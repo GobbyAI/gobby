@@ -39,11 +39,10 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
     async def create_worktree(
         branch_name: str,
-        base_branch: str = "main",
+        base_branch: str | None = None,
         task_id: str | None = None,
         worktree_path: str | None = None,
         create_branch: bool = True,
-        use_local: bool | None = None,
         project_path: str | None = None,
         provider: Literal["claude", "codex", "droid"] | None = None,
     ) -> dict[str, Any]:
@@ -51,12 +50,10 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         Args:
             branch_name: Name for the new branch.
-            base_branch: Branch to base the worktree on (default: main).
+            base_branch: Local branch or explicit origin ref; omitted uses caller HEAD.
             task_id: Optional task ID to link to this worktree.
             worktree_path: Optional custom path (defaults to ../{branch_name}).
             create_branch: Whether to create a new branch (default: True).
-            use_local: If True, branch from local ref instead of origin/ (preserves unpushed commits).
-                       If None (default), auto-detects: uses local when base_branch has unpushed commits.
             project_path: Path to project directory (pass cwd from CLI).
             provider: CLI provider to install hooks for (claude, codex, droid).
                      If specified, installs hooks so agents can communicate with daemon.
@@ -64,12 +61,6 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Returns:
             Dict with worktree ID, path, and branch info.
         """
-        if base_branch.startswith(("origin/", "refs/remotes/")):
-            return {
-                "success": False,
-                "error": f"Remote-style base branch is not allowed: {base_branch}",
-                "error_code": "remote_base_branch_not_allowed",
-            }
         owning_task_id = None
         if task_id:
             try:
@@ -103,7 +94,6 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             task_id=task_id,
             worktree_path=worktree_path,
             create_branch=create_branch,
-            use_local=use_local,
             provider=provider,
             resolve_task_id=ctx.resolve_task_id,
             path_factory=generate_worktree_path,

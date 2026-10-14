@@ -51,7 +51,7 @@ from ._failure_cleanup import (
     cleanup_created_isolation,
     cleanup_failed_spawn,
 )
-from ._isolation_prepare import prepare_spawn_isolation
+from ._isolation_prepare import prepare_spawn_isolation, requested_base_branch
 from ._placement import preflight_placement, run_placed_spawn, task_active_refusal
 from ._provider_resolution import (
     concrete_provider,
@@ -401,19 +401,9 @@ async def spawn_agent_impl(
                 "error": f"Could not create clone manager for project '{project_id}': {exc}",
             }
 
-    effective_base_branch = base_branch
-    if effective_base_branch is None and agent_body:
-        effective_base_branch = agent_body.base_branch
-    # "inherit" means "resolve from context", treat as unset
-    if effective_base_branch == "inherit":
-        effective_base_branch = None
-    if effective_base_branch is None and target_git_manager:
-        try:
-            effective_base_branch = await target_git_manager.get_current_branch()
-        except Exception as e:
-            logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
-            effective_base_branch = None
-    effective_base_branch = effective_base_branch or "main"
+    effective_base_branch = requested_base_branch(
+        base_branch, agent_body.base_branch if agent_body else None
+    )
     # Effective sandboxes combine config-store defaults with the agent definition;
     # the definition's network setting governs egress.
     gated = await resolve_spawn_sandbox(daemon_config, write_grant, agent_body)

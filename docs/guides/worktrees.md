@@ -141,7 +141,7 @@ automating against them.
 
 | Tool | Required arguments | Important optional arguments |
 |------|--------------------|------------------------------|
-| `create_worktree` | `branch_name` | `base_branch`, `task_id`, `worktree_path`, `create_branch`, `use_local`, `project_path`, `provider` |
+| `create_worktree` | `branch_name` | `base_branch`, `task_id`, `worktree_path`, `create_branch`, `project_path`, `provider` |
 | `get_worktree` | `worktree_id` | none |
 | `list_worktrees` | none | `status`, `agent_session_id`, `limit` |
 | `get_worktree_stats` | none | `project_path` |
@@ -189,17 +189,32 @@ call_tool(
         "base_branch": "main",
         "task_id": "#123",
         "create_branch": True,
-        "use_local": True,
         "provider": "codex",
         "project_path": "/path/to/repo",
     },
 )
 ```
 
-When `use_local` is omitted, Gobby auto-detects unpushed commits on the base
-branch and uses the local branch ref when needed.
-The base must name a local branch; `origin/...` and `refs/remotes/...` are
-rejected. Inspect existing task-linked worktrees before creating another.
+Omit `base_branch` to fork the project checkout's current attached HEAD without
+fetching. Detached HEAD requires an explicit base. Bare branch names and
+`refs/heads/<name>` select local branches; `origin/<name>` and
+`refs/remotes/origin/<name>` fetch only the requested remote ref. Creation uses
+the selected commit even if that ref advances. An existing destination branch at
+a different commit is refused when `create_branch=True`.
+
+With `create_branch=False`, Gobby checks out the existing destination branch's
+captured tip without resetting it, and records `base_branch` as its merge target.
+Choose a separate base branch: using the destination as its own base returns
+`merge_target_is_source_branch` before creating or recording a worktree. This also
+applies when an omitted base resolves to the destination branch.
+
+The Claude worktree-create hook blocks re-entry when an existing named worktree
+differs from the caller's selected commit. Continue in that worktree directly or
+choose a new worktree name; the hook preserves existing work. Agent isolation
+repair aborts spawn if the selected `.mcp.json` is invalid JSON, has a non-object
+root or a non-object `mcpServers`, preserving its bytes. It also refuses to copy
+parent provider hooks when tracked-file inspection fails.
+Inspect existing task-linked worktrees before creating another.
 
 ### Sync And Merge
 

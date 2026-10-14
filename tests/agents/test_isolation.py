@@ -1241,6 +1241,8 @@ class TestWorktreeIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_environment_preserves_failure_message(self) -> None:
         git_manager = MagicMock(spec=WorktreeGitManager)
+        git_manager.get_local_commit.return_value = "base-sha"
+        git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         git_manager.repo_path = "/path/to/main/repo"
         git_manager.get_current_branch.return_value = "main"
         git_manager.has_unpushed_commits.return_value = (False, 0)
@@ -1272,6 +1274,8 @@ class TestWorktreeIsolationHandler:
     async def test_prepare_environment_creates_worktree(self) -> None:
         """Test prepare_environment creates worktree if not exists."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(
             success=True,
@@ -1318,6 +1322,8 @@ class TestWorktreeIsolationHandler:
     async def test_prepare_environment_reuses_existing_worktree(self) -> None:
         """Test prepare_environment reuses existing worktree for same branch."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.get_current_branch.return_value = "main"
 
@@ -1367,6 +1373,7 @@ class TestWorktreeIsolationHandler:
             git_manager=mock_git_manager,
             worktree_path="/tmp/worktrees/existing-branch",
             base_branch="main",
+            base_commit_sha="base-sha",
         )
         repair.assert_awaited_once_with(
             main_repo_path="/path/to/main/repo",
@@ -1401,6 +1408,8 @@ class TestWorktreeIsolationHandler:
         git_manager = SimpleNamespace(
             repo_path="/path/to/main/repo",
             get_current_branch=AsyncMock(return_value="main"),
+            get_local_commit=AsyncMock(return_value="base-sha"),
+            run_git_command=AsyncMock(return_value=subprocess.CompletedProcess([], 0, "", "")),
             create_worktree=unexpected_create_worktree,
         )
         worktree_storage = SimpleNamespace(
@@ -1447,6 +1456,8 @@ class TestWorktreeIsolationHandler:
     async def test_prepare_environment_cleans_stale_record_before_recreate(self) -> None:
         """Test stale worktree records are pruned before recreating the deterministic path."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.get_current_branch.return_value = "main"
         mock_git_manager.has_unpushed_commits.return_value = (False, 0)
@@ -1521,7 +1532,7 @@ class TestWorktreeIsolationHandler:
             branch_name="stale-branch",
             base_branch="main",
             create_branch=True,
-            use_local=False,
+            base_commit_sha="base-sha",
         )
         mock_worktree_storage.create.assert_called_once_with(
             project_id="proj-123",
@@ -1543,6 +1554,8 @@ class TestWorktreeIsolationHandler:
         from gobby.agents.worktree_reuse import cleanup_stale_worktree_registration
 
         git_manager = MagicMock(spec=WorktreeGitManager)
+        git_manager.get_local_commit.return_value = "base-sha"
+        git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         worktree_path = tmp_path / "stale"
         worktree_path.mkdir()
 
@@ -1583,6 +1596,8 @@ class TestWorktreeIsolationHandler:
     def test_build_context_prompt_prepends_warning(self) -> None:
         """Test build_context_prompt prepends the worktree context banner."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_worktree_storage = MagicMock()
 
         handler = WorktreeIsolationHandler(
@@ -1609,6 +1624,8 @@ class TestWorktreeIsolationHandler:
     async def test_cleanup_after_storage_create_failure(self) -> None:
         """Test cleanup removes worktree on disk when storage.create fails."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
@@ -1728,6 +1745,8 @@ class TestWorktreeIsolationHandler:
     async def test_cleanup_after_hook_copy_failure(self) -> None:
         """Test cleanup removes worktree and storage record when hook copy fails."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
@@ -1777,6 +1796,8 @@ class TestWorktreeIsolationHandler:
     @pytest.mark.asyncio
     async def test_partial_cleanup_retains_worktree_record_when_target_cleanup_fails(self) -> None:
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.delete_worktree.return_value = MagicMock(success=True)
@@ -1834,6 +1855,8 @@ class TestWorktreeIsolationHandler:
     async def test_cleanup_noop_after_environment_commit(self) -> None:
         """Test cleanup does nothing after the run-start commit point."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
@@ -1882,6 +1905,8 @@ class TestWorktreeIsolationHandler:
     async def test_prepare_calls_ensure_project_json(self) -> None:
         """Test prepare_environment calls ensure_project_json_for_isolation."""
         mock_git_manager = MagicMock(spec=WorktreeGitManager)
+        mock_git_manager.get_local_commit.return_value = "base-sha"
+        mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"

@@ -10,9 +10,9 @@ import pytest
 
 from gobby.agents.worktree_reuse import (
     ReusedWorktreeRebaseConflict,
-    capture_worktree_base_commit_sha,
     sync_reused_worktree_to_base,
 )
+from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -24,6 +24,10 @@ class FakeGitManager:
         self.responses = responses
         self.calls: list[tuple[list[str], str | Path | None, int]] = []
 
+    async def get_local_commit(self, ref: str) -> str | None:
+        result = await self.run_git_command(["rev-parse", "--verify", ref])
+        return result.stdout.strip() if result.returncode == 0 else None
+
     async def run_git_command(
         self,
         args: list[str],
@@ -31,6 +35,8 @@ class FakeGitManager:
         cwd: str | Path | None = None,
         timeout: int = 30,
     ) -> subprocess.CompletedProcess[str]:
+        if args[0] == "check-ref-format":
+            return subprocess.CompletedProcess(args, 0, "", "")
         self.calls.append((args, cwd, timeout))
         response = self.responses.pop(0)
         if isinstance(response, BaseException):
@@ -76,14 +82,12 @@ async def test_capture_base_prefers_branch_over_same_named_tag(
     _git(tmp_path, "commit", "--allow-empty", "-m", "base advances")
     base_sha = _git(tmp_path, "rev-parse", "refs/heads/main").stdout.strip()
     _git(tmp_path, "update-ref", "refs/remotes/origin/main", base_sha)
+    _git(tmp_path, "remote", "add", "origin", str(tmp_path))
     _git(tmp_path, "switch", "-c", "task")
     _git(tmp_path, "commit", "--allow-empty", "-m", "task commit")
 
-    captured = await capture_worktree_base_commit_sha(
-        git_manager=WorktreeGitManager(tmp_path),
-        worktree_path=str(tmp_path),
-        base_branch=base_branch,
-        use_local=use_local,
+    _, captured = await select_worktree_base(
+        WorktreeGitManager(tmp_path), base_branch if use_local else "origin/main"
     )
 
     assert captured == base_sha
@@ -100,12 +104,10 @@ async def test_capture_base_refuses_tag_without_branch(tmp_path: Path, use_local
     _git(tmp_path, "commit", "--allow-empty", "-m", "task commit")
     _git(tmp_path, "tag", "main" if use_local else "origin/main")
 
-    with pytest.raises(RuntimeError, match="Failed to resolve base branch refs/"):
-        await capture_worktree_base_commit_sha(
-            git_manager=WorktreeGitManager(tmp_path),
-            worktree_path=str(tmp_path),
-            base_branch="main",
-            use_local=use_local,
+    _git(tmp_path, "remote", "add", "origin", str(tmp_path))
+    with pytest.raises(RuntimeError):
+        await select_worktree_base(
+            WorktreeGitManager(tmp_path), "main" if use_local else "origin/main"
         )
 
 

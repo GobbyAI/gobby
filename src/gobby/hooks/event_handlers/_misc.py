@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import subprocess
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -33,6 +34,7 @@ from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.occupancy import refuse_occupied_worktree
@@ -516,10 +518,31 @@ class MiscEventHandlerMixin(EventHandlersBase):
             self.logger.warning("WORKTREE_CREATE project resolution failed: %s", error)
             return HookResponse(decision="allow")
 
+        try:
+            base_branch, base_commit_sha = await select_worktree_base(git_manager, None)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            return HookResponse(
+                decision="block", reason=f"Cannot create branch '{worktree_name}': {exc}"
+            )
+
         existing = None
         if self._worktree_manager and project_id:
             existing = self._worktree_manager.get_by_branch(project_id, worktree_name)
             if existing and Path(existing.worktree_path).exists():
+                try:
+                    head = await git_manager.run_git_command(
+                        ["rev-parse", "HEAD"], cwd=existing.worktree_path, timeout=5
+                    )
+                except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                    return HookResponse(
+                        decision="block", reason=f"Cannot inspect worktree '{worktree_name}': {exc}"
+                    )
+                if head.returncode != 0 or head.stdout.strip() != base_commit_sha:
+                    return HookResponse(
+                        decision="block",
+                        reason=f"Existing worktree '{worktree_name}' differs from selected commit; "
+                        "preserving it. Continue in that worktree directly, or choose a new worktree name.",
+                    )
                 self.logger.info(
                     "WORKTREE_CREATE reusing existing worktree for '%s': %s",
                     worktree_name,
@@ -543,64 +566,25 @@ class MiscEventHandlerMixin(EventHandlersBase):
                         reason=f"Cannot recreate branch '{worktree_name}': {cargo_error}",
                     )
 
-        current_branch = await git_manager.get_current_branch()
-        base_branch = current_branch or await git_manager.get_default_branch()
-
-        use_local = False
-        try:
-            has_unpushed, _ = await git_manager.has_unpushed_commits(base_branch)
-            use_local = has_unpushed
-        except Exception as e:
-            self.logger.warning("WORKTREE_CREATE refused an unsafe base: %s", e)
-            return HookResponse(
-                decision="block", reason=f"Cannot create branch '{worktree_name}': {e}"
-            )
-
         create_branch = True
         try:
-            branch_ref = f"refs/heads/{worktree_name}"
             existing_tip = await git_manager.run_git_command(
-                ["rev-parse", "--verify", "--quiet", f"{branch_ref}^{{commit}}"], timeout=5
+                ["rev-parse", "--verify", "--quiet", f"refs/heads/{worktree_name}^{{commit}}"],
+                timeout=5,
             )
             if existing_tip.returncode == 0:
-                base_ref = f"refs/heads/{base_branch}"
-                if not use_local:
-                    fetched = await git_manager.run_git_command(
-                        ["fetch", "origin", base_branch], timeout=60
-                    )
-                    if fetched.returncode != 0:
-                        raise RuntimeError(
-                            f"Failed to fetch requested base: {fetched.stderr.strip()}"
-                        )
-                    base_ref = f"refs/remotes/origin/{base_branch}"
-                base_tip = await git_manager.run_git_command(
-                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
-                )
-                if base_tip.returncode != 0:
-                    raise RuntimeError(f"Cannot resolve requested base '{base_ref}'")
-                ancestor = await git_manager.run_git_command(
-                    [
-                        "merge-base",
-                        "--is-ancestor",
-                        existing_tip.stdout.strip(),
-                        base_tip.stdout.strip(),
-                    ],
-                    timeout=5,
-                )
-                if ancestor.returncode != 0:
+                if existing_tip.stdout.strip() != base_commit_sha:
                     raise RuntimeError(
-                        f"Existing branch '{worktree_name}' at {existing_tip.stdout.strip()} "
-                        f"is not proven merged into requested base '{base_ref}'; refusing reuse"
+                        f"Existing branch '{worktree_name}' differs from selected commit {base_commit_sha}; refusing reuse"
                     )
                 create_branch = False
             elif existing_tip.returncode != 1:
                 raise RuntimeError(
                     f"Cannot inspect branch '{worktree_name}': {existing_tip.stderr.strip()}"
                 )
-        except Exception as e:
-            self.logger.warning("WORKTREE_CREATE refused branch '%s': %s", worktree_name, e)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
             return HookResponse(
-                decision="block", reason=f"Cannot create branch '{worktree_name}': {e}"
+                decision="block", reason=f"Cannot create branch '{worktree_name}': {exc}"
             )
 
         if existing or not create_branch:
@@ -616,7 +600,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             branch_name=worktree_name,
             base_branch=base_branch,
             create_branch=create_branch,
-            use_local=use_local,
+            base_commit_sha=base_commit_sha,
         )
         if not result.success:
             self.logger.warning("WORKTREE_CREATE failed: %s", result.message)
@@ -624,27 +608,6 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 decision="block",
                 reason=f"Cannot create branch '{worktree_name}': {result.message}",
             )
-
-        if not create_branch:
-            captured_base = base_tip.stdout.strip()
-            advanced = await git_manager.run_git_command(
-                ["merge", "--ff-only", captured_base], cwd=worktree_path, timeout=60
-            )
-            head = await git_manager.run_git_command(
-                ["rev-parse", "--verify", "HEAD"], cwd=worktree_path, timeout=5
-            )
-            if (
-                advanced.returncode != 0
-                or head.returncode != 0
-                or head.stdout.strip() != captured_base
-            ):
-                cleanup = await git_manager.delete_worktree(worktree_path)
-                detail = advanced.stderr.strip() or "branch changed after the ancestry check"
-                if not cleanup.success:
-                    detail += f"; retained worktree '{worktree_path}': {cleanup.message}"
-                return HookResponse(
-                    decision="block", reason=f"Cannot advance branch '{worktree_name}': {detail}"
-                )
 
         if self._worktree_manager and project_id:
             try:
