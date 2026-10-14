@@ -2526,16 +2526,10 @@ produce a valid payload, so no field group ships alone.
   `idx_worktrees_branch (project_id, branch_name, machine_id)` and
   `idx_clones_path (machine_id, clone_path)`. Local storage already ranks
   workspaces by `updated_at DESC` (`src/gobby/storage/worktrees.py`).
-- hub-mode 1.4's `record_remote_workspaces`, as amended for this plan,
-  records `exits[]` entries before `agents[]` entries. For each entry it
-  first sets `updated_at = clock_timestamp()` on the row with that machine
-  and path, and inserts the `active` row with `updated_at = clock_timestamp()`
-  and `ON CONFLICT DO NOTHING` only when no row matched. So `updated_at` is
-  the last time a report named the workspace, a reused path moves it, and
-  within one report a live run's workspace is newer than an exited run's.
-  The update comes first because `worktrees` has two unique indexes, and an
-  `ON CONFLICT DO UPDATE` on the path would abort the report on a branch
-  conflict.
+- hub-mode 1.4's `record_remote_workspaces` sets a workspace row's
+  `updated_at` each time a report names its path: a repeated path moves it,
+  and within one report an exited run's workspace is older than a live
+  run's. 3.2 reads only that property; hub-mode 1.4 owns how it is written.
 
 **Implementation:**
 - `spawn_executor_providers.py` gains the module function
@@ -3023,7 +3017,7 @@ Verification planned:
   NH-14. `resumed_workspace` orders the session's active worktree and clone
   rows together by `updated_at DESC, created_at DESC`, and hub-mode 1.4's
   `record_remote_workspaces` moves `updated_at` each time a report names a
-  workspace, exits before live runs; hub-mode 1.4 now blocks 3.2 (Decision
+  workspace; hub-mode 1.4 now blocks 3.2 (Decision
   23, Constraints, 3.2, 3.2.8). 2.4's oracle imports `render_srt_settings`
   from `src/gobby/agents/srt_settings.py`, where gmcp-stdio 1.8 moves it
   (Constraints, 2.4). 2.14 states and accepts the loop-prompt dismissal (`y`
