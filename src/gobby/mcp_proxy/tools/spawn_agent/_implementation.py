@@ -588,7 +588,11 @@ async def spawn_agent_impl(
             branch_name=existing_clone.branch_name,
             clone_id=existing_clone.id,
             isolation_type="clone",
-            extra={"source_repo": resolved_project_path, "reused_clone": True},
+            extra={
+                "source_repo": resolved_project_path,
+                "reused_clone": True,
+                "base_branch": existing_clone.base_branch,
+            },
         )
         effective_checkout_mode = "clone"
         handler = get_isolation_handler("none")
