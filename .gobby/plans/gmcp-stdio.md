@@ -1580,6 +1580,14 @@ root is #23275. Drafting creates no tasks, labels, or edges.
   - New items left the M1 manifest stale. The whole `## M1 Task Manifest`
     block is withdrawn; its bytes stay in Git history at `34e7c28cee`. Plan
     Adversary gobby#16791 derives a fresh M1 after review.
+- 2026-10-13: Renewed consensus between the Plan Writer gobby#16770 and the
+  Plan Adversary gobby#16791 on `9caa4d2608`.
+  - The Adversary confirmed that the body carries Q1 to Q4.
+  - It raised one finding: the V2 close gate stopped at leaf 1.8. V2 now
+    covers 1.1 to 1.9, and gate 2 adds
+    `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart`.
+  - The Adversary derives and applies a fresh M1 from this commit.
+  - No disagreement went to the Orchestrator.
 
 ## V2: Verification
 `kind: verification`
