@@ -21,10 +21,15 @@ def protect_pending_handoffs(
     machine_id = require_machine_id()
     deadline = time.monotonic() + 600
     announced = False
+    logged_stale_markers: set[tuple[str, str | None, str]] = set()
     with ExitStack() as stack:
         while True:
             try:
-                stack.enter_context(guard_handoff_shutdown(db, machine_id))
+                stack.enter_context(
+                    guard_handoff_shutdown(
+                        db, machine_id, logged_stale_markers=logged_stale_markers
+                    )
+                )
                 break
             except HandoffShutdownBlocked as exc:
                 if not wait or time.monotonic() >= deadline:
