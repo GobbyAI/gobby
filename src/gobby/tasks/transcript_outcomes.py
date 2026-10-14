@@ -30,6 +30,8 @@ _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
+_PYTHON_EXECUTABLE = re.compile(r"python(?:\d+(?:\.\d+)*)?")
+_PYTHON_EXECUTION_OPTION = re.compile(r"-[bBdEiIOPqRsSuvx]*([cm])")
 
 _HOOK_BLOCKING_ATTACHMENT = "hook_blocking_error"
 _TOOL_DENIAL_KIND_KEYS = ("toolDenialKind", "tool_denial_kind")
@@ -143,7 +145,22 @@ def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
         return "js_repl wrapper"
     if executable in _NODE_WRAPPERS:
         return "node wrapper"
+    if _PYTHON_EXECUTABLE.fullmatch(executable) and _python_inline_command(arguments):
+        return "python inline wrapper"
     return None
+
+
+def _python_inline_command(arguments: tuple[str, ...]) -> bool:
+    """Inspect interpreter options only, never module or script operands."""
+    options = iter(arguments)
+    for argument in options:
+        if argument.startswith("-m") or argument in {"--", "-"} or not argument.startswith("-"):
+            return False
+        if execution := _PYTHON_EXECUTION_OPTION.match(argument):
+            return execution.group(1) == "c"
+        if argument in {"-W", "-X"}:
+            next(options, None)
+    return False
 
 
 def _trailing_output_command(parsed: ParsedShellCommand) -> str | None:
