@@ -16,6 +16,7 @@ pub mod host;
 pub mod leases;
 pub mod reconcile;
 pub mod repository;
+pub mod write;
 
 /// The family key in bootstrap `front_door.routes`.
 pub const FAMILY_NAME: &str = "terminal_ws";

@@ -2,9 +2,10 @@
 pub use crate::repository::Backend;
 use gobby_core::postgres_pool::Pool;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex as StdMutex, PoisonError, Weak};
 use std::{future::Future, time::Duration};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, watch};
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -174,11 +175,16 @@ pub enum Error {
 /// After acquiring it, operations do no I/O or awaits: reservation, state change,
 /// and publication cannot be interrupted by cancellation. WS owners subscribe to
 /// `subscribe_fault` and close the connections named by the sticky fault signal.
+///
+/// A per-terminal lock, taken before the state mutex, orders control
+/// transitions against writes: a takeover waits for an in-flight write, and a
+/// write that acquires the lock after a takeover sees the new generation.
 pub struct Registry {
     epoch: Uuid,
     events: mpsc::Sender<LifecycleEvent>,
     fault: watch::Sender<Option<PublicationFault>>,
     state: Mutex<RegistryState>,
+    terminals: StdMutex<HashMap<Uuid, Weak<Mutex<()>>>>,
 }
 
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
@@ -337,9 +343,31 @@ impl Registry {
                 events,
                 fault,
                 state: Mutex::new(RegistryState::default()),
+                terminals: StdMutex::default(),
             },
             rx,
         )
+    }
+
+    /// The terminal's write and control-transition lock. Take it before any
+    /// other registry call that locks the state mutex.
+    pub async fn lock(&self, terminal: Uuid) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self
+                .terminals
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            match locks.get(&terminal).and_then(Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    locks.insert(terminal, Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
     }
     pub fn epoch(&self) -> Uuid {
         self.epoch
@@ -449,6 +477,7 @@ impl Registry {
         attachment: Attachment,
         takeover: bool,
     ) -> Result<Control, Error> {
+        let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
@@ -503,6 +532,7 @@ impl Registry {
         })
     }
     pub async fn release_control(&self, attachment: Attachment) -> Result<Control, Error> {
+        let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal(attachment)?;
@@ -550,6 +580,7 @@ impl Registry {
         attachment: Attachment,
         reason: &str,
     ) -> Result<Option<Finalized>, Error> {
+        let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         self.finalize_locked(&mut state, attachment, reason, None::<&Pool>)
             .await
@@ -595,6 +626,7 @@ impl Registry {
         attachment: Attachment,
         store: &impl HandoffStore,
     ) -> Result<Option<Finalized>, Error> {
+        let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         let store = state.admission_closed.then_some(store);
         self.finalize_locked(&mut state, attachment, "daemon_shutdown", store)
