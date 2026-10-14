@@ -34,8 +34,8 @@ from gobby.agents.sandbox_policy import (
     prepare_sandbox_run_paths,
     previous_run_write_paths,
     sandbox_cache_path,
-    srt_mux_tmpdir,
 )
+from gobby.agents.srt_socket_paths import srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.sync.jsonl_io import export_file_lock
 from gobby.utils.dependency_requirements import (

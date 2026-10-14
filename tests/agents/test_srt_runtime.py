@@ -50,10 +50,14 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def isolated_shared_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    socket_root = tmp_path / "srt-sock"
+    socket_root.mkdir(mode=0o700)
+
     def monitor(**_kwargs: object) -> str:
-        return str(tmp_path / "monitor.sock")
+        return str(socket_root / "monitor.sock")
 
     monkeypatch.setattr("gobby.agents.srt_monitor.ensure_srt_monitor", monitor)
+    monkeypatch.setattr("gobby.agents.srt_runtime.srt_mux_tmpdir", lambda: socket_root)
 
 
 def test_macos_profile_grants_only_semaphore_limit_and_self_scheduling(tmp_path: Path) -> None:
@@ -713,7 +717,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     # every provider gets it pointed at the same writable run temp directory.
     assert Path(launch.provider_env["TMPDIR"]) == temp_path
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
-    mux_dir = gobby_home / "runtime" / "srt-sock"
+    mux_dir = tmp_path / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
     # This fixture has no cargo binary. Its PATH must still retain the ps shim.
     assert launch.provider_env["PATH"] == f"{ps_shim_path}{os.pathsep}{shim_dir}"

@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO
 
-from gobby.agents.sandbox_policy import srt_mux_tmpdir
+from gobby.agents.srt_socket_paths import srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.spawn import run

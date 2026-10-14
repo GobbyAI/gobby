@@ -85,6 +85,10 @@ def test_srt_managed_run_socket_boundary(monkeypatch: pytest.MonkeyPatch) -> Non
                 allow_run_unix_sockets=True,
             )
         )
+        monitor_socket = launch.provider_env.get("GOBBY_SRT_MONITOR_SOCKET")
+        if sys.platform == "darwin":
+            assert monitor_socket is not None
+            assert len(os.fsencode(monitor_socket)) < 104
         current_tmp = Path(launch.provider_env["TMPDIR"])
         (current_tmp / "escape").symlink_to(workspace, target_is_directory=True)
         paths = [
@@ -98,7 +102,8 @@ def test_srt_managed_run_socket_boundary(monkeypatch: pytest.MonkeyPatch) -> Non
         script.write_text(
             """import errno, json, os, socket, sys
 from pathlib import Path
-root, other, outside, escape = map(Path, sys.argv[1:])
+root, other, outside, escape = map(Path, sys.argv[1:5])
+monitor = Path(sys.argv[5]) if sys.argv[5] != '-' else None
 assert Path(os.environ['TMPDIR']) == root, (os.environ['TMPDIR'], str(root))
 (root / 'n' / 'nested').mkdir(parents=True)
 (root / 'n' / 'nested' / 'written').write_text('ok')
@@ -123,7 +128,23 @@ for label, path in [('current', root / 'n' / 's'), ('other_run', other / 's'),
         assert error.errno in (errno.EPERM, errno.EACCES), (label, error)
         results[label] = 'denied'
     finally:
-        path.unlink(missing_ok=True)
+        if results.get(label) == 'allowed':
+            path.unlink(missing_ok=True)
+if monitor is not None:
+    try:
+        (monitor.parent / 'violations.lock').read_bytes()
+        results['monitor_read'] = 'allowed'
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES), error
+        results['monitor_read'] = 'denied'
+    try:
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(2)
+            client.connect(str(monitor))
+        results['monitor_connect'] = 'allowed'
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES), error
+        results['monitor_connect'] = 'denied'
 print(json.dumps(results))
 """,
             encoding="utf-8",
@@ -138,6 +159,7 @@ print(json.dumps(results))
                     str(other_run),
                     str(workspace),
                     str(current_tmp / "escape"),
+                    monitor_socket or "-",
                 ],
             ),
             cwd=workspace,
@@ -153,6 +175,7 @@ print(json.dumps(results))
             "other_run": "denied",
             "outside": "denied",
             "symlink_escape": "denied",
+            **({"monitor_read": "denied", "monitor_connect": "denied"} if monitor_socket else {}),
         }
         assert (current_tmp / "n" / "nested" / "written").read_text() == "ok"
 
@@ -201,9 +224,11 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
     workspace.mkdir()
     gobby_home = Path(os.environ["GOBBY_HOME"])
     resolved_gobby_home = gobby_home.resolve()
-    assert str(gobby_home).startswith("/var/")
-    assert str(resolved_gobby_home).startswith("/private/var/")
-    assert resolved_gobby_home == Path("/private") / gobby_home.relative_to("/")
+    if sys.platform == "darwin":
+        alias_home = Path("/") / resolved_gobby_home.relative_to("/private")
+        assert alias_home.resolve() == resolved_gobby_home
+        # Exercise denial through /var even when the fixture supplied /private/var.
+        gobby_home = alias_home
     gobby_home.mkdir(parents=True, exist_ok=True)
     sensitive = gobby_home / "bootstrap.yaml"
     sensitive.write_text("must-not-leak", encoding="utf-8")
