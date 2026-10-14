@@ -1585,14 +1585,15 @@ root is #23275. Drafting creates no tasks, labels, or edges.
 `kind: verification`
 
 These are completion gates for the implementation. Except for plan validation,
-none has run yet. Each runs after the 1.1 to 1.8 leaves land, and each must
+none has run yet. Each runs after the 1.1 to 1.9 leaves land, and each must
 hold before #23275 closes.
 
-1. The focused suites of 1.1 to 1.8 must pass together against the test hub,
+1. The focused suites of 1.1 to 1.9 must pass together against the test hub,
    with `cargo nextest run -p gobby-mcp` and
    `cargo clippy -p gobby-mcp --all-targets -- -D warnings` (heavy work).
-2. `tests/e2e/test_stateless_ambient_session.py` must pass against an isolated
-   daemon with the checkout's `gmcp`.
+2. `tests/e2e/test_stateless_ambient_session.py` and
+   `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart` must pass against
+   an isolated daemon with the checkout's `gmcp`.
 3. `uv run gobby plans validate .gobby/plans/gmcp-stdio.md -p <root>` must
    pass, and `gcode grep -F "gobby mcp-server" src` must hit only the 1.6
    repair.
