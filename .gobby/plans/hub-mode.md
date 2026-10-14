@@ -615,7 +615,7 @@ sequenceDiagram
   participant DB as Hub database
   participant N as Node N gdaemon
   U->>FD: MCP spawn_agent with machine N
-  FD->>PY: proxied with the caller's verified identity
+  FD->>PY: proxied MCP call with the caller's session ref
   PY->>DB: read N's checkout row for P
   PY->>FD: GET /api/internal/nodes/connected
   PY->>DB: pre-register session, run, and pending terminal on N
@@ -1277,8 +1277,10 @@ Targets:
 - Orchestrator gobby#15977's security return (2026-10-14) asks for an
   `owner_user_id` check on every action aimed at a machine, failing closed:
   cancel (2.4), terminal write (2.3), attention respond (3.3), merge and
-  delete by row id (4.3, 4.4), and the node status reads (4.7). Spawn
-  already checks it (1.3's `machine_not_owned`).
+  delete by row id (4.3, 4.4), and the node status reads (4.7). 1.3's
+  `machine_not_owned` compares the target's owner with the origin machine's,
+  not with the caller's user, and skips a local target, so spawn (2.5) calls
+  this check too.
 - `AuthService.authenticate` (`src/gobby/servers/auth_service.py`) returns
   an `AuthDecision` whose `user_id` is set only from
   `verified_front_door_identity`: a request that came through gdaemon with
@@ -1333,7 +1335,7 @@ Targets:
   services are attached and `None` otherwise, and resets it in the
   handler's `finally`. Messages handled off the loop (`_start_off_loop`)
   run in tasks created inside the handler, so they inherit the binding.
-- 2.3, 2.4, 3.3, 4.3, 4.4, and 4.7 each call `require_machine_owned` where
+- 2.3, 2.4, 2.5, 3.3, 4.3, 4.4, and 4.7 each call `require_machine_owned` where
   the action names its machine and map the refusal to their own error.
 
 Consumers unchanged:
@@ -1859,7 +1861,7 @@ Verification planned:
 - 2.4.5 - A `{stopped: false}` reply returns `error_code: not_stopped` and leaves the terminal row unchanged. test: `tests/hub/test_remote_cancel.py::test_not_stopped_is_failure`.
 - 2.4.6 - A bound caller that does not own the run's machine, local or remote, gets `error_code: machine_not_owned`, and no PID is signalled, no terminal closed and no `agent.cancel` sent; an unbound caller's kill proceeds. test: `tests/hub/test_remote_cancel.py::test_cancel_needs_owned_machine`.
 
-### 2.5 Remote spawn goes through the node [category: code] (depends: 1.3, 2.1, 2.2, 2.4)
+### 2.5 Remote spawn goes through the node [category: code] (depends: 1.3, 1.5, 2.1, 2.2, 2.4)
 `kind: deliverable`
 
 Targets:
@@ -1880,10 +1882,10 @@ Targets:
 - `tests/hub/test_remote_spawn.py`
 - `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
 
-**Granularity:** fifteen acceptance items and eight production files, one
+**Granularity:** sixteen acceptance items and eight production files, one
 outcome: every remote spawn ends in one owned state, accepted, failed, or in
 doubt. The items fall into three groups. Routing covers 2.5.3, 2.5.6, 2.5.8,
-and 2.5.9. The launch covers 2.5.1, 2.5.2, 2.5.7, 2.5.10, 2.5.11, 2.5.12,
+2.5.9, and 2.5.16. The launch covers 2.5.1, 2.5.2, 2.5.7, 2.5.10, 2.5.11, 2.5.12,
 2.5.13, 2.5.14, and 2.5.15. Settlement of its outcome covers 2.5.4 and 2.5.5. None
 closes alone:
 - Routing without the launch only adds refusals for remote targets.
@@ -2041,9 +2043,13 @@ it is already its own section, 2.6.
   path, as `_parent_session_project_context` already returns `None` without
   one.
 - Each caller then calls `resolve_target_machine` with the context's project id,
-  `machine`, and the origin. A local result follows today's path. A remote
-  result calls `spawn_remote_agent`. A refusal returns its typed code as the
-  spawn error.
+  `machine`, and the origin, and then 1.5's
+  `require_machine_owned(routed.machine_id)` for a local or remote result. A
+  bound caller that does not own the target, the hub's machine included,
+  is refused there, and nothing is registered, launched, or sent. An
+  unbound caller passes, as in 1.5. A local result
+  follows today's path. A remote result calls `spawn_remote_agent`. A
+  refusal returns its typed code as the spawn error.
 - A remote spawn needs no hub checkout. The MCP tool takes `project_id` from the
   spawn project context, and the unresolved-parent context keeps that id, so
   the remote branch reads it from there. It ignores `effective_project_path`
@@ -2469,6 +2475,7 @@ Verification planned:
 - 2.5.13 - `DaemonConfig(max_active_agents=1000)` validates, `DaemonConfig(max_active_agents=1001)` raises `ValidationError`, and the default stays 20. test: `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`.
 - 2.5.14 - The checked-in runtime config contract still equals the generator's output after the bound. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
 - 2.5.15 - With `verify_srt_installation` failing on the hub, a remote spawn whose agent body resolves to enabled `srt` still sends `agent.spawn` with that sandbox, the resolved model, effort, and preflight mode; a body whose sandbox is disabled or `provider-native` returns `sandbox_required` with `stage: "none"` and sends nothing. test: `tests/hub/test_remote_spawn.py::test_remote_resolvers_skip_hub_srt_install`.
+- 2.5.16 - A bound caller that does not own the target machine, local or remote, gets `machine_not_owned` from the MCP tool and `POST /api/agents/spawn`, and no session, run, or terminal row is written and nothing is launched or sent; the owner's spawn and an unbound caller's spawn proceed. test: `tests/hub/test_remote_spawn.py::test_spawn_needs_owned_machine`.
 
 ### 2.6 The hub settles remote runs from the node's reports [category: code] (depends: 1.3, 1.4, 2.1, 2.5)
 `kind: deliverable`
@@ -3730,13 +3737,15 @@ Verification planned:
     machine or stores a row on another machine, and its fix.
   - C: the new "Cross-plan edges set at expansion" section has one row per
     edge, including 4.2 and 4.6.
-  - D: new leaf 1.5 binds each caller to the machines it owns, and cancel
-    (2.4), terminal write (2.3), attention respond (3.3), workspace actions
+  - D: new leaf 1.5 binds each caller to the machines it owns, and spawn
+    (2.5), cancel (2.4), terminal write (2.3), attention respond (3.3), workspace actions
     (4.3, 4.4) and per-machine status (4.7) refuse another user's machine.
     2.2 requires every hook to name a machine: the key's machine for a
     verified hook, the hub's otherwise. A hook binds only rows on its own
     machine. 1.1 follows node-halves 2.6 for the owner-only prompt file and
     2.5 cites node-halves Decision 32 for the node's sandbox refusal.
+    Roster and attention visibility stay with S4.4 #17769 (ROADMAP decision
+    17; "Relations that set no edge").
   - E: 4.8.5, 4.1.1 and 4.1.2 add their own tests, 5.1 fails without SRT,
     and 1.1.1, 1.1.5 and 4.1.5 name exact files and sections.
   - F: 1.1 is delivered by #24268, 5.1 is a code leaf, and the narrative
