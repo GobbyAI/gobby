@@ -271,7 +271,6 @@ async def _invoke_other_link_caller(
             "confirm_claiming_session_activity",
             MagicMock(return_value=True),
         )
-        monkeypatch.setattr(_lifecycle_claim, "_claim_scope_conflicts", MagicMock(return_value=[]))
         _lifecycle_claim.register_claim_task(caller.registry, ctx)
         result = await caller.registry.call(
             "claim_task", {"task_id": caller.task.id, "force": True}

@@ -457,7 +457,7 @@
   },
   "MCP gobby-tasks:claim_task": {
     "status": "proxied",
-    "note": "Blocked on #21560 Tasks family: port `claim_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py:173`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
+    "note": "Blocked on #21560 Tasks family: port `claim_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py:31`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
   },
   "MCP gobby-tasks:close_task": {
     "status": "proxied",
@@ -511,10 +511,6 @@
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `get_task_type_defaults` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:152`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
   },
-  "MCP gobby-tasks:inspect_task_path_ownership": {
-    "status": "proxied",
-    "note": "Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:165`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers."
-  },
   "MCP gobby-tasks:link_commit": {
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `link_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:135`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
@@ -542,10 +538,6 @@
   "MCP gobby-tasks:record_close_receipt": {
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
-  },
-  "MCP gobby-tasks:release_task_paths": {
-    "status": "proxied",
-    "note": "Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:233`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers."
   },
   "MCP gobby-tasks:remove_dependency": {
     "status": "proxied",

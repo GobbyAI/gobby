@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1097. Unclassified: 655.
+Public surfaces and evidence gates: 1095. Unclassified: 655.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -955,7 +955,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 655.
 | `MCP gobby-tasks:auto_link_commits` | proxied | Blocked on #21560 Tasks family: port `auto_link_commits` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:373`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:backup_tasks` | proxied | Blocked on #21560 Tasks family: port `backup_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_backup.py:17`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:check_dependency_cycles` | proxied | Blocked on #21560 Tasks family: port `check_dependency_cycles` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:196`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
-| `MCP gobby-tasks:claim_task` | proxied | Blocked on #21560 Tasks family: port `claim_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py:173`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:claim_task` | proxied | Blocked on #21560 Tasks family: port `claim_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py:31`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:close_task` | proxied | Blocked on #21560 Tasks family: port `close_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py:27`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:create_task` | proxied | Blocked on #21560 Tasks family: port `create_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_crud.py:88`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:de_escalate_task` | proxied | Blocked on #21560 Tasks family: port `de_escalate_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:250`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
@@ -969,7 +969,6 @@ Public surfaces and evidence gates: 1097. Unclassified: 655.
 | `MCP gobby-tasks:get_task_sessions` | proxied | Blocked on #21560 Tasks family: port `get_task_sessions` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:289`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:get_task_stages` | proxied | Blocked on #21560 Tasks family: port `get_task_stages` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:89`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:get_task_type_defaults` | proxied | Blocked on #21560 Tasks family: port `get_task_type_defaults` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:152`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
-| `MCP gobby-tasks:inspect_task_path_ownership` | proxied | Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:165`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers. |
 | `MCP gobby-tasks:link_commit` | proxied | Blocked on #21560 Tasks family: port `link_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:135`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:link_task_to_session` | proxied | Blocked on #21560 Tasks family: port `link_task_to_session` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:125`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:list_blocked_tasks` | proxied | Blocked on #21560 Tasks family: port `list_blocked_tasks` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:499`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
@@ -977,7 +976,6 @@ Public surfaces and evidence gates: 1097. Unclassified: 655.
 | `MCP gobby-tasks:list_stages_registry` | proxied | Blocked on #21560 Tasks family: port `list_stages_registry` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:124`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:list_tasks` | proxied | Blocked on #21560 Tasks family: port `list_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_listing.py:137`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:record_close_receipt` | proxied | Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
-| `MCP gobby-tasks:release_task_paths` | proxied | Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:233`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers. |
 | `MCP gobby-tasks:remove_dependency` | proxied | Blocked on #21560 Tasks family: port `remove_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:116`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:remove_label` | proxied | Blocked on #21560 Tasks family: port `remove_label` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py:64`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:reopen_task` | proxied | Blocked on #21560 Tasks family: port `reopen_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
