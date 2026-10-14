@@ -116,6 +116,11 @@ async def resolve_rust_module(
         if len(declarations[source_path]) != 1:
             raise ValueError(f"ambiguous Rust path module: {source_path}")
         owner, suffix = next(iter(declarations[source_path]))
-        return (*module_for(owner, seen | {source_path}), *suffix)
+        owner_module = (
+            ()
+            if PurePosixPath(owner).parent == PurePosixPath(root) / "tests"
+            else module_for(owner, seen | {source_path})
+        )
+        return (*owner_module, *suffix)
 
     return module_for(path, frozenset())

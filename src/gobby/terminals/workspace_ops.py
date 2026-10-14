@@ -795,31 +795,27 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             except Exception as exc:
                 await self._roll_back(pane.id)
                 raise WorkspaceOpError("terminal_failed", f"Pane spawn raised: {exc}") from exc
-            if not result.success:
+            terminal_id = result.terminal_id
+            if not result.success or terminal_id is None:
                 await self._roll_back(pane.id)
-                raise WorkspaceOpError(
-                    "terminal_failed", f"Pane spawn failed: {result.error_detail or result.error}"
-                )
+                reason = ": ".join(part for part in (result.error, result.error_detail) if part)
+                raise WorkspaceOpError("terminal_failed", f"Pane spawn failed: {reason}")
             try:
                 bound = await self._db(
                     self._workspaces.set_pane_terminal,
                     pane.id,
-                    result.terminal_id,
+                    terminal_id,
                     owns_terminal=True,
                 )
             except Exception as exc:
                 try:
                     await self._roll_back(pane.id)
                 finally:
-                    minted = await self._db(self._terminals.get, result.terminal_id)
+                    minted = await self._db(self._terminals.get, terminal_id)
                     if minted is not None:
                         await self._kill([minted])
                 raise WorkspaceOpError("terminal_failed", f"Pane bind raised: {exc}") from exc
-            minted = (
-                None
-                if bound is not None
-                else await self._db(self._terminals.get, result.terminal_id)
-            )
+            minted = None if bound is not None else await self._db(self._terminals.get, terminal_id)
             if minted is not None:
                 await self._kill([minted])
         if bound is None:

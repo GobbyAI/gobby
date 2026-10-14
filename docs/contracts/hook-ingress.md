@@ -39,6 +39,16 @@ A missing or unsupported schema version gets HTTP 400, for example:
 {"detail":"Unsupported schema_version: None. Supported: 1"}
 ```
 
+Missing required fields and an unsupported source also return HTTP 400:
+
+```json
+{"detail":"hook_type required"}
+{"detail":"source required"}
+{"detail":"Unsupported source: unsupported. Supported: claude, grok, codex, droid, agy"}
+```
+
+The unsupported source value in that detail is the submitted value.
+
 The corpus's `schema_version: 2` describes the recording format, independently
 of envelope `schema_version: 1`.
 
@@ -98,6 +108,10 @@ Authority: [`execute_hook`](../../src/gobby/servers/routes/mcp/hooks.py) and
 [`envelope_terminal_response`](../../src/gobby/hooks/envelope_dedupe.py).
 
 ## Retryable failures
+
+An uninitialized hook manager returns HTTP 503
+`{"detail":"HookManager not initialized"}`. This is not a retry envelope;
+it has no `status` or `retry_kind` fields.
 
 Retryable failures release the processing claim and return HTTP 503 with one
 of these bodies. ghook retains the spool envelope for retry:

@@ -16,7 +16,10 @@ from gobby.agents.spawn_executor import (
 from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.lifetime import TerminalLifetime
-from gobby.terminals.native_runtime import classify_native_spawn_failure
+from gobby.terminals.native_runtime import (
+    classify_native_spawn_failure,
+    refuse_unavailable_host,
+)
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -31,7 +34,8 @@ class WebSpawnResult:
     """Outcome of a terminal-only spawn."""
 
     success: bool
-    terminal_id: str
+    # None only when the spawn failed closed before minting a row.
+    terminal_id: str | None
     error: str | None = None
     error_detail: str | None = None
 
@@ -87,10 +91,13 @@ async def spawn_web_terminal(
     ``env`` sits under the runtime's own variables, so it never shadows
     ``GOBBY_TERMINAL_ID``. ``terminal_theme`` is the requesting client's
     colours, forwarded to a native host so the child's first OSC 10/11
-    queries answer with them. ``lifetime`` is internal: it never changes
-    native-first selection and only decides whether a fallback is legal.
+    queries answer with them. ``lifetime`` is internal and never changes
+    native-first selection: an unavailable host refuses every lifetime alike.
     """
     validated = validate_dimensions(rows, cols)
+    refusal = await refuse_unavailable_host(runtime)
+    if refusal is not None:
+        return WebSpawnResult(False, None, *refusal)
     terminal_id = mint_terminal_id()
     spawn_key = terminal_id
     attempt = manager.create_pending(

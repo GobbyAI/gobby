@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
 import { TerminalSessionList } from "../TerminalSessionList";
-import type { JoinedTerminalSession } from "../terminalSessions";
+import { joinTmuxSessions, type JoinedTerminalSession } from "../terminalSessions";
 
 function makeTmux(overrides: Partial<TmuxSession> = {}): TmuxSession {
   const name = overrides.name ?? "shell";
@@ -190,5 +190,25 @@ describe("TerminalSessionList backend chips", () => {
     const rows = screen.getAllByRole("listitem");
     expect(within(rows[0]).getByText("tmux")).toBeInTheDocument();
     expect(within(rows[1]).getByText("gterm")).toBeInTheDocument();
+  });
+
+  it("rendersBackendForEverySession from each stored row's backend", () => {
+    const stored = [
+      makeTmux({ name: "hand-started", backend: "tmux" }),
+      makeTmux({ name: "agent", backend: "native" }),
+      makeTmux({ name: "pane", backend: "native" }),
+    ];
+    render(
+      <TerminalSessionList
+        sessions={joinTmuxSessions(stored, [])}
+        value={null}
+        onChange={vi.fn()}
+        onTerminate={vi.fn()}
+      />,
+    );
+    const chips = screen
+      .getAllByRole("listitem")
+      .map((row) => within(row).getByText(/^(tmux|gterm)$/).textContent);
+    expect(chips).toEqual(["tmux", "gterm", "gterm"]);
   });
 });

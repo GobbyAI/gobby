@@ -28,7 +28,12 @@ class ArchiveHook(Protocol):
 
 
 def archive_superseded_hook(
-    app: Any, envelope: dict[str, Any], path: Path, archive: ArchiveHook
+    app: Any,
+    envelope: dict[str, Any],
+    path: Path,
+    archive: ArchiveHook,
+    *,
+    machine_id: str | None = None,
 ) -> bool | None:
     """Return None for admissible replay, otherwise the archive outcome.
 
@@ -70,7 +75,7 @@ def archive_superseded_hook(
         # instead of running potentially stale effects during a hub outage.
         logger.exception("Cannot establish hook replay freshness for %s", path.name)
         return False
-    if session is None:
+    if session is None or (machine_id is not None and session.machine_id != machine_id):
         return None
     try:
         enqueued_at = parse_stored_datetime(envelope.get("enqueued_at"))

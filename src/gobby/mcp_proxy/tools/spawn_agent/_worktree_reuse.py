@@ -43,7 +43,11 @@ async def prepare_reused_worktree(
         phase_timings_ms=spawn_config.phase_timings_ms,
     )
 
-    extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
+    extra = {
+        "main_repo_path": main_repo_path,
+        "reused_worktree": True,
+        "base_branch": base_branch,
+    }
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha
         if spawn_config.task_id is not None:
@@ -91,7 +95,11 @@ async def prepare_resumed_worktree(
             branch_name=existing_worktree.branch_name,
             worktree_id=existing_worktree.id,
             isolation_type="worktree",
-            extra={"main_repo_path": main_repo_path, "reused_worktree": True},
+            extra={
+                "main_repo_path": main_repo_path,
+                "reused_worktree": True,
+                "base_branch": existing_worktree.base_branch,
+            },
         ),
         get_isolation_handler("none"),
     )

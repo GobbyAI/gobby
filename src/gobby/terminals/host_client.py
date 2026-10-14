@@ -58,6 +58,22 @@ class HostUnavailableError(HostCommandError):
         self.message = message
 
 
+# Why the supervisor last failed to start or adopt a host. Only the first three
+# fail a spawn closed; ``other`` keeps the spawn path's existing codes.
+HostUnavailableReason = Literal["host_start_timeout", "epoch_refused", "gterm_missing", "other"]
+FAIL_CLOSED_HOST_REASONS: frozenset[HostUnavailableReason] = frozenset(
+    {"host_start_timeout", "epoch_refused", "gterm_missing"}
+)
+
+
+class HostReasonUnavailableError(HostUnavailableError):
+    """The host is unavailable for a typed fail-closed reason; nothing was spawned."""
+
+    def __init__(self, reason: HostUnavailableReason) -> None:
+        super().__init__(f"native terminals are unavailable ({reason})")
+        self.reason = reason
+
+
 class HostConnectionLost(HostUnavailableError):
     """The active control connection ended while requests were pending."""
 

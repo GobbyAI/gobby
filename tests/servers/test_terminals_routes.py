@@ -338,3 +338,32 @@ def test_a_native_row_falls_back_to_its_spawn_shell(
     rows = {row["id"]: row for row in listing.json()["items"]}
     assert rows[native.id]["command"] == "zsh"
     assert detail.json()["command"] == "zsh"
+
+
+def test_terminal_inventory_exposes_backend(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
+) -> None:
+    manager = _manager(temp_db)
+    stored = {
+        row.id: row.backend
+        for row in (
+            _native_live(manager, sample_project["id"], pgid=4242, shell="zsh"),
+            _live_tmux_row(manager, sample_project["id"]),
+        )
+    }
+    assert sorted(stored.values()) == ["native", "tmux"]
+    run = MagicMock(
+        return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout="", stderr="")
+    )
+
+    with patch("gobby.terminals.foreground.spawn.run", run), _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+        details = {
+            terminal_id: client.get(f"/api/terminals/{terminal_id}") for terminal_id in stored
+        }
+
+    # Every list and get row names the backend its stored terminal row records.
+    assert {row["id"]: row["backend"] for row in listing.json()["items"]} == stored
+    assert {
+        terminal_id: reply.json()["backend"] for terminal_id, reply in details.items()
+    } == stored

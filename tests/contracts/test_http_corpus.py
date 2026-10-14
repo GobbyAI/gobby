@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -279,6 +280,16 @@ def test_case_replays_equal(boundary: BoundaryHarness) -> None:
         for case in PYTHON_CASES:
             expected, actual = http_corpus.replay_case(client, case, **_credentials(boundary))
             assert actual == expected, case["name"]
+            if case["name"] == "hooks_execute_replay":
+                # Codex Interrupt freshly serializes to {}, unlike the stored
+                # Claude Notification response. A fresh ID proves that the
+                # same request cannot produce this replay response by execution.
+                fresh = copy.deepcopy(case)
+                fresh["request"]["headers"]["X-Gobby-Envelope-Id"] += "-fresh-control"
+                response = http_corpus.send_case(client, fresh, **_credentials(boundary))
+                assert response.status_code == 200
+                assert response.json() == {}
+                assert response.json() != actual["body"]
 
 
 @pytest.mark.e2e

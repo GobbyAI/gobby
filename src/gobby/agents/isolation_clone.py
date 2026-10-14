@@ -112,7 +112,10 @@ class CloneIsolationHandler(IsolationHandler):
                     branch_name=existing.branch_name,
                     clone_id=existing.id,
                     isolation_type="clone",
-                    extra={"source_repo": config.project_path},
+                    extra={
+                        "source_repo": config.project_path,
+                        "base_branch": existing.base_branch,
+                    },
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
@@ -214,6 +217,7 @@ class CloneIsolationHandler(IsolationHandler):
             isolation_type="clone",
             extra={
                 "source_repo": config.project_path,
+                "base_branch": base_branch,
                 **({"base_commit_sha": base_commit_sha} if base_commit_sha else {}),
             },
         )

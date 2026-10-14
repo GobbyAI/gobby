@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import re
 import textwrap
 
@@ -21,6 +22,146 @@ from gobby.tasks.transcript_tool_arguments import (
 )
 
 PythonBindingCache = dict[ast.Module, dict[str, int]]
+
+
+def _has_python_test_tightening(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    red: TranscriptValidationRun,
+    green: TranscriptValidationRun | None,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Prove a changed test node failed against the previously passing production tree."""
+    if not test.path.endswith(".py") or green is None or green.completed_at is None:
+        return False
+    if any(
+        edit.path != test.path
+        and (
+            green.order < edit.order < red.order
+            or green.started_at <= edit.timestamp < red.started_at
+        )
+        for edit in evidence.edits
+    ):
+        return False
+    edits = [
+        edit
+        for edit in evidence.edits
+        if edit.session_id == red.session_id
+        and edit.path == test.path
+        and green.order < edit.order < red.order
+        and green.completed_at < edit.timestamp < red.started_at
+    ]
+    latest = max(edits, key=lambda edit: edit.order, default=None)
+    if latest is None or latest.source_after is None:
+        return False
+    baseline_edit = max(
+        (
+            edit
+            for edit in evidence.edits
+            if edit.session_id == green.session_id
+            and edit.path == test.path
+            and edit.order < green.order
+            and edit.timestamp < green.started_at
+        ),
+        key=lambda edit: edit.order,
+        default=None,
+    )
+    # Fragments cannot establish that a node was absent from the baseline module.
+    if baseline_edit is None or baseline_edit.source_after is None:
+        return False
+    baseline = _original_test_module(test, evidence, green, parse_cache)
+    current_module = _original_test_module(test, evidence, red, parse_cache)
+    if baseline is None or current_module is None:
+        return False
+    before = copy.deepcopy(baseline)
+    after = copy.deepcopy(current_module)
+    current = _test_node_from_module(test, after)
+    previous = _test_node_from_module(test, before)
+    # A new node has no previously executed behavior to compare. Assertions may
+    # themselves mutate bindings, so deleting that node cannot prove tightening.
+    if current is None or previous is None:
+        return False
+    if not _normalize_expectations(current) or not _normalize_expectations(previous):
+        return False
+    return ast.dump(baseline) != ast.dump(current_module) and ast.dump(before) == ast.dump(after)
+
+
+def _normalize_expectations(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Mask literal expectations, retaining application calls and all executable setup."""
+    assertions = [statement for statement in node.body if isinstance(statement, ast.Assert)]
+    if not assertions:
+        return False
+    for statement in assertions:
+        actual = statement.test
+        if isinstance(actual, ast.Compare):
+            if len(actual.comparators) != 1:
+                return False
+            try:
+                ast.literal_eval(actual.comparators[0])
+            except (ValueError, TypeError, SyntaxError):
+                return False
+            actual = actual.left
+        if any(
+            isinstance(child, ast.NamedExpr | ast.Lambda | ast.Await | ast.Yield | ast.YieldFrom)
+            for child in ast.walk(actual)
+        ) or isinstance(actual, ast.Constant):
+            return False
+        if statement.msg is not None:
+            try:
+                ast.literal_eval(statement.msg)
+            except (ValueError, TypeError, SyntaxError):
+                return False
+        statement.test = actual
+        statement.msg = None
+    return True
+
+
+def _retains_python_red_source(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    red: TranscriptValidationRun,
+    green: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    before = _original_test_module(test, evidence, red, parse_cache)
+    after = _original_test_module(test, evidence, green, parse_cache)
+    original_node = _original_test_node(test, evidence, red, parse_cache)
+    committed = parse_python_module(textwrap.dedent(test.body), parse_cache)
+    committed_node = _test_node_from_module(test, committed)
+    if committed_node is None and committed is not None:
+        # Acceptance artifacts for methods contain the method source without its class.
+        matches = [
+            node
+            for node in committed.body
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == test.symbol.replace("::", ".").split(".")[-1]
+        ]
+        committed_node = matches[0] if len(matches) == 1 else None
+    if (
+        before is None
+        or after is None
+        or original_node is None
+        or committed_node is None
+        or ast.dump(before) != ast.dump(after)
+        or ast.dump(original_node) != ast.dump(committed_node)
+    ):
+        return False
+    if any(
+        edit.path != test.path
+        and not is_production_edit_path(edit.path)
+        and red.order < edit.order < green.order
+        for edit in evidence.edits
+    ):
+        return False
+    for edit in evidence.edits:
+        if edit.path != test.path or not red.order < edit.order < green.order:
+            continue
+        if edit.source_after is None or not _source_confirmed_before(edit, green):
+            return False
+        snapshot = parse_python_module(textwrap.dedent(edit.source_after), parse_cache)
+        if snapshot is None or ast.dump(snapshot) != ast.dump(before):
+            return False
+    return True
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
@@ -70,7 +211,14 @@ def _original_test_node(
     run: TranscriptValidationRun,
     parse_cache: PythonModuleCache | None = None,
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    node: ast.AST | None = _original_test_module(test, evidence, run, parse_cache)
+    return _test_node_from_module(test, _original_test_module(test, evidence, run, parse_cache))
+
+
+def _test_node_from_module(
+    test: AcceptanceTest,
+    module: ast.Module | None,
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    node: ast.AST | None = module
     for name in test.symbol.replace("::", ".").split("."):
         body = getattr(node, "body", ())
         matches = [child for child in body if getattr(child, "name", None) == name]

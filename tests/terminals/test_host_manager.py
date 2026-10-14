@@ -2492,3 +2492,52 @@ async def test_control_probe_reports_each_distinct_outage_after_recovery(
             assert host.last_error is None
         finally:
             await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_typed_failure_reason_recorded_and_cleared(
+    tmp_path: Path, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.terminals import host_manager as host_manager_module
+
+    monkeypatch.setattr(host_manager_module, "HOST_READY_DEADLINE_SECONDS", 0.05)
+    client = FakeControlClient()
+    host = _host(tmp_path, TerminalManager(temp_db), client)
+
+    async def absent() -> FakeControlClient:
+        raise ConnectionRefusedError("no socket")
+
+    def missing() -> FakeHostProcess:
+        raise FileNotFoundError("gterm")
+
+    # An undecided start misses the ready deadline before any start runs.
+    assert await host.spawn_refusal() == "host_start_timeout"
+
+    host._connector = absent
+    host._spawner = missing
+    await host.start()
+    assert host.failure_reason == "gterm_missing"
+    assert host.health_state()["failure_reason"] == "gterm_missing"
+    assert await host.spawn_refusal() == "gterm_missing"
+
+    # A spawned host whose control socket never answers misses the ready deadline.
+    host._spawner = lambda: FakeHostProcess(pid=client.host_pid)
+    await host._start_host()
+    assert host.failure_reason == "host_start_timeout"
+    assert await host.spawn_refusal() == "host_start_timeout"
+
+    # A live host it cannot adopt (pid identity) carries no fail-closed reason.
+    host._connector = _connector_for(client)
+    host._pid_identity = lambda _pid: False
+    await host._start_host()
+    assert host.failure_reason == "other"
+    assert host.health_state()["failure_reason"] == "other"
+    assert await host.spawn_refusal() is None
+
+    # The health loop re-adopts the host and the reason clears.
+    host._pid_identity = lambda _pid: True
+    await host._retry_adoption()
+    assert host.failure_reason is None
+    assert host.health_state()["failure_reason"] is None
+    assert await host.spawn_refusal() is None
+    await host.stop()

@@ -104,6 +104,7 @@ async def test_explicit_and_external_selection_under_native_default(
     )
     assert refused.success is False
     assert refused.error == "host_unreachable"
+    assert refused.terminal_id is not None
     refused_row = manager.get(refused.terminal_id)
     assert refused_row is not None
     assert refused_row.backend == "native"
@@ -221,6 +222,7 @@ async def test_explicit_and_external_selection_under_native_default(
     )
     assert explicit.success is False
     assert explicit.error == "tmux backend does not spawn terminals"
+    assert explicit.terminal_id is not None
     row = manager.get(explicit.terminal_id)
     assert row is not None
     assert row.backend == "tmux"

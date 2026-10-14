@@ -19,6 +19,7 @@ import getpass
 import inspect
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import Iterator, Mapping
@@ -42,6 +43,13 @@ from gobby.utils.machine_id import get_machine_id
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
 _TEST_SCHEMA_PREFIX = "gobby_test_"
+# Per-process test databases: isolated_test_database's gobby_test_<pid>_<12 hex> and
+# test_postgres_safety's gobby_sweep_test_<pid>_<8 hex>. Exactly one PID group matches.
+# PID 0 names a process group, and seven digits cover Linux's 4194304 pid_max without
+# overflowing os.kill.
+_PROCESS_DATABASE_NAME = re.compile(
+    r"gobby_test_([1-9][0-9]{0,6})_[0-9a-f]{12}|gobby_sweep_test_([1-9][0-9]{0,6})_[0-9a-f]{8}"
+)
 
 
 def _test_schema_created_epoch(schema_name: str) -> int | None:
@@ -269,6 +277,7 @@ def isolated_test_database(url: str) -> Iterator[str]:
     maintenance_url = make_conninfo(url, dbname="postgres")
     isolated_url = urlunsplit(urlsplit(url)._replace(path=f"/{database_name}"))
     with psycopg.connect(maintenance_url, autocommit=True) as connection:
+        _reap_dead_process_databases(connection, url)
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     try:
         with psycopg.connect(isolated_url, autocommit=True) as connection:
@@ -278,6 +287,39 @@ def isolated_test_database(url: str) -> Iterator[str]:
         with psycopg.connect(maintenance_url, autocommit=True) as connection:
             connection.execute(
                 sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
+            )
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _reap_dead_process_databases(connection: psycopg.Connection[Any], url: str) -> None:
+    """Drop per-process databases whose pytest died before its teardown ran.
+
+    A SIGKILLed or crashed run never reaches `isolated_test_database`'s finally
+    block. Only a loopback hub is reaped: its clients share this machine's PID
+    space, so a missing PID means that run is gone. The schemas
+    `isolated_test_schema` creates live inside these databases and go with them.
+    """
+    identity = _dsn_identity(url)
+    if identity is None or identity[0] != "localhost":
+        return
+    rows = connection.execute("SELECT datname FROM pg_database").fetchall()
+    for (name,) in rows:
+        match = _PROCESS_DATABASE_NAME.fullmatch(name)
+        if match is None or _process_alive(int(match[1] or match[2])):
+            continue
+        with contextlib.suppress(psycopg.errors.InvalidCatalogName):
+            # A concurrently starting run may have reaped it first.
+            connection.execute(
+                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name))
             )
 
 

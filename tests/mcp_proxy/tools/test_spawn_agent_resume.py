@@ -412,6 +412,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
         id="lane-worktree",
         worktree_path=str(lane_path),
         branch_name="lane-3",
+        base_branch="main",
         project_id="project",
     )
     worktrees = MagicMock()

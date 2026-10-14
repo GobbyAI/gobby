@@ -2513,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.23"
+version = "0.4.26"
 dependencies = [
  "anyhow",
  "assert_cmd",
