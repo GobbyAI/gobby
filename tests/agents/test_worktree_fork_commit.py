@@ -37,6 +37,7 @@ async def test_explicit_reuse_records_selected_base(repo: Path, tmp_path: Path) 
     )
     storage.update.assert_called_once_with("wt-id", base_branch="release")
     assert context.extra["base_commit_sha"] == selected
+    assert context.extra["base_branch"] == "release"
     assert git(child, "rev-parse", "HEAD") == selected
 
 
@@ -120,6 +121,7 @@ async def test_omitted_base_survives_to_one_head_resolution(
     ctx = await instance.prepare_environment(handler_config(repo, child, requested))
     assert git(child, "rev-parse", "HEAD") == selected
     assert ctx.extra["base_commit_sha"] == selected
+    assert ctx.extra["base_branch"] == ("caller" if base is None else "main")
     resolve.assert_awaited_once_with(
         "HEAD^{commit}" if base is None else "refs/heads/main^{commit}"
     )
@@ -313,4 +315,5 @@ async def test_clone_boundary_distinguishes_omitted_base_and_explicit_main(
     )
     assert storage.create.call_args.kwargs["base_branch"] == ("caller" if base is None else "main")
     assert context.clone_id == "clone"
+    assert context.extra["base_branch"] == ("caller" if base is None else "main")
     assert context.cwd == str(child)

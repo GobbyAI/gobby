@@ -86,7 +86,11 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
     assert context.worktree_id == "fresh-wt"
     assert context.cwd == "/tmp/fresh-wt"
     assert context.branch_name == "feature/fresh"
-    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
+    assert context.extra == {
+        "base_branch": "main",
+        "base_commit_sha": "base-sha",
+        "main_repo_path": "/repo",
+    }
     capture_base_commit.assert_awaited_once_with(git_manager, "main")
     repair_isolation.assert_awaited_once_with(
         main_repo_path="/repo",
@@ -140,7 +144,11 @@ async def test_reused_worktree_survives_failure() -> None:
     assert context.worktree_id == "reused-wt"
     assert context.cwd == "/tmp/reused-wt"
     assert context.branch_name == "feature/reused"
-    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
+    assert context.extra == {
+        "base_branch": "main",
+        "base_commit_sha": "base-sha",
+        "main_repo_path": "/repo",
+    }
     artifacts.set_artifacts_atomic.assert_called_once_with(
         "task-123",
         worktree_path="/tmp/reused-wt",

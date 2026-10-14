@@ -108,6 +108,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     )
                 extra = {
                     "main_repo_path": str(self._git_manager.repo_path),
+                    "base_branch": base_branch,
                     "base_commit_sha": sync_result.base_commit_sha,
                 }
                 # Use existing worktree
@@ -189,6 +190,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             isolation_type="worktree",
             extra={
                 "main_repo_path": str(self._git_manager.repo_path),
+                "base_branch": base_branch,
                 "base_commit_sha": base_commit_sha,
             },
         )

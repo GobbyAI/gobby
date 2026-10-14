@@ -133,7 +133,11 @@ async def test_isolation_paths_share_spawn_timing_map(
 
     storage = MagicMock()
     existing = SimpleNamespace(
-        worktree_path=str(tmp_path), clone_path=str(tmp_path), id="workspace", branch_name="timing"
+        worktree_path=str(tmp_path),
+        clone_path=str(tmp_path),
+        id="workspace",
+        branch_name="timing",
+        base_branch="main",
     )
     storage.get_by_branch.return_value = None if fresh else existing
     storage.create.return_value = existing
