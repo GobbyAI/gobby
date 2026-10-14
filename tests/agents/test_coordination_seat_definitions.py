@@ -127,12 +127,17 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     assert body.name == name
     assert body.version == "1.0"
     assert body.surfaces == SURFACES[name]
-    assert (body.provider, body.model, body.checkout_mode, body.timeout) == (
+    assert (body.provider, body.checkout_mode, body.timeout) == (
         "inherit",
-        None,
         "inherit",
         0,
     )
+    if name == "inbox-manager":
+        assert body.model == "claude-sonnet-5-5"
+        assert body.reasoning_effort == "medium"
+    else:
+        assert body.model is None
+        assert body.reasoning_effort is None
     assert body.prompts is not None
     assert body.prompts.persona == body.prompts.agent
     assert body.workflows.rule_selectors is not None

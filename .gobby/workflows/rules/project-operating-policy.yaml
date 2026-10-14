@@ -122,8 +122,6 @@ rules:
                 "release_manager_model": "gpt-6.1-sol",
                 "release_manager_reasoning_effort": "medium",
                 "inbox_manager_provider": "claude",
-                "inbox_manager_model": "claude-opus-5-5",
-                "inbox_manager_reasoning_effort": "medium",
                 "recovery_steward_provider": "claude",
                 "recovery_steward_model": "claude-opus-5-5",
                 "recovery_steward_reasoning_effort": "high",
