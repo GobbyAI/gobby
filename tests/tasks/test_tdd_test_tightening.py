@@ -1,0 +1,229 @@
+"""A later test-only change can establish an attributable TDD red."""
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from gobby.tasks.acceptance_artifacts import AcceptanceTest
+from gobby.tasks.tdd_evidence import _red_run_proof, evaluate_tdd_evidence
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
+
+pytestmark = pytest.mark.unit
+START = datetime(2026, 10, 14, tzinfo=UTC)
+TEST_PATH = "tests/test_feature.py"
+BEFORE = "from feature import Engine\n\ndef test_feature():\n    assert Engine().run()\n"
+AFTER = BEFORE.replace("assert Engine().run()", "assert Engine().run() == 2")
+
+
+def edit(path: str, order: int, source: str) -> TranscriptEdit:
+    return TranscriptEdit(
+        session_id="owner",
+        source="codex",
+        path=path,
+        timestamp=START + timedelta(seconds=order * 10),
+        order=order,
+        tool_name="Write",
+        source_after=source,
+        source_confirmed=True,
+        source_confirmed_at=START + timedelta(seconds=order * 10 + 1),
+    )
+
+
+def run(order: int, *, red: bool = False) -> TranscriptValidationRun:
+    return TranscriptValidationRun(
+        session_id="owner",
+        source="codex",
+        command=f"pytest {TEST_PATH} -q",
+        categories=("test",),
+        matcher_id="pytest",
+        label="pytest",
+        outcome="failure" if red else "success",
+        started_at=START + timedelta(seconds=order * 10),
+        completed_at=START + timedelta(seconds=order * 10 + 2),
+        order=order,
+        exit_code=1 if red else 0,
+        output=(
+            "_______________________ test_feature _______________________\n"
+            "E       assert 1 == 2\n"
+            "tests/test_feature.py:4: AssertionError\n"
+            "FAILED tests/test_feature.py::test_feature - assert 1 == 2\n"
+            if red
+            else "1 passed"
+        ),
+    )
+
+
+def cycle() -> tuple[AcceptanceTest, TranscriptEvidence]:
+    test = AcceptanceTest(
+        reference=f"{TEST_PATH}::test_feature", path=TEST_PATH, symbol="test_feature", body=AFTER
+    )
+    return test, TranscriptEvidence(
+        edits=(
+            edit(TEST_PATH, 1, BEFORE),
+            edit("src/feature.py", 2, "class Engine:\n    def run(self):\n        return 1\n"),
+            edit(TEST_PATH, 4, AFTER),
+            edit("src/feature.py", 6, "class Engine:\n    def run(self):\n        return 2\n"),
+        ),
+        validation_runs=(run(3), run(5, red=True), run(7)),
+    )
+
+
+def test_post_production_proof_credits_test_only_tightening() -> None:
+    test, evidence = cycle()
+    red = evidence.validation_runs[1]
+
+    matched, reason = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+
+    assert matched, reason
+    assert evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("cause", ["production_changed", "other_node_changed"])
+def test_post_production_proof_rejects_unattributable_red(cause: str) -> None:
+    test, evidence = cycle()
+    if cause == "production_changed":
+        evidence = replace(
+            evidence,
+            edits=(*evidence.edits, edit("src/other.py", 4, "value = 1\n")),
+        )
+    else:
+        evidence = replace(
+            evidence,
+            edits=tuple(
+                replace(item, source_after=BEFORE + "\ndef test_other():\n    assert True\n")
+                if item.path == TEST_PATH and item.order == 4
+                else item
+                for item in evidence.edits
+            ),
+        )
+    red = evidence.validation_runs[1]
+
+    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+
+    assert not matched
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+def test_post_production_proof_credits_added_node() -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=tuple(
+            replace(
+                item,
+                source_after="from feature import Engine\n\ndef test_other():\n    assert Engine().run()\n",
+            )
+            if item.path == TEST_PATH and item.order == 1
+            else item
+            for item in evidence.edits
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("cause", ["no_green", "unconfirmed", "fragment", "foreign_green"])
+def test_post_production_proof_needs_confirmed_baseline(cause: str) -> None:
+    test, evidence = cycle()
+    if cause == "no_green":
+        evidence = replace(evidence, validation_runs=evidence.validation_runs[1:])
+    elif cause == "foreign_green":
+        evidence = replace(
+            evidence,
+            validation_runs=(
+                replace(evidence.validation_runs[0], session_id="other"),
+                *evidence.validation_runs[1:],
+            ),
+        )
+    else:
+        baseline = evidence.edits[0]
+        baseline = (
+            replace(baseline, source_confirmed=False)
+            if cause == "unconfirmed"
+            else replace(baseline, source_after=None, source_fragment=BEFORE)
+        )
+        evidence = replace(evidence, edits=(baseline, *evidence.edits[1:]))
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("cause", ["no_fix", "no_pass", "wrong_node_pass", "newer_green"])
+def test_post_production_cycle_requires_fix_and_same_node_pass(cause: str) -> None:
+    test, evidence = cycle()
+    if cause == "no_fix":
+        evidence = replace(evidence, edits=evidence.edits[:-1])
+    elif cause == "no_pass":
+        evidence = replace(evidence, validation_runs=evidence.validation_runs[:-1])
+    elif cause == "wrong_node_pass":
+        evidence = replace(
+            evidence,
+            validation_runs=(
+                *evidence.validation_runs[:-1],
+                replace(evidence.validation_runs[-1], command=f"pytest {TEST_PATH}::test_other -q"),
+            ),
+        )
+    else:
+        # A newer pass already used the tightened test, so the older pass cannot
+        # explain a subsequent failure against identical test source.
+        evidence = replace(
+            evidence,
+            validation_runs=(
+                *evidence.validation_runs,
+                replace(
+                    run(4),
+                    started_at=START + timedelta(seconds=43),
+                    completed_at=START + timedelta(seconds=44),
+                ),
+            ),
+        )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("order", [1, 4])
+def test_post_production_proof_rejects_unconfirmed_source(order: int) -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=tuple(
+            replace(item, source_confirmed=False) if item.order == order else item
+            for item in evidence.edits
+        ),
+    )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [f"{TEST_PATH}::test_other", f"{TEST_PATH} -k test_other", f"{TEST_PATH} -k=test_other"],
+)
+def test_post_production_cycle_rejects_sibling_green_selection(selection: str) -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            *evidence.validation_runs[:-1],
+            replace(evidence.validation_runs[-1], command=f"pytest {selection} -q"),
+        ),
+    )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+def test_post_production_cycle_accepts_python_module_pytest() -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        validation_runs=tuple(
+            replace(item, command=f"uv run python -m {item.command}")
+            for item in evidence.validation_runs
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed

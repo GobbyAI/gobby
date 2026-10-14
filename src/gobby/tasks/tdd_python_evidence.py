@@ -23,6 +23,64 @@ from gobby.tasks.transcript_tool_arguments import (
 PythonBindingCache = dict[ast.Module, dict[str, int]]
 
 
+def _has_python_test_tightening(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    red: TranscriptValidationRun,
+    green: TranscriptValidationRun | None,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Prove a changed test node failed against the previously passing production tree."""
+    if not test.path.endswith(".py") or green is None or green.completed_at is None:
+        return False
+    if any(
+        is_production_edit_path(edit.path)
+        and (
+            green.order < edit.order < red.order
+            or green.started_at <= edit.timestamp < red.started_at
+        )
+        for edit in evidence.edits
+    ):
+        return False
+    edits = [
+        edit
+        for edit in evidence.edits
+        if edit.session_id == red.session_id
+        and edit.path == test.path
+        and green.order < edit.order < red.order
+        and green.completed_at < edit.timestamp < red.started_at
+    ]
+    latest = max(edits, key=lambda edit: edit.order, default=None)
+    if latest is None or latest.source_after is None:
+        return False
+    baseline_edit = max(
+        (
+            edit
+            for edit in evidence.edits
+            if edit.session_id == green.session_id
+            and edit.path == test.path
+            and edit.order < green.order
+            and edit.timestamp < green.started_at
+        ),
+        key=lambda edit: edit.order,
+        default=None,
+    )
+    # Fragments cannot establish that a node was absent from the baseline module.
+    if baseline_edit is None or baseline_edit.source_after is None:
+        return False
+    baseline = _original_test_module(test, evidence, green, parse_cache)
+    current = _original_test_node(test, evidence, red, parse_cache)
+    if baseline is None or current is None:
+        return False
+    previous = _original_test_node(test, evidence, green, parse_cache)
+    if previous is None:
+        return not any(
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == current.name
+            for node in ast.walk(baseline)
+        )
+    return ast.dump(previous) != ast.dump(current)
+
+
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
     return (
         edit.source_confirmed

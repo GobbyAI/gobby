@@ -22,6 +22,7 @@ from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_python_keyword_stub,
     _has_python_module_stub,
+    _has_python_test_tightening,
     _has_python_unchanged_api,
     _original_test_module,
     _original_test_node,
@@ -192,6 +193,16 @@ def evaluate_tdd_evidence(
                 evidence,
                 test_edit.order,
                 production_edit,
+                require_not_implemented=not test.path.endswith(".rs")
+                and any(
+                    edit.order < test_edit.order
+                    and is_implementation_edit_path(
+                        edit.path,
+                        named_test_paths=named_test_paths,
+                        test_infrastructure_paths=infrastructure_paths,
+                    )
+                    for edit in evidence.edits
+                ),
                 parse_cache=parse_cache,
                 binding_cache=binding_cache,
                 red_cache=red_cache,
@@ -338,12 +349,28 @@ def _red_run_proof(
     matched, reason = _has_named_red_failure(core_command, run.output, test)
     matched = matched or source_failure
     if matched:
+        prior_green = max(
+            (
+                candidate
+                for candidate in evidence.validation_runs
+                if candidate.session_id == run.session_id
+                and candidate.outcome == "success"
+                and candidate.order < run.order
+                and candidate.completed_at is not None
+                and candidate.completed_at < run.started_at
+                and _is_test_execution_run(candidate)
+                and _green_run_covers_test(candidate, test)
+            ),
+            key=lambda candidate: candidate.order,
+            default=None,
+        )
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
             reason = "test body is an unconditional pytest.fail placeholder"
         elif not require_not_implemented or (
             _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
+            or _has_python_test_tightening(test, evidence, run, prior_green, parse_cache)
         ):
             return True, None
         else:
@@ -803,9 +830,52 @@ def _find_green_run(
             or run.order <= max(red.order, after_order)
         ):
             continue
-        if validation_run_covers_test(run.core_command, run.output, test):
+        if _green_run_covers_test(run, test):
             return run
     return None
+
+
+def _green_run_covers_test(run: TranscriptValidationRun, test: AcceptanceTest) -> bool:
+    if not validation_run_covers_test(run.core_command, run.output, test):
+        return False
+    if not test.path.endswith(".py"):
+        return True
+    try:
+        tokens = shlex.split(run.core_command or "")
+    except ValueError:
+        return False
+    pytest_index = next(
+        (
+            index
+            for index, token in enumerate(tokens)
+            if PurePosixPath(token).name in {"pytest", "py.test"}
+        ),
+        None,
+    )
+    if pytest_index is not None:
+        tokens = tokens[pytest_index + 1 :]
+    for index, token in enumerate(tokens):
+        if token.startswith("-m"):
+            return validation_run_names_test("", run.output, test)
+        if not token.startswith("-k"):
+            continue
+        expression = (
+            tokens[index + 1]
+            if token == "-k" and index + 1 < len(tokens)
+            else token[2:].removeprefix("=")
+        )
+        # A simple pytest keyword matches the node's path/class/function names.
+        # Complex expressions need an explicit node receipt in the output.
+        if not re.fullmatch(r"\w+", expression) or expression.lower() not in test.reference.lower():
+            return validation_run_names_test("", run.output, test)
+    artifact_nodes, same_file_nodes = _selected_pytest_nodes(run.core_command or "", test)
+    if not same_file_nodes or artifact_nodes:
+        return True
+    if any(_path_matches_artifact(token, test) for token in tokens if "::" not in token):
+        return True
+    # Selecting a class covers its methods; selecting a sibling method does not.
+    name = test.symbol.replace("::", ".")
+    return any(name.startswith(f"{selected}.") for selected in same_file_nodes)
 
 
 __all__ = ["TddEvidenceResult", "evaluate_tdd_evidence"]
