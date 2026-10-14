@@ -152,38 +152,34 @@ def test_close_task_success_handlers_require_closed_output() -> None:
 
 
 def test_build_smoke_agent_runtime_mappings() -> None:
-    expected = {
-        "analyst": ("codex", "gpt-5.6-sol", "xhigh"),
-        "architect": ("codex", "gpt-5.6-sol", "xhigh"),
-        "tech-writer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "qa-reviewer": ("codex", "gpt-5.6-sol", "medium"),
-        "doc-reviewer": ("codex", "gpt-5.6-sol", "medium"),
-        "epic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-adversary": ("grok", "grok-4.7", "xhigh"),
-        "plan-adversary-old": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-adversary-taskless-old": ("grok", "grok-4.7", "xhigh"),
-        "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-enhancer-old": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-enhancer-taskless-old": ("codex", "gpt-6.1-sol", "medium"),
-        "plan-writer": ("codex", "gpt-5.6-sol", "medium"),
-        "planner": ("codex", "gpt-5.6-sol", "medium"),
-        "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),
-        "merge-worker": ("claude", "sonnet", "high"),
-    }
+    agents = (
+        "analyst",
+        "architect",
+        "tech-writer",
+        "qa-reviewer",
+        "doc-reviewer",
+        "epic-reviewer",
+        "plan-adversary",
+        "plan-adversary-old",
+        "plan-adversary-taskless-old",
+        "plan-enhancer",
+        "plan-enhancer-old",
+        "plan-enhancer-taskless-old",
+        "plan-writer",
+        "planner",
+        "product-manager",
+        "merge-worker",
+        "developer",
+        "researcher",
+    )
 
-    for agent_name, (provider, model, reasoning_effort) in expected.items():
+    for agent_name in agents:
         agent = _agent(agent_name)
 
-        assert agent["enabled"] is True
-        assert agent["provider"] == provider
-        assert agent["model"] == model
-        assert agent["reasoning_effort"] == reasoning_effort
-
-    # Decision 12: seats inherit their provider and model from the launch.
-    for seat in ("developer", "researcher"):
-        body = _agent(seat)
-        assert body["provider"] == "inherit", seat
-        assert "model" not in body, seat
+        assert agent.get("enabled", True) is True, agent_name
+        assert agent["provider"] == "inherit", agent_name
+        assert "model" not in agent, agent_name
+        assert "reasoning_effort" not in agent, agent_name
 
 
 def test_merge_worker_blocks_native_delegation_tools() -> None:
