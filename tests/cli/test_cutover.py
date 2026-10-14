@@ -166,7 +166,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     (fixture / "examples").mkdir()
     (fixture / "examples/catalog_candidate_24042.rs").write_text(
-        'fn main() { println!("{}", serde_json::to_string('
+        'fn main() { if std::env::args().nth(1).as_deref() == Some("--version") '
+        '{ println!("gdaemon 1.0.0"); return; } println!("{}", serde_json::to_string('
         "&gobby_core::schema::SchemaIdentityContract::embedded()).unwrap()); }\n"
     )
     subprocess.run(
@@ -188,12 +189,16 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     target = Path(os.environ.get("CARGO_TARGET_DIR", str(fixture / "target")))
     candidate = target / "debug/examples/catalog_candidate_24042"
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
-    monkeypatch.setattr(cutover_module, "_prove_catalog_freshness", _PROVE_CATALOG_FRESHNESS)
+    monkeypatch.setattr(
+        cutover_module,
+        "_prove_catalog_freshness",
+        lambda _root, candidate: _PROVE_CATALOG_FRESHNESS(fixture, candidate),
+    )
     promotion, restart = Mock(), Mock()
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     with pytest.raises(cutover_module.CutoverError) as error:
         cutover_module.run_cutover(
-            fixture,
+            repo,
             tmp_path / "bin",
             stop_daemon=lambda: True,
             start_daemon=restart,
