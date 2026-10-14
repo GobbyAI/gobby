@@ -56,7 +56,6 @@ _RECONCILIATION_VARIABLE_KEYS = (
     MARKER_COMPLETED,
     MARKER_VERSION,
     MARKER_HASH,
-    "baseline_dirty_files",
     "session_edited_files",
     "active_task_id",
     "task_edited_files",
@@ -263,8 +262,6 @@ def _missing_agent_keys(variables: dict[str, Any]) -> list[str]:
 
 def _missing_baseline_keys(variables: dict[str, Any]) -> list[str]:
     missing: list[str] = []
-    if "baseline_dirty_files" not in variables:
-        missing.append("baseline_dirty_files")
     if "session_edited_files" not in variables:
         missing.append("session_edited_files")
     return missing
@@ -384,13 +381,6 @@ def _baseline_updates(
     log: logging.Logger,
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {}
-    if "baseline_dirty_files" not in variables:
-        from gobby.workflows.git_utils import GIT_STATUS_UNAVAILABLE_MARKER
-
-        # Hooks never sample git status; only the sessions capture-baseline tool
-        # replaces this marker with a real list.
-        log.debug("Marking baseline dirty files unsampled for session activation")
-        updates["baseline_dirty_files"] = [GIT_STATUS_UNAVAILABLE_MARKER]
     if "session_edited_files" not in variables:
         updates["session_edited_files"] = []
     if "active_task_id" not in variables:

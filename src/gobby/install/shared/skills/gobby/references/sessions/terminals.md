@@ -41,9 +41,7 @@ explicit operation that may kill an externally owned terminal. `close_pane`,
 external terminal without killing it. Managed-agent termination remains a
 separate lifecycle operation with capture requirements.
 
-Use `capture_baseline_dirty_files` only for the intended session baseline capture
-workflow. It records dirty-file state for edit detection; do not recapture to hide
-changes or bypass task evidence. For waiting on output, load the waits topic and
+For waiting on output, load the waits topic and
 use the run-based primitive rather than repeating snapshots.
 
 Before a directed seat pause, such as a CLI update, a root terminal operator calls

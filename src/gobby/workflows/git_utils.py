@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # deliberately well inside the shared blocking-effect budget: a caller parked
 # here holds one of the workflow runtime's few blocking threads.
 DEFAULT_GIT_STATUS_TIMEOUT_SECONDS = 5.0
-GIT_STATUS_UNAVAILABLE_MARKER = "__gobby_git_status_unavailable__"
 
 
 class GitStatusUnavailable(RuntimeError):
@@ -419,26 +418,6 @@ async def resolve_git_worktree_root_async(
             return worktree_root
 
     return None
-
-
-async def get_dirty_files_async(
-    project_path: str | None = None,
-    *,
-    timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-) -> set[str]:
-    """
-    Get the set of dirty files from git status --porcelain.
-
-    Excludes .gobby/ files from the result.
-
-    Args:
-        project_path: Path to the project directory
-        timeout: Seconds to allow the git subprocess
-
-    Returns:
-        Set of dirty file paths (relative to repo root)
-    """
-    return (await get_dirty_files_categorized_async(project_path, timeout=timeout)).all
 
 
 def get_dirty_files(

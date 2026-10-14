@@ -59,7 +59,6 @@ def _handler(
 
     session_vars = MagicMock()
     session_vars.get_variables.return_value = {
-        "baseline_dirty_files": [],
         "session_edited_files": [],
     }
 

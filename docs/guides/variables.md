@@ -114,8 +114,7 @@ Requirement-list variables require arrays of non-empty instruction identifiers;
 empty arrays are allowed by the value validator, not permission to remove gates.
 
 `session_edited_files` records session history; `session_dirty_files` and its
-checkout map track unreconciled edits. Hooks do not sample a git baseline;
-`baseline_dirty_files` can be an unsampled marker until explicit capture. Task
+checkout map track unreconciled edits. Hooks do not sample a git baseline. Task
 validation comes from transcripts, not variable flags. Commits preserve evidence;
 a later attributed edit makes an earlier validation stale.
 

@@ -37,7 +37,6 @@ def real_deadline_handler(
     tasks.get_task.return_value = None
     variables = MagicMock()
     variables.get_variables.return_value = {
-        "baseline_dirty_files": [],
         "session_edited_files": [],
         "_variable_defaults_loaded": True,
         "project": {"path": str(tmp_path)},
@@ -326,7 +325,6 @@ def test_database_timeout_reaches_evaluator_and_next_delivery_can_retry(
     rule_engine.evaluate = AsyncMock(return_value=response)
     session_vars = MagicMock()
     session_vars.get_variables.return_value = {
-        "baseline_dirty_files": [],
         "session_edited_files": [],
         "is_spawned_agent": stage == "step",
     }

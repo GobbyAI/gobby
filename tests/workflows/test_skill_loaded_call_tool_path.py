@@ -64,7 +64,6 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
     session_vars.merge_variables(
         platform_session_id,
         {
-            "baseline_dirty_files": [],
             "session_edited_files": [],
             "enforce_tool_schema_check": False,
         },
@@ -144,7 +143,6 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
     session_vars.merge_variables(
         platform_session_id,
         {
-            "baseline_dirty_files": [],
             "session_edited_files": [],
             "enforce_tool_schema_check": False,
             # require-tasks-skill-for-mutations gates on the interactive agent.

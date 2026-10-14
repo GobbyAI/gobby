@@ -3,7 +3,7 @@
 Verifies that workflow action functions are exposed as MCP tools:
 - gobby-memory: backup_memories, restore_memories
 - gobby-tasks: backup_tasks, restore_tasks
-- gobby-sessions: set_handoff, get_handoff, capture_baseline_dirty_files
+- gobby-sessions: set_handoff, get_handoff
 """
 
 from __future__ import annotations
@@ -16,6 +16,12 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sync.tasks import TaskBackupError
 
 pytestmark = pytest.mark.unit
+
+
+def test_sessions_registry_omits_capture_baseline_dirty_files(
+    session_registry: InternalToolRegistry,
+) -> None:
+    assert "capture_baseline_dirty_files" not in session_registry._tools
 
 
 # ─── Shared mock fixtures ───
@@ -187,30 +193,3 @@ class TestTaskBackupRestore:
         result = await task_backup_registry.call("backup_tasks", {})
 
         assert result == {"success": False, "error": "backup unavailable"}
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# gobby-sessions: capture_baseline_dirty_files
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestSessionCaptureBaselineDirtyFiles:
-    """Verify capture_baseline_dirty_files is registered on gobby-sessions."""
-
-    def test_tool_registered(self, session_registry) -> None:
-        assert "capture_baseline_dirty_files" in session_registry._tools
-
-    @pytest.mark.asyncio
-    async def test_returns_dirty_files(self, session_registry) -> None:
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async",
-            new_callable=AsyncMock,
-        ) as mock_fn:
-            mock_fn.return_value = {"file1.py", "file2.py"}
-            result = await session_registry.call(
-                "capture_baseline_dirty_files",
-                {"project_path": "/tmp/project"},
-            )
-            assert result["success"] is True
-            assert result["file_count"] == 2
-            mock_fn.assert_called_once_with("/tmp/project")

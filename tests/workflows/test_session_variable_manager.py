@@ -484,11 +484,11 @@ def test_append_to_set_variable_preserves_other_vars(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    mgr.set_variable(S1, "baseline_dirty_files", ["x.py"])
+    mgr.set_variable(S1, "other_files", ["x.py"])
     mgr.append_to_set_variable(S1, "session_edited_files", ["a.py"])
 
     result = mgr.get_variables(S1)
-    assert result["baseline_dirty_files"] == ["x.py"]
+    assert result["other_files"] == ["x.py"]
     assert result["session_edited_files"] == ["a.py"]
 
 

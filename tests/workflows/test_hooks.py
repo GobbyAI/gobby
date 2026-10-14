@@ -2605,7 +2605,6 @@ class TestCodexToolContextRehydration:
         handler.rule_engine = rule_engine
         handler._session_var_manager = MagicMock()
         handler._session_var_manager.get_variables.return_value = {
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         }
 
