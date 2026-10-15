@@ -363,6 +363,11 @@ def test_compacted_red_without_matching_node_is_rejected(output: str) -> None:
         "---- test_sibling stdout ----\n"
         "thread 'test_sibling' panicked at 'assertion failed: replays_corpus'\n"
         "FAIL [ 0.001s] (2/2) feature::golden replays_corpus\n",
+        "FAIL feature::golden replays_corpus\n"
+        "thread 'test_sibling' panicked at 'assertion failed'\n",
+        "---- replays_corpus stdout ----\n"
+        "thread 'test_sibling' panicked at 'assertion failed'\n"
+        "FAIL [ 0.001s] (2/2) feature::golden replays_corpus\n",
     ],
 )
 def test_nextest_summary_without_attributable_failure_is_rejected(output: str) -> None:
