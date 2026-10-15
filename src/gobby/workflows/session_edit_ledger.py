@@ -226,6 +226,7 @@ class SessionEditLedger(ABC):
         from gobby.workflows.task_claim_state import (
             normalize_task_checkout_root,
             normalize_task_edited_path,
+            release_task_live_edit_starts,
         )
 
         requested = {
@@ -262,13 +263,18 @@ class SessionEditLedger(ABC):
                 return released, False
             variables["session_dirty_files"] = remaining
             variables["session_dirty_file_checkouts"] = dirty_checkouts
+            # Clean dirt ends each task's live interval; task_edited_files keeps
+            # the history, so the next edit of the path starts a new interval.
+            clean = sorted(requested) if root is not None else released
+            for task_id in list(variables.get("task_live_edit_starts", {})):
+                release_task_live_edit_starts(variables, task_id, clean, root)
             return released, True
 
         return self._mutate_variables(
             session_id,
             mutate,
             apply_defaults=True,
-            keys=("session_dirty_files", "session_dirty_file_checkouts"),
+            keys=("session_dirty_files", "session_dirty_file_checkouts", "task_live_edit_starts"),
         )
 
     def release_task_edited_files(

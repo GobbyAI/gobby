@@ -2278,6 +2278,8 @@ class TestLedgerDirtyState:
         assert variables["session_dirty_files"] == ["b.py"]
         assert variables["task_edited_files"] == {"task-1": ["a.py", "b.py"]}
         assert variables["session_edited_files"] == ["a.py", "b.py"]
+        live = variables["task_live_edit_starts"]["task-1"]
+        assert {path for paths in live.values() for path in paths} == {"b.py"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("ledger_path", ["tests", "."])

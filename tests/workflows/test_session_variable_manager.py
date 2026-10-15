@@ -921,6 +921,27 @@ def test_release_session_dirty_files_keeps_paths_still_dirty_in_another_checkout
     assert variables["session_dirty_file_checkouts"] == {}
 
 
+def test_release_session_dirty_files_ends_live_interval_and_keeps_task_history(
+    db: Any, tmp_path: Path
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    main = tmp_path / "main"
+    worktree = tmp_path / "wt"
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
+    mgr.record_edited_files(S1, ["a.py"], checkout_root=str(main), edited_at=100)
+    mgr.record_edited_files(S1, ["a.py"], checkout_root=str(worktree), edited_at=200)
+
+    mgr.release_session_dirty_files(S1, ["a.py"], checkout_root=str(main))
+
+    variables = mgr.get_variables(S1)
+    assert variables["task_live_edit_starts"] == {
+        "task-1": {str(worktree.resolve()): {"a.py": 200}}
+    }
+    assert variables["task_edited_files"] == {"task-1": ["a.py"]}
+
+
 def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
