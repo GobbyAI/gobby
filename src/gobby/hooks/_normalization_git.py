@@ -310,7 +310,15 @@ def classify_git_mutation(
         ):
             return _ShellSegmentMetadata("write", repo_mutation=True)
         supported_long_options = (
-            {"--force", "--detach", "--orphan", "--pathspec-from-file", "--merge"}
+            {
+                "--force",
+                "--detach",
+                "--orphan",
+                "--pathspec-from-file",
+                "--merge",
+                "--ours",
+                "--theirs",
+            }
             if operation == "checkout"
             else {
                 "--force",
@@ -406,7 +414,15 @@ def classify_git_mutation(
         _git_option_flags(
             arguments,
             {"-s", "--source", "--pathspec-from-file"},
-            {"--source", "--staged", "--worktree", "--pathspec-from-file", "--pathspec-file-nul"},
+            {
+                "--source",
+                "--staged",
+                "--worktree",
+                "--pathspec-from-file",
+                "--pathspec-file-nul",
+                "--ours",
+                "--theirs",
+            },
         )
         if operation == "restore"
         else (set(), True)

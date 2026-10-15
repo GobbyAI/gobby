@@ -244,6 +244,192 @@ async def test_rule2_landing_merge_passes_for_merge_set_paths(guard_harness: Gua
     assert "renamed.txt" not in result.reason
 
 
+def _commit_files(repo: Path, message: str, files: Mapping[str, str]) -> None:
+    for name, text in files.items():
+        (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", "--", *files)
+    _git(repo, "commit", "-q", "-m", message)
+
+
+def _git_conflict(repo: Path, *args: str) -> None:
+    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 1, result.stderr
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U")
+
+
+def _stop_at_conflict(repo: Path, operation: str) -> None:
+    """Stop `operation` conflicted in conflict.txt after it applied applied.txt."""
+    base = _git(repo, "branch", "--show-current")
+    _git(repo, "checkout", "-q", "-b", "topic")
+    _commit_files(repo, "topic", {"conflict.txt": "topic\n", "applied.txt": "applied\n"})
+    if operation == "revert":
+        _commit_files(repo, "follow-up", {"conflict.txt": "follow-up\n"})
+        _git_conflict(repo, "revert", "--no-edit", "HEAD~1")
+        return
+    _git(repo, "checkout", "-q", base)
+    _commit_files(repo, "upstream", {"conflict.txt": "upstream\n"})
+    if operation == "rebase":
+        _git(repo, "checkout", "-q", "topic")
+        _git_conflict(repo, "rebase", base)
+    else:
+        _git_conflict(repo, "cherry-pick", "topic")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["rebase", "cherry-pick", "revert"])
+async def test_rule3_exempts_operation_paths_at_conflict_stop(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, operation)
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    for path in ("conflict.txt", "applied.txt"):
+        result = await h.handler._evaluate_rules(h.edit_event(path))
+        assert result.decision == "allow", path
+    for command in (
+        "git checkout --ours conflict.txt",
+        "git checkout --theirs conflict.txt",
+        "git restore --theirs conflict.txt",
+    ):
+        result = await h.handler._evaluate_rules(h.event(command))
+        assert result.decision == "allow", command
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    for event in (h.edit_event("foreign.txt"), h.event("git checkout --ours foreign.txt")):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert result.reason is not None
+        assert h.foreign_session.ref in result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["rebase", "cherry-pick", "revert"])
+async def test_rule3_operation_exemption_ends_on_abort(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, operation)
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "allow"
+    _git(h.repo, operation, "--abort")
+    (h.repo / "conflict.txt").write_text("after abort dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "no live session owns it" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rule3_rebase_exemption_ends_on_continue_despite_stale_rebase_head(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, "rebase")
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    _git(h.repo, "-c", "core.editor=true", "rebase", "--continue")
+    assert _git(h.repo, "rev-parse", "-q", "--verify", "REBASE_HEAD")
+    (h.repo / "conflict.txt").write_text("after rebase dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "no live session owns it" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rule3_exempts_rename_followed_cherry_pick_conflict(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    lines = [f"line {number}\n" for number in range(20)]
+    _commit_files(h.repo, "story", {"story.txt": "".join(lines)})
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "checkout", "-q", "-b", "topic")
+    _commit_files(h.repo, "edit", {"story.txt": "".join([*lines[:5], "topic\n", *lines[6:]])})
+    _git(h.repo, "checkout", "-q", base)
+    _git(h.repo, "mv", "story.txt", "moved.txt")
+    _commit_files(h.repo, "move", {"moved.txt": "".join([*lines[:5], "upstream\n", *lines[6:]])})
+    _git_conflict(h.repo, "cherry-pick", "topic")
+    assert _git(h.repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "topic") == "story.txt"
+    assert _git(h.repo, "diff", "--name-only", "--diff-filter=U") == "moved.txt"
+    result = await h.handler._evaluate_rules(h.edit_event("moved.txt"))
+    assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_rule3_merge_exemption_excludes_paths_only_head_changed(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "checkout", "-q", "-b", "incoming")
+    _commit_files(h.repo, "incoming", {"incoming.txt": "incoming\n"})
+    _git(h.repo, "checkout", "-q", base)
+    _commit_files(h.repo, "head only", {"foreign.txt": "head foreign\n"})
+    _git(h.repo, "merge", "-q", "--no-ff", "--no-commit", "incoming")
+    assert "foreign.txt" in _git(h.repo, "diff", "--name-only", "HEAD", "MERGE_HEAD")
+    result = await h.handler._evaluate_rules(h.edit_event("incoming.txt"))
+    assert result.decision == "allow"
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+
+
+@pytest.mark.asyncio
+async def test_unrelated_history_merge_exempts_everything_it_brings(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "switch", "-q", "--orphan", "unrelated")
+    _commit_files(h.repo, "unrelated", {"conflict.txt": "theirs\n", "brought.txt": "brought\n"})
+    _git(h.repo, "switch", "-q", base)
+    _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
+    _git_conflict(h.repo, "merge", "--allow-unrelated-histories", "--no-edit", "unrelated")
+    for path in ("conflict.txt", "brought.txt"):
+        result = await h.handler._evaluate_rules(h.edit_event(path))
+        assert result.decision == "allow", path
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+    ledger = ["conflict.txt", "brought.txt"]
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
+    )
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
+    assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_rule2_concluding_cherry_pick_passes_for_its_paths(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, "cherry-pick")
+    ledger = ["conflict.txt", "applied.txt", "outside.txt"]
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
+    )
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m pick"))
+    assert result.decision == "allow"
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    _git(h.repo, "add", "outside.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m pick"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "outside.txt" in result.reason
+    assert "conflict.txt" not in result.reason
+
+
 @pytest.mark.asyncio
 async def test_rule3_resolves_relative_paths_at_tool_workdir(
     guard_harness: GuardHarness, tmp_path: Path

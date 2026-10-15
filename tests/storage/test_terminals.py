@@ -150,6 +150,17 @@ def test_reads_decode_each_json_column_once_without_redumping(
         "UPDATE terminals SET unresolved_writes = %s::jsonb WHERE id = %s",
         (json.dumps(writes), live.id),
     )
+    stale = _create_pending(manager, sample_project["id"], backend="native")
+    manager.record_process(
+        stale.id,
+        process,
+        attempt_generation=stale.attempt_generation,
+        attempt_started_at=stale.attempt_started_at,
+    )
+    temp_db.execute(
+        "UPDATE terminals SET unresolved_writes = %s::jsonb WHERE id = %s",
+        (json.dumps(writes), stale.id),
+    )
 
     with (
         patch("json.loads", wraps=json.loads) as loads,
@@ -159,15 +170,24 @@ def test_reads_decode_each_json_column_once_without_redumping(
             manager.get(live.id),
             manager.get_many([live.id])[live.id],
             *manager.list_live_by_epoch(epoch),
+            *manager.list_stale_pending(0),
         ]
 
     assert dumps.call_count == 0
-    assert loads.call_count == 3 * len(reads) == 9
-    for read in reads:
-        assert read is not None
+    live_reads = [read for read in reads if read is not None and read.id == live.id]
+    stale_reads = [read for read in reads if read is not None and read.id == stale.id]
+    assert len(live_reads) == 3
+    assert len(stale_reads) == 1
+    # Pending rows cannot store a locator. The reaper read still decodes the
+    # JSON columns that row is allowed to hold.
+    assert loads.call_count == 3 * len(live_reads) + 2 * len(stale_reads)
+    for read in live_reads:
         assert read.locator == {"host_terminal_id": "ht-decode"}
         assert read.process == process
         assert read.unresolved_writes == writes
+    assert stale_reads[0].locator is None
+    assert stale_reads[0].process == process
+    assert stale_reads[0].unresolved_writes == writes
 
 
 def test_latest_for_session_includes_orphaned_terminal_evidence(

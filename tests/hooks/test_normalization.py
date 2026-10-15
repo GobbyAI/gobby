@@ -3193,6 +3193,31 @@ class TestExternalNavigationScope:
                 assert data["canonical_git_checkout_mutation"] is True
                 assert data["canonical_dirty_edit_paths"] == [str(tmp_path.resolve())]
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git checkout --ours conflict.txt",
+            "git checkout --theirs conflict.txt",
+            "git restore --ours conflict.txt",
+            "git restore --theirs -- conflict.txt",
+        ],
+    )
+    def test_git_conflict_side_selection_targets_its_path(
+        self, tmp_path: Path, command: str
+    ) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        (tmp_path / "conflict.txt").write_text("conflict\n", encoding="utf-8")
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == [str(tmp_path.resolve() / "conflict.txt")]
+
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (
             "cd docs && python3 - <<'PYEOF'\n"
