@@ -170,17 +170,14 @@ async def capture_attribution(
         edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
     # Task attribution outlives the owner's commit, so a path the owner no longer
     # holds dirty is committed work that another live owner may have re-dirtied.
+    # Paths the owner still holds dirty stay in the proof, fallback or not.
     owner_dirty = session_dirty_file_set_for_checkout(session_vars, repo_path)
-    committed = (
-        edited_paths
-        if used_commit_fallback
-        else frozenset(
-            path
-            for path in edited_paths
-            if not any(
-                task_edit_path_covers(path, dirty) or task_edit_path_covers(dirty, path)
-                for dirty in owner_dirty
-            )
+    committed = frozenset(
+        path
+        for path in edited_paths
+        if not any(
+            task_edit_path_covers(path, dirty) or task_edit_path_covers(dirty, path)
+            for dirty in owner_dirty
         )
     )
     clean_proof_paths = edited_paths

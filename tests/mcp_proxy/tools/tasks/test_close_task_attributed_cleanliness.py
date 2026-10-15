@@ -394,12 +394,25 @@ async def test_retained_target_path_reedited_by_foreign_task_does_not_block_clos
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("commit_fallback", [False, True])
 async def test_target_path_redirtied_by_owner_blocks_close_despite_foreign_holder(
     close_harness: CloseHarness,
+    commit_fallback: bool,
 ) -> None:
-    """The owner's own live dirt stays in the proof even when a foreign session holds it."""
+    """The owner's own live dirt stays in the proof even when a foreign session holds it.
+
+    With ``commit_fallback`` the volatile attribution is gone (fresh claim or
+    recovery), so the path reaches the proof only through the linked commit.
+    """
     path = "shared.py"
     _commit_target_path(close_harness, path)
+    if commit_fallback:
+        close_harness.variable_manager.set_variable(
+            close_harness.session_id, "task_edited_files", {}
+        )
+        close_harness.variable_manager.set_variable(
+            close_harness.session_id, "task_edited_file_checkouts", {}
+        )
     _create_foreign_attribution(
         close_harness,
         external_id="concurrent-foreign-owner",
