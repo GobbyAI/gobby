@@ -517,6 +517,7 @@ step_workflow:
         call gobby-agents:wait_for_agent once with its reviewer_run_id and
         yield; after the verdict arrives, read the task with
         get_task(task_id=assigned_task_id). A closed task returns you to claim.
+        Remove a superseded candidate SHA here with unlink_commit.
         When the Orchestrator directs a hand-off of the assigned task, a
         successful escalate_task also resets task state and returns you to claim.
         The reason must start exactly with "Handed off: reviewer LAND", for example:
@@ -538,6 +539,8 @@ step_workflow:
         - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-tasks:link_commit"
+        # The claim holder alone may unlink, so superseded SHAs leave from here.
+        - "gobby-tasks:unlink_commit"
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
       on_mcp_before:
