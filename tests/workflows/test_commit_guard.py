@@ -2600,3 +2600,53 @@ async def test_git_path_probe_disables_fsmonitor(tmp_path: Path) -> None:
         paths = await _git_paths_async(str(tmp_path), "ls-files", "--cached")
     assert paths == {"a.py"}
     assert "core.fsmonitor=false" in run.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command", ["git -C {repo} commit -m 'cwd gone'", "git commit -m 'cwd gone'"]
+)
+async def test_foreign_staged_commit_conflict_resolves_repo_when_cwd_vanished(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    vanished = tmp_path / "vanished-scratch"
+    vanished.mkdir()
+    vanished.rmdir()
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(command.format(repo=guard_harness.repo), workdir=vanished)
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+    assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
+    assert "could not verify staged-path ownership" not in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relative", [False, True])
+async def test_foreign_staged_commit_conflict_names_vanished_cwd(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    relative: bool,
+) -> None:
+    vanished = tmp_path / "gitabbr"
+    vanished.mkdir()
+    vanished.rmdir()
+    if relative:
+        # A relative navigation from a vanished cwd has no resolvable target.
+        event = guard_harness.event("cd sub && git commit -m x", workdir=vanished)
+    else:
+        event = guard_harness.event(f"cd {vanished} && git commit -m x")
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert f"working directory {vanished} does not exist" in response.reason
+    assert "could not verify staged-path ownership" not in response.reason
