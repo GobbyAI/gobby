@@ -24,6 +24,15 @@ from gobby.workflows.definitions import WorkflowStep
 
 logger = logging.getLogger(__name__)
 
+# JSON columns come back as the server's text: the decoders below parse them once,
+# where the pool's jsonb loader would decode and re-dump them first (#23359).
+_COLUMNS = """
+    id, session_id, agent_step_workflow_id, agent_name, enabled, current_step,
+    step_entered_at, step_action_count, total_action_count,
+    variables::text AS variables, context_injected,
+    snapshot_json::text AS snapshot_json, created_at, updated_at
+"""
+
 
 class StaleStepInstanceWriteError(Exception):
     """Raised when save is rejected as a stale identity or CAS write."""
@@ -190,7 +199,7 @@ class AgentStepInstanceManager:
         if not is_session_uuid(session_id):
             return None
         row = self.db.fetchone(
-            "SELECT * FROM agent_step_instances WHERE session_id = %s",
+            f"SELECT {_COLUMNS} FROM agent_step_instances WHERE session_id = %s",
             (session_id,),
         )
         if row is None:
@@ -287,12 +296,12 @@ class AgentStepInstanceManager:
         now = utc_now()
         with self.db.transaction_immediate(lock) as txn:
             row = txn.execute(
-                """
+                f"""
                 UPDATE agent_step_instances
-                SET variables = COALESCE(variables, '{}'::jsonb) || %s::jsonb,
+                SET variables = COALESCE(variables, '{{}}'::jsonb) || %s::jsonb,
                     updated_at = %s
                 WHERE session_id = %s
-                RETURNING *
+                RETURNING {_COLUMNS}
                 """,
                 (_encode_json(updates), now, session_id),
             ).fetchone()
@@ -314,7 +323,7 @@ class AgentStepInstanceManager:
 
     def _fetch(self, txn: Transaction, session_id: str) -> AgentStepInstance | None:
         row = txn.execute(
-            "SELECT * FROM agent_step_instances WHERE session_id = %s",
+            f"SELECT {_COLUMNS} FROM agent_step_instances WHERE session_id = %s",
             (session_id,),
         ).fetchone()
         if row is None:
@@ -323,13 +332,13 @@ class AgentStepInstanceManager:
 
     def _insert(self, txn: Transaction, instance: AgentStepInstance) -> AgentStepInstance:
         row = txn.execute(
-            """
+            f"""
             INSERT INTO agent_step_instances (
                 id, session_id, agent_step_workflow_id, agent_name, enabled,
                 current_step, step_entered_at, step_action_count, total_action_count,
                 variables, context_injected, snapshot_json
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
+            RETURNING {_COLUMNS}
             """,
             (
                 instance.id,
@@ -353,7 +362,7 @@ class AgentStepInstanceManager:
     def _update_mutable(self, txn: Transaction, instance: AgentStepInstance) -> AgentStepInstance:
         now = utc_now()
         row = txn.execute(
-            """
+            f"""
             UPDATE agent_step_instances
             SET enabled = %s,
                 current_step = %s,
@@ -364,7 +373,7 @@ class AgentStepInstanceManager:
                 context_injected = %s,
                 updated_at = %s
             WHERE session_id = %s
-            RETURNING *
+            RETURNING {_COLUMNS}
             """,
             (
                 instance.enabled,
