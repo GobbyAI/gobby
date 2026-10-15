@@ -1,17 +1,11 @@
 """Structurally redacted watchdog signals from Claude Code JSONL transcripts."""
 
 import asyncio
-import os
-from collections import OrderedDict, deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from threading import Lock
-from typing import BinaryIO
 
-from gobby.agents.watchdog._scan import ScanVerdict, scan_line_is_malformed
+from gobby.agents.watchdog._scan import ResumableScanner, ResumableScanState, ScanVerdict
 from gobby.agents.watchdog.models import (
-    WATCHDOG_TAIL_LIMIT,
     ActivityKind,
     TranscriptEventSummary,
     TurnEventKind,
@@ -22,8 +16,6 @@ from gobby.utils.datetime import parse_stored_datetime
 _CLAUDE_RECORD_TYPES = frozenset({"assistant", "system", "user"})
 _AUTH_API_ERROR_LABELS = frozenset({"authentication_failed", "oauth_org_not_allowed"})
 _MAX_API_ERROR_MESSAGE_CHARS = 160
-_CLAUDE_SCAN_STATE_LIMIT = 128
-_CLAUDE_RESUME_GUARD_BYTES = 256
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -140,18 +132,7 @@ def _terminal_api_error_reason(data: dict[str, object]) -> str | None:
 
 
 @dataclass
-class _ClaudeScanState:
-    """Classifier state through the last newline-terminated line of one transcript."""
-
-    device: int
-    inode: int
-    offset: int = 0
-    line_num: int = 0
-    guard_start: int = 0
-    resume_guard: bytes = b""
-    tail: deque[TranscriptEventSummary] = field(
-        default_factory=lambda: deque(maxlen=WATCHDOG_TAIL_LIMIT)
-    )
+class _ClaudeScanState(ResumableScanState):
     turn_started_event: TranscriptEventSummary | None = None
     latest_turn_event: TranscriptEventSummary | None = None
     latest_turn_kind: TurnEventKind | None = None
@@ -159,22 +140,6 @@ class _ClaudeScanState:
     terminal_error_reason: str | None = None
     latest_activity_kind: ActivityKind | None = None
     latest_model_output_line_num: int | None = None
-    last_malformed_line_num: int | None = None
-
-    def resumes(self, handle: BinaryIO, stat: os.stat_result) -> bool:
-        """Whether the open file is the one scanned so far, changed only by appends.
-
-        Only the bytes just before the kept offset are compared, so an in-place rewrite
-        of the same inode that keeps them resumes wrongly; transcripts are append-only.
-        """
-        if (self.device, self.inode) != (stat.st_dev, stat.st_ino) or self.offset > stat.st_size:
-            return False
-        handle.seek(self.guard_start)
-        return handle.read(len(self.resume_guard)) == self.resume_guard
-
-    def scan_line(self, line_num: int, raw_line: bytes) -> None:
-        if scan_line_is_malformed(line_num, raw_line, self.classify):
-            self.last_malformed_line_num = line_num
 
     def classify(self, line_num: int, data: dict[str, object]) -> ScanVerdict:
         record_type = data.get("type")
@@ -275,59 +240,16 @@ class _ClaudeScanState:
         )
 
 
-def _read_claude_snapshot(
-    path: str,
-    states: OrderedDict[str, _ClaudeScanState],
-) -> WatchdogTranscriptSnapshot:
-    # Decoding the whole transcript on every poll held the daemon GIL in proportion to
-    # transcript size (#23359), so each read resumes after the last complete line.
-    with Path(path).open("rb") as handle:
-        stat = os.fstat(handle.fileno())
-        state = states.get(path)
-        if state is None or not state.resumes(handle, stat):
-            state = _ClaudeScanState(device=stat.st_dev, inode=stat.st_ino)
-            states[path] = state
-        handle.seek(state.offset)
-        unterminated = b""
-        for raw_line in handle:
-            if not raw_line.endswith(b"\n"):
-                unterminated = raw_line
-                break
-            state.line_num += 1
-            if raw_line.strip():
-                state.scan_line(state.line_num, raw_line)
-            state.offset += len(raw_line)
-        state.guard_start = max(0, state.offset - _CLAUDE_RESUME_GUARD_BYTES)
-        handle.seek(state.guard_start)
-        state.resume_guard = handle.read(state.offset - state.guard_start)
-    if not unterminated.strip():
-        return state.snapshot()
-    # A record still being written counts as it stands, on a copy, so the next read
-    # decodes it again from the kept offset once its newline lands.
-    pending = replace(state, tail=deque(state.tail, maxlen=WATCHDOG_TAIL_LIMIT))
-    pending.scan_line(state.line_num + 1, unterminated)
-    return pending.snapshot()
-
-
 class ClaudeTranscriptWatchdogReader:
     provider_id: str = "claude"
     capacity_pane_message: str | None = None
     supports_reasoning_interrupt: bool = False
 
     def __init__(self) -> None:
-        self._states: OrderedDict[str, _ClaudeScanState] = OrderedDict()
-        self._state_lock = Lock()
-
-    def _read_snapshot(self, transcript_path: str) -> WatchdogTranscriptSnapshot:
-        with self._state_lock:
-            snapshot = _read_claude_snapshot(transcript_path, self._states)
-            self._states.move_to_end(transcript_path)
-            while len(self._states) > _CLAUDE_SCAN_STATE_LIMIT:
-                self._states.popitem(last=False)
-            return snapshot
+        self._scanner = ResumableScanner(_ClaudeScanState)
 
     async def read(self, transcript_path: str) -> WatchdogTranscriptSnapshot:
-        return await asyncio.to_thread(self._read_snapshot, transcript_path)
+        return await asyncio.to_thread(self._scanner.snapshot, transcript_path)
 
 
 CLAUDE_WATCHDOG_READER = ClaudeTranscriptWatchdogReader()

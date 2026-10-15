@@ -31,7 +31,11 @@ from gobby.workflows.git_commit_parsing import (
     parse_git_commit_invocations,
     resolve_commit_inspect_cwd,
 )
-from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
+from gobby.workflows.ledger_reconcile import (
+    SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
+    SESSION_DIRTY_FILES_VARIABLE,
+    session_dirty_file_set_for_checkout,
+)
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -67,6 +71,16 @@ class DirtyEditOwnershipInspectionError(RuntimeError):
 
 def _normalized_command_cwd(event: HookEvent, project_path: str) -> str:
     return effective_tool_cwd(event.cwd, event.data) or project_path
+
+
+def _missing_commit_directory(invocation: GitCommitInvocation, command_cwd: str) -> str | None:
+    """Return the directory this commit navigates through that does not exist, if any."""
+    if invocation.chdir is None:
+        return None
+    if not os.path.isabs(invocation.chdir) and not os.path.isdir(command_cwd):
+        return command_cwd
+    target = os.path.normpath(os.path.join(command_cwd, invocation.chdir))
+    return None if os.path.isdir(target) else target
 
 
 async def _resolve_commit_checkout_root(
@@ -127,9 +141,21 @@ async def foreign_staged_commit_conflict(
         staged_paths_by_checkout: dict[str, set[str]] = {}
         command_cwd = _normalized_command_cwd(event, project_path)
         for invocation in invocations:
+            missing_directory = _missing_commit_directory(invocation, command_cwd)
+            if missing_directory is not None:
+                return (
+                    f"Commit blocked: its working directory {missing_directory} does not "
+                    "exist, so Gobby cannot resolve the repository it targets. Run the "
+                    "commit from an existing directory, creating a new repository in an "
+                    "earlier command."
+                )
+            # A vanished caller cwd leaves Git nothing to start from. An absolute
+            # target ignores it, and a cwd-relative commit can only reach the
+            # session's checkout, so inspect from there.
+            git_cwd = command_cwd if os.path.isdir(command_cwd) else project_path
             checkout_root = await _resolve_commit_checkout_root(
                 invocation,
-                command_cwd=command_cwd,
+                command_cwd=git_cwd,
             )
             if checkout_root is None:
                 continue
@@ -154,7 +180,7 @@ async def foreign_staged_commit_conflict(
 
             inspect_cwd = resolve_commit_inspect_cwd(
                 invocation,
-                event_cwd=command_cwd,
+                event_cwd=git_cwd,
                 project_path=project_path,
             )
             if invocation.is_path_scoped:
@@ -361,7 +387,15 @@ def _live_path_owners(
     owners: dict[str, list[ForeignPathOwner]] = {}
     for row in rows:
         owner_session_id = str(row["session_id"])
-        variables = variable_manager.get_variables(owner_session_id)
+        variables = variable_manager.get_variable_subset(
+            owner_session_id,
+            (
+                SESSION_DIRTY_FILES_VARIABLE,
+                SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
+                "claimed_tasks",
+                "task_edited_file_checkouts",
+            ),
+        )
         held = session_dirty_file_set_for_checkout(variables, checkout_root)
         if paths is not None:
             held = overlapping_task_edit_paths(held, paths)

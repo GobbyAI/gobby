@@ -132,10 +132,26 @@ once when the new image takes over.
   `host_upgrading`; type it again once the pane redraws.
 - An attached `gclient` pane reconnects straight to the host, so it recovers
   even when the daemon is down for the whole window.
-- `~/.gobby/logs/gterm.log` records each attempt as
-  `gterm host restored ... outcome=Succeeded`, or `outcome=Fallback` when the
-  host went back to its previous image (see
+- When the new image takes over, `~/.gobby/logs/gterm.log` records
+  `gterm host restored ... outcome=Succeeded`. If the new image's restore
+  fails with an error or a panic, the host execs its previous image once,
+  which records `gterm host restored ... outcome=Fallback`. It cannot fall
+  back when the handover state file cannot be read, the pinned previous image
+  fails verification, or that exec fails; those end the host with exit 70 and
+  no `gterm host restored` line (see
   [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
+- An attempt that ends before the exec writes no `gterm host restored` line,
+  and the host reports its outcome only to the daemon: the new image refused
+  its startup check, the host was busy (deferred), or the
+  handover stopped or the exec failed (aborted, rolled back). The host keeps
+  running its current image. The daemon tries a deferred attempt again on a
+  later check. It does not offer a refused, aborted or rolled-back image again
+  until the daemon restarts or a different gterm is installed.
+- Three cases end the host process instead, through `SIGALRM`, and report no
+  outcome: a rollback that cannot resume every pane, a pane capture that
+  times out and then cannot finish, and any attempt still unfinished 15 seconds
+  after it began. The 15-second alarm also covers the new image's restore, so
+  a restore that hangs gets no fallback.
 
 `--terminals` remains the way to end every native terminal. Use it when that is
 the goal, never as a follow-up to an upgrade: it hangs up every pane the
@@ -401,8 +417,10 @@ a Gobby source checkout:
 gobby cutover [--path PATH] [--allow-dirty] [--wait]
 ```
 
-The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
-proves the candidate, and stops the running daemon before promoting all three
+The command runs one locked release build for `gcode`, `gdaemon`, `ghook`, and
+`gclient`, so `gobby-core` compiles once for every dependent. If that shared build
+fails, cutover rebuilds the three-binary set alone and only `gclient` is lost. It
+proves the candidate, and stops the running daemon before promoting the three set binaries
 through the shared workspace installer. A refused stop leaves the installed
 binaries and identity pin unchanged. The installer signs staged binaries when
 required, installs through new inodes, writes
@@ -413,6 +431,13 @@ fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion. A promotion or verification failure
 leaves the daemon stopped; resolve the reported failure, then run `gobby start`.
+
+`gclient` sits outside the stamped set. After the daemon set is live, cutover
+promotes `gclient` separately through the same signed new-inode path and refreshes
+its version stamp, then prints `gclient matches this build.` A `gclient` build or
+promotion failure prints `gclient was not promoted: ...` on stderr with the
+remedy `uv run gobby install gclient`, leaves the daemon set live, and still exits
+0.
 
 The command refuses before it builds when the schema inputs carry uncommitted
 changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and

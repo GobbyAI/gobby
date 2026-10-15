@@ -24,9 +24,10 @@ export interface UseChatTestContext {
   };
 }
 
-// The context whose mocks currently own the globals. A test that times out keeps
-// running after cleanup; without this owner check its later hook renders would
-// hit the next test's fetch, WebSocket, and localStorage mocks.
+// The context whose mocks currently own the globals. loadUseChatModule checks it
+// once, after the dynamic import returns, and refuses to hand useChat to a test
+// whose context was cleared or replaced while the module loaded. It does not
+// isolate renders from a hook already returned to a test that later times out.
 let activeContext: UseChatTestContext | null = null;
 
 export function createUseChatTestContext(): UseChatTestContext {

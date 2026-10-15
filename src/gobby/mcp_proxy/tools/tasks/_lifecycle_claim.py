@@ -42,7 +42,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             force: Override existing claim by another session (default: False)
 
         Returns:
-            Success payload with the resolved task id and title, or an error dict
+            Success payload with the resolved task id, ref and title, or an error dict
             with conflict information.
         """
         from gobby.utils.session_context import get_current_session_id
@@ -184,10 +184,15 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             logger.warning("Failed to update session title after claiming %s: %s", task_id, e)
 
         # The title travels with the claim so memory surfacing can query the
-        # task's subject without a second read.
-        result: dict[str, Any] = {"success": True, "task_id": resolved_id, "title": task.title}
+        # task's subject without a second read; step workflows bind the ref.
+        task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+        result: dict[str, Any] = {
+            "success": True,
+            "task_id": resolved_id,
+            "ref": task_ref,
+            "title": task.title,
+        }
         if already_selected:
-            task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             result.update(
                 already_claimed=True,
                 message=f"Task {task_ref} is selected. Use claim_task to select another owned task.",

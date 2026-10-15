@@ -44,6 +44,8 @@ def _load_roster_entries(
                 "entry_id": entry_id,
                 "run_id": run.source_id,
                 "session_id": run.session_id,
+                "machine_id": run.machine_id,
+                "project_id": run.project_id,
                 "lifecycle_status": run.lifecycle_status,
                 "definition_title": run.definition_title,
                 "attention": _serialize_attention(attention.get(entry_id))
@@ -75,6 +77,8 @@ def _load_roster_entries(
                 "entry_id": entry_id,
                 "run_id": None,
                 "session_id": session.session_id,
+                "machine_id": session.machine_id,
+                "project_id": session.project_id,
                 "lifecycle_status": session.lifecycle_status,
                 "definition_title": session.definition_title,
                 "attention": _serialize_attention(attention.get(entry_id)),

@@ -42,9 +42,9 @@ from gobby.tasks.transcript_evidence import (
     _derive_transcript_evidence_sync,
     _resolve_transcript_path,
     derive_transcript_evidence,
-    merge_transcript_evidence,
     select_window_raw_lines,
 )
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -60,6 +60,65 @@ from gobby.workflows.found_work_gate import unresolved_validation_failures
 from gobby.workflows.validation_cover import cargo_package_selection_failed
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "status", "expected_outcome", "expected_exit"),
+    [
+        ("completed (exit code 0)", "completed", "success", 0),
+        ("failed with exit code 1", "failed", "failure", 1),
+    ],
+)
+async def test_claude_background_description_notice_settles_original_call(
+    tmp_path: Path, suffix: str, status: str, expected_outcome: str, expected_exit: int
+) -> None:
+    transcript = tmp_path / "background-description.jsonl"
+    command = "uv run pytest tests/tasks/test_transcript_background.py -q"
+    description = "Run background receipt tests (focused)"
+    output_path = "/tmp/claude-test/tasks/job-1.output"
+    records = _claude_tool_pair(
+        command=command,
+        description=description,
+        call_id="toolu-original",
+        start=BASE_TIME,
+        result=(
+            "Command did not complete within its 120s timeout and was moved to the "
+            f"background (ID: job-1). Output is being written to: {output_path}. "
+            "You will be notified when it completes."
+        ),
+    )
+    records.append(
+        {
+            "type": "user",
+            "timestamp": (BASE_TIME + timedelta(seconds=4)).isoformat(),
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification><task-id>job-1</task-id>"
+                    "<tool-use-id>toolu-original</tool-use-id>"
+                    f"<output-file>{output_path}</output-file><status>{status}</status>"
+                    f'<summary>Background command "{description}" {suffix}</summary>'
+                    "</task-notification>"
+                ),
+            },
+        }
+    )
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert len(evidence.validation_runs) == 1
+    run = evidence.validation_runs[0]
+    assert (run.outcome, run.exit_code) == (expected_outcome, expected_exit)
+    assert run.command == command
+    assert run.background_description == description
+    assert run.completed_at == BASE_TIME + timedelta(seconds=4)
 
 
 @pytest.mark.parametrize("receipt", ["valid", "missing", "wrong-job", "wrong-call", "assistant"])
@@ -304,6 +363,29 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+def test_blocking_pool_call_discards_broken_pool_and_runs_in_the_caller_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _BrokenExecutor()
+    executor = cast(ProcessPoolExecutor, fake)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_get_pool", lambda: executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_fallback_warning_logged", False)
+    caller = threading.get_ident()
+    ran_in: list[int] = []
+
+    def power(base: int, exponent: int) -> int:
+        ran_in.append(threading.get_ident())
+        return int(pow(base, exponent))
+
+    result = transcript_evidence_pool.run_blocking_in_transcript_evidence_pool(power, 2, 5)
+
+    assert result == 32
+    assert ran_in == [caller]
+    assert transcript_evidence_pool._pool is None
+    assert fake.shutdown_args == (False, True)
+
+
 @pytest.fixture
 def _no_pending_pool_exit() -> None:
     """Let an earlier test's pool-exit thread finish before tracker calls are recorded.
@@ -503,6 +585,7 @@ def _claude_tool_pair(
     start: datetime,
     result: Any,
     is_error: bool = False,
+    description: str | None = None,
 ) -> list[dict[str, Any]]:
     transport: Any = None
     if isinstance(result, dict) and "exit_code" in result:
@@ -527,7 +610,10 @@ def _claude_tool_pair(
                         "type": "tool_use",
                         "id": call_id,
                         "name": "Bash",
-                        "input": {"command": command},
+                        "input": {
+                            "command": command,
+                            **({"description": description} if description is not None else {}),
+                        },
                     }
                 ],
             },

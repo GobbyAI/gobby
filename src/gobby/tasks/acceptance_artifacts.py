@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from gobby.tasks.acceptance_rust_modules import (
     RustModuleCache,
     resolve_rust_module,
+    resolve_rust_target,
     rust_evidence_names_test,
     rust_inline_test_module,
 )
@@ -96,6 +97,7 @@ class AcceptanceTest:
     # Same-file functions the test reaches through bare calls (braced languages).
     helpers: tuple[str, ...] = ()
     rust_module: tuple[str, ...] | None = None
+    rust_target: tuple[str, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,10 +286,17 @@ async def resolve_acceptance_tests_async(
             )
             if rust_module is not None:
                 rust_module += rust_inline_test_module(source_cache.get(path, ""), symbol)
+            rust_target = (
+                await resolve_rust_target(path, candidate, repo_path, cache=source_cache)
+                if rust_module is not None
+                else None
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
-        tests.append(AcceptanceTest(reference, path, symbol, body, helpers, rust_module))
+        tests.append(
+            AcceptanceTest(reference, path, symbol, body, helpers, rust_module, rust_target)
+        )
     return tuple(tests), tuple(findings)
 
 
@@ -332,9 +341,9 @@ def validation_run_names_test(
     """Return whether a credited core command identifies the exact test."""
     if core_command is None:
         return False
+    if Path(test.path).suffix == ".rs":
+        return rust_validation_run_names_test(output or "", test, core_command)
     evidence = f"{core_command}\n{output or ''}"
-    if Path(test.path).suffix == ".rs" and rust_validation_run_names_test(evidence, test):
-        return True
     symbol_variants = (test.symbol, test.symbol.replace(".", "::"))
     return any(symbol in evidence for symbol in symbol_variants) and (
         test.path in evidence or Path(test.path).name in evidence
@@ -349,11 +358,11 @@ def validation_run_covers_test(
     """Return whether a credited core command covers the named test or its file."""
     if core_command is None:
         return False
+    if Path(test.path).suffix == ".rs":
+        return rust_validation_run_names_test(output or "", test, core_command)
     evidence = f"{core_command}\n{output or ''}"
     if test.path in evidence or test.reference in evidence:
         return True
-    if Path(test.path).suffix == ".rs":
-        return rust_validation_run_names_test(evidence, test)
     names = (
         Path(test.path).name,
         test.symbol,
@@ -363,9 +372,13 @@ def validation_run_covers_test(
     return any(_line_contains_word(evidence, name) for name in names)
 
 
-def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
+def rust_validation_run_names_test(
+    evidence: str, test: AcceptanceTest, core_command: str | None = None
+) -> bool:
     """Return whether one evidence line names a Rust test under its source module."""
-    return rust_evidence_names_test(evidence, test.path, test.symbol, test.rust_module)
+    return rust_evidence_names_test(
+        evidence, test.path, test.symbol, test.rust_module, test.rust_target, core_command
+    )
 
 
 def _line_contains_word(value: str, word: str) -> bool:

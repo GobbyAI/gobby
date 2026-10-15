@@ -320,7 +320,7 @@ step_workflow:
           tool: claim_task
           action: set_variable
           variable: assigned_task_ref
-          value: null
+          value: "(tool_output.get('result') or tool_output).get('ref')"
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
@@ -373,10 +373,12 @@ step_workflow:
         - *reset_handoff_bounce
         - *clear_handoff_task_id
         - *clear_handoff_task_ref
+        # An offloaded card can drop ref; never clear the ref the claim bound.
         - server: gobby-tasks
           tool: get_task
           when: >-
             (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and (tool_output.get('result') or tool_output).get('ref')
           action: set_variable
           variable: assigned_task_ref
           value: "(tool_output.get('result') or tool_output).get('ref')"

@@ -90,7 +90,7 @@ def _remote_snapshot() -> ProviderSnapshot:
         observed_at=_OBSERVED_AT,
     )
     return ProviderSnapshot(
-        provider="openai-compatible",
+        provider="codex",
         generation=0,
         models=(
             ModelCapability(
@@ -193,7 +193,7 @@ def test_observation_storage_isolation(postgres_db: HubDatabase) -> None:
     for observation in (original, other_endpoint, other_machine, changed_credentials):
         _replace(store, observation)
     capability_store.replace_provider_snapshot(_remote_snapshot())
-    remote_before = capability_store.get_provider_snapshot("openai-compatible")
+    remote_before = capability_store.get_provider_snapshot("codex")
 
     replacement = _observation(model_id="replacement/model", instance_id="new-instance")
     _replace(store, replacement)
@@ -220,4 +220,4 @@ def test_observation_storage_isolation(postgres_db: HubDatabase) -> None:
             endpoint_id=untouched.endpoint_id,
             configuration_fingerprint=untouched.configuration_fingerprint,
         ) == (untouched,)
-    assert capability_store.get_provider_snapshot("openai-compatible") == remote_before
+    assert capability_store.get_provider_snapshot("codex") == remote_before

@@ -235,10 +235,14 @@ class TerminalHostManager(HostShutdown):
 
     async def spawn_refusal(self) -> HostUnavailableReason | None:
         """The fail-closed reason a spawn must refuse with now, or None to proceed."""
-        try:
-            await asyncio.wait_for(self._startup_settled.wait(), HOST_READY_DEADLINE_SECONDS)
-        except TimeoutError:
-            return "host_start_timeout"
+        # A published client is a usable host even while the first start's
+        # reconcile is still running; only an undecided start waits.
+        if self._client is None:
+            try:
+                await asyncio.wait_for(self._startup_settled.wait(), HOST_READY_DEADLINE_SECONDS)
+            except TimeoutError:
+                if self._client is None:
+                    return "host_start_timeout"
         if self._client is not None:
             return None
         reason = self.failure_reason
