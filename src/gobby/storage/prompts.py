@@ -31,8 +31,6 @@ _NS_PROMPTS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:prompts")
 
 __all__ = [
     "LocalPromptManager",
-    "PromptChangeEvent",
-    "PromptChangeNotifier",
     "PromptRecord",
 ]
 
@@ -42,7 +40,6 @@ logger = logging.getLogger(__name__)
 _UNSET: Any = object()
 
 PromptScope = Literal["bundled", "global", "project"]
-ChangeEventType = Literal["create", "update", "delete"]
 
 
 @normalize_datetime_model(required=("created_at", "updated_at"))
@@ -147,83 +144,6 @@ class PromptRecord:
         )
 
 
-@normalize_datetime_model(required=("timestamp",))
-@dataclass
-class PromptChangeEvent:
-    """A change event fired when a prompt is created, updated, or deleted."""
-
-    event_type: ChangeEventType
-    prompt_id: str
-    prompt_name: str
-    timestamp: datetime = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert event to dictionary representation."""
-        return {
-            "event_type": self.event_type,
-            "prompt_id": self.prompt_id,
-            "prompt_name": self.prompt_name,
-            "timestamp": self.timestamp,
-        }
-
-
-# Type alias for change listeners
-ChangeListener = Any  # Callable[[PromptChangeEvent], None]
-
-
-class PromptChangeNotifier:
-    """Notifies registered listeners when prompts are mutated.
-
-    Follows the same pattern as SkillChangeNotifier in storage/skills.py.
-    """
-
-    def __init__(self) -> None:
-        self._listeners: list[ChangeListener] = []
-
-    def add_listener(self, listener: ChangeListener) -> None:
-        """Register a listener to receive change events."""
-        if listener not in self._listeners:
-            self._listeners.append(listener)
-
-    def remove_listener(self, listener: ChangeListener) -> bool:
-        """Unregister a listener. Returns True if removed."""
-        try:
-            self._listeners.remove(listener)
-            return True
-        except ValueError:
-            return False
-
-    def fire_change(
-        self,
-        event_type: ChangeEventType,
-        prompt_id: str,
-        prompt_name: str,
-    ) -> None:
-        """Fire a change event to all registered listeners."""
-        event = PromptChangeEvent(
-            event_type=event_type,
-            prompt_id=prompt_id,
-            prompt_name=prompt_name,
-        )
-        for listener in self._listeners:
-            try:
-                listener(event)
-            except Exception as e:
-                logger.exception(
-                    "Error in prompt change listener %s: %s",
-                    listener,
-                    e,
-                )
-
-    def clear_listeners(self) -> None:
-        """Remove all registered listeners."""
-        self._listeners.clear()
-
-    @property
-    def listener_count(self) -> int:
-        return len(self._listeners)
-
-
 class LocalPromptManager:
     """Manages prompt storage in the hub database.
 
@@ -231,32 +151,9 @@ class LocalPromptManager:
     (project > global > bundled) and read-only enforcement for bundled prompts.
     """
 
-    def __init__(
-        self,
-        db: HubDatabase,
-        dev_mode: bool = False,
-        notifier: PromptChangeNotifier | None = None,
-    ) -> None:
+    def __init__(self, db: HubDatabase, dev_mode: bool = False) -> None:
         self.db = db
         self._dev_mode = dev_mode
-        self._notifier = notifier
-
-    def _notify_change(
-        self,
-        event_type: ChangeEventType,
-        prompt_id: str,
-        prompt_name: str,
-    ) -> None:
-        """Fire a change event if a notifier is configured."""
-        if self._notifier is not None:
-            try:
-                self._notifier.fire_change(
-                    event_type=event_type,
-                    prompt_id=prompt_id,
-                    prompt_name=prompt_name,
-                )
-            except Exception as e:
-                logger.error("Error in prompt change notifier: %s", e)
 
     def _check_bundled_writable(self, scope: str) -> None:
         """Raise ValueError if trying to mutate a bundled record in non-dev mode."""
@@ -334,7 +231,6 @@ class LocalPromptManager:
         record = self.get_prompt(prompt_id)
         if record is None:
             raise RuntimeError(f"Failed to retrieve newly created prompt {prompt_id}")
-        self._notify_change("create", prompt_id, name)
         return record
 
     def get_prompt(self, prompt_id: str) -> PromptRecord | None:
@@ -497,7 +393,6 @@ class LocalPromptManager:
         record = self.get_prompt(prompt_id)
         if record is None:
             raise RuntimeError(f"Failed to retrieve updated prompt {prompt_id}")
-        self._notify_change("update", prompt_id, record.name)
         return record
 
     def delete_prompt(self, prompt_id: str) -> bool:
@@ -517,7 +412,6 @@ class LocalPromptManager:
             if cursor.rowcount == 0:
                 return False
 
-        self._notify_change("delete", prompt_id, record.name)
         return True
 
     def list_prompts(

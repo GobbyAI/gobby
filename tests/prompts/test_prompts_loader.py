@@ -6,7 +6,7 @@ from jinja2 import UndefinedError
 from gobby.prompts import PromptLoader, PromptTemplate, parse_frontmatter
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.prompts import LocalPromptManager, PromptChangeNotifier
+from gobby.storage.prompts import LocalPromptManager
 
 pytestmark = pytest.mark.unit
 
@@ -151,47 +151,6 @@ class TestPromptLoader:
         template = loader.load("test/precedence")
 
         assert template.content == "Global version"
-
-    def test_cache_behavior(self, synced_db: HubDatabase) -> None:
-        """Test that templates are cached after first load."""
-        loader = PromptLoader(db=synced_db)
-
-        template1 = loader.load("expansion/system")
-        template2 = loader.load("expansion/system")
-
-        assert template1 is template2
-
-        loader.clear_cache()
-        template3 = loader.load("expansion/system")
-
-        assert template1 is not template3
-
-    def test_cache_invalidation_via_notifier(
-        self, db: HubDatabase, manager: LocalPromptManager
-    ) -> None:
-        """Test that cache is invalidated when notifier fires."""
-        notifier = PromptChangeNotifier()
-        loader = PromptLoader(db=db, notifier=notifier)
-
-        manager_with_notifier = LocalPromptManager(db, notifier=notifier)
-        manager.create_prompt(
-            name="test/cache",
-            content="Original",
-            scope="global",
-        )
-
-        # Load to cache
-        template1 = loader.load("test/cache")
-        assert template1.content == "Original"
-
-        # Update via manager with notifier (triggers cache clear)
-        records = manager_with_notifier.list_prompts()
-        target = next(r for r in records if r.name == "test/cache")
-        manager_with_notifier.update_prompt(target.id, content="Updated")
-
-        # Cache should be cleared, so next load gets updated version
-        template2 = loader.load("test/cache")
-        assert template2.content == "Updated"
 
     def test_list_templates(self, synced_db: HubDatabase) -> None:
         """Test listing available templates."""
