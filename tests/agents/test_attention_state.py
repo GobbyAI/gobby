@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 from types import SimpleNamespace
@@ -360,6 +361,51 @@ def test_clear_preserves_turn_lifecycle_payload(temp_db: HubDatabase) -> None:
     assert persisted.state is None
     assert persisted.payload == lifecycle
     assert manager.snapshot().states == ()
+
+
+def test_state_reads_decode_the_payload_once_without_redumping(temp_db: HubDatabase) -> None:
+    # The pool's jsonb loader decoded and re-dumped payload, and
+    # AttentionState.from_row decoded that text again, on every read (#23359).
+    manager = _attention_manager(temp_db)
+    payload = {"turn_lifecycle": {"generation": 3}, "prompt": "approve?"}
+    blocked = manager.transition(
+        "session:decode",
+        state="blocked",
+        session_id="decode",
+        reason="approval",
+        kind="actionable",
+        fingerprint="prompt-1",
+        payload=payload,
+    )
+
+    with (
+        patch("json.loads", wraps=json.loads) as loads,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        reads = [
+            manager.get("session:decode"),
+            *manager.list_blocked(),
+            *manager.snapshot().states,
+        ]
+        duplicate = manager.transition(
+            "session:decode",
+            state="blocked",
+            session_id="decode",
+            reason="approval",
+            kind="actionable",
+            fingerprint="prompt-1",
+            payload=payload,
+        )
+
+    # The unchanged transition serializes its own target payload once.
+    assert dumps.call_count == 1
+    assert loads.call_count == len(reads) + 1
+    assert blocked.current.payload == payload
+    assert duplicate.applied is False
+    assert duplicate.current.payload == payload
+    for read in reads:
+        assert read is not None
+        assert read.payload == payload
 
 
 def test_transition_sweeps_old_empty_rows_without_roster_requests(temp_db: HubDatabase) -> None:
