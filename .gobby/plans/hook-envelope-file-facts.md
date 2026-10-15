@@ -92,14 +92,26 @@ items are decisions 10, 11 and 12 below.
    - **R0**, the nearest ancestor of the canonical cwd that holds
      `.gobby/project.json`. Its `id` is the project. With no such ancestor,
      the node answers `no_project_root`.
-   - **Admitted paths.** A path is admitted when its canonical form is under
-     R0, or when its nearest checkout shares R0's git common dir. This mirrors
-     the two accepting branches of
-     `src/gobby/hooks/_path_scope.py::_is_project_managed_path`.
-   - **Excluded paths.** Any path under the node's gobby home is outside,
-     except `<home>/worktrees/` and `<home>/clones/`.
-   - **Outside paths.** Every other path is outside. The node returns no
-     content or git result for it.
+   - **Admission.** The node classifies a path's canonical form with one
+     predicate, in this order. It copies
+     `src/gobby/hooks/_path_scope.py::_is_project_managed_path` with R0 as the
+     project root, including the rejecting branch between its two accepting
+     ones:
+     1. A path under R0 is admitted.
+     2. A temp agent scratchpad is outside. That is a path under one of the
+        node's temp roots that has a scratchpad marker part, using the
+        markers and prefixes of `_SCRATCHPAD_MARKERS` and
+        `_SCRATCHPAD_PREFIXES` in the same file. The node's temp roots are
+        its canonical `std::env::temp_dir()`, `/tmp` and `/private/tmp`, as
+        `_temp_scratchpad_roots` lists them for the hub.
+     3. A path whose nearest checkout shares R0's git common dir is admitted.
+        This includes a symlink or a `..` path that resolves there.
+     4. Every other path is outside.
+   - **Home exclusion.** After that predicate, a path under the node's gobby
+     home is outside, whatever steps 1 to 3 said, unless it is under
+     `<home>/worktrees/` or `<home>/clones/`.
+   - **Outside paths.** The node returns no content or git result for an
+     outside path.
 
    Workspaces carry a copied marker, so a session running in a node workspace
    has its workspace as R0. The hub-mode 4.2 and node-halves 2.3 edges
@@ -437,6 +449,10 @@ Targets:
   error reply for each error, and these `invalid` entries:
   - a query with an unknown `kind`;
   - a files query carrying `args`;
+  - a files query carrying `stdin`;
+  - a files query carrying `timeout_ms`;
+  - a git query carrying `paths`;
+  - a git query carrying `read_limit`;
   - 257 paths;
   - an omitted `read_limit`;
   - an omitted `stdin`;
@@ -483,7 +499,10 @@ fixture tree.
   - `git_common_dir` is `src/gobby/hooks/_path_scope.py::_git_common_dir`;
   - `project_root` is `src/gobby/utils/project_context.py::find_project_root`;
   - admission is `src/gobby/hooks/_path_scope.py::_is_project_managed_path`
-    with R0 as the project root.
+    with R0 as the project root. Its branch order is: under the root, accept;
+    temp agent scratchpad (`_is_temp_agent_scratchpad_path`), reject; shared
+    git common dir (`_shares_git_repository`), accept. Decision 4's
+    predicate copies that order.
 
 **Implementation:**
 - `dispatch` sends `checkout.read` to `checkout_read::read` outside the
@@ -491,8 +510,11 @@ fixture tree.
 - `read` canonicalizes `cwd` and finds R0 and its marker id
   (`no_project_root` when absent). It then answers the files or git query
   under Decisions 4 to 6.
-- The gobby home is the one the node daemon runs with.
-- Files: each path is resolved, classified and, when admitted, described. A
+- `dispatch` passes `read` the node's gobby home and temp roots: the home the
+  node daemon runs with, and Decision 4's three temp roots. Tests pass an
+  isolated home and the single temp root `<fixture>/tmp`.
+- Files: each path is resolved, classified by Decision 4's predicate and home
+  exclusion and, when admitted, described. A
   `file` is read up to `read_limit` within the 8 MiB reply budget.
 - Git: the arguments are checked against the allow-list before any process
   starts:
@@ -506,15 +528,21 @@ fixture tree.
   entries. The tree has:
   - a project with a marker and a linked worktree;
   - an unrelated repository;
-  - a symlink out of R0;
-  - a `..` escape;
+  - a symlink inside R0 that points into the unrelated repository, and a
+    `..` path that resolves to a directory outside every repository;
+  - a symlink inside R0 that points into the linked worktree, and a `..`
+    path that resolves there;
+  - a linked worktree of R0's repository under
+    `<fixture>/tmp/agent-scratchpad-1/`;
   - an isolated node home holding `bootstrap.yaml`, `worktrees/` and
     `clones/`;
   - a large file.
 
   `test_checkout_read_facts_golden.py` builds the same tree and checks every
   entry outside the node home against the Python oracle above, so node and
-  hub agree on what each fact means.
+  hub agree on what each fact means. It patches
+  `src/gobby/hooks/_path_scope.py::_temp_scratchpad_roots` to return
+  `<fixture>/tmp`, the temp root the Rust test passes.
 - LAND requires the Security Reviewer verdict (Decision 17).
 
 Verification planned:
@@ -523,9 +551,9 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.2.1 - For every golden case, `checkout.read` answers the expected `root`, `project_id` and entries (`resolved`, `kind`, `checkout_root`, `git_common_dir`, `project_root`, `project_id`, `data`, `truncated`). test: `crates/gdaemon/tests/node_checkout_read.rs::facts_match_golden`.
+- 1.2.1 - For every golden case, `checkout.read` answers the expected `root`, `project_id`, `home`, `temp_dir` and entries (`resolved`, `kind`, `checkout_root`, `git_common_dir`, `project_root`, `project_id`, `data`, `truncated`). Every successful reply carries the node's canonical `home` and `temp_dir`, and every `outside` entry carries its non-null `resolved`. test: `crates/gdaemon/tests/node_checkout_read.rs::facts_match_golden`.
 - 1.2.2 - The Python oracle produces every golden entry outside the node home, so the hub's local helpers and the node agree. test: `tests/hub/test_checkout_read_facts_golden.py::test_golden_matches_local_helpers`.
-- 1.2.3 - These answer `kind: "outside"` with null data: a path in an unrelated repository, a symlink inside R0 that points out of it, a `..` escape, and the isolated node home's `bootstrap.yaml`. A linked worktree of R0's repository under `<home>/worktrees/` is admitted. test: `crates/gdaemon/tests/node_checkout_read.rs::confinement_withholds_outside_paths`.
+- 1.2.3 - Admission follows Decision 4's predicate and home exclusion. These answer `kind: "outside"` with null data: a path in an unrelated repository, a symlink inside R0 that points into that repository, a `..` path that resolves outside every repository, a linked worktree of R0's repository under the temp scratchpad `<fixture>/tmp/agent-scratchpad-1/`, and the isolated node home's `bootstrap.yaml`. These are admitted: a linked worktree of R0's repository under `<home>/worktrees/`, a symlink inside R0 that points into the linked worktree, and a `..` path that resolves there. test: `crates/gdaemon/tests/node_checkout_read.rs::confinement_withholds_outside_paths`.
 - 1.2.4 - These answer `invalid_payload`, `stage: "none"`, and start no process: a refused subcommand (`commit`, `checkout`, `config`), a `-c` other than `core.fsmonitor=false`, and each refused option. A `-C`, `--git-dir` or `--work-tree` naming an outside path answers `outside`. A cwd with no marker above it answers `no_project_root`. test: `crates/gdaemon/tests/node_checkout_read.rs::refusals_run_nothing`.
 - 1.2.5 - git does not see an inherited `GIT_DIR` or `GIT_INDEX_FILE`, and runs with `GIT_OPTIONAL_LOCKS=0`, leaving no `index.lock` behind. stdout over 8 MiB is cut with `truncated: true`. git past `timeout_ms` is killed and answers `timed_out: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::git_runs_scrubbed_and_bounded`.
 - 1.2.6 - `read_limit` caps each file's data, and a reply whose files exceed 8 MiB cuts later entries with `truncated: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::reads_respect_limits`.
@@ -538,6 +566,13 @@ Targets:
 - `src/gobby/hooks/adapter_execution.py::run_adapter_hook`
 - `tests/hooks/checkout_read_fakes.py`
 - `tests/hooks/test_checkout_reads.py`
+
+Consumers unchanged:
+- `src/gobby/servers/routes/mcp/hooks.py` — no-edit-reason: It calls `run_adapter_hook` with an unchanged signature and already puts `machine_id` and `cwd` in `payload["input_data"]`; the delivery scope opens inside `run_adapter`.
+- `tests/agents/test_spawn_executor.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and its delivery is local, so the scope adds no node branch.
+- `tests/servers/test_mcp_routes.py` — no-edit-reason: It patches or awaits `run_adapter_hook` with an unchanged signature, and its deliveries are local.
+- `tests/workflows/test_hook_evaluation_timeout.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and its timeout behavior is unchanged for a local delivery.
+- `tests/workflows/test_hook_saturation.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and the scope runs inside the same executor slot it measures.
 
 **Research context:**
 - `run_adapter_hook` captures the daemon loop with
@@ -602,6 +637,70 @@ Consumers unchanged:
 - `src/gobby/workflows/code_review_scope.py` — no-edit-reason: Its git runs through `daemon_git`, and its failure defaults keep the review gate armed.
 - `src/gobby/workflows/ledger_reconcile.py` — no-edit-reason: Its git runs through `daemon_git`, and a failure releases nothing.
 - `src/gobby/workflows/condition_helpers.py` — no-edit-reason: `tdd_gate_open` reaches git only through `tdd_paths._git_out`.
+- `tests/utils/test_daemon_git.py` — no-edit-reason: Its `_execute` replacements keep the method's signature, and its runs are local, outside any node delivery.
+- `src/gobby/agents/checkpoint_manager.py` — no-edit-reason: It calls `DaemonGitService.status` with an unchanged signature. Within a node delivery the call reaches the node through `_execute`'s node branch, and outside one it runs locally as before, so it needs no branch of its own.
+- `src/gobby/agents/code_index.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/agents/isolation_git_hygiene.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/agents/sandbox.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/agents/worktree_checkpoint.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/build/claim_recovery.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/build/workspace_git.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/clones/git.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/dispatch/daemon_resume.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/merge_conflict_hydration.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/merge_github_protection.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/sessions/_commits.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/task_repo_paths.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/tasks/_landing.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/mcp_proxy/tools/tasks/_task_scope.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/servers/routes/files.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/servers/routes/sessions/core.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/servers/routes/source_control_git.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/servers/session_changes.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/servers/websocket/chat/_session_runtime.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/sessions/handoff_summary.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/sessions/workspace_context.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/tasks/commits.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/tasks/diff_paging.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/tasks/land_commit.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/utils/git.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/utils/project_context.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/workflows/git_utils.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/workflows/task_dirty_state.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `src/gobby/worktrees/merge/resolver.py` — no-edit-reason: Same reason as `checkpoint_manager.py`.
+- `tests/agents/test_checkpoint_manager.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_isolation_base_capture.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_isolation_project_json.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_sandbox.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_sandbox_policy.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_worktree_checkpoint.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/agents/test_worktree_fork_commit.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/build/test_claim_recovery.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/clones/test_git.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/dispatch/test_daemon_resume.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/e2e/daemon_git_deadline_bootstrap.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/close_review_test_support.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/tasks/test_task_scope.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/mcp_proxy/tools/test_probe_branch_protection.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/merge/test_merge_mcp_tools.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/servers/routes/test_servers_routes_sessions_routes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/servers/routes/test_source_control_routes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/servers/test_session_changes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/servers/websocket/chat/test_servers_websocket_chat_session.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/tasks/test_acceptance_artifacts.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/tasks/test_land_commit.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/utils/test_task_dirty_state.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/workflows/test_commit_guard.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/workflows/test_git_utils.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/workflows/test_hooks.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/worktrees/merge/test_resolver_implementation.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 
 **Research context:**
 - Every asynchronous hook-path git call goes through
@@ -659,7 +758,9 @@ Consumers unchanged:
   as `input_bytes`. Each existing `OSError` or `TimeoutExpired` branch
   handles the seam's errors.
 - `_positional_checkout_is_path` tests existence by joining a relative
-  operand to `cwd`, for both origins. For a node delivery it reads
+  operand to `cwd`, for both origins. For local events this is a deliberate
+  local behavior change, which fixes the found bug (Decision 13). For a node
+  delivery it reads
   `path_facts(paths, cwd=cwd)`, where any kind other than `missing` or
   `outside` means the path exists.
 
@@ -699,6 +800,14 @@ Targets:
 Consumers unchanged:
 - `tests/workflows/test_hooks.py` — no-edit-reason: It calls `WorkflowHookHandler._resolve_project_path`, which keeps its signature and local behavior.
 - `tests/workflows/test_database_deadline_retry.py` — no-edit-reason: It patches the `_resolve_project_path` method, which stays on the handler.
+- `src/gobby/hooks/event_handlers/_session_start/flow.py` — no-edit-reason: It calls `resolve_hook_project_context` with an unchanged signature, and the node branch lives inside that function.
+- `src/gobby/hooks/hook_manager.py` — no-edit-reason: It calls `resolve_hook_project_context` with an unchanged signature, and the node branch lives inside that function.
+- `src/gobby/hooks/session_lookup.py` — no-edit-reason: It calls `resolve_hook_project_context` with an unchanged signature, and the node branch lives inside that function.
+- `tests/hooks/test_hook_extracted_helpers.py` — no-edit-reason: It calls or patches `resolve_hook_project_context` with an unchanged signature for local events.
+- `tests/hooks/test_hook_manager.py` — no-edit-reason: It calls or patches `resolve_hook_project_context` with an unchanged signature for local events.
+- `tests/hooks/test_hooks_manager.py` — no-edit-reason: It calls or patches `resolve_hook_project_context` with an unchanged signature for local events.
+- `tests/hooks/test_session_activation_reconciliation.py` — no-edit-reason: It calls or patches `resolve_hook_project_context` with an unchanged signature for local events.
+- `tests/hooks/test_transcript_path_derivation.py` — no-edit-reason: It calls or patches `resolve_hook_project_context` with an unchanged signature for local events.
 
 **Research context:**
 - `resolve_hook_project_context` tries these sources in order:
@@ -793,6 +902,9 @@ Targets:
 Consumers unchanged:
 - `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It reaches paths only through `resolve_tool_path`.
 - `src/gobby/providers/path_policy.py` — no-edit-reason: `plan_write_paths_allowed` passes it node-resolved paths, and the node's roots through the existing `home_root` and `temp_root` parameters.
+- `src/gobby/hooks/_normalization_base_commands.py` — no-edit-reason: It calls `classify_git_mutation(parts, cwd, base_cwd)` with an unchanged signature, and the node branch lives in `checkout_root`.
+- `src/gobby/workflows/engine/templating.py` — no-edit-reason: It registers `plan_write_paths_allowed` as a template function with an unchanged signature, and the node branch lives inside that function.
+- `tests/workflows/test_condition_helpers_paths.py` — no-edit-reason: It calls `write_paths_within` with an unchanged signature for local events, whose behavior is unchanged.
 
 **Research context:**
 - `src/gobby/hooks/_path_scope.py`, which is on the hub's disk:
@@ -862,6 +974,7 @@ Targets:
 Consumers unchanged:
 - `src/gobby/install/shared/workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml` — no-edit-reason: It already lists the returned paths in its block reason, which then carries the diagnostic.
 - `src/gobby/workflows/safe_evaluator.py` — no-edit-reason: It passes `project_path` and the variables through unchanged.
+- `tests/workflows/test_monolith_guard.py` — no-edit-reason: It calls `outstanding_monolith_paths` with an unchanged signature for local events, whose behavior is unchanged.
 
 **Research context:**
 - `_project_root` resolves `project_path` and requires `is_dir()`.
@@ -909,6 +1022,7 @@ Targets:
 
 Consumers unchanged:
 - `src/gobby/workflows/condition_helpers.py` — no-edit-reason: It calls `rust_edit_is_test_writing` with an unchanged signature, and `tdd_gate_open` reaches git through 1.4.
+- `tests/workflows/test_rust_test_evidence.py` — no-edit-reason: It calls `rust_edit_is_test_writing` with an unchanged signature for local events, whose behavior is unchanged.
 
 **Research context:**
 - `rust_edit_is_test_writing(path, tool_input)` reads the prior text with
@@ -983,6 +1097,8 @@ Targets:
 
 Consumers unchanged:
 - `tests/workflows/test_commit_guard.py` — no-edit-reason: Its `_live_path_owners` patches replace the function whole, and its database tests run on the hub machine.
+- `tests/hooks/test_tool_handlers.py` — no-edit-reason: It calls or patches `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
+- `tests/workflows/test_task_claim_state.py` — no-edit-reason: It calls `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
 
 **Research context:**
 - `resolve_edit_pair(file_path, cwd, *, project_id, db, variables)` does
@@ -1041,6 +1157,12 @@ Targets:
 - `src/gobby/hooks/_normalization_operands.py::_file_transfer_paths`
 - `tests/hooks/test_node_origin_shell.py`
 
+Consumers unchanged:
+- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `path_execution` and `read_script_body` with unchanged signatures, and the node branch lives inside those functions.
+- `src/gobby/hooks/_normalization_sed.py` — no-edit-reason: It calls `read_script_body` with an unchanged signature, and the node branch lives inside that function.
+- `src/gobby/hooks/_normalization_file_commands.py` — no-edit-reason: It calls `_file_transfer_paths` with an unchanged signature, and the node branch lives inside that function.
+- `tests/hooks/test_normalization_canonical_mutation_scope.py` — no-edit-reason: It exercises `read_script_body` with an unchanged signature for local events, whose behavior is unchanged.
+
 **Research context:**
 - `path_execution(words, base)` resolves the first word with
   `resolve_tool_path` (2.2). It requires `is_file()`, then reads up to
@@ -1084,6 +1206,8 @@ Targets:
 Consumers unchanged:
 - `src/gobby/workflows/found_work_gate.py` — no-edit-reason: For a node-owned session, `_terminal_failures` already returns `()` after `RemoteSessionOwnershipError` (Decision 15). The test pins it.
 - `src/gobby/config/validation_detection.py` — no-edit-reason: Its only hook-path caller is `_terminal_failures`, which discards the result for a node session.
+- `src/gobby/hooks/event_handlers/__init__.py` — no-edit-reason: It maps `WORKTREE_CREATE` and `WORKTREE_REMOVE` to `handle_worktree_create` and `handle_worktree_remove`, whose signatures are unchanged; the node skip lives inside them.
+- `src/gobby/workflows/engine/effects.py` — no-edit-reason: It awaits `_apply_run_command` with an unchanged signature, and the node skip lives inside that method.
 
 **Granularity:** five acceptance items, one outcome. A node event triggers
 no hub-machine effect. Each item is one guard at a different site, with
@@ -1185,6 +1309,19 @@ Verification planned:
   - The site sweep, symbols and line counts were verified read-only on
     `0.5.0` at `3e4d426ddf`.
   - The draft is narrative only, with no M1.
+- 2026-10-14: review repairs for Plan Adversary gobby#16791's findings on
+  `a93896a4ba`.
+  - HE-1: Decision 4's admission predicate copies
+    `_is_project_managed_path`'s branch order, including the temp scratchpad
+    rejection, and then applies the home exclusion. 1.2's fixture tree,
+    1.2.1 and 1.2.3 follow that predicate.
+  - HE-2: callers flagged by consumer coverage are named under Consumers
+    unchanged on 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.6, 2.7 and 2.8, each with a
+    no-edit reason.
+  - HE-3: 1.1's invalid corpus pins every foreign field on both query
+    forms.
+  - 1.4 flags the 1.4.5 fix as a deliberate local behavior change, as
+    #15977 asked.
 
 ## V2: Verification
 `kind: verification`
