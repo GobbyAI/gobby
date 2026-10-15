@@ -495,7 +495,20 @@ async def test_reclaimed_handoff_restores_ordinary_close_gate(
         seats.former,
         {},
     )
-    assert _current_step(seats.db, seats.former) == ("submit" if has_commit else "implement")
+    # The pre-handoff commit belongs to the earlier claim; the reclaim links its own.
+    assert _current_step(seats.db, seats.former) == "implement"
+    if has_commit:
+        await engine._process_step_after_tool(
+            _after_tool(
+                seats.former,
+                "link_commit",
+                {"task_id": seats.ref, "commit_sha": COMMIT},
+                {"task_id": seats.task_id, "commits": [COMMIT]},
+            ),
+            seats.former,
+            {},
+        )
+        assert _current_step(seats.db, seats.former) == "submit"
     close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
     close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
     response = engine._check_step_tool_enforcement(close_event, seats.former, {})
@@ -662,7 +675,11 @@ async def test_handoff_close_preserves_next_task_binding(
         project_id, "Next directed task", validation_criteria="The active binding survives."
     )
     claimed = await call("claim_task", {"task_id": next_task.id})
-    assert claimed == {"task_id": next_task.id, "title": "Next directed task"}
+    assert claimed == {
+        "task_id": next_task.id,
+        "ref": f"#{next_task.seq_num}",
+        "title": "Next directed task",
+    }
     assert _current_step(seats.db, seats.former) == "route_skills"
     assert await call("get_task", {"task_id": next_task.id})
     instance_manager = AgentStepInstanceManager(seats.db)
@@ -855,13 +872,13 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     )
     step, state = _instance_state(seats.db, seats.former)
     assert step == "route_skills"
-    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (active.id, None)
+    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (active.id, active_ref)
     assert state["bounced"] is False
     assert state["_developer_handoff_tasks"] == [history.id]
     session_state = variables.get_variables(seats.former)
     assert (session_state["assigned_task_id"], session_state["assigned_task_ref"]) == (
         active.id,
-        None,
+        active_ref,
     )
     if closed_bound:
         assert seats.task_id not in session_state["claimed_tasks"]
@@ -875,6 +892,16 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     await complete(
         _after_tool(
             seats.former, "get_task", {"task_id": active_ref}, {"id": active.id, "ref": active_ref}
+        ),
+    )
+    # A commit linked before this claim does not make the candidate; this claim's link does.
+    assert _current_step(seats.db, seats.former) == "implement"
+    await complete(
+        _after_tool(
+            seats.former,
+            "link_commit",
+            {"task_id": active_ref, "commit_sha": COMMIT},
+            {"task_id": active.id, "commits": [COMMIT]},
         ),
     )
     assert _current_step(seats.db, seats.former) == "submit"
@@ -991,7 +1018,7 @@ def test_held_or_unbound_step_adds_no_query(seats: _Seats, step: str, bound: boo
     assert after.updated_at == before.updated_at
 
 
-async def test_binding_a_task_with_a_linked_commit_reaches_submit(seats: _Seats) -> None:
+async def test_commit_linked_under_an_earlier_claim_does_not_reach_submit(seats: _Seats) -> None:
     claim_task(seats.db, seats.task_id, seats.former)
     LocalTaskManager(seats.db).link_commit(seats.task_id, COMMIT)
     _force_transfer(seats)
@@ -1009,11 +1036,23 @@ async def test_binding_a_task_with_a_linked_commit_reaches_submit(seats: _Seats)
     )
 
     assert notice is not None
-    assert notice.startswith(
-        "Step transition: route_skills -> load_additional_skills -> implement -> submit"
+    assert notice.startswith("Step transition: route_skills -> load_additional_skills -> implement")
+    step, state = _instance_state(seats.db, seats.successor)
+    assert (step, state["implementation_complete"]) == ("implement", False)
+
+    # Only this claim's own link makes the candidate.
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(
+            seats.successor,
+            "link_commit",
+            {"task_id": seats.task_id, "commit_sha": COMMIT},
+            {"task_id": seats.task_id, "commits": [COMMIT]},
+        ),
+        seats.successor,
+        {},
     )
     step, state = _instance_state(seats.db, seats.successor)
-    assert (step, state["implementation_complete"], state["bounced"]) == ("submit", True, False)
+    assert (step, state["implementation_complete"]) == ("submit", True)
 
 
 async def test_bounce_back_to_implement_stays_in_implement(seats: _Seats) -> None:

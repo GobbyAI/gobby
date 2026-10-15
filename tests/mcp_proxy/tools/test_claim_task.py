@@ -196,6 +196,7 @@ class TestClaimTaskTool:
 
             registry = create_task_registry(mock_task_manager)
 
+            sample_task.seq_num = 42
             mock_task_manager.get_task.return_value = sample_task
             updated_task = MagicMock()
             updated_task.id = sample_task.id
@@ -221,8 +222,8 @@ class TestClaimTaskTool:
             # Should succeed
             assert "error" not in result
             # The claim payload names the task so surfacing rules can query the
-            # subject without a second read.
-            assert result["title"] == sample_task.title
+            # subject without a second read, and carries the ref step workflows bind.
+            assert (result["title"], result["ref"]) == (sample_task.title, "#42")
             mock_task_manager.claim_task_for_agent.assert_called_once_with(
                 sample_task.id,
                 session_id="my-session-id",
