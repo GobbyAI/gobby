@@ -1,6 +1,8 @@
 """Tests for task_claim_state helpers."""
 
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,8 +14,84 @@ from gobby.workflows.task_claim_state import (
     target_task_has_edits,
     task_edited_file_times,
 )
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
+
+
+def test_resolve_edit_pair_keys_on_project_root(tmp_path: Path) -> None:
+    root = tmp_path / "main"
+    other = tmp_path / "other"
+    unmanaged = tmp_path / "scratch"
+    for path in (root, other, unmanaged):
+        path.mkdir()
+    write_project_marker(root, project_id="project-a", name="main")
+    write_project_marker(other, project_id="project-b", name="other")
+    resolve = task_claim_state.resolve_edit_pair
+    assert resolve("p.py", str(root), project_id="project-a", db=None, variables={}) == (
+        str(root),
+        "p.py",
+    )
+    assert resolve(str(root / "p.py"), None, project_id="project-a", db=None, variables={}) == (
+        str(root),
+        "p.py",
+    )
+    assert resolve(str(other / "p.py"), None, project_id="project-a", db=None, variables={}) is None
+    assert (
+        resolve(str(unmanaged / "p.py"), None, project_id="project-a", db=None, variables={})
+        is None
+    )
+    link = tmp_path / "linked-other"
+    link.symlink_to(other, target_is_directory=True)
+    variables = {"claimed_tasks": {"task-a": "#1"}}
+    with patch("gobby.storage.worktrees.LocalWorktreeManager") as manager:
+        manager.return_value.list_worktrees.return_value = [MagicMock(worktree_path=str(link))]
+        assert resolve(
+            str(link / "p.py"), None, project_id="project-a", db=MagicMock(), variables=variables
+        ) == (str(other), "p.py")
+        manager.return_value.list_worktrees.assert_called_once_with(
+            project_id="project-b", task_id="task-a"
+        )
+
+
+def test_resolve_edit_pair_finds_root_from_resolved_target(tmp_path: Path) -> None:
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    for path in (root, worktree):
+        path.mkdir()
+        write_project_marker(path, project_id="project-a", name="project")
+    (root / "link").symlink_to(worktree, target_is_directory=True)
+    for target in ("../worktree/p.py", "link/p.py"):
+        assert task_claim_state.resolve_edit_pair(
+            target, str(root), project_id="project-a", db=None, variables={}
+        ) == (str(worktree), "p.py")
+    assert (
+        task_claim_state.resolve_edit_pair(
+            "p.py", None, project_id="project-a", db=None, variables={}
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "base, tool_input, expected",
+    [
+        ("/main", {"workdir": "/other"}, "/other"),
+        ("/main", {"workdir": "sub"}, "/main/sub"),
+        ("/main", {"cwd": "sub"}, "/main/sub"),
+        ("/main", {}, "/main"),
+        (None, {"workdir": "sub"}, None),
+        ("relative", {}, None),
+        ("", {}, None),
+        (" ", {}, None),
+        ("/main", {"workdir": " ", "cwd": "/other"}, "/other"),
+        ("/main", {"workdir": 1, "cwd": "/other"}, "/other"),
+    ],
+)
+def test_effective_tool_cwd(
+    base: str | None, tool_input: dict[str, object], expected: str | None
+) -> None:
+    assert task_claim_state.effective_tool_cwd(base, {"tool_input": tool_input}) == expected
 
 
 @pytest.mark.parametrize(

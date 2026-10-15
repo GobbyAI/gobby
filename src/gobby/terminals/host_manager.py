@@ -64,6 +64,10 @@ class HostStartTimeoutError(ConnectionError):
     """A spawned host never answered its control socket within the ready deadline."""
 
 
+class HostEpochRefusedError(HostControlError):
+    """A verified live host whose epoch native rows on another machine already bind."""
+
+
 def _start_failure_reason(exc: BaseException) -> HostUnavailableReason:
     if isinstance(exc, FileNotFoundError):
         return "gterm_missing"
@@ -231,10 +235,14 @@ class TerminalHostManager(HostShutdown):
 
     async def spawn_refusal(self) -> HostUnavailableReason | None:
         """The fail-closed reason a spawn must refuse with now, or None to proceed."""
-        try:
-            await asyncio.wait_for(self._startup_settled.wait(), HOST_READY_DEADLINE_SECONDS)
-        except TimeoutError:
-            return "host_start_timeout"
+        # A published client is a usable host even while the first start's
+        # reconcile is still running; only an undecided start waits.
+        if self._client is None:
+            try:
+                await asyncio.wait_for(self._startup_settled.wait(), HOST_READY_DEADLINE_SECONDS)
+            except TimeoutError:
+                if self._client is None:
+                    return "host_start_timeout"
         if self._client is not None:
             return None
         reason = self.failure_reason
@@ -253,9 +261,9 @@ class TerminalHostManager(HostShutdown):
                 # Never race a live host: no second spawn, no token rotation.
                 # The health loop re-probes it on its interval and adopts once
                 # pidfile, ping, and live identity agree again (#22337).
+                # _try_adopt recorded the typed reason for the refusal.
                 self.running = False
                 self.native_available = False
-                self.failure_reason = "other"
                 self._arm_health()
                 return
             await self._spawn_and_connect()
@@ -631,6 +639,11 @@ class TerminalHostManager(HostShutdown):
                 raise HostControlError(
                     f"host pid {ping.host_pid} does not match the pidfile or a live gterm"
                 )
+            # Only a host that passed every check above can be refused by epoch,
+            # matching the Rust supervisor's adoption matrix (plan 1.2.2).
+            epoch = ping.host_epoch or hello.host_epoch
+            if self._epoch_bound_elsewhere(epoch):
+                raise HostEpochRefusedError(f"host epoch {epoch} is bound to another machine")
         except (
             OSError,
             HostControlError,
@@ -641,6 +654,8 @@ class TerminalHostManager(HostShutdown):
             await self._close_client(client)
             self.host_mismatch = str(exc)
             self.last_error = str(exc)
+            refused = isinstance(exc, HostEpochRefusedError)
+            self.failure_reason = "epoch_refused" if refused else "other"
             if self.host_mismatch != previous_mismatch:
                 logger.warning(
                     "gterm host at %s is alive but not adoptable (%s); leaving it and its "
@@ -651,6 +666,10 @@ class TerminalHostManager(HostShutdown):
                     self.config.health_interval_seconds,
                 )
             return _Adopt.MISMATCH
+        except BaseException:
+            # The epoch read can fail at the database; never leak the probe.
+            await self._close_client(client)
+            raise
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
         self.host_generation = ping.generation
@@ -661,6 +680,12 @@ class TerminalHostManager(HostShutdown):
         self.spawned_this_construction = False
         await self.upgrade.observe(client, ping, self.capabilities)
         return _Adopt.ADOPTED
+
+    def _epoch_bound_elsewhere(self, epoch: str | None) -> bool:
+        if self.terminal_manager is None or not epoch:
+            return False
+        machines = self.terminal_manager.native_epoch_machine_ids(epoch)
+        return bool(machines - {require_machine_id()})
 
     async def _spawn_and_connect(self) -> None:
         client, hello, ping = await self._spawn_candidate()

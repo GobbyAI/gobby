@@ -820,6 +820,52 @@ Plan archive is system-managed: archiving flips `state` to `archived`, moves
 the plan file to `.gobby/plans/completed/`, records `archived_at`, and removes
 the managed coverage manifest.
 
+## Re-expansion Reconciliation
+
+Re-running expansion apply on an epic that already has output reconciles the
+new manifest with that output when every leaf in both specs carries
+`source_section_id`. Apply does not refuse, reset, or duplicate those leaves.
+Specs with no section identity keep the previous refusal: reset the output
+before applying, which still refuses closed, claimed, committed, or in-progress
+targets.
+
+Reconciliation records a `reconciliation` checkpoint on the new run.
+Classification reads `closed_at`, `closed_reason`, and `claimed_by_session_id`
+with `SELECT … FOR UPDATE` on the apply transaction, then checks stage progress.
+A reuse write runs in that same transaction, so the row lock is held until
+commit. A claim or close that commits first leaves the leaf untouched or
+preserved. A reuse that commits first is what a later claim or close observes.
+
+- **Preserve.** A closed completed prior leaf whose section remains is that
+  section's leaf. Apply does not reopen it, edit it, or create another leaf
+  for the section. Coverage QA counts the preserved leaf when its `covers:`
+  label still matches the section.
+- **Reuse.** An open prior leaf that is unclaimed and has not entered a stage
+  is updated in place when the section text changes. No second task is created.
+  Its labels are the same set a newly created leaf would receive, including
+  `parallel:<execution_group>` when the section names one.
+- **Create.** A section new to the manifest gets a new leaf. Dependency edges
+  in the new spec are wired to preserved and reused leaves as well as to new
+  ones. A phase epic created by the prior run is reused when that phase remains.
+  When the amended spec places a new leaf or a reused open leaf under a
+  closed-completed phase epic, apply reopens that epic in the same transaction
+  before the child is written. A phase whose leaves stay preserved is not
+  reopened. A section that moves to another phase keeps its current parent;
+  apply does not change `parent_task_id`. The destination phase epic may gain
+  a blocker edge on that leaf.
+- **Report.** A prior leaf whose section was removed is listed under `removed`
+  and left in place, including when it is closed. A claimed or in-progress open
+  leaf is listed under `untouched` and is not reset, reassigned, or edited.
+  Outgoing blockers of preserved and untouched leaves stay as they are. A spec
+  edge that would add one is listed under `skipped_edges` and is not written.
+  New and reused leaves may still depend on those leaves. Closed obsolete
+  leaves are not matches; a later apply may create a new leaf for that section.
+  A placeholder deferral is reused when the prior run's `deferral_task_map`
+  still names a live task, so a second holder is not created. A reused open
+  holder gains the amended spec's blocker edges; its text is not refreshed.
+  A placeholder whose section
+  is no longer deferred is listed under `removed` and left in place.
+
 ## Table-Row Decomposition
 
 Any `deliverable` section whose body uses a markdown table to enumerate work

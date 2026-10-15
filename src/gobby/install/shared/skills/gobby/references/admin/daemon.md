@@ -30,6 +30,21 @@ datastore shutdown; remote nodes do not stop the hub's containers. Never infer
 that the user's terminal or datastore contents may be destroyed from a request
 to diagnose or restart the daemon.
 
+A newly installed gterm needs no restart and no drain. The daemon compares the
+running host's image hash with the installed `~/.gobby/bin/gterm` and asks the
+host to exec the new image in place. Panes, both screens' scrollback and the
+host PID survive. Input is refused with `host_upgrading` during the window, and
+`gclient` reconnects straight to the host even while the daemon is down. Hosts
+run from pinned copies under `<socket_dir>/gterm-images/` (default
+`~/.gobby/gterm-images/`), so replacing the installed binary never touches a
+running image. The one-shot fallback covers only a new image that fails to
+restore after the exec: the host execs the pinned previous image once and logs
+`outcome=Fallback` in `~/.gobby/logs/gterm.log`, and a failed fallback ends
+the host. A candidate refused at its startup check, or an attempt aborted or
+rolled back before the exec, never leaves the current image and writes no
+`gterm host restored` line. Never follow a successful upgrade with `--terminals`. A host started
+by a gterm without upgrade support needs one `gobby restart --terminals`.
+
 Use service installation, status, enable, disable, and uninstall commands for
 host service-manager configuration. Service environments differ from interactive
 shells; use bootstrap, managed configuration, and supported secret handling.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
@@ -533,7 +534,7 @@ class PipelineExecutor(
                         from gobby.worktrees.git import WorktreeGitManager
 
                         current_branch = await WorktreeGitManager(project_path).get_current_branch()
-                    except (ImportError, ValueError, OSError):
+                    except (ImportError, ValueError, OSError, subprocess.TimeoutExpired):
                         pass
 
                 context: dict[str, Any] = {

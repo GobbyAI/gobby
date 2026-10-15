@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from gobby.config.documents import ConfigDocumentsService
 from gobby.config.runtime import ConfigRuntime, ConfigSnapshot
 from gobby.config.values import ConfigValuesError, ConfigValuesService
-from gobby.prompts.loader import PromptLoader
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.config_mutations import ConfigMutations
 from gobby.storage.config_repository import ConfigRepository
@@ -102,12 +101,6 @@ class ConfigurationRouteContext:
                 manager = LocalPromptManager(self.server.services.database, dev_mode=dev_mode)
                 self.server.services.prompt_manager = manager
         return manager
-
-    def get_prompt_loader(self) -> PromptLoader:
-        return PromptLoader(
-            db=self.server.services.database,
-            project_id=self.server.services.project_id,
-        )
 
 
 def require_config_snapshot(server: HTTPServer) -> ConfigSnapshot:

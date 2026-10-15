@@ -87,7 +87,8 @@ impl Default for TlsBootstrap {
     }
 }
 
-/// The `front_door` bootstrap block. Families absent from `routes` are proxied.
+/// The `front_door` bootstrap block. Families absent from `routes` take their
+/// family's default (`RouteFamily::default_backend`).
 /// Unknown family names are accepted because Stage 2 leaves introduce families.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontDoorBootstrap {

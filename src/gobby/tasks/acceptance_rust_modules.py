@@ -8,6 +8,9 @@ import shlex
 import tomllib
 from pathlib import PurePosixPath
 
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
+
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 
 # Consume comments and literals before looking for real module declarations.
@@ -257,6 +260,9 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
         "--verbose",
         "-v",
         "--no-fail-fast",
+        "--workspace",
+        "--all-targets",
+        "--tests",
     }
     libtest_values = {"--skip", "--test-threads", "--logfile", "--format", "--color"}
     libtest_flags = {
@@ -292,8 +298,6 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
                 elif not is_cargo and option == "--skip":
                     skips.append(value)
             elif is_cargo and argument == "--lib":
-                if library:
-                    return False
                 library = True
             elif argument in (cargo_flags if is_cargo else libtest_flags):
                 exact = exact or (not is_cargo and argument == "--exact")
@@ -302,15 +306,13 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
             else:
                 filters.append(argument)
             index += 1
-    if len(packages) > 1 or len(binaries) > 1 or len(filters) > 1 or (library and binaries):
+    if len(binaries) > 1 or len(filters) > 1:
         return False
     if target is not None:
         package, binary = target
-        if packages != [package]:
+        if package not in packages:
             return False
-        if (binary is None and (not library or binaries)) or (
-            binary is not None and (library or binaries != [binary])
-        ):
+        if (binary is None and not library) or (binary is not None and binaries != [binary]):
             return False
     return (not filters or (name == filters[0] if exact else filters[0] in name)) and not any(
         name == skip if exact else skip in name for skip in skips
@@ -328,7 +330,8 @@ def _root_evidence_names_test(
     package, binary = target
     label = f"{package}::{binary}" if binary is not None else package
     nextest = re.compile(
-        rf"^\s*(?:PASS|FAIL)\s+\[[^]]+\]\s+{re.escape(label)}\s+{re.escape(name)}(?:\s|$)"
+        rf"^\s*(?:PASS|FAIL)\s+\[[^]]+\]\s+(?:\(\d+/\d+\)\s+)?"
+        rf"{re.escape(label)}\s+{re.escape(name)}(?:\s|$)"
     )
     if any(nextest.search(line) for line in output.splitlines()):
         return True
@@ -371,9 +374,11 @@ def rust_evidence_names_test(
         module_test = re.compile(rf"{module_prefix}(?:::[A-Za-z0-9_]+)*::{escaped_symbol}")
     for line in evidence.splitlines():
         row = re.fullmatch(r"\s*test (\S+) \.\.\. (?:ok|FAILED)\s*", line)
-        nextest = re.fullmatch(r"\s*(?:PASS|FAIL)\s+(?:\[[^]]+\]\s+)?(\S+)\s+(\S+)\s*", line)
-        junit = re.search(r"<testcase\b[^>]*\bname=[\"\']([^\"\']+)[\"\']", line)
-        row_name = row[1] if row else nextest[2] if nextest else junit[1] if junit else None
+        nextest = re.fullmatch(
+            r"\s*(?:PASS|FAIL)\s+(?:\[[^]]+\]\s+)?(?:\(\d+/\d+\)\s+)?(\S+)\s+(\S+)\s*",
+            line,
+        )
+        row_name = row[1] if row else nextest[2] if nextest else None
         if row_name is None:
             continue
         matches = module_test.fullmatch(row_name) is not None or (
@@ -386,4 +391,25 @@ def rust_evidence_names_test(
         )
         if matches and (core_command is None or _cargo_selects_test(core_command, None, row_name)):
             return True
+    try:
+        root = ElementTree.fromstring(
+            evidence, forbid_dtd=True, forbid_entities=True, forbid_external=True
+        )
+    except (ElementTree.ParseError, DefusedXmlException):
+        return False
+    if root.tag not in {"testsuite", "testsuites"}:
+        return False
+    for suite in root.iter("testsuite"):
+        for testcase in suite.findall("testcase"):
+            case_name = testcase.get("name")
+            if not case_name:
+                continue
+            classname = testcase.get("classname")
+            qualified_name = (
+                f"{classname}::{case_name}" if classname and "::" not in case_name else case_name
+            )
+            if module_test.fullmatch(qualified_name) and (
+                core_command is None or _cargo_selects_test(core_command, None, qualified_name)
+            ):
+                return True
     return False

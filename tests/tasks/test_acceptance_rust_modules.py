@@ -55,7 +55,11 @@ def test_nested_same_name_test_not_credited(path: str, module: tuple[str, ...], 
 )
 @pytest.mark.parametrize(
     "output",
-    ["test {name} ... ok", "PASS [0.004s] gobby-code {name}", '<testcase name="{name}"/>'],
+    [
+        "test {name} ... ok",
+        "PASS [0.004s] gobby-code {name}",
+        '<testsuite><testcase name="{name}"/></testsuite>',
+    ],
 )
 def test_exact_module_scope_still_credited(
     path: str, module: str, symbol: str, output: str
@@ -247,7 +251,7 @@ async def test_root_target_comes_from_committed_manifest(
         ("cargo test --workspace", "test {name} ... ok", False),
         ("{base} --package --test {name}", "test {name} ... ok", False),
         ("{base} {name} sibling", "test {name} ... ok", False),
-        ("{base} -p example {name}", "test {name} ... ok", False),
+        ("{base} -p example {name}", "test {name} ... ok", True),
         ("{base} {name}", "test {name} ... ok", True),
         ("{base}", "test {name} ... FAILED", True),
         ("{base} root", "test {name} ... ok", True),
@@ -318,7 +322,7 @@ def test_root_credit_requires_executed_row(
         ("cargo test", "FAIL [0.004s] example a::tests::test_x", True),
         ("cargo test", "PASS example a::tests::test_x", True),
         ("cargo nextest run", "FAIL example a::tests::test_x", True),
-        ("cargo test", '<testcase name="a::tests::test_x"/>', True),
+        ("cargo test", '<testsuite><testcase name="a::tests::test_x"/></testsuite>', True),
     ],
 )
 def test_non_root_credit_uses_executed_output(
@@ -349,3 +353,117 @@ def test_rust_generic_fallback_cannot_credit_diagnostic(names_only: bool, diagno
     )
     validate = validation_run_names_test if names_only else validation_run_covers_test
     assert not validate("cargo test -p other --test foo test_x", f"Running {diagnostic}", test)
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize(
+    "command,output,expected",
+    [
+        ("cargo test", 'echo <testcase name="a::tests::test_x"/>', False),
+        ("cargo test", 'log: <testsuite><testcase name="a::tests::test_x"/></testsuite>', False),
+        ("cargo test", '<testsuite><testcase name="a::tests::test_x"/></testsuite> log', False),
+        ("cargo test", '<testcase name="a::tests::test_x"/>', False),
+        ("cargo test", '<testsuites><testcase name="a::tests::test_x"/></testsuites>', False),
+        ("cargo test", '<testsuite><testcase name="a::tests::test_x"/>', False),
+        ("cargo test", '<testsuite><testcase name="a::tests::other"/></testsuite>', False),
+        ("cargo test", '<testsuite><testcase name="b::tests::test_x"/></testsuite>', False),
+        (
+            "cargo test",
+            '<testsuite><testcase classname="a::tests"/><testcase name="test_x"/></testsuite>',
+            False,
+        ),
+        ("cargo test", '<testsuite><testcase classname="a::tests::test_x"/></testsuite>', False),
+        (
+            "cargo test",
+            '<!DOCTYPE testsuite><testsuite><testcase name="a::tests::test_x"/></testsuite>',
+            False,
+        ),
+        (
+            "cargo test",
+            '<!DOCTYPE testsuite [<!ENTITY test "a::tests::test_x">]>'
+            '<testsuite><testcase name="&test;"/></testsuite>',
+            False,
+        ),
+        ("cargo test", '<testsuite><testcase name="a::tests::test_x"/></testsuite>', True),
+        (
+            "cargo test",
+            '<testsuites><testsuite><testcase name="a::tests::test_x"/></testsuite></testsuites>',
+            True,
+        ),
+        (
+            "cargo test",
+            '<testsuite><testcase classname="a::tests" name="test_x"/></testsuite>',
+            True,
+        ),
+        (
+            "cargo test -- --skip a::tests::test_x",
+            '<testsuite><testcase name="a::tests::test_x"/></testsuite>',
+            False,
+        ),
+    ],
+)
+def test_junit_credit_requires_complete_suite(
+    names_only: bool, command: str, output: str, expected: bool
+) -> None:
+    test = AcceptanceTest(
+        reference="crates/example/src/a.rs::test_x",
+        path="crates/example/src/a.rs",
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=("a", "tests"),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    assert validate(command, output, test) is expected
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize("module", [(), ("a", "tests")])
+@pytest.mark.parametrize("result", ["PASS", "FAIL"])
+def test_nextest_progress_counter_keeps_executed_credit(
+    names_only: bool, module: tuple[str, ...], result: str
+) -> None:
+    path = "crates/example/src/a.rs" if module else "crates/example/src/lib.rs"
+    name = "::".join((*module, "test_x"))
+    test = AcceptanceTest(
+        reference=f"{path}::test_x",
+        path=path,
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=module,
+        rust_target=("example", None),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    assert validate("cargo nextest run", f"{result} [ 0.001s] (1/1) example {name}", test)
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize("binary", [None, "root"])
+@pytest.mark.parametrize(
+    "flags,expected",
+    [
+        ("--workspace", True),
+        ("--all-targets", True),
+        ("--tests", True),
+        ("--lib", True),
+        ("-p other -p example", True),
+        ("--package other --package example", True),
+        ("--unknown-selection", False),
+    ],
+)
+def test_broadening_flags_keep_per_test_credit(
+    names_only: bool, binary: str | None, flags: str, expected: bool
+) -> None:
+    path = "crates/example/tests/root.rs" if binary else "crates/example/src/lib.rs"
+    selector = "--test root" if binary else "--lib"
+    test = AcceptanceTest(
+        reference=f"{path}::test_x",
+        path=path,
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=(),
+        rust_target=("example", binary),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    command = f"cargo test -p example {selector} {flags}"
+    assert validate(command, "test test_x ... ok", test) is expected
+    assert not validate(command, "test sibling ... ok", test)

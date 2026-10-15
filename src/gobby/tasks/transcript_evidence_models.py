@@ -56,6 +56,8 @@ class TranscriptValidationRun:
     provider_call_id: str | None = None
     background_job_id: str | None = None
     background_output_path: str | None = None
+    background_monitor_id: str | None = None
+    background_description: str | None = None
     #: The shell tool call's absolute working directory, when the provider recorded one.
     workdir: str | None = None
     #: Why a diagnostic-only observation was removed from task credit.

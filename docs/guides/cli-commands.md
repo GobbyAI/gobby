@@ -118,6 +118,40 @@ Pass `--terminals` to drain the host and its terminals as part of the stop.
 Only explicit shutdown intent drains terminals; the admin `POST /shutdown?terminals=true` and
 `POST /restart?terminals=true` routes are the HTTP equivalents.
 
+#### Applying a gterm upgrade
+
+A gterm upgrade needs no stop, restart, or `--terminals`. After `gobby install
+gterm` puts a new binary in `~/.gobby/bin/`, the daemon notices on its next
+health check (or when it adopts the host at start) that the running host's image differs from the installed one and
+asks the host to upgrade. The host execs the new image in place. Its PID and
+every terminal survive, and each terminal keeps the scrollback of both its
+primary and alternate screens. Full-screen programs such as editors repaint
+once when the new image takes over.
+
+- Input typed during the brief upgrade window is refused with
+  `host_upgrading`; type it again once the pane redraws.
+- An attached `gclient` pane reconnects straight to the host, so it recovers
+  even when the daemon is down for the whole window.
+- When the new image takes over, `~/.gobby/logs/gterm.log` records
+  `gterm host restored ... outcome=Succeeded`. If the new image fails to
+  restore, the host execs its previous image once, which records
+  `gterm host restored ... outcome=Fallback` (see
+  [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
+- An attempt that ends before the exec writes no `gterm host restored` line,
+  and the host reports its outcome only to the daemon: the new image refused
+  its startup check, the host was busy (deferred), or the
+  handover stopped or the exec failed (aborted, rolled back). The host keeps
+  running its current image. The daemon tries a deferred attempt again on a
+  later check. It does not offer a refused, aborted or rolled-back image again
+  until the daemon restarts or a different gterm is installed.
+
+`--terminals` remains the way to end every native terminal. Use it when that is
+the goal, never as a follow-up to an upgrade: it hangs up every pane the
+upgrade just kept. One case still needs it: a host started by a gterm without
+upgrade support never receives the upgrade request, so run
+`gobby restart --terminals` once to replace it. Every host started after that
+upgrades in place.
+
 #### `gterm host`
 
 `gterm host` is the supervised native PTY host the daemon adopts on start.
@@ -180,6 +214,8 @@ gobby restart [--verbose] [--docker] [--terminals] [--wait | --force]
 `--wait`, `--force`, and `--terminals` apply to the stop half exactly as for
 `gobby stop`: without `--terminals` the restarted daemon adopts the surviving
 `gterm host`, and attached `gclient` sessions reconnect to the same terminals.
+A new gterm does not need a restart; see
+[Applying a gterm upgrade](#applying-a-gterm-upgrade).
 
 Before stopping anything, the command proves the start half will succeed: the
 linked-worktree guard, the installed binary set, the schema identity, and a
@@ -1287,7 +1323,7 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-10-10_
+_Last verified: 2026-10-14_
 
 ## Contributor validation
 
