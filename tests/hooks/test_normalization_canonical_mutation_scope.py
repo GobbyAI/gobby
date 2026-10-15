@@ -1346,8 +1346,13 @@ def test_git_branch_checkout_resolves_worktree_scope(
     prefix = f"git -C {directory}" if directory_form == "git_option" else f"cd {directory} && git"
     data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
 
-    assert data["canonical_tool_kind"] == "execute"
+    forced = any(flag in operation.split() for flag in ("-f", "--force", "--discard-changes"))
+    assert data["canonical_tool_kind"] == ("write" if forced else "execute")
     assert data["canonical_file_paths"] == [str(target)]
+    if forced:
+        assert data["canonical_dirty_edit_paths"] == [str(target)]
+        assert data["canonical_git_force_checkout_roots"] == [str(target)]
+        assert data["canonical_git_checkout_mutation"] is True
     assert data["canonical_edit_file_paths"] == []
     assert not data.get("canonical_write_file_paths")
     assert data.get("canonical_repo_mutation_scope_unknown") is None
@@ -1382,11 +1387,14 @@ def test_git_checkout_positional_operands_have_checked_scope(
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_edit_file_paths"] == []
     assert data["canonical_dirty_edit_paths"] == data["canonical_file_paths"]
-    assert (
-        str(directory / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
-    )
     if "-f" in operand.split() or "--force" in operand.split():
+        assert data["canonical_file_paths"] == [str(tmp_path)]
         assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+    else:
+        assert (
+            str(directory / ("." if "." in operand.split() else "a.py"))
+            in data["canonical_file_paths"]
+        )
 
 
 @pytest.mark.parametrize("failure", ["oserror", "timeout", "exit"])
@@ -1456,9 +1464,9 @@ def test_git_checkout_proven_branch_wins_over_file(
     data = _invocation_metadata(
         f"git checkout {'-f ' if forced else ''}a.py", tool_cwd=tmp_path, project_path=tmp_path
     )
-    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_kind"] == ("write" if forced else "execute")
     assert data["canonical_file_paths"] == [str(tmp_path)]
-    assert data["canonical_dirty_edit_paths"] == []
+    assert data["canonical_dirty_edit_paths"] == ([str(tmp_path)] if forced else [])
     assert data["canonical_edit_file_paths"] == []
     if forced:
         assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]

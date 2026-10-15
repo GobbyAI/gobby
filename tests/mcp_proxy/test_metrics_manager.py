@@ -1,9 +1,9 @@
 """Tests for ToolMetricsManager."""
 
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from collections.abc import Iterator
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 

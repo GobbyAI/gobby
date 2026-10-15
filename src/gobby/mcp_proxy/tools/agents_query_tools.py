@@ -762,7 +762,7 @@ def register_agent_query_tools(
         description=(
             "List active agent runs. Defaults to build-wide scope. Pass "
             "scope='parent' or parent_session_id to filter by parent session; "
-            "pass task_id to filter by task; "
+            "pass task_id to filter by task, including its close-review runs; "
             "pass status='running' to match `gobby agents runs list --status running`."
         ),
     )
@@ -830,6 +830,7 @@ def register_agent_query_tools(
                         resolved_parent_id,
                         limit=limit,
                         task_ids=task_ids,
+                        include_close_reviews=True,
                     )
             else:
                 parent_status = cast(AgentRunStatus, status_key)
@@ -845,17 +846,21 @@ def register_agent_query_tools(
                         limit=limit,
                         status=parent_status,
                         task_ids=task_ids,
+                        include_close_reviews=True,
                     )
         elif status_key == "active":
             if task_ids is None:
                 runs = ctx.agent_run_manager.list_active_global(limit=limit)
             else:
-                runs = ctx.agent_run_manager.list_active_global(limit=limit, task_ids=task_ids)
+                runs = ctx.agent_run_manager.list_active_global(
+                    limit=limit, task_ids=task_ids, include_close_reviews=True
+                )
         elif resolved_task_id is not None:
             runs = ctx.agent_run_manager.list_by_status(
                 status=status_key,
                 limit=limit,
                 task_ids=task_ids,
+                include_close_reviews=True,
             )
         elif status_key == "running":
             runs = ctx.agent_run_manager.list_running(limit=limit)

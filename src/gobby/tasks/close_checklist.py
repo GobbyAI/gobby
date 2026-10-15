@@ -15,7 +15,7 @@ from gobby.tasks.close_test_coverage import (
     copy_differing_paths,
     coverage_failure_messages,
     drop_foreign_runs,
-    related_python_source_tests,
+    related_python_source_tests_in_pool,
     uncovered_pytest_paths,
     uncovered_vitest_related_paths,
 )
@@ -42,6 +42,7 @@ from gobby.tasks.criterion_commands import (
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
+    missing_linked_session,
 )
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
@@ -301,7 +302,9 @@ def _evaluate_validation_commands(
     )
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
     source_tests = (
-        related_python_source_tests(changed_paths, base_dir=close_root) if close_root else {}
+        related_python_source_tests_in_pool(changed_paths, base_dir=close_root)
+        if close_root
+        else {}
     )
     # Rootless probes only inspect paths; selection runs in the rooted to_thread call.
     related_tests_required = (
@@ -771,13 +774,27 @@ def _uncredited_runs(evidence: TranscriptEvidence) -> list[dict[str, object]]:
 
 
 def _degraded_message(evidence: TranscriptEvidence) -> str:
-    if not evidence.degraded_capabilities:
-        return ""
-    capabilities = "; ".join(evidence.degraded_capabilities)
-    return (
-        f"Some transcript outcomes were unknown ({capabilities}); unknown results neither satisfy "
-        "nor block the gate. Re-run the command so the provider records a definitive exit status."
-    )
+    unknown: list[str] = []
+    missing: list[str] = []
+    for capability in evidence.degraded_capabilities:
+        if (session_id := missing_linked_session(capability)) is None:
+            unknown.append(capability)
+        else:
+            missing.append(session_id)
+    parts: list[str] = []
+    if unknown:
+        parts.append(
+            f"Some transcript outcomes were unknown ({'; '.join(unknown)}); unknown results "
+            "neither satisfy nor block the gate. Re-run the command so the provider records a "
+            "definitive exit status."
+        )
+    if missing:
+        # Re-running a command cannot restore a deleted session's transcript.
+        parts.append(
+            f"Linked session(s) not found: {', '.join(missing)}; their transcripts "
+            "contributed no validation evidence."
+        )
+    return " ".join(parts)
 
 
 __all__ = [

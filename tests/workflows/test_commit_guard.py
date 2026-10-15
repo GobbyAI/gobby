@@ -450,6 +450,76 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
 
 
 @pytest.mark.asyncio
+async def test_rule3_allows_writes_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    # A git-archive export in a scratchpad carries the project marker but no .git.
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    (export / "a.txt").write_text("exported\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(export / 'a.txt'))}"),
+        h.edit_event(str(export / "a.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkout", ["clone", "worktree"])
+async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path, checkout: str
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # The nested checkout carries no marker, so its writes resolve to the export root.
+    nested = export / "nested"
+    if checkout == "clone":
+        _git(tmp_path, "clone", "-q", str(h.repo), str(nested))
+    else:
+        _git(h.repo, "worktree", "add", "-q", "--detach", str(nested))
+    (nested / "owned.txt").write_text("nested dirt\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(nested / 'owned.txt'))}"),
+        h.edit_event(str(nested / "owned.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_rule3_refuses_directory_write_over_unreadable_subdirectory(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    hidden = export / "hidden"
+    hidden.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # An unreadable subdirectory could hide a nested checkout.
+    hidden.chmod(0)
+    try:
+        result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    finally:
+        hidden.chmod(0o755)
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation",
     [
@@ -1608,10 +1678,10 @@ async def test_unverifiable_foreign_candidate_blocks(guard_harness: GuardHarness
 
 
 @pytest.mark.asyncio
-async def test_shell_git_status_after_external_commit_reconciles_attribution(
+async def test_shell_git_status_after_external_commit_reconciles_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
-    """A commit made outside the hooks is picked up by the next git command the session runs."""
+    """A commit made outside the hooks clears session dirt on the next git command."""
     (guard_harness.repo / "owned.txt").write_text("committed elsewhere\n", encoding="utf-8")
     _git(guard_harness.repo, "add", "--", "owned.txt")
     _git(guard_harness.repo, "commit", "-q", "-m", "external commit", "--", "owned.txt")
@@ -1626,8 +1696,8 @@ async def test_shell_git_status_after_external_commit_reconciles_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio
@@ -2076,7 +2146,7 @@ async def test_dirty_foreign_pathspec_commit_still_blocked_and_entry_retained(
 
 
 @pytest.mark.asyncio
-async def test_successful_owner_commit_releases_clean_checkout_attribution(
+async def test_successful_owner_commit_releases_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
     (guard_harness.repo / "owned.txt").write_text("committed by owner\n", encoding="utf-8")
@@ -2101,8 +2171,8 @@ async def test_successful_owner_commit_releases_clean_checkout_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio

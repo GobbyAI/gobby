@@ -169,6 +169,55 @@ def test_summary_query_skips_detail_metadata_and_freezes_terminal_count(
     assert len(json.dumps(listed, default=str)) < 10_000
 
 
+def test_projections_decode_each_json_column_once_without_redumping(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped the lifecycle payload and resume
+    # metadata, and the row decoders parsed that text again, on every poll (#23359).
+    parent = _register_session(session_manager, sample_project, "decode-parent")
+    child = _register_session(
+        session_manager, sample_project, "decode-child", parent_session_id=parent
+    )
+    metadata = {"execution_mode": "interactive", "sandbox": {"backend": "srt"}}
+    run = agent_manager.create(
+        parent_session_id=parent,
+        child_session_id=child,
+        provider="codex",
+        prompt="decode",
+        resume_metadata_json=metadata,
+    )
+    agent_manager.start(run.id)
+    session_manager.update_session_status(child, "active")
+    TurnLifecycleReducer(session_manager).enter_wait(
+        child, kind="input", token="prompt", evidence=TurnEvidence(source="test")
+    )
+
+    with (
+        patch("json.loads", wraps=json.loads) as loads,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        detail = agent_manager.get(run.id)
+        lifecycle = _only(agent_manager.list_active_for_machine_summary(LOCAL_MACHINE_ID))
+        [listed] = agent_manager.list_by_status_summary("running")
+
+    assert dumps.call_count == 0
+    assert loads.call_count == 6
+    assert detail is not None
+    assert detail.resume_metadata_json == metadata
+    assert lifecycle.resume_metadata_json == {
+        "execution_mode": "interactive",
+        "reconciliation_pending": None,
+        "daemon_stop_resume_phase": None,
+        "allow_closed_task": None,
+        "sandbox": {"backend": "srt"},
+    }
+    assert listed.projection["sandbox"]["backend"] == "srt"
+    for observed in (detail.wait_kind, lifecycle.wait_kind, listed.projection["wait_kind"]):
+        assert observed == "input"
+
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_settled_recovery_scan_allocation_ignores_unrelated_metadata(

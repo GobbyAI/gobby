@@ -193,6 +193,17 @@ def _attribute_path(
     )
 
 
+def _hold_session_dirt(harness: CloseHarness, *, session_id: str, path: str) -> None:
+    """Record ``path`` as live session dirt, the ledger edit ownership judges."""
+    harness.variable_manager.merge_variables(
+        session_id,
+        {
+            "session_dirty_files": [path],
+            "session_dirty_file_checkouts": {str(harness.repo_path): [path]},
+        },
+    )
+
+
 def _create_foreign_attribution(
     harness: CloseHarness,
     *,
@@ -216,6 +227,7 @@ def _create_foreign_attribution(
     )
     task = harness.manager.claim_task(task.id, session.id)
     _attribute_path(harness, session_id=session.id, task=task, path=path)
+    _hold_session_dirt(harness, session_id=session.id, path=path)
     if expired:
         harness.session_manager.update_status(session.id, "expired")
     return session, task
@@ -337,21 +349,13 @@ async def test_clean_linked_target_closes_amid_unowned_foreign_and_expired_dirt(
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
 
 
-@pytest.mark.asyncio
-async def test_released_target_path_reedited_by_foreign_task_does_not_block_close(
-    close_harness: CloseHarness,
-) -> None:
-    path = "shared.py"
-    (close_harness.repo_path / path).write_text("TARGET = True\n", encoding="utf-8")
-    _attribute_path(
-        close_harness,
-        session_id=close_harness.session_id,
-        task=close_harness.task,
-        path=path,
-    )
-    _git(close_harness.repo_path, "add", path)
+def _commit_target_path(harness: CloseHarness, path: str) -> None:
+    """Commit ``path`` as the target task's work, keeping its attribution history."""
+    (harness.repo_path / path).write_text("TARGET = True\n", encoding="utf-8")
+    _attribute_path(harness, session_id=harness.session_id, task=harness.task, path=path)
+    _git(harness.repo_path, "add", path)
     _git(
-        close_harness.repo_path,
+        harness.repo_path,
         "-c",
         "user.name=Gobby Tests",
         "-c",
@@ -362,19 +366,16 @@ async def test_released_target_path_reedited_by_foreign_task_does_not_block_clos
         "-m",
         "target task commit",
     )
-    close_harness.manager.link_commit(
-        close_harness.task.id,
-        _git(close_harness.repo_path, "rev-parse", "HEAD"),
-    )
-    released, remaining = close_harness.variable_manager.release_task_edited_files(
-        close_harness.session_id,
-        close_harness.task.id,
-        [path],
-        checkout_root=str(close_harness.repo_path),
-    )
-    assert released == [path]
-    assert remaining == []
+    harness.manager.link_commit(harness.task.id, _git(harness.repo_path, "rev-parse", "HEAD"))
 
+
+@pytest.mark.asyncio
+async def test_retained_target_path_reedited_by_foreign_task_does_not_block_close(
+    close_harness: CloseHarness,
+) -> None:
+    """Committed target work a live foreign session re-dirties is not the target's dirt."""
+    path = "shared.py"
+    _commit_target_path(close_harness, path)
     _create_foreign_attribution(
         close_harness,
         external_id="later-foreign-owner",
@@ -383,11 +384,50 @@ async def test_released_target_path_reedited_by_foreign_task_does_not_block_clos
     )
     (close_harness.repo_path / path).write_text("FOREIGN = True\n", encoding="utf-8")
 
-    result = await _close_task(close_harness)
+    async with _recorded_clean_proof_paths() as proof_sets:
+        result = await _close_task(close_harness)
 
     assert result["closed"] is True
     assert result["clean_proof"] == {"status": "clean"}
+    assert all(path not in proof for proof in proof_sets)
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("commit_fallback", [False, True])
+async def test_target_path_redirtied_by_owner_blocks_close_despite_foreign_holder(
+    close_harness: CloseHarness,
+    commit_fallback: bool,
+) -> None:
+    """The owner's own live dirt stays in the proof even when a foreign session holds it.
+
+    With ``commit_fallback`` the volatile attribution is gone (fresh claim or
+    recovery), so the path reaches the proof only through the linked commit.
+    """
+    path = "shared.py"
+    _commit_target_path(close_harness, path)
+    if commit_fallback:
+        close_harness.variable_manager.set_variable(
+            close_harness.session_id, "task_edited_files", {}
+        )
+        close_harness.variable_manager.set_variable(
+            close_harness.session_id, "task_edited_file_checkouts", {}
+        )
+    _create_foreign_attribution(
+        close_harness,
+        external_id="concurrent-foreign-owner",
+        path=path,
+        expired=False,
+    )
+    (close_harness.repo_path / path).write_text("OWNER_AGAIN = True\n", encoding="utf-8")
+    _hold_session_dirt(close_harness, session_id=close_harness.session_id, path=path)
+
+    result = await _close_task(close_harness)
+
+    assert result["closed"] is False
+    assert result["error"] == "uncommitted_task_edits"
+    assert result["clean_proof"] == {"status": "dirty", "dirty_paths": [path]}
+    assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
 
 @pytest.mark.asyncio
@@ -408,8 +448,8 @@ async def test_stale_clean_foreign_entry_stays_in_clean_proof_and_releases(
     assert result["clean_proof"] == {"status": "clean"}
     assert frozenset({"target.py"}) in proof_sets
     foreign_vars = close_harness.variable_manager.get_variables(foreign_session.id)
-    assert foreign_vars.get("task_edited_files", {}).get(foreign_task.id) is None
-    assert foreign_vars.get("task_edited_file_checkouts", {}).get(foreign_task.id) is None
+    assert "target.py" not in foreign_vars["session_dirty_files"]
+    assert foreign_vars["task_edited_files"][foreign_task.id] == ["target.py"]
 
 
 @pytest.mark.asyncio

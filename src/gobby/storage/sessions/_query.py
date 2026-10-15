@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -411,32 +412,28 @@ class _QueryMixin:
             return result
 
         placeholders = ",".join(["%s"] * len(session_ids))
+        # One row per (session, role) holding a JSON array, so Python builds and
+        # normalizes a row per role rather than per task (#23359).
         sql = f"""
-            SELECT
-                seq_num,
-                claimed_by_session_id,
-                created_in_session_id,
-                closed_in_session_id
-            FROM tasks
-            WHERE seq_num IS NOT NULL
-              AND (
-                  claimed_by_session_id IN ({placeholders})
-                  OR created_in_session_id IN ({placeholders})
-                  OR closed_in_session_id IN ({placeholders})
-              )
-            ORDER BY seq_num
+            SELECT session_id, role, json_agg(seq_num ORDER BY seq_num)::text AS seq_nums
+            FROM (
+                SELECT claimed_by_session_id AS session_id, 'claimed' AS role, seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND claimed_by_session_id IN ({placeholders})
+                UNION ALL
+                SELECT created_in_session_id, 'created', seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND created_in_session_id IN ({placeholders})
+                UNION ALL
+                SELECT closed_in_session_id, 'closed', seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND closed_in_session_id IN ({placeholders})
+            ) AS refs
+            GROUP BY session_id, role
         """  # nosec B608
-        rows = self.db.fetchall(sql, tuple(session_ids) * 3)
-
-        for row in rows:
-            seq_num = row["seq_num"]
-            for role, col in (
-                ("claimed", "claimed_by_session_id"),
-                ("created", "created_in_session_id"),
-                ("closed", "closed_in_session_id"),
-            ):
-                sid = row[col]
-                if sid in result:
-                    result[sid][role].append(seq_num)
+        for row in self.db.fetchall(sql, tuple(session_ids) * 3):
+            refs = result.get(row["session_id"])
+            if refs is not None:
+                refs[row["role"]] = json.loads(row["seq_nums"])
 
         return result
