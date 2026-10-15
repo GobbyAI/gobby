@@ -32,6 +32,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptTaskClaim,
+    missing_linked_session_capability,
 )
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_sync import transcript_sync_point
@@ -261,7 +262,7 @@ async def derive_close_transcript_evidence(
             logger.debug("Skipping close evidence for missing linked session %s", session_id)
             evidence.append(
                 TranscriptEvidence(
-                    degraded_capabilities=(f"Linked session {session_id} was not found",)
+                    degraded_capabilities=(missing_linked_session_capability(session_id),)
                 )
             )
             continue
@@ -392,7 +393,10 @@ async def derive_close_transcript_evidence(
                     selection_history=variables.get("task_selection_history"),
                 )
                 if presence is not None:
-                    session_evidence = _while_on_task(
+                    # Each off-task run rebuild re-classifies its command, so a long
+                    # session's filter stays off the event loop (#22708, #24183).
+                    session_evidence = await asyncio.to_thread(
+                        _while_on_task,
                         session_evidence,
                         presence,
                         keep_edits=session_id == owner_session_id,
@@ -565,8 +569,11 @@ def _while_on_task(
 ) -> TranscriptEvidence:
     """Keep only the runs and edits a linked session made while working this task.
 
-    ``keep_edits`` keeps every edit: an owner edit to the task's files stales its
-    earlier green even while another claim was active or no claim call marked a return.
+    ``keep_edits`` keeps the owner's edits at any time: an owner edit to the task's
+    files stales its earlier green even while another claim was active or no claim
+    call marked a return. ``temporally_scoped_paths``, the shared paths another task
+    also edited in this checkout, are carved out: selection history attributes each
+    of their edits by timestamp, so they count only while on this task.
     """
 
     def on_task(value: datetime) -> bool:
