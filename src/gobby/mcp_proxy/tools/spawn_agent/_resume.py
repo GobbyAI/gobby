@@ -3,13 +3,19 @@
 from typing import Any
 
 from gobby.agents.resume_executor import SUPPORTED_RESUME_PROVIDERS
-from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
+from gobby.agents.resume_placement import split_target
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.workflows.state_manager import SessionVariableManager
 
 _RETYPE_REFUSED = frozenset({"assistant", "orchestrator", "default"})
+# Bounds the resume-chain walk for a placement recorded before resumes dropped it.
+_RESUME_CHAIN_LIMIT = 32
+# Recorded split axes back to the ``placement`` input spelling.
+_INPUT_AXES = {"horizontal": "right", "vertical": "down", "balanced": "balanced"}
 
 
 def resolve_resume_target(
@@ -62,6 +68,71 @@ def resolve_resume_target(
             f"agent={stored_type!r}, not {agent_type!r}"
         )
     return session
+
+
+class ResumeSeatGone(LookupError):
+    """A placed seat's recorded pane and tab are both gone, so it has nowhere to return."""
+
+
+def _recorded_placement(run_storage: Any, run: AgentRun) -> dict[str, Any] | None:
+    """The newest placement recorded along the seat's resume chain, newest run first."""
+    seen: set[str] = set()
+    current: AgentRun | None = run
+    while current is not None and current.id not in seen and len(seen) < _RESUME_CHAIN_LIMIT:
+        seen.add(current.id)
+        metadata = current.resume_metadata_json or {}
+        if isinstance(metadata.get("placement"), dict):
+            return dict(metadata["placement"])
+        previous = metadata.get("resume_previous_run_id")
+        current = run_storage.get(previous) if isinstance(previous, str) else None
+    return None
+
+
+def resumed_seat_placement(
+    session: Session, run_storage: Any, workspaces: WorkspaceManager
+) -> dict[str, Any] | None:
+    """The ``placement`` input that returns a resumed seat to its pane's tab.
+
+    The previous run's own pane comes first, even dead: the successor splits in beside
+    it and inherits its slot when the sweep collapses it. Otherwise the newest placement
+    recorded along the resume chain names the split target, a pane left in its tab, or
+    the tab a tab-kind seat opened. None means the seat was never placed.
+    """
+    run = run_storage.get(session.agent_run_id) if session.agent_run_id else None
+    if run is None:
+        return None
+    snapshot = _recorded_placement(run_storage, run)
+    recorded_title = snapshot.get("title") if snapshot else None
+    own = workspaces.get_pane_for_terminal(run.terminal_id) if run.terminal_id else None
+    if own is not None:
+        title = own.label or recorded_title or session.title or run.agent_name or "agent"
+        return {"split": {"pane": own.id, "axis": "down", "title": title}}
+    if snapshot is None or not isinstance(recorded_title, str):
+        return None
+    workspace_id = snapshot.get("workspace_id")
+    if snapshot.get("kind") == "tab" and isinstance(workspace_id, str):
+        tab = next(
+            (tab for tab in workspaces.list_tabs(workspace_id) if tab.title == recorded_title),
+            None,
+        )
+        if tab is None:
+            return {"tab": {"workspace": workspace_id, "title": recorded_title}}
+        snapshot = {"workspace_id": workspace_id, "tab_id": tab.id, "axis": "vertical"}
+    target = split_target(workspaces, snapshot)
+    if target is None:
+        raise ResumeSeatGone(
+            f"Resume target {session.id} was seated in a pane and tab that are both gone; "
+            "pass placement to seat it"
+        )
+    axis = snapshot.get("axis")
+    split: dict[str, Any] = {
+        "pane": target,
+        "axis": _INPUT_AXES.get(axis, "down") if isinstance(axis, str) else "down",
+        "title": recorded_title,
+    }
+    if axis == "balanced":
+        split |= {"columns": snapshot.get("columns", 80), "rows": snapshot.get("rows")}
+    return {"split": split}
 
 
 def resume_isolation(session: Session, run_storage: Any) -> tuple[str | None, str | None]:

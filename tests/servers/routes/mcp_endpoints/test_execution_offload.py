@@ -169,6 +169,28 @@ async def test_call_route_can_bypass_result_offload(
     assert default["result"]["result_id"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_server_tool_route_returns_cli_internal_results_inline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """`gobby workspaces show` and the other CLI readers render the whole payload."""
+    server, payload = _offload_server(temp_db)
+    scoped = {"X-Gobby-Project-Id": sample_project["id"]}
+    cli = _request({})
+    cli.headers = scoped | {"X-Gobby-CLI-Internal": "1"}
+    other = _request({})
+    other.headers = scoped
+
+    inline = await mcp_proxy("gobby-large", "list_large", cli, server)
+    default = await mcp_proxy("gobby-large", "list_large", other, server)
+
+    assert inline["result"] == payload
+    assert default["result"]["offloaded"] is True
+    assert default["result"]["result_id"]
+
+
 def test_body_project_scope_releases_the_earlier_seeded_project_token(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

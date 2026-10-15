@@ -361,7 +361,7 @@
   },
   "MCP gobby-workspaces:close_pane": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:229 (create_workspaces_registry.<locals>.close_pane)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:242 (create_workspaces_registry.<locals>.close_pane)`."
   },
   "MCP gobby-workspaces:close_tab": {
     "status": "proxied",
@@ -393,39 +393,43 @@
   },
   "MCP gobby-workspaces:move_pane": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:233 (create_workspaces_registry.<locals>.move_pane)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:246 (create_workspaces_registry.<locals>.move_pane)`."
+  },
+  "MCP gobby-workspaces:move_tab": {
+    "status": "proxied",
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:216 (create_workspaces_registry.<locals>.move_tab)`."
   },
   "MCP gobby-workspaces:read_pane": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:323 (create_workspaces_registry.<locals>.read_pane)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:336 (create_workspaces_registry.<locals>.read_pane)`."
   },
   "MCP gobby-workspaces:rebalance_tab": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:251 (create_workspaces_registry.<locals>.rebalance_tab)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:264 (create_workspaces_registry.<locals>.rebalance_tab)`."
   },
   "MCP gobby-workspaces:rename_workspace_item": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:262 (create_workspaces_registry.<locals>.rename_workspace_item)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:275 (create_workspaces_registry.<locals>.rename_workspace_item)`."
   },
   "MCP gobby-workspaces:send_pane_keys": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:304 (create_workspaces_registry.<locals>.send_pane_keys)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:317 (create_workspaces_registry.<locals>.send_pane_keys)`."
   },
   "MCP gobby-workspaces:send_text": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:285 (create_workspaces_registry.<locals>.send_text)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:298 (create_workspaces_registry.<locals>.send_text)`."
   },
   "MCP gobby-workspaces:split_pane": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:216 (create_workspaces_registry.<locals>.split_pane)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:229 (create_workspaces_registry.<locals>.split_pane)`."
   },
   "MCP gobby-workspaces:swap_panes": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:247 (create_workspaces_registry.<locals>.swap_panes)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:260 (create_workspaces_registry.<locals>.swap_panes)`."
   },
   "MCP gobby-workspaces:wait_for_pane_output": {
     "status": "proxied",
-    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:329 (create_workspaces_registry.<locals>.wait_for_pane_output)`."
+    "note": "Blocked on #21565 Daemon-side gterm adoption and terminal WS: port the Python workspace inventory, authorization and operation dispatch to Rust; native gterm operations alone do not migrate this registration; registered Python handler `src/gobby/mcp_proxy/tools/workspaces/registry.py:342 (create_workspaces_registry.<locals>.wait_for_pane_output)`."
   },
   "MCP gobby-worktrees:abandon_worktree": {
     "status": "proxied",

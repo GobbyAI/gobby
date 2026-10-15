@@ -61,7 +61,12 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._request import build_spawn_request
-from ._resume import resolve_resume_target, resume_isolation
+from ._resume import (
+    ResumeSeatGone,
+    resolve_resume_target,
+    resume_isolation,
+    resumed_seat_placement,
+)
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import (
     _normalize_optional_model,
@@ -418,6 +423,17 @@ async def spawn_agent_impl(
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
+    if placement is None and resume_target is not None and agent_pane_reserver is not None:
+        # A resumed seat returns to its lane tab; only a never-placed seat launches unplaced.
+        try:
+            placement = await asyncio.to_thread(
+                resumed_seat_placement,
+                resume_target,
+                runner.run_storage,
+                agent_pane_reserver.workspaces,
+            )
+        except ResumeSeatGone as exc:
+            return {"success": False, "placement_error": "not_found", "error": str(exc)}
     placed = await preflight_placement(
         placement,
         reserver=agent_pane_reserver,

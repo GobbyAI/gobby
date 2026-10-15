@@ -687,7 +687,8 @@ def create_spawn_agent_registry(
             lane=(lane or "").strip() or None,
             agent_pane_reserver=(
                 agent_pane_reserver_resolver()
-                if placement is not None and agent_pane_reserver_resolver is not None
+                if (placement is not None or resume_session_id)
+                and agent_pane_reserver_resolver is not None
                 else None
             ),
             project_context_authoritative=project_context_authoritative,

@@ -188,6 +188,11 @@ class AgentPaneReserver:
         self._publish = publish
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def workspaces(self) -> WorkspaceManager:
+        """The workspace store placements resolve against, for re-placing a resumed seat."""
+        return self._workspaces
+
     async def preflight(
         self, actor: str, project_id: str, placement: AgentPlacement
     ) -> ResolvedPlacement:
