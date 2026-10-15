@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +23,7 @@ from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.utils.daemon_git import GitResult, GitTimeout, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     active_owned_dirty_paths,
@@ -404,6 +404,38 @@ async def test_unrelated_history_merge_exempts_everything_it_brings(
     _git(h.repo, "add", "conflict.txt")
     result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
     assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exit-128", "timeout"])
+async def test_merge_base_failure_fails_closed(guard_harness: GuardHarness, failure: str) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "switch", "-q", "-c", "incoming")
+    _commit_files(h.repo, "theirs", {"conflict.txt": "theirs\n"})
+    _git(h.repo, "switch", "-q", base)
+    _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
+    _git_conflict(h.repo, "merge", "--no-edit", "incoming")
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    real_run = daemon_git.run
+    faked: list[tuple[str, ...]] = []
+
+    async def git_run(args: Sequence[str], **kwargs: Any) -> GitResult:
+        argv = ("git", *args)
+        if list(args[-3:]) != ["merge-base", "HEAD", "MERGE_HEAD"]:
+            return await real_run(args, **kwargs)
+        faked.append(argv)
+        if failure == "timeout":
+            return GitTimeout("timeout", argv, 10.0)
+        return GitFailed("failed", argv, 128, "", "fatal: injected merge-base failure")
+
+    with patch.object(daemon_git, "run", side_effect=git_run):
+        result = await h.handler._evaluate_rules(h.edit_event("outside.txt"))
+
+    assert faked
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "git merge-base failed" in result.reason
 
 
 @pytest.mark.asyncio
