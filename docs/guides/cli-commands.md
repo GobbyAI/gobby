@@ -132,10 +132,18 @@ once when the new image takes over.
   `host_upgrading`; type it again once the pane redraws.
 - An attached `gclient` pane reconnects straight to the host, so it recovers
   even when the daemon is down for the whole window.
-- `~/.gobby/logs/gterm.log` records each attempt as
-  `gterm host restored ... outcome=Succeeded`, or `outcome=Fallback` when the
-  host went back to its previous image (see
+- When the new image takes over, `~/.gobby/logs/gterm.log` records
+  `gterm host restored ... outcome=Succeeded`. If the new image fails to
+  restore, the host execs its previous image once, which records
+  `gterm host restored ... outcome=Fallback` (see
   [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
+- An attempt that ends before the exec writes no `gterm host restored` line,
+  and the host reports its outcome only to the daemon: the new image refused
+  its startup check, the host was busy (deferred), or the
+  handover stopped or the exec failed (aborted, rolled back). The host keeps
+  running its current image. The daemon tries a deferred attempt again on a
+  later check. It does not offer a refused, aborted or rolled-back image again
+  until the daemon restarts or a different gterm is installed.
 
 `--terminals` remains the way to end every native terminal. Use it when that is
 the goal, never as a follow-up to an upgrade: it hangs up every pane the
