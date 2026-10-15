@@ -26,7 +26,7 @@ from gobby.tasks.tdd_evidence import (
     evaluate_tdd_evidence,
 )
 from gobby.tasks.tdd_paths import is_test_convention_path
-from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,

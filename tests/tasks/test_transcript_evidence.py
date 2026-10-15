@@ -42,9 +42,9 @@ from gobby.tasks.transcript_evidence import (
     _derive_transcript_evidence_sync,
     _resolve_transcript_path,
     derive_transcript_evidence,
-    merge_transcript_evidence,
     select_window_raw_lines,
 )
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,

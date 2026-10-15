@@ -31,7 +31,11 @@ from gobby.workflows.git_commit_parsing import (
     parse_git_commit_invocations,
     resolve_commit_inspect_cwd,
 )
-from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
+from gobby.workflows.ledger_reconcile import (
+    SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
+    SESSION_DIRTY_FILES_VARIABLE,
+    session_dirty_file_set_for_checkout,
+)
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -383,7 +387,15 @@ def _live_path_owners(
     owners: dict[str, list[ForeignPathOwner]] = {}
     for row in rows:
         owner_session_id = str(row["session_id"])
-        variables = variable_manager.get_variables(owner_session_id)
+        variables = variable_manager.get_variable_subset(
+            owner_session_id,
+            (
+                SESSION_DIRTY_FILES_VARIABLE,
+                SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
+                "claimed_tasks",
+                "task_edited_file_checkouts",
+            ),
+        )
         held = session_dirty_file_set_for_checkout(variables, checkout_root)
         if paths is not None:
             held = overlapping_task_edit_paths(held, paths)
