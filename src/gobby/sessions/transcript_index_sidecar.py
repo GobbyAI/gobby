@@ -225,12 +225,12 @@ def _read_checkpoint(sidecar: str) -> dict[str, Any]:
 
 
 def _write_checkpoint(
-    sidecar: str, payload: dict[str, Any], index: TranscriptIndex, journal_size: int
+    sidecar: str, payload: dict[str, Any], groups: int, parsed_boundaries: int, journal_size: int
 ) -> None:
     checkpoint = {key: payload[key] for key in _CHECKPOINT_FIELDS}
     checkpoint.update(
-        groups=len(index.boundaries),
-        parsed_boundaries=len(index.parsed_boundaries),
+        groups=groups,
+        parsed_boundaries=parsed_boundaries,
         journal_size=journal_size,
     )
     temp_name: str | None = None
@@ -253,6 +253,38 @@ def _write_checkpoint(
                 os.unlink(temp_name)
             except OSError:
                 pass
+
+
+def _replace_sidecar(
+    sidecar: str, payload: dict[str, Any], groups: int, parsed_boundaries: int
+) -> None:
+    """Install a full base atomically, then empty the journal behind it."""
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=os.path.dirname(sidecar),
+            prefix=f".{os.path.basename(sidecar)}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_name = handle.name
+            json.dump(payload, handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, sidecar)
+        temp_name = None
+    finally:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+    with open(sidecar + ".journal", "wb") as handle:
+        handle.flush()
+        os.fsync(handle.fileno())
+    _write_checkpoint(sidecar, payload, groups, parsed_boundaries, 0)
 
 
 def _replay_journal(sidecar: str, payload: dict[str, Any]) -> int:
@@ -591,6 +623,7 @@ def load_index_sidecar(
     try:
         with _sidecar_lock(sidecar):
             with open(sidecar, encoding="utf-8") as handle:
+                base_size = os.fstat(handle.fileno()).st_size
                 payload = json.load(handle)
             if (
                 not isinstance(payload, dict)
@@ -608,6 +641,14 @@ def load_index_sidecar(
                 or len(payload["parsed_boundaries"]) != checkpoint["parsed_boundaries"]
             ):
                 return None
+            # Every journal line repeats the whole parser state, so replay cost
+            # outgrows the base. Fold it in once it does; the kept generation
+            # lets resident holders go on appending (#23359).
+            if journal_size > base_size:
+                _replace_sidecar(
+                    sidecar, payload, checkpoint["groups"], checkpoint["parsed_boundaries"]
+                )
+                journal_size = 0
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -655,7 +696,6 @@ def persist_index_sidecar(path: str, index: TranscriptIndex) -> None:
     sidecar = _sidecar_path(path)
     directory = os.path.dirname(sidecar)
     os.makedirs(directory, exist_ok=True)
-    temp_name: str | None = None
     try:
         with _sidecar_lock(sidecar):
             state = _persistence_state(index)
@@ -718,39 +758,23 @@ def persist_index_sidecar(path: str, index: TranscriptIndex) -> None:
                     handle.write((json.dumps(payload, separators=(",", ":")) + "\n").encode())
                     handle.flush()
                     os.fsync(handle.fileno())
-                    _write_checkpoint(sidecar, payload, index, handle.tell())
+                    _write_checkpoint(
+                        sidecar,
+                        payload,
+                        len(index.boundaries),
+                        len(index.parsed_boundaries),
+                        handle.tell(),
+                    )
                     _attach_state(index, payload, handle.tell())
                 return
             payload = _index_to_payload(path, index)
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=directory,
-                prefix=f".{os.path.basename(sidecar)}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temp_name = handle.name
-                json.dump(payload, handle, separators=(",", ":"))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, sidecar)
-            temp_name = None
-            with open(sidecar + ".journal", "wb") as handle:
-                handle.flush()
-                os.fsync(handle.fileno())
-            _write_checkpoint(sidecar, payload, index, 0)
+            _replace_sidecar(sidecar, payload, len(index.boundaries), len(index.parsed_boundaries))
             _attach_state(index, payload, 0)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         logger.debug(
             "Failed to persist transcript index sidecar",
             extra={"sidecar_path": sidecar, "error": str(exc)},
         )
-        if temp_name:
-            try:
-                os.unlink(temp_name)
-            except OSError:
-                pass
 
 
 def clear_index_cache() -> None:

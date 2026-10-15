@@ -188,6 +188,56 @@ async def test_partial_journal_fails_closed_and_full_build_compacts_it(
 
 
 @pytest.mark.asyncio
+async def test_cold_load_folds_an_outgrown_journal_and_resident_appends_continue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each journal line repeats the parser state, so replay outgrows the base (#23359)."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    indexes.clear_index_cache()
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(_message(0))
+    await _read(path)
+    base = Path(sidecars._sidecar_path(str(path)))
+    journal = Path(str(base) + ".journal")
+    for number in range(1, 40):
+        with path.open("a") as handle:
+            handle.write(_message(number))
+        resident = await _read(path)
+        if journal.stat().st_size > base.stat().st_size:
+            break
+    assert journal.stat().st_size > base.stat().st_size
+    generation = sidecars._read_checkpoint(str(base))["generation"]
+
+    st = path.stat()
+    folded = sidecars.load_index_sidecar(
+        str(path),
+        "claude",
+        "journal-test",
+        seek_mode="byte",
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+    assert folded is not None
+    assert asdict(folded) == asdict(resident)
+    assert journal.read_bytes() == b""
+    checkpoint = sidecars._read_checkpoint(str(base))
+    assert (checkpoint["generation"], checkpoint["journal_size"]) == (generation, 0)
+
+    with path.open("a") as handle:
+        handle.write(_message(number + 1))
+    grown = await _read(path)
+    assert journal.stat().st_size > 0, "resident append stopped persisting after the fold"
+
+    indexes.clear_index_cache()
+    with patch.object(
+        indexes, "build_index_from_file", wraps=indexes.build_index_from_file
+    ) as build:
+        replayed = await _read(path)
+    assert build.call_count == 0
+    assert asdict(replayed) == asdict(grown)
+
+
+@pytest.mark.asyncio
 async def test_processor_catches_up_after_reader_advances_the_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
