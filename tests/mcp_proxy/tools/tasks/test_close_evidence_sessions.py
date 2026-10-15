@@ -111,6 +111,7 @@ async def test_legacy_linked_edits_require_registered_task_checkout_proof(
         20,
         "red",
         command,
+        "________________ test_named ________________\n"
         f"E   AssertionError\n{test_path}:2: AssertionError\nFAILED {test_path}::test_named",
         1,
     )
@@ -862,6 +863,8 @@ async def test_owner_commit_fallback_credits_test_edits_despite_ignored_checkout
 def _claude_shell_records(
     start: datetime, offset: int, tool_id: str, command: str, output: str, exit_code: int
 ) -> list[dict[str, Any]]:
+    # Claude Bash returns text; failed calls carry their status in the first line.
+    content = f"Exit code {exit_code}\n{output}" if exit_code else output
     return [
         {
             "type": "assistant",
@@ -887,7 +890,8 @@ def _claude_shell_records(
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_id,
-                        "content": {"exit_code": exit_code, "stdout": output},
+                        "content": content,
+                        "is_error": bool(exit_code),
                     }
                 ],
             },
@@ -1036,6 +1040,13 @@ async def test_transferred_task_credits_released_test_history_without_foreign_ta
             owner_used_commit_fallback=True,
         )
 
+    red_run = evidence.validation_runs[0]
+    assert red_run.exit_code == 100
+    assert red_run.output is not None
+    assert (
+        f"FAIL [0.01s] gobby-client::host_upgrade_recovery {names[0]}"
+        in red_run.output.splitlines()
+    )
     result = evaluate_tdd_evidence(tests, evidence)
     validation = evaluate_validation_commands(
         task_category="code",
