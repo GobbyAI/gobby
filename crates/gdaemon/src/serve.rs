@@ -44,6 +44,70 @@ const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
 /// First byte of a TLS record carrying a handshake (a ClientHello).
 const TLS_HANDSHAKE: u8 = 0x16;
 
+/// Soft `RLIMIT_NOFILE` target, matching the Python runner's `_raise_fd_limit`.
+#[cfg(unix)]
+const NOFILE_TARGET: libc::rlim_t = 10240;
+
+/// Raise the soft `RLIMIT_NOFILE` toward `target`, capped by the hard limit.
+/// launchd starts the front door at 256 and every proxied connection holds two
+/// descriptors. Returns the soft limit before and after.
+#[cfg(unix)]
+fn raise_nofile_limit(target: libc::rlim_t) -> std::io::Result<(libc::rlim_t, libc::rlim_t)> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid, writable rlimit for getrlimit to fill.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let before = limit.rlim_cur;
+    // RLIM_INFINITY is the largest rlim_t, so `min` also covers an unlimited hard limit.
+    let raised = target.min(limit.rlim_max);
+    if before >= raised {
+        return Ok((before, before));
+    }
+    limit.rlim_cur = raised;
+    // SAFETY: `limit` is an initialized rlimit whose soft value does not exceed its hard value.
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((before, raised))
+}
+
+/// Pause after a transient accept failure so descriptors or buffers can drain.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+
+/// Minimum spacing between transient accept-failure warnings.
+const ACCEPT_WARNING_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Accept failures caused by resource exhaustion or one aborted connection; the
+/// listener itself is still usable, so the loop backs off and keeps accepting.
+fn transient_accept_error(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS)
+    ) {
+        return true;
+    }
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::OutOfMemory
+    )
+}
+
+/// The accept half of a listener; tests substitute one that injects errors.
+trait AcceptSource: Send + 'static {
+    fn accept(&self) -> impl Future<Output = std::io::Result<(TcpStream, SocketAddr)>> + Send;
+}
+
+impl AcceptSource for TcpListener {
+    fn accept(&self) -> impl Future<Output = std::io::Result<(TcpStream, SocketAddr)>> + Send {
+        TcpListener::accept(self)
+    }
+}
+
 /// A bound public listener and the loopback backend it proxies to.
 pub struct PublicListener {
     pub listener: TcpListener,
@@ -57,6 +121,12 @@ pub fn run() -> Result<()> {
     use rand::RngCore;
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
+    match raise_nofile_limit(NOFILE_TARGET) {
+        Ok((before, after)) => eprintln!("gdaemon serve: fd soft limit {before} -> {after}"),
+        Err(error) => {
+            eprintln!("gdaemon serve: warning: could not raise the fd soft limit: {error}")
+        }
+    }
     let native = if bootstrap.mode == RunMode::Node {
         None
     } else {
@@ -373,12 +443,32 @@ pub async fn serve_doors(
 /// peek and TLS handshake run in each connection's own task, under
 /// [`PREAUTH_DEADLINE`], so a stalled peer cannot hold up the listener.
 async fn accept(
-    listener: TcpListener,
+    listener: impl AcceptSource,
     front_door: FrontDoor,
     acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
+    let mut last_warning: Option<std::time::Instant> = None;
+    let mut suppressed = 0u64;
     loop {
-        let (stream, peer) = listener.accept().await.context("accept failed")?;
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) if transient_accept_error(&error) => {
+                if last_warning.is_none_or(|at| at.elapsed() >= ACCEPT_WARNING_INTERVAL) {
+                    eprintln!(
+                        "gdaemon serve: accept failed, retrying in {}ms \
+                         ({suppressed} similar failures suppressed): {error}",
+                        ACCEPT_BACKOFF.as_millis()
+                    );
+                    last_warning = Some(std::time::Instant::now());
+                    suppressed = 0;
+                } else {
+                    suppressed += 1;
+                }
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                continue;
+            }
+            Err(error) => return Err(error).context("accept failed"),
+        };
         let front_door = front_door.clone();
         let acceptor = acceptor.clone();
         tokio::spawn(async move {
@@ -500,5 +590,112 @@ mod tests {
             (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT)
         );
         assert!(bootstrap.front_door.enabled);
+    }
+
+    /// A listener whose first `emfiles` accepts fail with EMFILE.
+    #[cfg(unix)]
+    struct ExhaustedListener {
+        listener: TcpListener,
+        emfiles: std::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(unix)]
+    impl AcceptSource for ExhaustedListener {
+        fn accept(&self) -> impl Future<Output = std::io::Result<(TcpStream, SocketAddr)>> + Send {
+            use std::sync::atomic::Ordering;
+            let exhausted = self
+                .emfiles
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok();
+            async move {
+                if exhausted {
+                    return Err(std::io::Error::from_raw_os_error(libc::EMFILE));
+                }
+                self.listener.accept().await
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn accept_loop_serves_after_transient_emfile() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let auth = Arc::new(AuthState::new(
+            "test-secret".into(),
+            None,
+            Default::default(),
+        )?);
+        let state = FrontDoorState::new("127.0.0.1:1".parse()?, BackendState::Down, auth);
+        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+        let exhausted = ExhaustedListener {
+            listener,
+            emfiles: 2.into(),
+        };
+        let mut accept_loop = tokio::spawn(accept(exhausted, FrontDoor::new(state, table), None));
+
+        let round_trip = async {
+            let mut client = TcpStream::connect(addr).await?;
+            client
+                .write_all(
+                    b"GET /api/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .await?;
+            let mut response = String::new();
+            client.read_to_string(&mut response).await?;
+            anyhow::Ok(response)
+        };
+        let response = tokio::select! {
+            biased;
+            finished = &mut accept_loop => panic!("accept loop exited on EMFILE: {finished:?}"),
+            response = tokio::time::timeout(Duration::from_secs(10), round_trip) => response??,
+        };
+
+        assert!(response.starts_with("HTTP/1.1 "), "{response}");
+        accept_loop.abort();
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn serve_startup_raises_the_launchd_fd_soft_limit() {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `limit` is a valid, writable rlimit for getrlimit to fill.
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+            0
+        );
+        assert!(
+            limit.rlim_max > 256,
+            "hard limit {} leaves no room",
+            limit.rlim_max
+        );
+        limit.rlim_cur = 256;
+        // SAFETY: `limit` is initialized and lowers only the soft value, which is
+        // always permitted; nextest runs this test in its own process.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+
+        let (before, after) = raise_nofile_limit(NOFILE_TARGET).expect("raise fd limit");
+
+        // SAFETY: as above for getrlimit.
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+            0
+        );
+        assert_eq!(before, 256);
+        assert_eq!(after, NOFILE_TARGET.min(limit.rlim_max));
+        assert_eq!(limit.rlim_cur, after);
+        assert!(
+            limit.rlim_cur > 256,
+            "soft limit stayed at {}",
+            limit.rlim_cur
+        );
     }
 }
