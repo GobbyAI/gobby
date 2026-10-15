@@ -12,6 +12,7 @@ from gobby.agents.sandbox_reaper import reap_sandbox_run_roots, record_sandbox_r
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.storage.attention import run_attention_entry_id
 from gobby.storage.hub.operation_deadline import detached_database_operation_deadline
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -127,6 +128,7 @@ class TerminalResourceCleaner:
             phase_started = now
 
         parking = run.terminal_reason == "daemon_stop" and not force_full_cleanup
+        on_this_machine = run.machine_id == require_machine_id()
         session_id = cleanup_session_id
         if session_id is None:
             session_id = run.child_session_id
@@ -175,18 +177,19 @@ class TerminalResourceCleaner:
                 os.close(fd)
             except OSError:
                 pass
-        try:
-            await self._close_tmux_session(run)
-        except Exception as exc:
-            # Finalisation must survive a tmux or storage error here; the
-            # sweep retries any row left unsettled.
-            logger.warning(
-                "Failed to close tmux session for terminal agent %s: %s",
-                run.id,
-                type(exc).__name__,
-            )
-        finish_phase("tmux")
-        if not parking:
+        if on_this_machine:
+            try:
+                await self._close_tmux_session(run)
+            except Exception as exc:
+                # Finalisation must survive a tmux or storage error here; the
+                # sweep retries any row left unsettled.
+                logger.warning(
+                    "Failed to close tmux session for terminal agent %s: %s",
+                    run.id,
+                    type(exc).__name__,
+                )
+            finish_phase("tmux")
+        if on_this_machine and not parking:
             try:
                 try:
                     await reap_srt_runner_process_tree(run.id)
@@ -356,7 +359,10 @@ class TerminalResourceCleaner:
 
     async def cleanup_terminal_tmux_sessions(self) -> int:
         """Close tmux sessions left behind for already-terminal agent runs."""
-        runs = await self._run_db(self._agent_run_manager.list_terminal_with_tmux)
+        runs = await self._run_db(
+            self._agent_run_manager.list_terminal_with_tmux,
+            require_machine_id(),
+        )
         closed = 0
         for run in runs:
             if await self._close_tmux_session(run):
