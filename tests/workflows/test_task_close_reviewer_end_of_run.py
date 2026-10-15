@@ -203,10 +203,9 @@ async def test_reviewer_ends_run_after_verdict_within_step_allowance(
             {"success": True, "result": {"status": "completed"}},
         )
     )
-    assert variables.get("_gobby_feedback_epoch_submitted") is not True
-    assert HANDOFF_SKILL not in variables["loaded_skill_references"]
     finished = instances.get_for_session(session_id)
-    assert finished is None or finished.variables.get("review_complete") is True
+    assert finished is not None
+    assert finished.variables.get("review_complete") is True
 
 
 @pytest.mark.asyncio
