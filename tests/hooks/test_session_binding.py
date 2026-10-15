@@ -69,15 +69,18 @@ def _refuse_foreign_registration(**kwargs: Any) -> str:
 @pytest.mark.parametrize(
     ("row_machine", "event_machine", "binds"),
     [
-        (OTHER, None, True),
-        (OTHER, "", True),
-        (OTHER, HUB, True),
-        (None, HUB, True),
+        (HUB, HUB, True),
         (NODE, NODE, True),
-        (OTHER, NODE, False),
+        (NODE, HUB, False),
+        (OTHER, HUB, False),
         (HUB, NODE, False),
+        (OTHER, NODE, False),
+        (None, HUB, False),
+        ("", HUB, False),
         (None, NODE, False),
-        ("", NODE, False),
+        (OTHER, None, False),
+        (OTHER, "", False),
+        (None, None, False),
     ],
 )
 def test_binding_predicate(row_machine: str | None, event_machine: str | None, binds: bool) -> None:
@@ -166,6 +169,37 @@ def test_same_machine_precreated_row_binds(
     manager.update.assert_called_once_with("node-precreated", external_id="node-external")
     assert pre_created.call_args.kwargs["existing_session"] is own
     manager.register_session.assert_not_called()
+
+
+def test_local_hook_skips_node_rows(
+    mock_dependencies: dict[str, Any],
+    mock_empty_session_variable_manager: MagicMock,
+) -> None:
+    handlers, manager = _start_handlers(mock_dependencies)
+    node_row = _row(NODE, id="node-precreated")
+    manager.get.side_effect = lambda ref: node_row if ref == "node-precreated" else None
+    event = make_event(
+        HookEventType.SESSION_START,
+        session_id="hub-external",
+        data={
+            "source": "resume",
+            "cwd": NODE_CWD,
+            "terminal_context": {"gobby_session_id": "node-precreated"},
+        },
+        machine_id=HUB,
+    )
+
+    with (
+        patch(f"{_HANDOFF}.resolve_clear_continuation", return_value=_NO_CLEAR),
+        patch(f"{_HANDOFF}.resolve_compact_continuation", return_value=CompactIdentityResolution()),
+        patch.object(EventHandlers, "_handle_pre_created_session") as pre_created,
+    ):
+        handlers.handle_session_start(event)
+
+    pre_created.assert_not_called()
+    manager.update.assert_not_called()
+    manager.backfill_terminal_context.assert_not_called()
+    assert manager.register_session.call_args.kwargs["machine_id"] == HUB
 
 
 def _lookup_service(manager: MagicMock, task_manager: MagicMock) -> SessionLookupService:

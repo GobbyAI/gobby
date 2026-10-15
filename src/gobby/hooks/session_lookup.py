@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from gobby.hooks.codex_seat import codex_seat_available
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
-from gobby.hooks.session_binding import bound_session, is_hub_machine_event
+from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
@@ -165,7 +165,7 @@ class SessionLookupService:
             return None
 
         platform_session_id = self._resolve_session_id(external_id, event, cached_session)
-        if platform_session_id and not is_hub_machine_event(event.machine_id):
+        if platform_session_id:
             # Neither the cached mapping nor the id lookups are machine-scoped.
             resolved = (
                 cached_session

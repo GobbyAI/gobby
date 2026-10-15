@@ -11,8 +11,8 @@ from uuid import UUID
 
 import psutil
 
-from gobby.hooks.session_binding import is_hub_machine_event
 from gobby.sessions.tmux_context import parse_tmux_socket_path, query_tmux_identity
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def enrich_terminal_context_with_cwd(
     enriched = dict(terminal_context)
     if cwd_text and not _non_empty_str(enriched.get("cwd")):
         enriched["cwd"] = cwd_text
-    if not is_hub_machine_event(machine_id):
+    if machine_id and machine_id != get_machine_id():
         enriched.pop("parent_create_time", None)
         enriched.pop("parent_name", None)
         return enriched
