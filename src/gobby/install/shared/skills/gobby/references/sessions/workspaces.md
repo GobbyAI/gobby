@@ -13,7 +13,8 @@ refused `invalid_op` because that node's daemon owns them. Start from `list_node
 `create_workspace` returns the named workspace, creating it on first use.
 `create_tab` and `split_pane` open a shell in the project or `worktree_id`, or
 adopt a live `terminal_id`. A split lands second, to the right on `horizontal` and
-below on `vertical`; `swap_panes` moves it into first place. `move_pane`,
+below on `vertical`; `swap_panes` moves it into first place. `move_tab` sets a
+tab's zero-based `position` among its workspace's tabs. `move_pane`,
 `swap_panes`, and `rename_workspace_item` rearrange; `rename_workspace_item`
 without `name` clears a tab title or pane label. `close_pane`, `close_tab`, and
 `close_workspace` kill the live terminals they own. Changes publish to the
