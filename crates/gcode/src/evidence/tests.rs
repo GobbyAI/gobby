@@ -1175,6 +1175,72 @@ fn dirty_indexed_files_and_documentation_are_citable() -> anyhow::Result<()> {
 }
 
 #[test]
+fn working_tree_excerpts_that_differ_from_the_binding_are_marked_dirty() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let root = temporary.path();
+    let first_line = |path: &str| {
+        request(
+            &binding,
+            EvidenceOperation::Read {
+                read: ReadSelector::Range {
+                    path: path.into(),
+                    start_line: 1,
+                    end_line: 1,
+                },
+            },
+        )
+    };
+    let clean = EvidenceLibrary::new(
+        root,
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?
+    .with_working_tree()
+    .query(first_line("src/lib.rs"))?;
+    assert!(clean.warnings.is_empty());
+
+    std::fs::write(root.join("src/lib.rs"), "pub fn staged() {}\n")?;
+    git(root, &["add", "src/lib.rs"])?;
+    let dirty = "pub fn staged() {}\npub fn unstaged() {}\n";
+    std::fs::write(root.join("src/lib.rs"), dirty)?;
+    let untracked = "Working-tree notes.\n";
+    std::fs::write(root.join("notes.md"), untracked)?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files[0].content_hash = gobby_core::indexing::content_hash(dirty.as_bytes());
+    facts.files.push(FileFact {
+        id: FileId::new("notes.md"),
+        path: "notes.md".into(),
+        language: "markdown".into(),
+        symbol_count: 0,
+        content_hash: gobby_core::indexing::content_hash(untracked.as_bytes()),
+    });
+    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(facts))?.with_working_tree();
+    for (path, excerpt, state) in [
+        ("src/lib.rs", "pub fn staged() {}\n", "differ from"),
+        ("notes.md", untracked, "are absent from or unreadable at"),
+    ] {
+        let response = library.query(first_line(path))?;
+        let EvidenceItem::Source(source) = &response.items[0] else {
+            panic!("source evidence");
+        };
+        assert_eq!(source.excerpt, excerpt);
+        assert_eq!(response.binding, binding);
+        assert_eq!(
+            response.warnings,
+            vec![EvidenceWarning {
+                code: "binding_dirty".into(),
+                message: format!(
+                    "{path} excerpt bytes come from the working tree and {state} binding commit {}",
+                    binding.commit_oid
+                ),
+                path: Some(path.into()),
+            }]
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn evidence_rejects_foreign_index_and_unsafe_provenance() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let mut facts = FakeFacts::for_source(&binding);
@@ -1342,6 +1408,7 @@ fn source_mode_changes_the_request_fingerprint() -> anyhow::Result<()> {
         .with_working_tree()
         .query(request(&binding, range_read(1, 9)))?;
     assert_eq!(bound.items, unbound.items);
+    assert_eq!(bound.warnings, unbound.warnings);
     assert_ne!(bound.request_fingerprint, unbound.request_fingerprint);
     Ok(())
 }

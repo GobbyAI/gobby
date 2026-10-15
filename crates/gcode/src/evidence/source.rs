@@ -1,4 +1,5 @@
 //! Commit-bound blobs and indexed working-tree reads.
+use super::contracts::{EvidenceItem, EvidenceWarning};
 use super::{EvidenceError, EvidenceLibrary, Result};
 use crate::codewiki_facts::FileFact;
 use std::io::Read as _;
@@ -87,6 +88,42 @@ impl EvidenceLibrary {
             });
         }
         Ok(())
+    }
+
+    /// Marks each cited path whose working-tree bytes are not the bytes at the
+    /// binding commit, which an unbound request records as HEAD.
+    pub(super) fn dirty_warnings(&self, items: &[EvidenceItem]) -> Vec<EvidenceWarning> {
+        if !self.working_tree {
+            return Vec::new();
+        }
+        let cited = items
+            .iter()
+            .filter_map(|item| match item {
+                EvidenceItem::Source(source) => Some((&*source.path, &*source.content_hash)),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        cited
+            .into_iter()
+            .filter_map(|(path, hash)| {
+                let bound =
+                    super::provenance::read_bound_blob(&self.repository_root, &self.binding, path);
+                let state = match bound {
+                    Ok(bytes) if gobby_core::indexing::content_hash(&bytes) == hash => return None,
+                    Ok(_) => "differ from",
+                    Err(_) => "are absent from or unreadable at",
+                };
+                let commit = &self.binding.commit_oid;
+                Some(EvidenceWarning {
+                    code: "binding_dirty".to_string(),
+                    message: format!(
+                        "{path} excerpt bytes come from the working tree and {state} \
+                         binding commit {commit}"
+                    ),
+                    path: Some(path.to_string()),
+                })
+            })
+            .collect()
     }
 }
 
