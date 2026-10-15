@@ -96,6 +96,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-1",
+        project_id=project.id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -122,6 +123,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     event_read = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-1",
+        project_id=project.id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": "read_file"},
@@ -165,6 +167,7 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-shell-session",
+        project_id=project.id,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -299,6 +302,7 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-no-claim",
+        project_id=project.id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -360,6 +364,7 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-multi-claim",
+        project_id=project.id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -425,6 +430,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     patch_event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="codex-patch-ledger",
+        project_id=project.id,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -442,6 +448,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     commit_event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="codex-patch-ledger",
+        project_id=project.id,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
@@ -459,6 +466,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     compact_event = HookEvent(
         event_type=HookEventType.PRE_COMPACT,
         session_id="codex-patch-ledger",
+        project_id=project.id,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={"trigger": "manual"},

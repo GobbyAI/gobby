@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from gobby.agents.detection.provider import DetectionRegistry
@@ -20,7 +20,7 @@ from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager
+    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
@@ -130,7 +130,7 @@ class InteractiveAttentionMonitor:
 
         try:
             arm = LocalAgentRunManager(self._session_manager.db)
-            active_runs = await self._list_active_runs(arm)
+            active_agent_sessions = await self._list_active_agent_sessions(arm)
         except Exception as exc:
             if is_pool_unavailable(exc):
                 _pool_outage_log(
@@ -144,9 +144,9 @@ class InteractiveAttentionMonitor:
                     exc_info=True,
                 )
             return
-        await self._check_attention_panes(active_runs=active_runs)
+        await self._check_attention_panes(active_agent_sessions=active_agent_sessions)
 
-    async def _check_attention_panes(self, *, active_runs: Sequence[AgentRun]) -> None:
+    async def _check_attention_panes(self, *, active_agent_sessions: set[str]) -> None:
         """Report attention and recover confirmed capacity failures in placed seats."""
         manager = self._attention_manager
         session_manager = self._session_manager
@@ -162,9 +162,6 @@ class InteractiveAttentionMonitor:
             )
             return
 
-        active_agent_sessions = {
-            run.child_session_id for run in active_runs if run.child_session_id is not None
-        }
         active_interactive_ids = {session.id for session in sessions}
         if self._capacity_recovery is not None:
             self._capacity_recovery.prune(active_interactive_ids - active_agent_sessions)
@@ -392,22 +389,22 @@ class InteractiveAttentionMonitor:
             expected_fingerprint=current.fingerprint,
         )
 
-    async def _list_active_runs(
+    async def _list_active_agent_sessions(
         self,
         manager: LocalAgentRunManager,
-    ) -> list[AgentRun]:
-        runs: list[AgentRun] = []
+    ) -> set[str]:
+        session_ids: set[str] = set()
         offset = 0
         while True:
             page = await asyncio.to_thread(
-                manager.list_active_for_machine,
+                manager.list_active_child_session_ids_for_machine,
                 require_machine_id(),
                 limit=_AGENT_RUN_PAGE_SIZE,
                 offset=offset,
             )
-            runs.extend(page)
+            session_ids.update(page)
             if len(page) < _AGENT_RUN_PAGE_SIZE:
-                return runs
+                return session_ids
             offset += len(page)
 
     async def _list_interactive_sessions(self) -> list[Session]:

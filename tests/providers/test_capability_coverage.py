@@ -1,6 +1,7 @@
 """Retired providers cannot persist or leak into the startup coverage audit."""
 
 import logging
+from unittest.mock import patch
 
 import pytest
 
@@ -123,7 +124,7 @@ def test_unsupported_provider_snapshot_is_not_audited(
     )
 
 
-def test_snapshot_load_prunes_only_unsupported_providers(
+def test_startup_prunes_only_unsupported_providers(
     postgres_db: HubDatabase, caplog: pytest.LogCaptureFixture
 ) -> None:
     _seed_retired_snapshot(postgres_db, "qwen")
@@ -135,6 +136,8 @@ def test_snapshot_load_prunes_only_unsupported_providers(
     before = (store.get_provider_snapshot("claude"), store.get_provider_snapshot(local))
 
     with caplog.at_level(logging.INFO):
+        assert store.prune_unsupported_providers() == 4
+        assert store.prune_unsupported_providers() == 0
         loaded = store.get_all_snapshots()
         assert store.get_all_snapshots() == loaded
 
@@ -150,3 +153,26 @@ def test_snapshot_load_prunes_only_unsupported_providers(
         row["provider"]
         for row in postgres_db.fetchall("SELECT provider FROM provider_capability_refresh_state")
     } == {"claude", local}
+
+
+def test_snapshot_reads_skip_unsupported_without_pruning(postgres_db: HubDatabase) -> None:
+    _seed_retired_snapshot(postgres_db, "qwen")
+    store = ProviderCapabilityStore(postgres_db)
+    store.replace_provider_snapshot(_snapshot("claude"))
+
+    with patch.object(store, "prune_unsupported_providers") as prune:
+        supported = store.get_provider_snapshot("claude")
+        assert supported is not None
+        assert store.get_all_snapshots() == (supported,)
+        assert store.get_all_snapshots() == (supported,)
+        assert store.get_provider_snapshot("qwen") is None
+        assert store.has_rows("qwen") is False
+        prune.assert_not_called()
+
+    # Reads do not delete historic rows; only startup preparation does.
+    assert postgres_db.fetchone(
+        "SELECT provider FROM provider_model_capabilities WHERE provider = 'qwen'"
+    ) == {"provider": "qwen"}
+    assert postgres_db.fetchone(
+        "SELECT provider FROM provider_capability_refresh_state WHERE provider = 'qwen'"
+    ) == {"provider": "qwen"}

@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
-from gobby.storage.agents import AgentRun
 from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
 from gobby.utils.logging import ThrottledLogger
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -33,29 +32,34 @@ def _monitor(session_manager: Mock, runtime: LifecycleRuntime) -> InteractiveAtt
 
 
 @pytest.mark.asyncio
-async def test_active_runs_are_paginated_on_worker_thread() -> None:
+async def test_active_agent_sessions_are_paged_on_a_worker_thread_without_the_run_selector() -> (
+    None
+):
     session_manager = Mock(db=Mock())
     monitor = _monitor(session_manager, LifecycleRuntime(backend="native"))
-    runs = [SimpleNamespace(id=f"run-{index}") for index in range(101)]
+    child_sessions = [f"session-{index}" for index in range(101)]
     calls: list[tuple[int, int]] = []
     worker_threads: set[int] = set()
     main_thread = threading.get_ident()
 
-    def list_active_for_machine(machine_id: str, *, limit: int, offset: int) -> list[AgentRun]:
+    def list_child_session_ids(machine_id: str, *, limit: int, offset: int) -> list[str]:
         del machine_id
         calls.append((limit, offset))
         worker_threads.add(threading.get_ident())
-        return cast(list[AgentRun], runs[offset : offset + limit])
+        return child_sessions[offset : offset + limit]
 
     with (
         patch("gobby.storage.agents.LocalAgentRunManager") as arm_class,
-        patch.object(monitor, "_check_attention_panes", new_callable=AsyncMock),
+        patch.object(monitor, "_check_attention_panes", new_callable=AsyncMock) as check_panes,
     ):
-        arm_class.return_value.list_active_for_machine.side_effect = list_active_for_machine
+        arm = arm_class.return_value
+        arm.list_active_child_session_ids_for_machine.side_effect = list_child_session_ids
         await monitor._check_attention()
 
     assert calls == [(100, 0), (100, 100)]
     assert worker_threads and main_thread not in worker_threads
+    arm.list_active_for_machine.assert_not_called()
+    check_panes.assert_awaited_once_with(active_agent_sessions=set(child_sessions))
 
 
 @pytest.mark.asyncio
@@ -111,7 +115,7 @@ async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
         patch.object(monitor, "_sync_interactive_attention", new_callable=AsyncMock) as sync,
         caplog.at_level(logging.DEBUG, logger="gobby.agents.interactive_attention_monitor"),
     ):
-        await monitor._check_attention_panes(active_runs=[])
+        await monitor._check_attention_panes(active_agent_sessions=set())
         assert runtime.snapshot_calls == [15]
         assert sync.await_count == 0
         assert (
@@ -123,7 +127,7 @@ async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
         assert not [record for record in caplog.records if record.levelno >= logging.INFO]
 
         runtime.snapshot_error = None
-        await monitor._check_attention_panes(active_runs=[])
+        await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert runtime.snapshot_calls == [15, 15, 15]
     assert sync.await_count == 2
@@ -147,7 +151,7 @@ async def test_unexpected_capture_failure_still_reports_each_session(
     cast(Mock, monitor._attention_manager).list_blocked.return_value = []
 
     with caplog.at_level(logging.WARNING, logger="gobby.agents.interactive_attention_monitor"):
-        await monitor._check_attention_panes(active_runs=[])
+        await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert runtime.snapshot_calls == [15, 15]
     assert len([record for record in caplog.records if record.levelno == logging.WARNING]) == 2

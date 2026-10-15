@@ -116,6 +116,11 @@ class _MemoryStore:
     def __init__(self, snapshot: ProviderSnapshot) -> None:
         self.snapshot = snapshot
         self.failures: list[tuple[str, str, str]] = []
+        self.prune_calls = 0
+
+    def prune_unsupported_providers(self) -> int:
+        self.prune_calls += 1
+        return 0
 
     def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
         return self.snapshot if self.snapshot.provider == provider else None
@@ -234,6 +239,7 @@ async def test_startup_and_successful_refresh_run_coverage_audits() -> None:
 
     assert auditor.sync_calls == 1
     assert auditor.async_calls == 1
+    assert store.prune_calls == 1
 
 
 @pytest.mark.unit
