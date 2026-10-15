@@ -24,6 +24,8 @@ pub(super) type DirectAttach = (Value, String, AttachLocator, UnixSocketFrameSou
 pub(super) struct Recovery {
     pane_id: PaneId,
     generation: Generation,
+    /// When the attempt this step belongs to began.
+    started: Instant,
     step: RecoveryStep,
 }
 
@@ -33,17 +35,23 @@ enum RecoveryStep {
         old_attachment: String,
         outcome: DetachOutcome,
     },
+    /// `request_id` names the attach the pane waits on, so a superseded
+    /// result is told apart from the current one.
     Attached {
+        terminal_id: String,
+        request_id: String,
         outcome: Result<ProxyAttachOutcome, FrameError>,
     },
     /// A retried attach's direct try; failing, it falls back to the proxy.
     DirectAttached {
         terminal_id: String,
+        request_id: String,
         outcome: Result<DirectAttach, FrameError>,
     },
     /// A host-restored pane's fresh daemon attachment on a new generation;
     /// its host stream stays (#23419).
     Reregistered {
+        terminal_id: String,
         outcome: Result<(Value, String), FrameError>,
     },
     /// A proxy pane's direct try beside its live proxy attachment (#23714).
@@ -353,13 +361,19 @@ impl Workspace<LiveDaemon> {
             pane.fallback_in_flight = true;
             let terminal_id = pane.terminal_id.clone();
             if !(self.frame_delivery.allows(Transport::Direct) && pane.direct_available) {
-                started.extend(self.begin_recovery_attach(pane_id, terminal_id, generation));
+                started.extend(self.begin_recovery_attach(
+                    pane_id,
+                    terminal_id,
+                    generation,
+                    Instant::now(),
+                ));
                 continue;
             }
             let request_id = uuid::Uuid::new_v4().to_string();
             pane.begin_attaching(request_id.clone(), Transport::Direct, generation);
             let daemon = self.daemon.clone();
             let gobby_home = self.gobby_home.clone();
+            let attempt = Instant::now();
             let retry: RecoveryFuture = Box::pin(async move {
                 let outcome = request_direct_source(
                     &daemon,
@@ -371,8 +385,10 @@ impl Workspace<LiveDaemon> {
                 Recovery {
                     pane_id,
                     generation,
+                    started: attempt,
                     step: RecoveryStep::DirectAttached {
                         terminal_id,
+                        request_id,
                         outcome,
                     },
                 }
