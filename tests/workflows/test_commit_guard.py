@@ -471,6 +471,34 @@ async def test_rule3_allows_writes_under_project_marker_without_git(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("checkout", ["clone", "worktree"])
+async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path, checkout: str
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # The nested checkout carries no marker, so its writes resolve to the export root.
+    nested = export / "nested"
+    if checkout == "clone":
+        _git(tmp_path, "clone", "-q", str(h.repo), str(nested))
+    else:
+        _git(h.repo, "worktree", "add", "-q", "--detach", str(nested))
+    (nested / "owned.txt").write_text("nested dirt\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(nested / 'owned.txt'))}"),
+        h.edit_event(str(nested / "owned.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation",
     [

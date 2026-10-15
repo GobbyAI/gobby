@@ -290,8 +290,8 @@ async def foreign_dirty_edit_conflict(
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
         for root, rels in roots.items():
-            if await asyncio.to_thread(checkout_root, Path(root)) is None:
-                # A project marker with no enclosing Git checkout holds no uncommitted work.
+            rels = await asyncio.to_thread(_git_backed_targets, root, rels)
+            if not rels:
                 continue
             own = session_dirty_file_set_for_checkout(variables, root)
             candidates = {
@@ -345,6 +345,19 @@ async def foreign_dirty_edit_conflict(
             f"Edit blocked: Gobby could not verify dirty-path ownership ({exc}). "
             "Fix that cause, or retry once the daemon and repository are available."
         )
+
+
+def _git_backed_targets(root: str, rels: set[str]) -> set[str]:
+    """Keep targets inside, or holding, a Git checkout; the rest hold no uncommitted work."""
+    kept: set[str] = set()
+    for rel in rels:
+        target = Path(root, rel)
+        if checkout_root(target) is not None or (
+            target.is_dir()
+            and any(".git" in dirs or ".git" in files for _, dirs, files in os.walk(target))
+        ):
+            kept.add(rel)
+    return kept
 
 
 def _write_paths(event_data: dict[str, Any]) -> list[str]:
