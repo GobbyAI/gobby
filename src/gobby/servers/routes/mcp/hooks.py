@@ -155,6 +155,20 @@ def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any
     return normalized_payload, metadata
 
 
+def _envelope_machine_mismatch(server: "HTTPServer", request: Request, input_data: Any) -> bool:
+    """A key-authenticated hook must name the key's machine in its envelope.
+
+    Session lookups trust the envelope machine, so a node may never claim
+    another machine's identity. A hook without front-door identity comes from
+    the hub's own ghook and keeps its envelope as sent.
+    """
+    identity = server.auth_service.verified_front_door_identity(request)
+    if identity is None:
+        return False
+    envelope_machine = input_data.get("machine_id") if isinstance(input_data, dict) else None
+    return envelope_machine != identity.machine_id
+
+
 def _hook_log_extra(
     hook_type: str | None,
     metadata: dict[str, Any],
@@ -325,6 +339,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 return {"continue": True, "decision": "approve"}
 
             payload, request_metadata = _normalize_hook_request(raw_payload)
+            if _envelope_machine_mismatch(server, request, payload["input_data"]):
+                return JSONResponse(status_code=403, content={"code": "hook_machine_mismatch"})
             platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
             if platform_session_id and request.headers.get(AGENT_RUN_ID_HEADER):
                 platform_session_id = await server.run_db(

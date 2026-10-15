@@ -1492,7 +1492,10 @@ class TestSessionStartNewSession:
         mock_resolve_clear: MagicMock,
     ) -> None:
         """A pending clear attempt cannot claim a resume the persisted row already owns."""
-        known = SimpleNamespace(id="known-sess", status="active", terminal_context=None)
+        event_machine_id = "21000000-0000-4000-8000-000000000008"
+        known = SimpleNamespace(
+            id="known-sess", status="active", terminal_context=None, machine_id=event_machine_id
+        )
         handler = MagicMock()
         handler._session_manager.find_by_external_id.return_value = known
         input_data: dict[str, Any] = {"source": "resume"}
@@ -1506,7 +1509,7 @@ class TestSessionStartNewSession:
                 input_data,
                 "resume",
                 external_id="droid-known-ext",
-                machine_id="21000000-0000-4000-8000-000000000008",
+                machine_id=event_machine_id,
                 project_id="proj-123",
                 cli_source="droid",
                 terminal_context={"tmux_pane": "%100", "tmux_socket_path": "/tmp/tmux"},

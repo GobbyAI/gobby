@@ -93,6 +93,7 @@ def session_start_should_defer(
         terminal_context,
         hook_cwd(event.data, event.cwd),
         external_id=event.session_id,
+        machine_id=event.machine_id,
     )
     if is_gobby_acp_child(terminal_context):
         return False
@@ -372,6 +373,7 @@ def activate_materialized_session(
             terminal_context,
             hook_cwd(input_data, event.cwd),
             external_id=external_id,
+            machine_id=event.machine_id,
         )
 
     if session_obj is None and handler._session_manager:
