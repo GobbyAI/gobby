@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import ast
+import multiprocessing
 import os
 import subprocess
 from collections import OrderedDict
 from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +21,7 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 import gobby.tasks.close_test_coverage as close_test_coverage
+import gobby.tasks.transcript_evidence_pool as transcript_evidence_pool
 from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
@@ -31,7 +34,10 @@ from gobby.tasks.close_checklist import (
     CloseGateResult,
     evaluate_validation_commands,
 )
-from gobby.tasks.close_test_coverage import related_python_source_tests
+from gobby.tasks.close_test_coverage import (
+    related_python_source_tests,
+    related_python_source_tests_in_pool,
+)
 from gobby.tasks.command_equivalence import (
     pytest_targets,
     scope_difference,
@@ -43,6 +49,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
+    missing_linked_session_capability,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
@@ -822,7 +829,7 @@ def test_source_without_related_tests_preserves_no_edit_skip(tmp_path: Path) -> 
 
 
 def test_rootless_validation_probe_never_scans_tests() -> None:
-    with patch("gobby.tasks.close_checklist.related_python_source_tests") as selector:
+    with patch("gobby.tasks.close_checklist.related_python_source_tests_in_pool") as selector:
         gate = evaluate_validation_commands(
             task_category="code",
             evidence=TranscriptEvidence(),
@@ -999,6 +1006,34 @@ def test_related_source_selector_shares_test_parses_across_worktrees(tmp_path: P
 
     assert first == second == expected
     assert parse.call_args_list == []
+
+
+def test_cold_related_source_selection_parses_outside_the_daemon_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cold scan in a pool worker leaves the daemon's GIL out of every parse (#23801)."""
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_consumer.py").write_text("from gobby.widget import VALUE\n")
+    (tmp_path / "tests/test_other.py").write_text("import json  # widget\n")
+    expected = {"src/gobby/widget.py": ("tests/test_consumer.py",)}
+    pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", pool)
+    try:
+        with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as pooled_parse:
+            pooled = related_python_source_tests_in_pool(
+                ("src/gobby/widget.py",), base_dir=tmp_path
+            )
+    finally:
+        pool.shutdown(wait=True)
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as in_process_parse:
+        in_process = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert pooled == in_process == expected
+    assert pooled_parse.call_count == 0
+    assert in_process_parse.call_count == 1
 
 
 @pytest.mark.parametrize(
@@ -3412,6 +3447,23 @@ def test_unknown_outcome_never_satisfies_or_blocks_and_names_cure() -> None:
     assert "definitive exit status" in gate.message
 
 
+def test_missing_linked_session_names_the_session_without_a_rerun_cure() -> None:
+    """A deleted session's transcript cannot come back, so re-running is the wrong cure."""
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            degraded_capabilities=(missing_linked_session_capability("gone-session"),),
+        ),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "failed"
+    assert "Linked session(s) not found: gone-session;" in gate.message
+    assert "no validation evidence" in gate.message
+    assert "Re-run the command" not in gate.message
+    assert "outcomes were unknown" not in gate.message
+
+
 def test_all_failures_reports_every_blocker_and_keeps_the_first_for_the_reason() -> None:
     """One evaluation names every failed gate; the first stays the headline reason."""
     checklist = CloseChecklist(
@@ -3548,7 +3600,8 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
             return_value=NetCommitPaths(changed=frozenset({"src/a.py"})),
         ),
         patch(
-            "gobby.tasks.close_checklist.related_python_source_tests", side_effect=select_tests
+            "gobby.tasks.close_checklist.related_python_source_tests_in_pool",
+            side_effect=select_tests,
         ) as selector,
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),

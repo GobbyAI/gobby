@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,7 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    _while_on_task,
     derive_close_transcript_evidence,
 )
 from gobby.storage.session_models import Session
@@ -1302,6 +1304,33 @@ async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_cr
     )
 
     assert credited == (before,)
+
+
+@pytest.mark.asyncio
+async def test_on_task_filter_runs_off_the_event_loop() -> None:
+    """#24183: each off-task run rebuild re-classifies its command, so it stays off-loop."""
+    before = _run_at(IMPLEMENTER, "2026-09-28T14:30:00+00:00", "success")
+    away = _run_at(IMPLEMENTER, "2026-09-29T03:00:00+00:00", "failure")
+    loop_thread = get_ident()
+    filter_threads: list[int] = []
+
+    def record_thread(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        filter_threads.append(get_ident())
+        return _while_on_task(*args, **kwargs)
+
+    with patch(f"{_SUPPORT}._while_on_task", side_effect=record_thread):
+        credited = await _implementer_runs_after_claims(
+            [
+                _session_link("task", "2026-09-28T13:55:00+00:00"),
+                _session_link("other-task", "2026-09-28T12:00:00+00:00"),
+            ],
+            (_claim("other-task", "2026-09-29T02:14:00+00:00"),),
+            (before, away),
+        )
+
+    assert credited == (before,)
+    assert len(filter_threads) == 1
+    assert filter_threads[0] != loop_thread
 
 
 async def _owner_evidence(
