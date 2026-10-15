@@ -47,7 +47,8 @@ const STATUS_MODE_OPTIONS = [
 ] as const;
 
 // Expired sessions show their archival summary; active and paused sessions show
-// the continuation handoff. Either falls back to whichever field has content.
+// the continuation handoff only. Expired falls back to the handoff when the
+// summary is blank.
 function resolveSessionSummaryMarkdown(
   status: GobbySession["status"] | null,
   ...sessions: Array<
