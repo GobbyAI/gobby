@@ -647,7 +647,7 @@ async def test_tmux_monitor_reads_interactive_terminal_off_loop_and_reports_prom
         registry=runtime_registry(runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     attention = manager.get(f"session:{session.id}")
     assert attention is not None
@@ -691,7 +691,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
         registry=runtime_registry(runtime),
     )
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     before_timeout = manager.get(f"session:{session.id}")
     assert before_timeout is not None
 
@@ -700,7 +700,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     caplog.clear()
     logger_name = "gobby.agents.interactive_attention_monitor"
     with caplog.at_level(logging.DEBUG, logger=logger_name):
-        await monitor._check_attention_panes(active_runs=[])
+        await monitor._check_attention_panes(active_agent_sessions=set())
 
     after_timeout = manager.get(f"session:{session.id}")
     assert after_timeout is not None
@@ -720,7 +720,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
 
     runtime.snapshot_error = None
     runtime.snapshot_text = "Working normally"
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     recovered = manager.get(f"session:{session.id}")
     assert recovered is not None
@@ -764,7 +764,7 @@ async def test_monitor_keeps_a_composer_block_item_until_the_ledger_clears(
         registry=runtime_registry(LifecycleRuntime(snapshot_text="Working normally")),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     kept = manager.get(f"session:{session.id}")
     assert kept is not None
@@ -772,7 +772,7 @@ async def test_monitor_keeps_a_composer_block_item_until_the_ledger_clears(
     assert kept.attention_id == raised.current.attention_id
 
     composer_ledger.release(str(terminal.id))
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     retired = manager.get(f"session:{session.id}")
     assert retired is not None
