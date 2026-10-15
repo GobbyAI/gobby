@@ -476,3 +476,55 @@ def test_job_output_mutated_between_stat_and_read_is_refused(
     monkeypatch.setattr(os, "fstat", fstat_then_rewrite)
     _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
     assert rewritten
+
+
+def _numbered(text: str) -> str:
+    """The Read tool's rendering: each line behind its number and a tab."""
+    return "\n".join(f"{index}\t{line}" for index, line in enumerate(text.splitlines(), start=1))
+
+
+@pytest.mark.parametrize("monitor", [True, False])
+def test_late_read_never_displaces_output_delivered_before_production(
+    tmp_path: Path, monitor: bool
+) -> None:
+    # #23879: RED settled 20:32:57Z, closing edit 20:33:27Z, own-file Read 02:30:52Z next day.
+    output_path = tmp_path / "tasks/job.output"
+    full = _nextest_file("expected 2")
+    _retain(output_path, full, NOTICE)
+    production_at = NOTICE + 30.9
+    records = _write(tmp_path, 1, RUST_TEST)
+    records += _job(output_path, monitor=monitor)
+    records += _write(tmp_path, production_at, RUST_CODE)
+    records += _pair(
+        production_at + 5,
+        "Bash",
+        {"command": NEXTEST},
+        "PASS [ 0.001s] (1/1) feature::golden replays_corpus\nSummary 1 tests run: 1 passed",
+    )
+    records += _pair(NOTICE + 21_475, "Read", {"file_path": str(output_path)}, _numbered(full))
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = _rust_result(tmp_path, records)
+    # Without the Monitor, only the receipt reached the transcript before production.
+    assert result.passed is monitor, result.findings
+    assert result.red_runs == ((NEXTEST,) if monitor else ())
+
+
+def test_read_line_numbers_do_not_hide_delivered_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "tasks/job.output"
+    full = _nextest_file("expected 2")
+    _retain(output_path, full, NOTICE)
+    head = "\n".join(full.splitlines()[:3])
+    records = _write(tmp_path, 1, RUST_TEST)
+    records += _job(output_path, monitor=False)
+    records += _pair(5, "Read", {"file_path": str(output_path), "limit": 3}, _numbered(head))
+    records += _write(tmp_path, 10, RUST_CODE)
+    records += _pair(
+        12,
+        "Bash",
+        {"command": NEXTEST},
+        "PASS [ 0.001s] (1/1) feature::golden replays_corpus\nSummary 1 tests run: 1 passed",
+    )
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = _rust_result(tmp_path, records)
+    assert result.passed, result.findings
+    assert result.red_runs == (NEXTEST,)

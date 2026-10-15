@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import replace
+from datetime import datetime
 
 from defusedxml import ElementTree
 
 from gobby.sessions.transcripts.base import ParsedMessage
-from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import OutputDelivery, TranscriptValidationRun
 from gobby.tasks.transcript_evidence_snapshots import PendingTool
 from gobby.tasks.transcript_outcomes import extract_outcome, extract_output
 
@@ -18,6 +19,59 @@ _BACKGROUND = re.compile(
     r"background \(ID: (?P<job>[A-Za-z0-9_-]+)\)\. Output is being written to: "
     r"(?P<path>/[^\r\n]+?\.output)\. "
 )
+_MAX_RECOVERED_CHARS = 64_000
+# The Read tool renders each line behind its number and a tab.
+_READ_LINE_NUMBER = re.compile(r"(?m)^ *\d+\t")
+
+
+def output_as_of(run: TranscriptValidationRun, before: datetime) -> TranscriptValidationRun:
+    """The run as its transcript had delivered it before ``before``.
+
+    A later recovery never displaces what was delivered earlier.
+    """
+    if not run.output_deliveries:
+        return run
+    output: str | None = None
+    truncated = False
+    source: str | None = None
+    recovered_at: datetime | None = None
+    for delivery in run.output_deliveries:
+        if delivery.delivered_at < before:
+            output, truncated = _applied(output, truncated, delivery)
+            source = delivery.source
+            recovered_at = delivery.delivered_at if source is not None else None
+    return replace(
+        run,
+        output=output,
+        output_truncated=truncated,
+        output_recovered_from=source,
+        output_recovered_at=recovered_at,
+    )
+
+
+def _deliver(run: TranscriptValidationRun, delivery: OutputDelivery) -> TranscriptValidationRun:
+    launch = OutputDelivery(run.started_at, None, run.output, run.output_truncated, appends=False)
+    output, truncated = _applied(run.output, run.output_truncated, delivery)
+    return replace(
+        run,
+        output=output,
+        output_truncated=truncated,
+        output_recovered_from=delivery.source,
+        output_recovered_at=delivery.delivered_at,
+        output_deliveries=(*(run.output_deliveries or (launch,)), delivery),
+    )
+
+
+def _applied(
+    output: str | None, truncated: bool, delivery: OutputDelivery
+) -> tuple[str | None, bool]:
+    if not delivery.appends:
+        return delivery.text, delivery.truncated
+    joined = (output or "") + "\n" + (delivery.text or "")
+    return (
+        joined[:_MAX_RECOVERED_CHARS],
+        truncated or delivery.truncated or len(joined) > _MAX_RECOVERED_CHARS,
+    )
 
 
 def background_job_receipt(output: object) -> dict[str, str] | None:
@@ -63,14 +117,12 @@ def recover_background_receipt(
             return
         index = matches[0]
         run = runs[index]
-        output, truncated = extract_output(message.tool_result, max_chars=64_000)
+        output, truncated = extract_output(message.tool_result, max_chars=_MAX_RECOVERED_CHARS)
+        if output and pending.name.lower() == "read":
+            output = _READ_LINE_NUMBER.sub("", output)
         if output and message.timestamp >= run.started_at:
-            runs[index] = replace(
-                run,
-                output=output,
-                output_truncated=truncated,
-                output_recovered_from=path,
-                output_recovered_at=message.timestamp,
+            runs[index] = _deliver(
+                run, OutputDelivery(message.timestamp, path, output, truncated, appends=False)
             )
         return
     notice = _notification(message)
@@ -185,13 +237,11 @@ def _recover_monitor_receipt(
     # A Monitor's own exit cannot settle the command it watches. Only the
     # original job/call/output-file terminal receipt above proves its exit.
     if not event.startswith(("[Monitor expired", "[exited with code")):
-        output = (run.output or "") + "\n" + event
-        runs[index] = replace(
+        runs[index] = _deliver(
             run,
-            output=output[:64_000],
-            output_truncated=run.output_truncated or len(output) > 64_000,
-            output_recovered_from=run.background_output_path,
-            output_recovered_at=message.timestamp,
+            OutputDelivery(
+                message.timestamp, run.background_output_path, event, False, appends=True
+            ),
         )
     return True
 
