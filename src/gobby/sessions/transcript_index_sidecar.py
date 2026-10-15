@@ -644,11 +644,19 @@ def load_index_sidecar(
             # Every journal line repeats the whole parser state, so replay cost
             # outgrows the base. Fold it in once it does; the kept generation
             # lets resident holders go on appending (#23359).
+            # A failed fold keeps the replayed index; a half-done one fails the
+            # checkpoint match on a later cold load, like a crashed full write.
             if journal_size > base_size:
-                _replace_sidecar(
-                    sidecar, payload, checkpoint["groups"], checkpoint["parsed_boundaries"]
-                )
-                journal_size = 0
+                try:
+                    _replace_sidecar(
+                        sidecar, payload, checkpoint["groups"], checkpoint["parsed_boundaries"]
+                    )
+                    journal_size = 0
+                except OSError as exc:
+                    logger.debug(
+                        "Failed to fold transcript index journal",
+                        extra={"sidecar_path": sidecar, "error": str(exc)},
+                    )
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as exc:
