@@ -577,6 +577,8 @@ def _has_named_red_failure(
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
+    if _has_failed_node_summary(output, test):
+        return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
@@ -590,6 +592,10 @@ def _has_named_red_failure(
     )
     lines = output.splitlines()
     for index, line in enumerate(lines):
+        # Summaries carry their own path/node identity. Never borrow an assertion
+        # from a sibling summary through the generic symbol/section fallback.
+        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
+            continue
         if _PYTEST_LOCATION_RE.match(line):
             continue
         if not any(pattern.search(line) for pattern in symbol_patterns):
@@ -600,6 +606,45 @@ def _has_named_red_failure(
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True, ""
     return False, reason
+
+
+def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
+    """Credit pytest summaries or legacy sections carrying node-bound assertion detail."""
+    if not test.path.endswith(".py"):
+        return False
+    expected = test.symbol.replace("::", ".")
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line)
+        if match is None or not _path_matches_artifact(match[1], test):
+            continue
+        reported = match[2].replace("::", ".")
+        if "[" not in expected:
+            reported = reported.split("[", maxsplit=1)[0]
+        if reported != expected:
+            continue
+        detail = match[3]
+        if detail is None:
+            # Older provider output uses FAILED as a section header before E assert.
+            # A complete pytest report instead belongs to the ordered body parser.
+            if _has_ordered_pytest_failure(lines, test) is not None:
+                continue
+            section = _failure_section(lines, index)
+            if (
+                index + 1 < len(lines)
+                and re.match(r"\s*E\s+(?:assert\b|AssertionError\b)", lines[index + 1])
+                and not any(_PYTEST_LOCATION_RE.match(item) for item in section.splitlines())
+                and is_assertion_failure(section)
+            ):
+                return True
+            continue
+        # Identity alone cannot recover discarded failure detail. In particular,
+        # an assertion elsewhere in this run belongs to its own node only.
+        if re.match(
+            r"(?:AssertionError\b|assert\s|Failed:\s+DID NOT RAISE\b)", detail
+        ) and is_assertion_failure(detail):
+            return True
+    return False
 
 
 def _has_pytest_body_failure(

@@ -29,34 +29,18 @@ class PromptLoader:
         rendered = loader.render("expansion/system", {"tdd_mode": True})
     """
 
-    def __init__(
-        self,
-        db: HubDatabase,
-        project_id: str | None = None,
-        notifier: Any | None = None,
-    ):
+    def __init__(self, db: HubDatabase, project_id: str | None = None):
         """Initialize the prompt loader.
+
+        The loader keeps no cache: every load reads the database, so a prompt
+        written by any process is visible on the next load.
 
         Args:
             db: Borrowed database connection
             project_id: Project context for precedence resolution
-            notifier: Optional PromptChangeNotifier for cache invalidation
         """
         self._db = db
         self._project_id = project_id
-        self._cache: dict[str, PromptTemplate] = {}
-
-        # Subscribe to change events for cache invalidation
-        if notifier is not None:
-            notifier.add_listener(self._on_change)
-
-    def _on_change(self, event: Any) -> None:
-        """Handle change notification by clearing cache."""
-        self._cache.clear()
-
-    def clear_cache(self) -> None:
-        """Clear the template cache."""
-        self._cache.clear()
 
     def _get_db(self) -> HubDatabase:
         """Get the injected database connection."""
@@ -85,14 +69,10 @@ class PromptLoader:
         Raises:
             FileNotFoundError: If template not found in database
         """
-        if path in self._cache:
-            return self._cache[path]
-
         record = self._get_record(path)
 
         if record is not None:
             template = cast(PromptTemplate, record.to_prompt_template())
-            self._cache[path] = template
             logger.debug("Loaded prompt template '%s' from database (scope=%s)", path, record.scope)
             return template
 

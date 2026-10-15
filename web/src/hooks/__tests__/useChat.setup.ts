@@ -24,6 +24,11 @@ export interface UseChatTestContext {
   };
 }
 
+// The context whose mocks currently own the globals. A test that times out keeps
+// running after cleanup; without this owner check its later hook renders would
+// hit the next test's fetch, WebSocket, and localStorage mocks.
+let activeContext: UseChatTestContext | null = null;
+
 export function createUseChatTestContext(): UseChatTestContext {
   const consoleSpy = {
     log: vi.spyOn(console, "log").mockImplementation(() => {}),
@@ -64,10 +69,13 @@ export function createUseChatTestContext(): UseChatTestContext {
     configurable: true,
   });
 
-  return { mockWs, mockFetch, originalLocalStorage, consoleSpy };
+  const context = { mockWs, mockFetch, originalLocalStorage, consoleSpy };
+  activeContext = context;
+  return context;
 }
 
 export function cleanupUseChatTestContext(context: UseChatTestContext): void {
+  if (activeContext === context) activeContext = null;
   context.mockWs.restore();
   context.mockFetch.restore();
   Object.defineProperty(globalThis, "localStorage", {
@@ -85,7 +93,13 @@ export function cleanupUseChatTestContext(context: UseChatTestContext): void {
 export async function loadUseChatModule(): Promise<
   typeof import("../useChat").useChat
 > {
+  const owner = activeContext;
   vi.resetModules();
   const mod = await import("../useChat");
+  if (owner === null || owner !== activeContext) {
+    throw new Error(
+      "useChat test outlived its test context (timed out); refusing to render against another test's mocks",
+    );
+  }
   return mod.useChat;
 }

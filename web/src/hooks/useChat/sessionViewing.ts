@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps -- Extracted useChat session-viewing callbacks intentionally close over parent refs and stable setters to preserve the original hook behavior. */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
@@ -78,6 +78,9 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
   } = params;
 
   const viewRequestSeqRef = useRef(0);
+  // The latest view request whose REST loads have both settled. The reconnect
+  // retry waits on it so a WS connect never supersedes a restore still in flight.
+  const [settledViewRequestSeq, setSettledViewRequestSeq] = useState(0);
 
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
@@ -239,7 +242,9 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
 
       // Fetch messages via REST
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
+      const messagesLoaded = fetch(
+        `${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`,
+      )
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!isCurrentRequest()) return;
@@ -255,7 +260,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
 
       // Fetch session metadata
       const metadataFetchStartedAt = Date.now();
-      fetch(`${baseUrl}/api/sessions/${sessionId}`)
+      const metadataLoaded = fetch(`${baseUrl}/api/sessions/${sessionId}`)
         .then((res) => {
           if (res.status === 404 && isCurrentRequest()) {
             initialViewingSessionIdRef.current = null;
@@ -312,6 +317,9 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
         .catch((err) =>
           console.error("Failed to fetch session metadata:", err),
         );
+      void Promise.allSettled([messagesLoaded, metadataLoaded]).then(() =>
+        setSettledViewRequestSeq((prev) => Math.max(prev, requestSeq)),
+      );
       // resolveAgentName is a stable useCallback (its own deps are []) — safe
       // to reference here without re-creating the callback every render.
     },
@@ -396,6 +404,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
       !restoredViewingSessionId ||
       !initialViewingRestoreRef.current ||
       initialViewingReconnectRetryRef.current ||
+      settledViewRequestSeq !== viewRequestSeqRef.current ||
       viewingSessionIdRef.current !== restoredViewingSessionId ||
       viewingSessionMetaRef.current ||
       messagesRef.current.length > 0
@@ -405,7 +414,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
 
     initialViewingReconnectRetryRef.current = true;
     viewSession(restoredViewingSessionId);
-  }, [isConnected, viewSession, viewingSessionId]);
+  }, [isConnected, settledViewRequestSeq, viewSession, viewingSessionId]);
 
   useEffect(() => {
     const restoredViewingSessionId = initialViewingSessionIdRef.current;

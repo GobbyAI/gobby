@@ -5,13 +5,15 @@ Split from the test_pipeline_executor monolith (#12210).
 
 import asyncio
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.pipelines import PipelineConfig
 from gobby.utils.webhook_transport import WebhookTransport
-from gobby.workflows.definitions import WebhookConfig, WebhookEndpoint
+from gobby.workflows.definitions import PipelineDefinition, WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.pipeline_webhooks import WebhookNotifier
 
@@ -148,6 +150,52 @@ class TestPipelineExecutorExecute:
         mock_execution_manager.get_execution.assert_any_call("pe-existing-456")
         assert mock_execution_manager.get_execution.call_count >= 1
         assert mock_execution_manager.get_execution.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_execute_continues_after_branch_lookup_timeout(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        simple_pipeline: PipelineDefinition,
+        tmp_path: Path,
+    ) -> None:
+        """An optional Git lookup timeout preserves the main template fallback."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        completed_execution = MagicMock()
+        completed_execution.id = "pe-test-123"
+        completed_execution.status = ExecutionStatus.COMPLETED
+        mock_execution_manager.update_execution_status.return_value = completed_execution
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        handler = AsyncMock(return_value={"exit_code": 0})
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"project_path": str(tmp_path)},
+            ),
+            patch(
+                "gobby.worktrees.git.WorktreeGitManager.get_current_branch",
+                new_callable=AsyncMock,
+                side_effect=subprocess.TimeoutExpired(["git", "branch"], 5),
+            ) as branch_lookup,
+            patch("gobby.workflows.pipeline_executor.execute_exec_step", handler),
+        ):
+            result = await executor.execute(
+                pipeline=simple_pipeline, inputs={}, project_id="proj-123"
+            )
+
+        branch_lookup.assert_awaited_once()
+        assert result.status == ExecutionStatus.COMPLETED
+        assert handler.await_count == 2
+        assert [call.args[1]["current_branch"] for call in handler.await_args_list] == [
+            "main",
+            "main",
+        ]
 
     @pytest.mark.asyncio
     async def test_execute_builds_context_with_inputs(

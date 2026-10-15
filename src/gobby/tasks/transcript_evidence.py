@@ -577,7 +577,10 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
             state.pending[call_id] = PendingTool(
                 name, arguments, timestamp, order, call_id, workdir=tool_workdir(message.raw_json)
             )
-        _record_edit(state, name, arguments, timestamp, order)
+        edit_arguments = arguments
+        if tool_workdir(arguments) is None and (cwd := tool_workdir(message.raw_json)):
+            edit_arguments = {**arguments, "cwd": cwd}
+        _record_edit(state, name, edit_arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
         return

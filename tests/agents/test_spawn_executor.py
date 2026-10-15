@@ -61,6 +61,7 @@ from gobby.terminals.host_client import (
     HostUnavailableReason,
 )
 from gobby.terminals.host_manager import TerminalHostManager
+from gobby.terminals.host_protocol import write_pidfile
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND, TerminalLifetime
 from gobby.terminals.native_runtime import HostManagerControl
@@ -4016,12 +4017,24 @@ def _missing_gterm() -> FakeHostProcess:
     raise FileNotFoundError("gterm")
 
 
+_LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+class _ForeignEpochBindings:
+    """Durable native rows that bind every host epoch to another machine too."""
+
+    def native_epoch_machine_ids(self, host_epoch: str) -> set[str]:
+        del host_epoch
+        return {_LOCAL_MACHINE_ID, "22000000-0000-4000-8000-000000000002"}
+
+
 def _host_manager(
     tmp_path: Path,
     *,
     connector: Callable[[], Any],
     spawner: Callable[[], Any],
     pid_ok: bool = True,
+    terminal_manager: TerminalManager | None = None,
 ) -> TerminalHostManager:
     return TerminalHostManager(
         config=TerminalHostConfig(
@@ -4031,6 +4044,7 @@ def _host_manager(
             health_interval_seconds=3600.0,
         ),
         terminal_config=TerminalConfig(),
+        terminal_manager=terminal_manager,
         connector=connector,
         spawner=spawner,
         pid_identity=lambda _pid: pid_ok,
@@ -4046,7 +4060,14 @@ async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
             tmp_path, connector=_refused_connect, spawner=lambda: FakeHostProcess(pid=4242)
         )
     elif state == "epoch_refused":
-        host = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+        # Reachable, authenticated and pid-verified; only the durable adoption
+        # matrix refuses the epoch, as the Rust supervisor does (plan 1.2.2).
+        host = _host_manager(
+            tmp_path,
+            connector=_connector(FakeControlClient()),
+            spawner=_missing_gterm,
+            terminal_manager=cast(TerminalManager, _ForeignEpochBindings()),
+        )
     elif state == "pid":
         client = FakeControlClient()
         host = _host_manager(
@@ -4062,12 +4083,12 @@ async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
         assert state == "healthy"
         client = FakeControlClient()
         host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
-    await host.start()
-    if state == "epoch_refused":
-        # Only the Rust host's epoch-adoption matrix emits this reason and no
-        # Python path assigns it, so the test sets it for the spawn path to read.
-        host.failure_reason = "epoch_refused"
-    elif state != "healthy":
+    # The pidfile agrees with the fake host's ping, so each client-backed state
+    # fails for its own reason and a healthy host is truly adopted.
+    write_pidfile(tmp_path, FakeControlClient.host_pid)
+    with patch("gobby.utils.machine_id._cached_machine_id", _LOCAL_MACHINE_ID):
+        await host.start()
+    if state != "healthy":
         # A misleading free-text error must never steer the spawn path.
         host.last_error = "host_start_timeout gterm_missing epoch_refused"
     return host
@@ -4169,11 +4190,13 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
         monkeypatch.setattr(native, f"{stage}_spawn", AsyncMock(side_effect=error))
     try:
         result = await execute_spawn(request)
+        health = host.health_state()
     finally:
         await host.stop()
 
     assert tmux.create_calls == 0
     if expected is None:
+        assert health["adopted"] is True
         assert result.success is True
         assert result.backend == "native"
         assert manager.rows[str(result.terminal_id)].backend == "native"
@@ -4181,6 +4204,7 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
     assert result.success is False
     assert result.error == expected
     if state in _FAIL_CLOSED:
+        assert health["failure_reason"] == state
         assert result.error_detail == f"native terminals are unavailable ({state})"
         assert result.terminal_id is None
         assert native.create_calls == 0

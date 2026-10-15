@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, tasks, git, shared-worktree, default, guar
 
 rules:
   block-cross-session-foreign-dirty-edit:
-    description: "Block edits to dirty paths owned by another active task session"
+    description: "Rule 3: block writes to dirty paths this session does not own"
     event: before_tool
     enabled: true
     priority: 26

@@ -466,19 +466,18 @@ def identical_copy_run(
     changed_paths: Sequence[str],
     candidate: CloseCandidate | None = None,
 ) -> bool:
-    """Whether a passing pytest run targets only identical copies of changed tests.
+    """Whether a passing pytest run includes an identical copy of a changed test.
 
     Such a run proved this task's test bytes from another tree, so a ``uv`` location
-    outside ``close_root`` does not make it foreign (#23653).
+    outside ``close_root`` does not make it foreign (#23653). Other regression targets
+    do not erase that proof; downstream coverage checks each target's candidate bytes.
     """
     root = os.path.realpath(close_root)
     targets = _resolved_pytest_targets(run, root) if run.outcome == "success" else ()
-    return bool(targets) and all(
-        any(
-            _runs_test(target, test, root, changed_paths, candidate, copy_only=True)
-            for test in changed_python_tests
-        )
+    return any(
+        _runs_test(target, test, root, changed_paths, candidate, copy_only=True)
         for target in targets
+        for test in changed_python_tests
     )
 
 

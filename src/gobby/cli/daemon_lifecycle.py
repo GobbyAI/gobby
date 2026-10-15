@@ -576,13 +576,15 @@ def _restart_backend(
                     _step("Previous backend did not exit after restart request", error=True)
                     return False
                 time.sleep(0.1)
-            if not _poll_startup_progress(port):
-                _step("Backend did not finish startup readiness", error=True)
-                return False
-            return True
     except HandoffShutdownBlocked as exc:
         _step(f"Refusing to restart: {exc}", error=True)
         return False
+    # The old backend is gone: release shutdown admission before waiting for
+    # its replacement. Startup readiness owns the restart outcome from here.
+    if not _poll_startup_progress(port):
+        _step("Backend did not finish startup readiness", error=True)
+        return False
+    return True
 
 
 @click.command()

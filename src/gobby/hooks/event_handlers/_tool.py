@@ -168,10 +168,18 @@ class ToolEventHandlerMixin(EventHandlersBase):
             return
         variables = SessionVariableManager(db).get_variables(session_id)
         task_id = task_selected_at(variables, event.timestamp.timestamp())
+        from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
+
         for path in paths:
             if not isinstance(path, str):
                 continue
-            resolved = self._resolve_repo_edit_paths(path, event.cwd, project_id=event.project_id)
+            resolved = resolve_edit_pair(
+                path,
+                effective_tool_cwd(event.cwd, data),
+                project_id=event.project_id,
+                db=db,
+                variables=variables,
+            )
             if resolved is not None:
                 root, relative_path = resolved
                 assert_task_edit_paths_available(
@@ -411,13 +419,19 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
 
+        from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
+
+        db = getattr(self._session_manager, "db", None)
+        variables = SessionVariableManager(db).get_variables(session_id) if db is not None else {}
         committable_paths: list[str] = []
         paths_by_checkout: dict[str, list[str]] = {}
         for file_path in file_paths:
-            repo_edit = self._resolve_repo_edit_paths(
+            repo_edit = resolve_edit_pair(
                 file_path,
-                event.cwd,
+                effective_tool_cwd(event.cwd, event.data),
                 project_id=event.project_id,
+                db=db,
+                variables=variables,
             )
             if repo_edit is None:
                 continue
@@ -428,7 +442,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 # `.gobby` files participate in task ownership like every
                 # other repository path, but are not source files for gcode.
                 if Path(repo_relative_path).parts[:1] != (".gobby",):
-                    self._notify_code_index(repo_root, repo_relative_path)
+                    self._notify_code_index(Path(repo_root), repo_relative_path)
             checkout_paths = paths_by_checkout.setdefault(os.fspath(repo_root), [])
             if repo_relative_path not in checkout_paths:
                 checkout_paths.append(repo_relative_path)
@@ -575,51 +589,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
             )
         except Exception as e:
             self.logger.warning("Failed to record autonomous tool progress: %s", e)
-
-    def _resolve_repo_edit_paths(
-        self,
-        file_path: str,
-        cwd: str | None,
-        *,
-        project_id: str | None = None,
-    ) -> tuple[Path, str] | None:
-        """Return ``(repo_root, repo_relative_path)`` for an edited file."""
-        target_path = Path(os.path.expanduser(file_path))
-        cwd_path = Path(cwd).resolve(strict=False) if cwd else None
-        if target_path.is_absolute():
-            resolved_target = target_path.resolve(strict=False)
-            search_start = cwd_path or resolved_target.parent
-        elif cwd_path is not None:
-            resolved_target = (cwd_path / target_path).resolve(strict=False)
-            search_start = cwd_path
-        else:
-            return None
-
-        from gobby.utils.project_context import find_project_root, get_project_context
-
-        # Without a project root or cwd there is no repo to attribute the edit
-        # to — fabricating one from the file's parent would attribute scratchpad
-        # and other out-of-repo writes as repo edits.
-        repo_root = find_project_root(search_start) or cwd_path
-        if repo_root is None:
-            return None
-        repo_root = repo_root.resolve(strict=False)
-        if target_path.is_absolute() and not resolved_target.is_relative_to(repo_root):
-            target_root = find_project_root(resolved_target.parent)
-            target_context = get_project_context(target_root) if target_root is not None else None
-            if (
-                project_id is None
-                or target_root is None
-                or target_context is None
-                or target_context.get("id") != project_id
-            ):
-                return None
-            repo_root = target_root.resolve(strict=False)
-        if not resolved_target.is_relative_to(repo_root):
-            return None
-
-        rel_path = os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
-        return repo_root, rel_path
 
     def handle_before_tool_selection(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_TOOL_SELECTION events."""

@@ -390,6 +390,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if isinstance(event.data, dict):
                     from gobby.hooks.normalization import normalize_tool_fields
 
+                    event.data.setdefault("cwd", event.cwd)
                     await asyncio.to_thread(normalize_tool_fields, event.data)
 
                 # Load session-scoped variables (canonical store).
@@ -606,7 +607,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     canonical_paths = event_data.get("canonical_file_paths") or event_data.get(
                         "canonical_file_path"
                     )
-                    if event_data.get("canonical_repo_mutation") is True and canonical_paths:
+                    if event_data.get("canonical_tool_kind") == "write" and canonical_paths:
                         eval_context[
                             "foreign_dirty_edit_conflict"
                         ] = await foreign_dirty_edit_conflict(

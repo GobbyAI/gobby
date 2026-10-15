@@ -6,12 +6,7 @@ from collections.abc import Iterator
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.prompts import (
-    LocalPromptManager,
-    PromptChangeEvent,
-    PromptChangeNotifier,
-    PromptRecord,
-)
+from gobby.storage.prompts import LocalPromptManager, PromptRecord
 
 pytestmark = pytest.mark.unit
 
@@ -349,62 +344,3 @@ class TestPromptListing:
         results = manager.search_prompts("expansion")
         assert len(results) >= 1
         assert any(r.name == "expansion/system" for r in results)
-
-
-class TestPromptChangeNotifier:
-    """Tests for change notification system."""
-
-    def test_notification_on_create(self, db: HubDatabase) -> None:
-        """Test that create triggers notification."""
-        notifier = PromptChangeNotifier()
-        events: list[PromptChangeEvent] = []
-        notifier.add_listener(lambda e: events.append(e))
-
-        manager = LocalPromptManager(db, notifier=notifier)
-        manager.create_prompt(name="test/notify", content="Content", scope="bundled")
-
-        assert len(events) == 1
-        assert events[0].event_type == "create"
-        assert events[0].prompt_name == "test/notify"
-
-    def test_notification_on_update(self, db: HubDatabase) -> None:
-        """Test that update triggers notification."""
-        notifier = PromptChangeNotifier()
-        events: list[PromptChangeEvent] = []
-        notifier.add_listener(lambda e: events.append(e))
-
-        manager = LocalPromptManager(db, dev_mode=True, notifier=notifier)
-        created = manager.create_prompt(name="test/notify", content="C", scope="bundled")
-        manager.update_prompt(created.id, content="Updated")
-
-        assert len(events) == 2
-        assert events[1].event_type == "update"
-
-    def test_notification_on_delete(self, db: HubDatabase) -> None:
-        """Test that delete triggers notification."""
-        notifier = PromptChangeNotifier()
-        events: list[PromptChangeEvent] = []
-        notifier.add_listener(lambda e: events.append(e))
-
-        manager = LocalPromptManager(db, dev_mode=True, notifier=notifier)
-        created = manager.create_prompt(name="test/del", content="C", scope="bundled")
-        manager.delete_prompt(created.id)
-
-        assert len(events) == 2
-        assert events[1].event_type == "delete"
-
-    def test_remove_listener(self, db: HubDatabase) -> None:
-        """Test removing a listener."""
-        notifier = PromptChangeNotifier()
-        events: list[PromptChangeEvent] = []
-
-        def listener(event: PromptChangeEvent) -> None:
-            events.append(event)
-
-        notifier.add_listener(listener)
-        notifier.remove_listener(listener)
-
-        manager = LocalPromptManager(db, notifier=notifier)
-        manager.create_prompt(name="test/no-notify", content="C", scope="bundled")
-
-        assert len(events) == 0

@@ -748,11 +748,13 @@ class TestInitHubDatabase:
             call(
                 FAKE_DATABASE_URL,
                 pool_config=PostgresPoolConfig(min_size=2, max_size=2),
+                lifecycle="runner",
             ),
             call(
                 FAKE_DATABASE_URL,
                 pool_config=PostgresPoolConfig(min_size=2, max_size=2),
                 runtime_role="gobby_daemon_runtime",
+                lifecycle="runner",
             ),
         ]
         migration_db.apply_migrations.assert_called_once_with()
@@ -780,9 +782,11 @@ class TestInitHubDatabase:
                 *,
                 pool_config: object,
                 runtime_role: str | None = None,
+                lifecycle: str = "independent",
             ) -> None:
                 self.closed = False
                 self.runtime_role = runtime_role
+                self.lifecycle = lifecycle
                 self.instances.append(self)
 
             def apply_migrations(self) -> None:
@@ -795,6 +799,7 @@ class TestInitHubDatabase:
 
             def verify_runtime_identity(self) -> None:
                 assert self.runtime_role == "gobby_daemon_runtime"
+                assert self.lifecycle == "runner"
 
         monkeypatch.setattr(
             "gobby.storage.hub.postgres.PostgresHubDatabase",

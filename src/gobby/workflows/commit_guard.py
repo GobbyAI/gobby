@@ -8,15 +8,13 @@ import os
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psycopg
 from psycopg_pool import PoolTimeout
 
-from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
-from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.commit_guard_conflicts import (
     ForeignPathOwner as ForeignPathOwner,
@@ -24,21 +22,23 @@ from gobby.workflows.commit_guard_conflicts import (
 from gobby.workflows.commit_guard_conflicts import (
     format_conflict_reason,
     format_dirty_edit_reason,
-    format_ref,
     format_session_ref,
     format_unverified_dirty_edit_reason,
     scope_foreign_owners,
 )
-from gobby.workflows.commit_guard_shell import (
+from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
     parse_git_commit_invocations,
     resolve_commit_inspect_cwd,
 )
+from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
+    effective_tool_cwd,
     normalize_task_edited_path,
     overlapping_task_edit_paths,
+    resolve_edit_pair,
     task_edit_path_covers,
     task_edited_file_set_for_checkout,
 )
@@ -66,24 +66,7 @@ class DirtyEditOwnershipInspectionError(RuntimeError):
 
 
 def _normalized_command_cwd(event: HookEvent, project_path: str) -> str:
-    """Resolve relative tool paths from the cwd used by the tool invocation."""
-    raw_event_cwd = event.cwd if isinstance(event.cwd, str) and event.cwd.strip() else project_path
-    event_cwd = Path(raw_event_cwd).expanduser()
-    if not event_cwd.is_absolute():
-        event_cwd = Path(project_path) / event_cwd
-
-    data = event.data if isinstance(event.data, dict) else {}
-    tool_input = data.get("tool_input")
-    if isinstance(tool_input, Mapping):
-        for key in ("workdir", "cwd"):
-            raw_tool_cwd = tool_input.get(key)
-            if not isinstance(raw_tool_cwd, str) or not raw_tool_cwd.strip():
-                continue
-            tool_cwd = Path(raw_tool_cwd).expanduser()
-            if not tool_cwd.is_absolute():
-                tool_cwd = event_cwd / tool_cwd
-            return os.path.normpath(str(tool_cwd))
-    return os.path.normpath(str(event_cwd))
+    return effective_tool_cwd(event.cwd, event.data) or project_path
 
 
 async def _resolve_commit_checkout_root(
@@ -154,10 +137,9 @@ async def foreign_staged_commit_conflict(
             if checkout_root not in owners_by_checkout:
                 try:
                     owners_by_checkout[checkout_root] = await asyncio.to_thread(
-                        _active_foreign_path_owners,
+                        _live_path_owners,
                         db,
-                        session_id=session_id,
-                        project_id=project_id,
+                        exclude_session_id=session_id,
                         checkout_root=checkout_root,
                     )
                 except psycopg.errors.QueryCanceled as exc:
@@ -221,8 +203,14 @@ async def foreign_staged_commit_conflict(
         for checkout_root, owned_candidates in candidates_by_checkout.items():
             owners = owners_by_checkout[checkout_root]
             current_owned = await asyncio.to_thread(
-                _active_current_owned_paths, db, session_id, project_id, checkout_root
+                _current_owned_paths, db, session_id, checkout_root
             )
+            owned_candidates = {
+                path
+                for path in owned_candidates
+                if not any(task_edit_path_covers(own, path) for own in current_owned)
+            }
+            owned_candidates -= await _merge_set(checkout_root)
             scoped_owners = scope_foreign_owners(owners, owned_candidates, current_owned)
             dirty_paths = await _dirty_owned_paths_releasing_clean(
                 db,
@@ -250,179 +238,151 @@ async def foreign_staged_commit_conflict(
 
 
 async def foreign_dirty_edit_conflict(
-    db: HubDatabase,
-    event: HookEvent,
-    *,
-    session_id: str,
-    project_id: str,
-    project_path: str,
+    db: HubDatabase, event: HookEvent, *, session_id: str, project_id: str, project_path: str
 ) -> str:
-    """Return an actionable block reason for edits to dirty foreign-owned paths.
-
-    Candidates are the edit's paths that another active session's task ledger
-    claims; only those are verified against git, with a pathspec-limited
-    status. An unverifiable candidate blocks rather than guesses.
-    """
+    """Refuse first-touch writes to dirt, regardless of task claim ownership."""
     data = event.data if isinstance(event.data, dict) else {}
-    if data.get("canonical_repo_mutation") is not True:
+    if data.get("canonical_tool_kind") != "write":
         return ""
-
-    # Checkout operands use the target worktree's ledger, including deleted files.
-    checkout_scopes = {root: [root] for root in data.get("canonical_git_force_checkout_roots", [])}
-    if data.get("canonical_git_checkout_mutation"):
-        ownership_paths = data.get(
-            "canonical_dirty_edit_paths", data.get("canonical_file_paths", [])
-        )
-        for path in ownership_paths or []:
-            scoped_path = Path(path)
-            if not scoped_path.is_absolute():
-                scoped_path = Path(_normalized_command_cwd(event, project_path)) / scoped_path
-            if root_path := checkout_root(scoped_path):
-                checkout_scopes.setdefault(str(root_path), []).append(str(scoped_path))
-    for root, paths in checkout_scopes.items():
-        scoped_data = dict(data)
-        scoped_data.pop("canonical_git_force_checkout_roots", None)
-        scoped_data.pop("canonical_git_checkout_mutation", None)
-        scoped_data["canonical_file_paths"] = paths
-        scoped_data["canonical_dirty_edit_paths"] = paths
-        reason = await foreign_dirty_edit_conflict(
-            db,
-            replace(event, data=scoped_data, cwd=root),
-            session_id=session_id,
-            project_id=project_id,
-            project_path=root,
-        )
-        if reason:
-            return reason
-
     try:
-        mutation_paths = _canonical_mutation_paths(event, project_path)
-        if not mutation_paths:
-            return ""
-
-        try:
-            owners = await asyncio.to_thread(
-                _active_foreign_path_owners,
-                db,
-                session_id=session_id,
+        variables = await asyncio.to_thread(SessionVariableManager(db).get_variables, session_id)
+        roots: dict[str, set[str]] = {}
+        for path in _write_paths(data):
+            pair = await asyncio.to_thread(
+                resolve_edit_pair,
+                path,
+                effective_tool_cwd(event.cwd, data),
                 project_id=project_id,
-                checkout_root=project_path,
+                db=db,
+                variables=variables,
             )
-        except (psycopg.OperationalError, PoolTimeout) as exc:
-            raise DirtyEditOwnershipInspectionError(
-                f"database ownership inspection failed: {exc}"
-            ) from exc
-        candidate_paths = overlapping_task_edit_paths(owners.keys(), mutation_paths)
-        if not candidate_paths:
-            return ""
-
-        current_owned = await asyncio.to_thread(
-            _active_current_owned_paths, db, session_id, project_id, project_path
+            if pair is not None:
+                root, rel = pair
+                roots.setdefault(root, set()).add(rel)
+        conflicts: set[ForeignPathOwner] = set()
+        unowned: set[str] = set()
+        for root, rels in roots.items():
+            own = session_dirty_file_set_for_checkout(variables, root)
+            candidates = {
+                rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
+            }
+            if not candidates:
+                continue
+            merge_paths = await _merge_set(root)
+            candidates -= merge_paths
+            if not candidates:
+                continue
+            dirty = await task_dirty_paths_async(candidates, root)
+            if dirty is None:
+                return format_unverified_dirty_edit_reason(candidates)
+            owners = await asyncio.to_thread(
+                _live_path_owners,
+                db,
+                checkout_root=root,
+                paths=candidates,
+                exclude_session_id=session_id,
+            )
+            scoped = scope_foreign_owners(owners, candidates, own)
+            clean = {
+                path
+                for path in candidates | set(scoped)
+                if not any(task_edit_path_covers(path, child) for child in dirty)
+            }
+            await asyncio.to_thread(_release_clean_ledger_entries, db, scoped, clean, root)
+            for path in dirty:
+                if path in merge_paths or any(task_edit_path_covers(p, path) for p in own):
+                    continue
+                holders = tuple(
+                    owner
+                    for ledger in overlapping_task_edit_paths(scoped, [path])
+                    for owner in scoped[ledger]
+                )
+                if holders:
+                    conflicts.update(replace(owner, path=path) for owner in holders)
+                else:
+                    unowned.add(path)
+        return format_dirty_edit_reason(conflicts, unowned) if conflicts or unowned else ""
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        return (
+            f"Edit blocked: Gobby could not verify dirty-path ownership "
+            f"(database ownership inspection failed: {exc}). "
+            "Fix that cause, or retry once the daemon and repository are available."
         )
-        scoped_owners = scope_foreign_owners(owners, mutation_paths, current_owned)
-
-        dirty_paths = await _dirty_owned_paths_releasing_clean(
-            db,
-            scoped_owners,
-            set(scoped_owners),
-            checkout_root=project_path,
-        )
-        if dirty_paths is None:
-            return format_unverified_dirty_edit_reason(set(scoped_owners))
-        conflicts = {owner for path in dirty_paths for owner in scoped_owners.get(path, ())}
-        if not conflicts:
-            return ""
-        return format_dirty_edit_reason(conflicts)
     except DirtyEditOwnershipInspectionError as exc:
-        logger.warning(
-            "Cross-session dirty edit ownership inspection failed",
-            extra={"session_id": session_id, "project_id": project_id},
-            exc_info=True,
-        )
+        logger.warning("Cross-session dirty edit ownership inspection failed", exc_info=True)
         return (
             f"Edit blocked: Gobby could not verify dirty-path ownership ({exc}). "
             "Fix that cause, or retry once the daemon and repository are available."
         )
 
 
-def _canonical_mutation_paths(event: HookEvent, project_path: str) -> set[str]:
-    data = event.data if isinstance(event.data, dict) else {}
-    raw_paths = data.get("canonical_dirty_edit_paths", data.get("canonical_file_paths"))
-    if not isinstance(raw_paths, list):
-        single_path = data.get("canonical_file_path")
-        raw_paths = [single_path] if isinstance(single_path, str) else []
-
-    repository_root = Path(project_path).resolve()
-    tool_cwd = Path(_normalized_command_cwd(event, project_path)).resolve()
-
-    paths: set[str] = set()
-    for raw_path in raw_paths:
-        if not isinstance(raw_path, str) or not raw_path:
-            continue
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = tool_cwd / path
-        try:
-            relative_path = path.resolve().relative_to(repository_root).as_posix()
-        except ValueError:
-            continue
-        normalized = normalize_task_edited_path(relative_path)
-        if normalized is not None:
-            paths.add(normalized)
-    return paths
+def _write_paths(event_data: dict[str, Any]) -> list[str]:
+    if "canonical_write_file_paths" in event_data:
+        raw = event_data["canonical_write_file_paths"]
+    else:
+        raw = event_data.get("canonical_file_paths") or event_data.get("canonical_file_path")
+    if isinstance(raw, str):
+        return [raw]
+    return [path for path in raw if isinstance(path, str)] if isinstance(raw, list) else []
 
 
-def _active_path_owners(
+async def _merge_set(checkout_root: str) -> set[str]:
+    result = await daemon_git.run(
+        ["-c", "core.fsmonitor=false", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=checkout_root,
+        timeout=10.0,
+    )
+    if not isinstance(result, GitOk):
+        return set()
+    return await _git_paths_async(
+        checkout_root, "diff", "--name-only", "--no-renames", "-z", "HEAD", "MERGE_HEAD"
+    )
+
+
+def _live_path_owners(
     db: HubDatabase,
     *,
-    project_id: str,
     checkout_root: str,
+    paths: AbstractSet[str] | None = None,
     exclude_session_id: str | None = None,
 ) -> dict[str, tuple[ForeignPathOwner, ...]]:
     rows = db.fetchall(
         """
-        SELECT
-            tasks.id AS task_id,
-            tasks.seq_num AS task_seq_num,
-            sessions.id AS session_id,
-            sessions.seq_num AS session_seq_num,
-            sessions.project_id AS session_project_id,
-            projects.name AS project_name
-        FROM tasks
-        JOIN sessions ON sessions.id = tasks.claimed_by_session_id
+        SELECT sessions.id AS session_id, sessions.seq_num AS session_seq_num,
+               sessions.project_id AS session_project_id, projects.name AS project_name
+        FROM sessions
         LEFT JOIN projects ON projects.id = sessions.project_id
-        WHERE tasks.project_id = %s
-          AND tasks.claimed_by_session_id IS NOT NULL
-          AND tasks.closed_at IS NULL
-          AND sessions.id IS DISTINCT FROM %s
-          AND sessions.status = ANY(%s)
-        ORDER BY sessions.seq_num, tasks.seq_num
+        WHERE sessions.id IS DISTINCT FROM %s AND sessions.status = ANY(%s)
+        ORDER BY sessions.seq_num
         """,
-        (project_id, exclude_session_id, list(TERMINAL_OWNER_STATUSES)),
+        (exclude_session_id, list(LIVE_SESSION_STATUS_ORDER)),
     )
     variable_manager = SessionVariableManager(db)
-    variables_by_session: dict[str, dict[str, Any]] = {}
     owners: dict[str, list[ForeignPathOwner]] = {}
-
     for row in rows:
         owner_session_id = str(row["session_id"])
-        variables = variables_by_session.get(owner_session_id)
-        if variables is None:
-            variables = variable_manager.get_variable_subset(
-                owner_session_id, ("task_edited_file_checkouts",)
-            )
-            variables_by_session[owner_session_id] = variables
-        task_id = str(row["task_id"])
-        paths = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
-
+        variables = variable_manager.get_variables(owner_session_id)
+        held = session_dirty_file_set_for_checkout(variables, checkout_root)
+        if paths is not None:
+            held = overlapping_task_edit_paths(held, paths)
+        claims = variables.get("claimed_tasks")
+        claimed_tasks = claims if isinstance(claims, dict) else {}
         session_ref = format_session_ref(
             row["session_seq_num"],
             owner_session_id,
             project_name=row["project_name"],
             project_id=row["session_project_id"],
         )
-        task_ref = format_ref(row["task_seq_num"], task_id)
-        for path in paths:
+        for path in held:
+            task_id = next(
+                (
+                    task
+                    for task in claimed_tasks
+                    if path in task_edited_file_set_for_checkout(variables, task, checkout_root)
+                ),
+                None,
+            )
+            task_ref = str(claimed_tasks[task_id]) if task_id is not None else ""
             owners.setdefault(path, []).append(
                 ForeignPathOwner(
                     path=path,
@@ -432,37 +392,17 @@ def _active_path_owners(
                     owner_task_id=task_id,
                 )
             )
+    return {path: tuple(holders) for path, holders in owners.items()}
 
-    return {path: tuple(path_owners) for path, path_owners in owners.items()}
 
-
-def _active_current_owned_paths(
-    db: HubDatabase, session_id: str, project_id: str, checkout_root: str
-) -> set[str]:
+def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -> set[str]:
     try:
-        owners = _active_path_owners(db, project_id=project_id, checkout_root=checkout_root)
+        variables = SessionVariableManager(db).get_variables(session_id)
     except (psycopg.OperationalError, PoolTimeout) as exc:
-        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    return {
-        path
-        for path, path_owners in owners.items()
-        if any(owner.owner_session_id == session_id for owner in path_owners)
-    }
-
-
-def _active_foreign_path_owners(
-    db: HubDatabase,
-    *,
-    session_id: str,
-    project_id: str,
-    checkout_root: str,
-) -> dict[str, tuple[ForeignPathOwner, ...]]:
-    return _active_path_owners(
-        db,
-        project_id=project_id,
-        checkout_root=checkout_root,
-        exclude_session_id=session_id,
-    )
+        raise DirtyEditOwnershipInspectionError(
+            f"database ownership inspection failed: {exc}"
+        ) from exc
+    return session_dirty_file_set_for_checkout(variables, checkout_root)
 
 
 def _release_clean_ledger_entries(
@@ -471,30 +411,22 @@ def _release_clean_ledger_entries(
     clean_paths: AbstractSet[str],
     checkout_root: str,
 ) -> None:
-    """Drop the ledger entries that claim ``clean_paths`` in ``checkout_root``."""
     variable_manager = SessionVariableManager(db)
-    paths_by_owner: dict[tuple[str, str], list[str]] = {}
+    paths_by_owner: dict[str, list[str]] = {}
     for path in sorted(clean_paths):
         for owner in owners.get(path, ()):
-            paths_by_owner.setdefault((owner.owner_session_id, owner.owner_task_id), []).append(
-                path
-            )
-    for (owner_session_id, owner_task_id), paths in paths_by_owner.items():
+            paths_by_owner.setdefault(owner.owner_session_id, []).append(path)
+    for owner_session_id, paths in paths_by_owner.items():
         try:
-            variable_manager.release_task_edited_files(
+            variable_manager.release_session_dirty_files(
                 owner_session_id,
-                owner_task_id,
                 paths,
                 checkout_root=checkout_root,
             )
         except (psycopg.OperationalError, PoolTimeout):
-            # Releasing a stale entry is ledger hygiene, not part of the ownership
-            # decision: git already proved the path clean, so a database hiccup
-            # leaves the entry for a later check instead of failing the caller.
             logger.warning(
-                "Could not release stale clean ledger entries for session %s task %s",
+                "Could not release stale clean ledger entries for session %s",
                 owner_session_id,
-                owner_task_id,
                 exc_info=True,
             )
 
@@ -552,9 +484,8 @@ def _owned_dirty_paths(
     exclude_session_id: str | None,
 ) -> dict[str, tuple[ForeignPathOwner, ...]]:
     try:
-        owners = _active_path_owners(
+        owners = _live_path_owners(
             db,
-            project_id=project_id,
             checkout_root=checkout_root,
             exclude_session_id=exclude_session_id,
         )
@@ -628,10 +559,9 @@ async def foreign_owned_dirty_paths_async(
     """
     try:
         owners = await asyncio.to_thread(
-            _active_foreign_path_owners,
+            _live_path_owners,
             db,
-            session_id=session_id,
-            project_id=project_id,
+            exclude_session_id=session_id,
             checkout_root=checkout_root,
         )
     except (psycopg.OperationalError, PoolTimeout) as exc:
@@ -657,9 +587,8 @@ async def inspect_checkout_path_ownership_async(
     """Inspect dirty ownership without blocking a daemon worker on Git."""
     try:
         owners = await asyncio.to_thread(
-            _active_path_owners,
+            _live_path_owners,
             db,
-            project_id=project_id,
             checkout_root=checkout_root,
         )
     except (psycopg.OperationalError, PoolTimeout) as exc:
