@@ -198,7 +198,7 @@ pub(super) fn place_live_terminal(
     worktree_id: Option<String>,
     project_override: Option<&str>,
 ) {
-    if let Some(op) = placement_op(
+    if let Some(mut op) = placement_op(
         workspace,
         chrome,
         placement,
@@ -207,6 +207,15 @@ pub(super) fn place_live_terminal(
         None,
         project_override,
     ) {
+        // A roster agent's own tab carries its label; a shell's stays untitled.
+        if let WorkspaceOp::TabCreate { title, .. } = &mut op {
+            *title = workspace
+                .sidebar()
+                .agents
+                .iter()
+                .find(|agent| agent.terminal_id == terminal_id)
+                .map(|agent| agent.definition_label());
+        }
         workspace.expect_placement(terminal_id);
         issue_op(workspace, outcomes, op, Some(terminal_id.to_owned()));
         return;
