@@ -499,6 +499,27 @@ async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
 
 
 @pytest.mark.asyncio
+async def test_rule3_refuses_directory_write_over_unreadable_subdirectory(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    hidden = export / "hidden"
+    hidden.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # An unreadable subdirectory could hide a nested checkout.
+    hidden.chmod(0)
+    try:
+        result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    finally:
+        hidden.chmod(0o755)
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation",
     [

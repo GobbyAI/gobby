@@ -349,15 +349,20 @@ async def foreign_dirty_edit_conflict(
 
 def _git_backed_targets(root: str, rels: set[str]) -> set[str]:
     """Keep targets inside, or holding, a Git checkout; the rest hold no uncommitted work."""
-    kept: set[str] = set()
-    for rel in rels:
-        target = Path(root, rel)
-        if checkout_root(target) is not None or (
-            target.is_dir()
-            and any(".git" in dirs or ".git" in files for _, dirs, files in os.walk(target))
-        ):
-            kept.add(rel)
-    return kept
+    return {rel for rel in rels if _may_hold_git(Path(root, rel))}
+
+
+def _may_hold_git(target: Path) -> bool:
+    if checkout_root(target) is not None:
+        return True
+    if not target.is_dir():
+        return False
+    errors: list[OSError] = []
+    for _, dirs, files in os.walk(target, onerror=errors.append):
+        if ".git" in dirs or ".git" in files:
+            return True
+    # An unreadable subdirectory could hide a checkout.
+    return bool(errors)
 
 
 def _write_paths(event_data: dict[str, Any]) -> list[str]:
