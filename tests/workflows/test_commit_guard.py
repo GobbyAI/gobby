@@ -282,14 +282,23 @@ async def test_rule3_exempts_operation_paths_at_conflict_stop(
 ) -> None:
     h = guard_harness
     _stop_at_conflict(h.repo, operation)
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
     for path in ("conflict.txt", "applied.txt"):
         result = await h.handler._evaluate_rules(h.edit_event(path))
         assert result.decision == "allow", path
+    for command in (
+        "git checkout --ours conflict.txt",
+        "git checkout --theirs conflict.txt",
+        "git restore --theirs conflict.txt",
+    ):
+        result = await h.handler._evaluate_rules(h.event(command))
+        assert result.decision == "allow", command
     (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
-    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
-    assert result.decision == "block"
-    assert result.reason is not None
-    assert h.foreign_session.ref in result.reason
+    for event in (h.edit_event("foreign.txt"), h.event("git checkout --ours foreign.txt")):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert result.reason is not None
+        assert h.foreign_session.ref in result.reason
 
 
 @pytest.mark.asyncio
@@ -365,6 +374,36 @@ async def test_rule3_merge_exemption_excludes_paths_only_head_changed(
     assert result.decision == "block"
     assert result.reason is not None
     assert h.foreign_session.ref in result.reason
+
+
+@pytest.mark.asyncio
+async def test_unrelated_history_merge_exempts_everything_it_brings(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "switch", "-q", "--orphan", "unrelated")
+    _commit_files(h.repo, "unrelated", {"conflict.txt": "theirs\n", "brought.txt": "brought\n"})
+    _git(h.repo, "switch", "-q", base)
+    _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
+    _git_conflict(h.repo, "merge", "--allow-unrelated-histories", "--no-edit", "unrelated")
+    for path in ("conflict.txt", "brought.txt"):
+        result = await h.handler._evaluate_rules(h.edit_event(path))
+        assert result.decision == "allow", path
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+    ledger = ["conflict.txt", "brought.txt"]
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
+    )
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
+    assert result.decision == "allow"
 
 
 @pytest.mark.asyncio

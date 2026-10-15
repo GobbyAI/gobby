@@ -15,7 +15,7 @@ from psycopg_pool import PoolTimeout
 
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
-from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.commit_guard_conflicts import (
     ForeignPathOwner as ForeignPathOwner,
 )
@@ -351,19 +351,29 @@ def _write_paths(event_data: dict[str, Any]) -> list[str]:
 async def _operation_paths(checkout_root: str) -> set[str]:
     """Paths an in-progress merge, cherry-pick, revert or rebase applied or left unmerged."""
 
-    async def git_ok(*args: str) -> GitOk | None:
-        result = await daemon_git.run(
+    async def git(*args: str) -> GitResult:
+        return await daemon_git.run(
             ["-c", "core.fsmonitor=false", *args], cwd=checkout_root, timeout=10.0
         )
+
+    async def git_ok(*args: str) -> GitOk | None:
+        result = await git(*args)
         return result if isinstance(result, GitOk) else None
 
     paths: set[str] = set()
     in_progress = False
     if await git_ok("rev-parse", "-q", "--verify", "MERGE_HEAD"):
         in_progress = True
-        paths |= await _git_paths_async(
-            checkout_root, "diff", "--name-only", "--no-renames", "-z", "HEAD...MERGE_HEAD"
-        )
+        merge_base = await git("merge-base", "HEAD", "MERGE_HEAD")
+        if isinstance(merge_base, GitOk):
+            merge_args = ("diff", "--name-only", "--no-renames", "-z", "HEAD...MERGE_HEAD")
+        elif isinstance(merge_base, GitFailed) and merge_base.returncode == 1:
+            # Unrelated histories share no base, so the merge brings all of MERGE_HEAD.
+            merge_args = ("ls-tree", "-r", "--name-only", "-z", "MERGE_HEAD")
+        else:
+            detail = merge_base.stderr.strip() or merge_base.status
+            raise DirtyEditOwnershipInspectionError(f"git merge-base failed: {detail}")
+        paths |= await _git_paths_async(checkout_root, *merge_args)
     picked = ["CHERRY_PICK_HEAD", "REVERT_HEAD"]
     # REBASE_HEAD outlives a finished rebase, so only its state directory proves one.
     state_dirs = await git_ok(
