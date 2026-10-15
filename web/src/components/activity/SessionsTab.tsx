@@ -46,16 +46,21 @@ const STATUS_MODE_OPTIONS = [
   { value: "expired", label: "Expired" },
 ] as const;
 
+// Expired sessions show their archival summary; active and paused sessions show
+// the continuation handoff. Either falls back to whichever field has content.
 function resolveSessionSummaryMarkdown(
+  status: GobbySession["status"] | null,
   ...sessions: Array<
     | Pick<GobbySession, "summary_markdown" | "handoff_markdown">
     | null
     | undefined
   >
 ): string | null {
-  for (const session of sessions) {
-    if (session?.summary_markdown?.trim()) {
-      return session.summary_markdown;
+  if (status === "expired") {
+    for (const session of sessions) {
+      if (session?.summary_markdown?.trim()) {
+        return session.summary_markdown;
+      }
     }
   }
   for (const session of sessions) {
@@ -470,12 +475,13 @@ export const SessionsTab = memo(function SessionsTab({
     return "No messages yet";
   }, [transcriptStatus]);
 
+  const selectedSessionStatus =
+    selectedSession?.status ?? selectedEntry?.status ?? null;
   const summaryMarkdown = resolveSessionSummaryMarkdown(
+    selectedSessionStatus,
     selectedSessionDetail,
     selectedCatalogSession,
   );
-  const selectedSessionStatus =
-    selectedSession?.status ?? selectedEntry?.status ?? null;
   const transcriptUnavailable =
     transcriptStatus?.content_state === "missing" ||
     transcriptStatus?.content_state === "unparseable";
