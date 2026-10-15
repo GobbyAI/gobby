@@ -42,6 +42,7 @@ from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     effective_tool_cwd,
+    normalize_task_checkout_root,
     normalize_task_edited_path,
     overlapping_task_edit_paths,
     resolve_edit_pair,
@@ -463,6 +464,7 @@ def _live_path_owners(
                 SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
                 "claimed_tasks",
                 "task_edited_file_checkouts",
+                "task_live_edit_starts",
             ),
         )
         held = session_dirty_file_set_for_checkout(variables, checkout_root)
@@ -470,6 +472,9 @@ def _live_path_owners(
             held = overlapping_task_edit_paths(held, paths)
         claims = variables.get("claimed_tasks")
         claimed_tasks = claims if isinstance(claims, dict) else {}
+        live = variables.get("task_live_edit_starts")
+        live_starts = live if isinstance(live, dict) else {}
+        root_key = normalize_task_checkout_root(checkout_root) or ""
         session_ref = format_session_ref(
             row["session_seq_num"],
             owner_session_id,
@@ -477,7 +482,8 @@ def _live_path_owners(
             project_id=row["session_project_id"],
         )
         for path in held:
-            task_id = next(
+            # Edit history outlives a clean reconcile; the live interval names the owner.
+            task_id = _live_interval_task(live_starts, claimed_tasks, root_key, path) or next(
                 (
                     task
                     for task in claimed_tasks
@@ -496,6 +502,26 @@ def _live_path_owners(
                 )
             )
     return {path: tuple(holders) for path, holders in owners.items()}
+
+
+def _live_interval_task(
+    live_starts: dict[str, Any], claimed_tasks: dict[str, Any], root_key: str, path: str
+) -> str | None:
+    """The claim whose live attribution interval covers path; the latest start wins."""
+    best: tuple[float, int, str] | None = None
+    for order, task in enumerate(claimed_tasks):
+        by_root = live_starts.get(task)
+        starts = by_root.get(root_key) if isinstance(by_root, dict) else None
+        if not isinstance(starts, dict):
+            continue
+        stamps = [
+            float(stamp)
+            for entry, stamp in starts.items()
+            if isinstance(stamp, (int, float)) and task_edit_path_covers(entry, path)
+        ]
+        if stamps and (best is None or (max(stamps), order) > best[:2]):
+            best = (max(stamps), order, task)
+    return best[2] if best is not None else None
 
 
 def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -> set[str]:
