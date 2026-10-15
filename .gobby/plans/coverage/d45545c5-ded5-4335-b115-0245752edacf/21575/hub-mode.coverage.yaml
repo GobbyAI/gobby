@@ -1,0 +1,1380 @@
+header:
+  plan_id: hub-mode
+  plan_hash: 8123a69451949ae32af2884f22bd019a0e8af4c97f425d42e2fa56565c9df799
+  root_task_ref: '21575'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-15T16:07:57Z'
+  task_tree_source: db
+  task_tree_source_hash: 7b088394eaf6477401f4dfe3c7e8b248745534dda12322442da0e52dc1f79340
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: eb10ace66b12a6c7d9ade94f7e58e222fd0d8f1bdd15376f8404b9d61af277a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24268'
+    validation_criteria_snippet: '1.1.1: The contract specifies both frames, the three
+      v1 commands with payload and result fields, both node bodies, the error codes
+      with their producers and sta...'
+    matched_artifact_ref: docs/contracts/node-commands.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 6ee80185c203e74c49f255e2efad8acf457e56e9c99d43c11a9f6cf827460fe8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24268'
+    validation_criteria_snippet: '1.1.1: The contract specifies both frames, the three
+      v1 commands with payload and result fields, both node bodies, the error codes
+      with their producers and sta...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 7d5db1589f5b3d6459baa1284e89ccb91f743463659d06543fab76182ff74354
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24268'
+    validation_criteria_snippet: '1.1.1: The contract specifies both frames, the three
+      v1 commands with payload and result fields, both node bodies, the error codes
+      with their producers and sta...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_corpus_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 5235c1151e50ed9584380cb81608e51c8421e6be736423a709831af94cdda1e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24268'
+    validation_criteria_snippet: '1.1.1: The contract specifies both frames, the three
+      v1 commands with payload and result fields, both node bodies, the error codes
+      with their producers and sta...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: c79b5de59962c9f400677606df3067233b858b36c6b9c172d1afa8c6666c8a96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24268'
+    validation_criteria_snippet: '1.1.1: The contract specifies both frames, the three
+      v1 commands with payload and result fields, both node bodies, the error codes
+      with their producers and sta...'
+    matched_artifact_ref: ROADMAP.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 75db03b457fa0853f951897d614578677a72accf415c96147d2cf91e81f7378a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 3d739edf0ed70952dbc6ef27b04f7946b3feb30911c9034dd8b0a7ea3a3d2de2
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 101b2d59c0189ab6c7e84937db7c0d29bd7271c52d73b9c8012d31d30a005b11
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: fee03444ece1a0e8e99a6878ef041b8d004d76ca1464741e23d2cf5b44b9ed87
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 6547e067ca588916b23fe9c9aec31de2c4ab8c8f4f4b2d90267219eacc652658
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 7b4f552c9d00890a82374cf4533feb14e03b7745c72e837018f673141e53c58c
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: ddf2f7d844ae5871bc70634c728ece76e77286023a7f757b213c56652ba49132
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_node_client.py::test_send_maps_replies
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 97b95c7b033d91f0d125e89658a3547cebd2eb99da7665db16495bf35edf0cb8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_node_client.py::test_unavailable_routing_is_typed
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 2361742b367cc8a12872dafa2411bf7b7ed6eeef3eb296b933d1b6f176325d83
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_machine_routing.py::test_default_and_explicit_targets
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 95dbec3ddede961f0650480cf83bcfa584b031acb80b0bceb37fa57e48f1a374
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_machine_routing.py::test_ineligible_targets_never_fall_back
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 6adc36f61f806604bb81249674113beafd628b795812d26222595810c4c960fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_node_client.py::test_post_send_failures_are_uncertain
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: c3af76e7d3fcabcaf7eb3f3d50494cfaa1e81c3e00abd26f0ef713c96692e42f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24269'
+    validation_criteria_snippet: '1.3.1: Against a fake route, `send` posts the secret
+      header and maps an ok reply to its result and an error reply to `NodeCommandError`
+      with code and stage. te...'
+    matched_artifact_ref: tests/hub/test_machine_routing.py::test_remote_checkout_read_keeps_local_guard
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 2392ff906c9268d8ce7a4ee9a8875cd58a2e9df23f7d8966192bf7e6e8c7acff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_checkout_registration_uses_key_machine
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 66a8068d3143c428c2f3816bfc4092f87395ac9141abffb75bce64c247ce7bd1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_checkout_registration_refusals
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: f141803e50f3b20de6c3092d6d6d92646bd3370913799e558d68fc98ad13cdd0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_inbox_replaces_snapshot_and_merges_exits
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: b2150079faa8e879bff2d34ef53aaf2456cdca4109f8ae119777f9efb25adb2f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_node_routes_refuse_unverified_and_local_identity
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: 9eefb61e5cf576921d62af1c1977bee98e6847b355575d5112b6957508a7977e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.6
+  plan_node_hash: 1c13248d5e634a9c69cc0a5b848379e3ee0f423c45297f80c6d4b3b1ace603c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_reported_workspace_is_durable_before_200
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.7
+  plan_node_hash: 45adc9bc9518ec59b18410b538ed13bb9bfd2c7bfc61355470bdc19736161c21
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: 1690f1db1e6bf57c2bfd2701e8373e0d1722d677ea066d3aee1bc49a6633f6b5
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 5cea74e022728e1bbccee2b27480f10fc259fea055f6b4b64b6f0ca5fd23c097
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: a7b396396e7d8739463fc13fe29fee1d90db648ae4977a80a8ebfd8c6bf27bf9
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 934c19a570fcc73490ba7af2eb434a2aa2096772891f316d1cdddc90bb9f354e
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: bbd48363d94892b5c9263d1500366c3c040468efc18434cca36bf254d7b770ee
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.6
+  plan_node_hash: 0785ba31417db42a92851cdbcdb99abf03b65546d821b5d031a47c405a50894c
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 72ec8435649cec1b1b648c22e0ffa40dd74406d8cf930fed9588ef6396a5a851
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24271'
+    validation_criteria_snippet: '2.1.1: The stale-pending reaper leaves another machine''s
+      pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::t...'
+    matched_artifact_ref: tests/agents/test_hub_local_loops.py::test_reaper_skips_remote_pending
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 208402527d91a6a1858c7ed0afd0f053b87c86834dafd2d70e1618a0c35f351c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24271'
+    validation_criteria_snippet: '2.1.1: The stale-pending reaper leaves another machine''s
+      pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::t...'
+    matched_artifact_ref: tests/agents/test_hub_local_loops.py::test_tmux_cleanup_is_machine_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 4cb603d09774477d550e7be1ea02ff87913ec8e8533840e75b3dcd5abab5c47b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24271'
+    validation_criteria_snippet: '2.1.1: The stale-pending reaper leaves another machine''s
+      pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::t...'
+    matched_artifact_ref: tests/agents/test_hub_local_loops.py::test_post_cleanup_skips_local_phases_for_remote_run
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 1b4e0e7187e75c9e46c5abac515818bc8a219033a73ca0ea2f257b51e578573f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24271'
+    validation_criteria_snippet: '2.1.1: The stale-pending reaper leaves another machine''s
+      pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::t...'
+    matched_artifact_ref: tests/agents/test_hub_local_loops.py::test_interactive_monitor_is_machine_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 5aa9919fd2c80e3988c1c0c5ed63fff193c8fe6788d10478f2b1c367211104db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24271'
+    validation_criteria_snippet: '2.1.1: The stale-pending reaper leaves another machine''s
+      pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::t...'
+    matched_artifact_ref: tests/agents/test_hub_local_loops.py::test_workspace_loops_skip_remote_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 089ec7f231301062c88932ff73698740b398a715e6e26fb52e2d19b1659eab48
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/servers/test_hook_machine_binding.py::test_envelope_machine_must_match_key
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 447b4b4aa4d735a943154e1c8a282592573dd539857046666faa6ef4d1b273d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/servers/test_hook_machine_binding.py::test_unverified_hook_must_name_hub_machine
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 6a2fdec89f230cb1f63cf5153e111ef842a9ac8fff45e5aaa8514a453942fadc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_binding_predicate
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: fbb2364f00f96bd581a5306227ec3ea1f2aab829d606c50861a6cf31aebc268d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_session_start_skips_foreign_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: c0527229b2543f0abad0c2bfcada31ddbe85dca4dee021867c536535fb781416
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_session_header_skips_foreign_row
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: f19943a411a4a768e671d9541204464c9a3323bcd0dded8c763eb39ef3a56b4b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_non_start_lookup_skips_foreign_row
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: daa7dc6135ef75d6df9bb6dd8c9d19e4d48305aca5604fb285edf487262e0e55
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: 6022292005ad8a6174914cc38043bd8f52656c0c965a985b59e43e72ca9b23c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_same_machine_precreated_row_binds
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: ac23555382b2bfcb798110d6320929da4961747c5f92756d15f063087889c7ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_resume_of_a_known_session_is_never_promoted_to_clear
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: 8b6325b04885bf5d14f6a46634c6121f986a0e91e2c6d96ab5752b8118ea5687
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24272'
+    validation_criteria_snippet: '2.2.1: A key-authenticated hook whose envelope names
+      another machine, or names none, is refused with `hook_machine_mismatch` before
+      any adapter runs, and one n...'
+    matched_artifact_ref: tests/hooks/test_session_binding.py::test_local_hook_skips_node_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: bca366634802e658ba899228bac9aae729069800ef6f61a49bf9561f33b8af83
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_remote_write_uses_node_command
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 7fe6d1fbdb36635041c0ff9403b7ae3e749d784e499c5a61136a85ab4c32fffe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_offline_node_clears_latch
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 9b69d8230bbe0746152269a473fef8cc5c489d8e0dca090c9038d9b836d559b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_partial_stage_propagates
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: f2354363edf9c897fd0352edd94cad2ad9d847744f24dfe8af391e80028f1a09
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_local_write_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: a100f92339a7f27f459003c3af2a6b3c86c6457d9fe9c7f4f5da329d7b630078
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_lost_reply_is_indeterminate
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 06c8a6ab3a83cb4bb4ec7448489200394fd32548241e18c18a53cbbf263d6383
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 671a392c4b4d781c0e6715a18554c7bb92339cd107c2dc9c0e23bd7070b71867
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_remote_run_cancels_through_node
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 23458e00bd56c4ad13d1191c44b66e9f62374d7bd00269dd98a9efb10d765479
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_offline_node_is_typed
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 7a268fc42cb2485d960f1873b120f9397cad25dcc7302e76b90f831ba4468db4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_close_terminal_settles_row
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: b9f36ae7604a65b852e07659131575ee4d349b5283600134b60d02574436927b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_not_found_counts_as_stopped
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: 60911997d1473dbb18906019f9587a2c372a1385cfe01e4722d9f7856034b438
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_not_stopped_is_failure
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.6
+  plan_node_hash: 565eda8531311dd0e4e5e92e606c28851ea4d2210d9c2c3484b814b1d6b24e9d
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 708ffeefa58a1f602a31e94d04cb7ae55f1652df1c30451a1e2656eb8f522619
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_spawn_routes_to_requesting_machine
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: f17565c22cbdd1ef8c0de952e44e72f73c08904f73a905fa90f7b8e03d7ea708
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_remote_spawn_touches_no_hub_disk
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 78db8f4657ed49def1f7730dfab8a9a031196d04d03d48fa6834e112339dc98d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_explicit_machine_is_validated
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: faaa490c662027ef30c22ae813f576d3d156cbc87d002eff94cf5c45a2857c1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: 377d81bd77dc07d913854bb75fc4291b2a061d273f97d9f7cb178c0a4d056103
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_in_doubt_spawn_keeps_state
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.6
+  plan_node_hash: 48cda7fcbec298d91f48c1a52cdaaaa91d6bde6724c55c51c6df655a0d8ce508
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_origin_is_the_calling_session
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.7
+  plan_node_hash: db85be4de0a1b747762793a581d1991e215867ef671be7144c180b5a58e3e30b
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_resume_routes_and_placement_refused
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.8
+  plan_node_hash: c8c0e7048688ba73f76ffa3b10d8e6a25860ec6b7f4e1c3e4f7eafc96ea24242
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_local_target_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.9
+  plan_node_hash: a4952e16a72d2955e08587505035e05e4844491e181c222507f79f1de37ebe59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_remote_target_needs_no_hub_checkout
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.10
+  plan_node_hash: c2921f33a19598f596eb9370ac0de71f5a4fd53767255ccf88aefac219ade0fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_foreign_session_needs_routed_machine
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.11
+  plan_node_hash: d6060b8f5840f4ebe56a2ec6fba1d6fbfc8def9946ec591bcbc2bd0822cfbb69
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_workspace_intent_names_run_branch
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.12
+  plan_node_hash: 66e929116835b4e392c2ba9233704f5f15d99700462e73ad4fae4371cd24c777
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_machine_ceiling_refuses_before_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.13
+  plan_node_hash: 4405dc37395db58c69423f8350473192dcf7659a27ccee00cfa0aea010ae0529
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.14
+  plan_node_hash: ee291b5811a1cfb4cf155ef10bfdec42f525d733dec98f4a184341ce39f0c8ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.15
+  plan_node_hash: b7ce7b2ac95f47cace6272f0cef2ea8481a7962eb1a593a1a226ce0b748edc90
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.16
+  plan_node_hash: f885f3eb43085df372e0cc5f6c67f5271de799bd59b759cce070dedab38474ab
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: 3fb2d561109e1b24dee23ec2fb0c286a408e49dd95ef6ad3be762f4817d1af5b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: 306658df94b6c80d1817ad93b2ef587a9ddbd1169649729a1ad2d648622976ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_two_reports
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: 6524524f4a9f4c8ba94ea884ac084fcada143b4f30efd6f610839fb54802cedf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: ef92b398f291851cbf295b97d05827edffaaaac02c4a56a0aaf71ad030d83b97
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: 067dedf7fa067d5eff74168a4c8a3b7e4229c9a3fd037cd3c306b18891cf4d9f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_unreported_and_local_rows_untouched
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.6
+  plan_node_hash: 461c052a2c3a1da30412c4aa11a8aa1c3f311932c9f1d5b0554cb8dd7e5bc44f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.7
+  plan_node_hash: 3aecada96ea798162746b6bf8d5a544cb321ce8d3e080fea9b9c99c0b30c04f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.8
+  plan_node_hash: fc0251cc3f33401e89a1b57095f2c582f63086f5559be20277aed94f7af06512
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.9
+  plan_node_hash: 2ca1e3c3e4dd7c5c1a4dd2367cb780210885ea90fb3dd603fde71e1a64a79634
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 594ef93c49e5ead009cdf23a4aaf45a9cbff18006015b130c67d84ac8cf5acd6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24277'
+    validation_criteria_snippet: '3.1.1: The roster lists live runs and sessions from
+      every machine. test: `tests/servers/test_attention_roster_machines.py::test_roster_is_hub_wide`.
+      3.1.2: Eve...'
+    matched_artifact_ref: tests/servers/test_attention_roster_machines.py::test_roster_is_hub_wide
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 6ac86d394d6d35016aca2f294f230a94f4bde3d47649a093debedbcadd41530d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24277'
+    validation_criteria_snippet: '3.1.1: The roster lists live runs and sessions from
+      every machine. test: `tests/servers/test_attention_roster_machines.py::test_roster_is_hub_wide`.
+      3.1.2: Eve...'
+    matched_artifact_ref: tests/servers/test_attention_roster_machines.py::test_entries_carry_machine_and_project
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: debb19d7e0a946d841fe0b68b02c57e656fa75e770913ffc397fe4ff6fd31801
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24277'
+    validation_criteria_snippet: '3.1.1: The roster lists live runs and sessions from
+      every machine. test: `tests/servers/test_attention_roster_machines.py::test_roster_is_hub_wide`.
+      3.1.2: Eve...'
+    matched_artifact_ref: tests/servers/test_attention_roster_machines.py::test_local_respond_resolves_detector
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: d6e894befb8ba294815540ccfa09d559732f491bfbc73d0c36151d92b41e469c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24278'
+    validation_criteria_snippet: '3.2.1: An agent whose session row is outside the
+      fetched window is listed under its roster machine. test: `crates/gclient/tests/roster_machines.rs::agents_use_...'
+    matched_artifact_ref: crates/gclient/tests/roster_machines.rs::agents_use_roster_machine
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: fcf6cae574e804b769faea411ad89e9d2f443336bc40c01dfd1b24fdfb185b90
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24278'
+    validation_criteria_snippet: '3.2.1: An agent whose session row is outside the
+      fetched window is listed under its roster machine. test: `crates/gclient/tests/roster_machines.rs::agents_use_...'
+    matched_artifact_ref: crates/gclient/tests/roster_machines.rs::remote_machine_row_shows_attention
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 0face0b69a9c3557d20b7d21384748c6b2a536e0f236792504d47772961a6e58
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24278'
+    validation_criteria_snippet: '3.2.1: An agent whose session row is outside the
+      fetched window is listed under its roster machine. test: `crates/gclient/tests/roster_machines.rs::agents_use_...'
+    matched_artifact_ref: crates/gclient/tests/roster_machines.rs::agents_use_roster_project
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: 9e2bd5dbe0e0cf4f0efd9cf7e5481c3ed36f39aa20c472cc8cf6d23c3539a2a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24278'
+    validation_criteria_snippet: '3.2.1: An agent whose session row is outside the
+      fetched window is listed under its roster machine. test: `crates/gclient/tests/roster_machines.rs::agents_use_...'
+    matched_artifact_ref: crates/gclient/tests/roster_machines.rs::new_window_defaults_to_current_machine
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: af6598f4183758c13f46e05c7601bbbe38407c955287c34e7330bd170add2081
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_remote_respond_writes_through_node
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 2e8a6921c559daaef4ab9971cd99d78455dafce90c572686063a4322cfb247b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_offline_owner_is_typed
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 14cf757f431c018aef945cbdca0c6c061807ea3bab0900e25ad4a71c6507589a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_stale_episode_sends_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 827ff09b8e4969e8de16ddce7a4d0fe07c891c3416639b8a7fd62f4bcfc03bb2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.5
+  plan_node_hash: 7fdbe90cc5070663c9ec2e00f31e7536ba31f32ee888ea0a4cb7f9f7ba3e62aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.6
+  plan_node_hash: df732186ac8368190c1e8e1ba70dcb3ec7a5daa01ab0875e709663986c7fc2cb
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 914432d32c4a220ffd69a14f09729f29a5462a55732ac74f5aca2fe64797f2c7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: ffa9724e9e11052c84a89a1deb21b386887e3cedee23dc4abd09388d391e7043
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: c640cba644c411cd9158c85a3e8d67eff9b05d4ad28a925bd550e7dde8b1b406
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: e5bdac7de7ecf187126b8fe549d6f7dca0c27cf8db700d8440a98f302c7ae724
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 3fc37eab25085a87c1dbc2ff465fbc9caf0c370488073e9e1e7ee2ae86176a7d
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 775f86fc98b631ccd0131d7ebce0f1dfc094778d2086254ef16b97d5f63489e8
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: e79c6437c2af030ebdefa548fce00dcbbc94ae066535eb17b10ad94fdd300338
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: f51506ef73de334f6145c94d4af8f9a4f012cf7ef34ec1c1c0d1987bce3c134e
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: ea195f23cbd85c2a56cd8800cf6fe3e8b63efcc55dc48625e08cb646efcce2ca
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: 44207a2610f43f55bd8b0e38a427890f575bad8140b1e208b5f0d8a50eb382eb
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: 47286a42de6ddff149f9b1a4cd9726ed10f95d9d0b25f3e1787f295b4b768f71
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.7
+  plan_node_hash: 0247e40dc012791a9958ca288d836386724e8d79e15fe1c5f6f75e6d7cb3703e
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.8
+  plan_node_hash: feab1d0d6573af3f40c521e7fa20df45de20cf42d7edd71bcb92b53741e95e0b
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: a848ed36ea46ae770dff31511710d69c91e0cc4c05e9d528124b34e129da7cc7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 69f53e4c185ef2fc53137f35a88a68b65de8e68148a8dbf1c3a30c5a58df0355
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: ef40358122ec075e48bfdb9aaee117ade3bfebfb3438a2726d5806dbd46d0501
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: f369b1f35f928559db4f599b8271e347eacbd904510df5a949c7c66c8615a6de
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.5
+  plan_node_hash: 2855901c275c6bc8f8a1984a719d95e5d2edbf99d5f3e7bea6b7e6e2df36f7c4
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.6
+  plan_node_hash: 6f3407faed730d7270b45a960861ae87ee8b4c339d8d8af496286f4bc93379c7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.7
+  plan_node_hash: 9166d5bdc0075ddd3960cbfaca9ba752395e588eabe9978cef3943cdc0ef651e
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: 3a4f3c005caa0dc0b1eef8ac58cdfd2e47fef90b92b147c849134b66ad537cc7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: 4e566cd964102d0aae483c3eb5ab6b4ea973bbb2293eaf2444a49b6b7b1331bb
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: df6bfcf7ba7abbfdd521a0ff4c8b61bfb68601848691166661c3cbcf91d5de41
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.4
+  plan_node_hash: cca93be5a6a2194ea9daab7f00178c299fc95e0a8e5ba50e9ba3381f1edf4597
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.1
+  plan_node_hash: 56ed9b6e91ac6e77bc1a0014242293b98fcc17c3e3ed1a75d8d8341ab8451ece
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.2
+  plan_node_hash: 32488baff9aae4dbbe8a04c7ac683d046d13d7e0141a9fb74e3df6735c973dd0
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.3
+  plan_node_hash: d91bc641e9fff41b309763019a4d5a16505b5821eb5e2092a59f98c6a3f77305
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.1
+  plan_node_hash: 4ebab1a630edd3256888ddb4494a36209b382deaafefe8041fe2928fdedf7225
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.2
+  plan_node_hash: 0e7b5db434a7ca41ba4bb532f1bd27bff0436ed597cebeca7e86b21095f96390
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.3
+  plan_node_hash: e1a399e7944fd62a6b1b79c11fc4ba423b07ee7642bbd6b2f62748c1d71d7366
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.4
+  plan_node_hash: d4e228cd1b4ced6326fdfa0fb687d4b1a06d063778fe568492b4a42df898fcd2
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.1
+  plan_node_hash: 4fdb90a4babed2d99982d8fbf614707d36a527432782295534435e2b3e96085a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.2
+  plan_node_hash: 3082b80eb2e7fa8636ecda00c7210d8b702cf43920ef2387a7215a7020891e1a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.3
+  plan_node_hash: 18acb6ba863e2144ae376db15ae4e7968fae7821b05a817dbc46363581a8fe33
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.4
+  plan_node_hash: 6da28f768d4e3ab5b17f12e229c7ca704a4005903631b41a63f26fe2130bd059
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.5
+  plan_node_hash: 05821d41ef76915b4a173918c1abfbd7ff464c5222ada2a7dd3aaea4e7a12425
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.8'
+  item_id: 4.8.1
+  plan_node_hash: f1e467b2fb004e9e17c023e54453f5c6b9c7d91faec440660704754dcb3687b3
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.8'
+  item_id: 4.8.2
+  plan_node_hash: b30177f0ac3001329df65b374ad296b2e4b05e6d9362648a8fbbb1749b9913c2
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.8'
+  item_id: 4.8.3
+  plan_node_hash: edcfc895ffb0692240ff8efe792ce5dfa65bd43000013eb9dbca8681b7d5e74d
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.8'
+  item_id: 4.8.4
+  plan_node_hash: edcf7c4a852dc7d4997039eee1d12664e1141c641ea3ee5e38c6a35e96245ef1
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.8'
+  item_id: 4.8.5
+  plan_node_hash: 7a1dcec4e88c59f139e372f1f14f40ac27fdd7acde6c227add3fdb6854464608
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: e88465336cc073ed00e7d0a28741dd2dd40655011ee9372b16972be61be98789
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 1ecd9d6daae2d99abf83dae9db76128a80e7fe11841704e81f3832527cf459a5
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: bbbe9148645b0015cea9e75e86b05c0ddaf8750f7c2a114c8974396ff748ba0b
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: 97c2479bd83211776a98f718f6faa2cac8725686d6ccce1f5834c848c57459f5
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: b56eb78ff5f7439ae241710975ccefcc51bd580c92d5fcf1580b856895591521
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.6
+  plan_node_hash: 3e7e0a084b3cf3a815376b4fe629278a89fadb02282144f95a78696ad12575f9
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.7
+  plan_node_hash: 2f6638df933cb6e3406c92edfa90a027970f55ef0c8f055be29c9b5f388d606f
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.8
+  plan_node_hash: 426f441453434b3c64a069dc34197a616a9910f57ed0890c0db27e64d8ce8fad
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
