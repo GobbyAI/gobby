@@ -7,11 +7,82 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 
 from __future__ import annotations
 
+import os
 import posixpath
 from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
+
+
+def effective_tool_cwd(event_cwd: str | None, event_data: dict[str, Any]) -> str | None:
+    """Resolve the tool's cwd only from an absolute, proven base."""
+    base = Path(event_cwd).expanduser() if event_cwd and event_cwd.strip() else None
+    if base is not None and not base.is_absolute():
+        base = None
+    tool_input = event_data.get("tool_input")
+    if isinstance(tool_input, dict):
+        for key in ("workdir", "cwd"):
+            override = tool_input.get(key)
+            if not isinstance(override, str) or not override.strip():
+                continue
+            path = Path(override).expanduser()
+            if not path.is_absolute():
+                if base is None:
+                    return None
+                path = base / path
+            return str(path.resolve(strict=False))
+    return str(base.resolve(strict=False)) if base is not None else None
+
+
+def sanctioned_worktree_root(
+    db: HubDatabase, variables: dict[str, Any], root: str, root_project_id: str
+) -> bool:
+    """Whether a claimed task authorizes this registered project's checkout."""
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    manager = LocalWorktreeManager(db)
+    return any(
+        os.path.realpath(row.worktree_path) == os.path.realpath(root)
+        for task_id in _claimed_tasks(variables)
+        for row in manager.list_worktrees(project_id=root_project_id, task_id=task_id)
+    )
+
+
+def resolve_edit_pair(
+    file_path: str,
+    cwd: str | None,
+    *,
+    project_id: str | None,
+    db: HubDatabase | None,
+    variables: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Resolve the real target to its innermost authorized project checkout."""
+    from gobby.utils.project_context import find_project_root, get_project_context
+
+    target = Path(file_path).expanduser()
+    if not target.is_absolute():
+        if cwd is None:
+            return None
+        target = Path(cwd) / target
+    target = target.resolve(strict=False)
+    root = find_project_root(target if target.is_dir() else target.parent)
+    if root is None:
+        return None
+    root = root.resolve(strict=False)
+    context = get_project_context(root)
+    root_project_id = context.get("id") if context else None
+    if root_project_id != project_id:
+        if (
+            db is None
+            or not isinstance(root_project_id, str)
+            or not sanctioned_worktree_root(db, variables, str(root), root_project_id)
+        ):
+            return None
+    return str(root), os.path.normpath(str(target.relative_to(root)))
 
 
 def normalize_task_edited_path(value: object) -> str | None:
