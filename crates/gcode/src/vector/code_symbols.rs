@@ -36,4 +36,4 @@ use qdrant::delete_file_vectors;
 use search::{SearchError, search_code_symbols};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

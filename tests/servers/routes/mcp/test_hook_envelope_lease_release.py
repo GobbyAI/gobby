@@ -25,6 +25,7 @@ from gobby.hooks.runtime_compat import (
 )
 from gobby.servers.routes.mcp import hooks as hooks_route
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -40,7 +41,7 @@ def _envelope() -> dict[str, Any]:
         "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "session-start",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
 
 
@@ -131,7 +132,11 @@ async def test_shutdown_cancelled_worker_releases_claim_and_cancels_renewal(
 
     envelope = _envelope()
     envelope["hook_type"] = "PreToolUse"
-    envelope["input_data"] = {"tool_name": "Bash", "tool_input": {"command": "true"}}
+    envelope["input_data"] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "true"},
+        "machine_id": get_machine_id(),
+    }
     request: asyncio.Task[Any] | None = None
     try:
         async with server.app.router.lifespan_context(server.app):

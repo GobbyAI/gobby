@@ -206,7 +206,9 @@ fn fetch_projects() -> Result<Vec<ProjectListing>, CliError> {
 
 fn join_daemon_url(path: &str) -> Result<String, CliError> {
     let base = gobby_core::daemon_url::daemon_url().map_err(|error| {
-        CliError::grant(gobby_core::grant::GrantError::Malformed(error.to_string()))
+        CliError::grant(gobby_core::grant::GrantError::BootstrapConfig(
+            error.to_string(),
+        ))
     })?;
     reject_remote_endpoint(&base).map_err(CliError::grant)?;
     Ok(format!("{}{path}", base.trim_end_matches('/')))
@@ -402,5 +404,34 @@ mod tests {
         assert_eq!(mapped.last_indexed_at, "");
         assert_eq!(mapped.index_duration_ms, 0);
         assert_eq!(mapped.total_eligible_files, None);
+    }
+
+    #[test]
+    fn bootstrap_daemon_url_configuration_error() {
+        let home = tempfile::tempdir().unwrap();
+        temp_env::with_vars(
+            [
+                ("GOBBY_HOME", Some(home.path().as_os_str())),
+                ("GOBBY_DAEMON_URL", None),
+                ("GOBBY_PORT", None),
+                ("GOBBY_DAEMON_PORT", None),
+            ],
+            || {
+                for value in ["123", "true", "[]", "{}"] {
+                    std::fs::write(
+                        home.path().join("bootstrap.yaml"),
+                        format!("daemon_url: {value}\n"),
+                    )
+                    .unwrap();
+                    let error = join_daemon_url("/api/projects").unwrap_err();
+                    assert_eq!(error.code, "bootstrap_config");
+                    assert_eq!(
+                        error.message,
+                        "bootstrap configuration error: daemon_url must be a string"
+                    );
+                    assert_eq!(error.exit_status, 2);
+                }
+            },
+        );
     }
 }

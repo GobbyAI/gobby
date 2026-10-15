@@ -299,6 +299,19 @@ def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None
     assert not navigation_requires_index(event(repo, "rg VALUE ."), variables)
 
 
+def test_bootstrap_configuration_error_opens_the_checkout(repo: Path) -> None:
+    variables = turn(
+        repo,
+        "gcode outline src/constants.py",
+        '{"error":"bootstrap_config","message":"bootstrap configuration error: '
+        'daemon_url must be a string"}\n',
+        failed=True,
+    )
+    assert [record["action"] for record in variables["code_index_recoveries"]] == ["outage"]
+    assert not navigation_requires_index(event(repo, "cat src/untouched.py"), variables)
+    assert not navigation_requires_index(event(repo, "rg VALUE ."), variables)
+
+
 def test_external_project_outage_does_not_open_current_checkout(repo: Path) -> None:
     variables = turn(repo, "gcode --project /external/archive grep VALUE src", OUTAGE, failed=True)
     assert variables["code_index_recoveries"] == [

@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.hooks.tool_error_tracker import extract_error_snippet
+from gobby.hooks.tool_outcomes import ToolOutcomeStatus, classify_raw_tool_result
 from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
@@ -159,13 +161,18 @@ def _process_tool_proxy_result(
     Returns:
         Result dict with success status and response time
     """
-    # Track metrics for tool-level failures vs successes
-    if isinstance(result, dict) and result.get("success") is False:
+    # Track metrics for tool-level failures vs successes. The raw result is
+    # classified like the MCP server does, so an internal {"error": ...} is a
+    # failure here too instead of a success-wrapped payload.
+    if classify_raw_tool_result(result).status is ToolOutcomeStatus.FAILED:
         inc_counter("mcp_tool_calls_failed_total")
 
         # Return tool-level failures as a flat error payload with success=False.
         # This preserves the HTTP 200/application-error contract without forcing
         # clients to unwrap a nested {"success": false, "result": {...}} shape.
+        if not isinstance(result, dict):
+            result = {"error": extract_error_snippet(result), "result": to_json_safe(result)}
+        result = {**result, "success": False}
         error_code = result.get("error_code")
         if error_code:
             logger.debug(
@@ -236,8 +243,7 @@ async def _call_internal_tool(
     try:
         result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
         response_time_ms = (time.perf_counter() - start_time) * 1000
-        inc_counter("mcp_tool_calls_succeeded_total")
-        return _success_response_payload(result, response_time_ms)
+        return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
         logger.exception(
@@ -734,9 +740,7 @@ async def call_mcp_tool(
                     server_name, tool_name, arguments, timeout=timeout
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                inc_counter("mcp_tool_calls_succeeded_total")
-
-                return _success_response_payload(result, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
             except TimeoutError:
                 inc_counter("mcp_tool_calls_failed_total")
@@ -859,21 +863,7 @@ async def mcp_proxy(
                 )
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-
-                logger.debug(
-                    "MCP tool call successful: %s.%s",
-                    server_name,
-                    tool_name,
-                    extra={
-                        "server": server_name,
-                        "tool": tool_name,
-                        "response_time_ms": response_time_ms,
-                    },
-                )
-
-                inc_counter("mcp_tool_calls_succeeded_total")
-
-                return _success_response_payload(result, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
             except TimeoutError:
                 inc_counter("mcp_tool_calls_failed_total")

@@ -61,6 +61,7 @@ def resolve_edit_pair(
     variables: dict[str, Any],
 ) -> tuple[str, str] | None:
     """Resolve the real target to its innermost authorized project checkout."""
+    from gobby.hooks._path_scope import checkout_root
     from gobby.utils.project_context import find_project_root, get_project_context
 
     target = Path(file_path).expanduser()
@@ -82,6 +83,10 @@ def resolve_edit_pair(
             or not sanctioned_worktree_root(db, variables, str(root), root_project_id)
         ):
             return None
+    # A Git checkout nested below the project root owns its own status, so key on it.
+    nested = checkout_root(target)
+    if nested is not None and nested != root and nested.is_relative_to(root):
+        root = nested
     return str(root), os.path.normpath(str(target.relative_to(root)))
 
 

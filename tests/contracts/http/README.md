@@ -14,6 +14,9 @@ Its operator-authenticated cases cover an envelope v1 Notification without a
 session row, replay using the same fixed envelope ID, a below-floor capability,
 and rejection of a flat body without `schema_version`. Replay order is material:
 `hooks_execute_replay` follows `hooks_execute_ok` on the same isolated daemon.
+An envelope must name the daemon's own machine, as the hub's ghook stamps it, so
+these cases carry the isolated daemon's fixed `machine_id`
+(`21000000-0000-4000-8000-000000000002`).
 Envelope version 1 is independent of corpus version 2.
 
 Each case is one JSON file at `schema_version` 2:

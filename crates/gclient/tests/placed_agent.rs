@@ -45,7 +45,11 @@ fn agent_row() -> Value {
 
 /// A client subscribed to `project-1`, whose workspace holds `tabs`.
 async fn session(tabs: &[(&[&str], &str)], live: &[&str]) -> Session {
-    let mock = MockDaemon::start("local-token").await;
+    session_on(MockDaemon::start("local-token").await, tabs, live).await
+}
+
+/// `session` on a mock already primed with the replies a test needs.
+async fn session_on(mock: MockDaemon, tabs: &[(&[&str], &str)], live: &[&str]) -> Session {
     mock.seed_workspace("project-1", tabs);
     for _ in 0..6 {
         mock.enqueue("GET", "/api/terminals?", 200, roster(live));
@@ -353,5 +357,102 @@ async fn a_placement_lost_with_the_connection_never_moves_the_view() {
         active,
         "the lost placement leaves the active tab"
     );
+    s.mock.shutdown().await;
+}
+
+/// A roster seat with no pane opens in a tab named after it.
+#[tokio::test]
+async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let attention = json!({"epoch": "attention-1", "seq": 1, "entries": [{
+        "entry_id": format!("run:run-{AGENT}"),
+        "run_id": format!("run-{AGENT}"),
+        "session_id": null,
+        "lifecycle_status": "running",
+        "definition_title": "Lane 8 developer",
+        "attention": null,
+        "task": null,
+        "provider": "claude",
+        "model": null,
+        "terminal": {"terminal_id": AGENT, "backend": "native"},
+        "tmux": null,
+        "last_activity_at": null,
+    }]});
+    // Every relist reads the roster again; each must still know the seat.
+    for _ in 0..6 {
+        mock.enqueue("GET", "/api/attention/roster", 200, attention.clone());
+    }
+    let mut s = session_on(mock, &[(&["existing"], "existing")], &["existing", AGENT]).await;
+    s.mock
+        .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    focus_agent(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        &format!("terminal:{AGENT}"),
+    )
+    .await
+    .expect("focus the unplaced agent");
+
+    let create = timeout(Duration::from_secs(1), async {
+        loop {
+            let found = s.mock.workspace_requests().into_iter().find(|request| {
+                request.get("op") == Some(&json!("tab.create"))
+                    && request["terminal_id"] == json!(AGENT)
+            });
+            if let Some(request) = found {
+                return request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the agent was sent to a new tab");
+    assert_eq!(create["title"], json!("Lane 8 developer"));
+    s.mock.shutdown().await;
+}
+
+/// Clicking a seat already in its lane tab focuses its pane there and opens
+/// no tab.
+#[tokio::test]
+async fn a_placed_agent_is_focused_in_its_tab_without_a_new_one() {
+    let mut s = session(
+        &[(&["existing"], "existing"), (&[AGENT], "Lane 8")],
+        &["existing", AGENT],
+    )
+    .await;
+    let lane = s.agent_surfaces();
+    assert_eq!(lane.len(), 1, "the seat shows once, in its lane tab");
+    assert_ne!(
+        s.chrome.active_tab().map(|tab| tab.id.clone()),
+        Some(lane[0].0.clone()),
+        "the lane tab starts in the background"
+    );
+    let tabs = s.chrome.tabs().tabs.len();
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    focus_agent(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        &format!("terminal:{AGENT}"),
+    )
+    .await
+    .expect("focus the placed agent");
+
+    assert_eq!(
+        s.chrome.active_tab().map(|tab| tab.id.clone()),
+        Some(lane[0].0.clone())
+    );
+    assert_eq!(
+        s.chrome.focused_pane(),
+        s.workspace.pane_for_terminal(AGENT)
+    );
+    assert_eq!(s.chrome.tabs().tabs.len(), tabs);
+    assert!(!s
+        .mock
+        .workspace_requests()
+        .iter()
+        .any(|request| request.get("op") == Some(&json!("tab.create"))));
     s.mock.shutdown().await;
 }

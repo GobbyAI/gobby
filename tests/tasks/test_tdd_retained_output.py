@@ -138,12 +138,18 @@ def _queued(at: float, prompt: str) -> dict[str, Any]:
 
 
 def _job(
-    output_path: Path, *, monitor: bool = True, monitor_at: float = 3.2, events: str | None = None
+    output_path: Path,
+    *,
+    monitor: bool = True,
+    monitor_at: float = 3.2,
+    events: str | None = None,
+    command: str = NEXTEST,
+    exit_code: int = 100,
 ) -> list[dict[str, Any]]:
     records = _pair(
         2,
         "Bash",
-        {"command": NEXTEST, "run_in_background": True, "description": "RED tests"},
+        {"command": command, "run_in_background": True, "description": "RED tests"},
         "Command did not complete within its 600s timeout and was moved to the "
         f"background (ID: job). Output is being written to: {output_path}. "
         "You will be notified when it completes.",
@@ -169,7 +175,8 @@ def _job(
                 "content": "<task-notification><task-id>job</task-id>"
                 f"<tool-use-id>call-2</tool-use-id><output-file>{output_path}</output-file>"
                 "<status>failed</status>"
-                '<summary>Background command "RED tests" failed with exit code 100</summary>'
+                f'<summary>Background command "RED tests" failed with exit code {exit_code}'
+                "</summary>"
                 "</task-notification>",
             },
         }
@@ -476,3 +483,77 @@ def test_job_output_mutated_between_stat_and_read_is_refused(
     monkeypatch.setattr(os, "fstat", fstat_then_rewrite)
     _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
     assert rewritten
+
+
+def _numbered(text: str) -> str:
+    """The Read tool's rendering: each line behind its number and a tab."""
+    return "\n".join(f"{index}\t{line}" for index, line in enumerate(text.splitlines(), start=1))
+
+
+@pytest.mark.parametrize("monitor", [True, False])
+def test_late_read_never_displaces_output_delivered_before_production(
+    tmp_path: Path, monitor: bool
+) -> None:
+    # #23879: RED settled 20:32:57Z, closing edit 20:33:27Z, own-file Read 02:30:52Z next day.
+    output_path = tmp_path / "tasks/job.output"
+    full = _nextest_file("expected 2")
+    _retain(output_path, full, NOTICE)
+    production_at = NOTICE + 30.9
+    records = _write(tmp_path, 1, RUST_TEST)
+    records += _job(output_path, monitor=monitor)
+    records += _write(tmp_path, production_at, RUST_CODE)
+    records += _pair(
+        production_at + 5,
+        "Bash",
+        {"command": NEXTEST},
+        "PASS [ 0.001s] (1/1) feature::golden replays_corpus\nSummary 1 tests run: 1 passed",
+    )
+    records += _pair(NOTICE + 21_475, "Read", {"file_path": str(output_path)}, _numbered(full))
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = _rust_result(tmp_path, records)
+    # Without the Monitor, only the receipt reached the transcript before production.
+    assert result.passed is monitor, result.findings
+    assert result.red_runs == ((NEXTEST,) if monitor else ())
+
+
+def test_read_line_numbers_do_not_hide_delivered_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "tasks/job.output"
+    full = _nextest_file("expected 2")
+    _retain(output_path, full, NOTICE)
+    head = "\n".join(full.splitlines()[:3])
+    records = _write(tmp_path, 1, RUST_TEST)
+    records += _job(output_path, monitor=False)
+    records += _pair(5, "Read", {"file_path": str(output_path), "limit": 3}, _numbered(head))
+    records += _write(tmp_path, 10, RUST_CODE)
+    records += _pair(
+        12,
+        "Bash",
+        {"command": NEXTEST},
+        "PASS [ 0.001s] (1/1) feature::golden replays_corpus\nSummary 1 tests run: 1 passed",
+    )
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = _rust_result(tmp_path, records)
+    assert result.passed, result.findings
+    assert result.red_runs == (NEXTEST,)
+
+
+@pytest.mark.parametrize(("recall_at", "credited"), [(5, True), (11, False)])
+def test_recall_after_a_job_file_tail_counts_only_before_production(
+    tmp_path: Path, recall_at: float, credited: bool
+) -> None:
+    # RTK compacts the job file too, so only the recall delivers the assertion body.
+    output_path = tmp_path / "tasks/job.output"
+    _retain(output_path, _compacted() + "\n[exited with code 1]\n", NOTICE)
+    records = _write(tmp_path, 1, PY_TEST)
+    records += _job(output_path, monitor=False, command=PYTEST, exit_code=1)
+    records += _pair(4, "Bash", {"command": f"tail -n 50 {output_path}"}, _compacted())
+    records += _pair(recall_at, "Bash", {"command": f"rtk recall {RECALL}"}, _pytest_raw())
+    records += _write(tmp_path, 10, PY_CODE)
+    records += _pair(12, "Bash", {"command": PYTEST}, "2 passed in 0.40s")
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_feature", PY_TEST, "test_feature", ""),),
+        _evidence(tmp_path, records, {PY_TEST, PY_CODE}),
+    )
+    assert result.passed is credited, result.findings
+    assert result.red_runs == ((PYTEST,) if credited else ())

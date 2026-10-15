@@ -64,6 +64,7 @@ _OUTAGE_ERROR_CODES = frozenset(
         "config_revision_mismatch",
         "revoked",
         "timeout",
+        "bootstrap_config",
         "malformed",
         "io",
         "project_required",

@@ -72,6 +72,7 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
@@ -105,7 +106,7 @@ def _mock_hook_manager() -> MagicMock:
 
 
 def _hook_envelope(**payload: Any) -> dict[str, Any]:
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -113,6 +114,7 @@ def _hook_envelope(**payload: Any) -> dict[str, Any]:
         "input_data": {},
     }
     envelope.update(payload)
+    envelope["input_data"] = {**envelope["input_data"], "machine_id": get_machine_id()}
     return envelope
 
 
@@ -3553,7 +3555,7 @@ class TestHooksEndpoints:
         assert mock_adapter.handle_native.call_args.args[0] == {
             "hook_type": "session-start",
             "source": "claude",
-            "input_data": {"session_id": "claude-envelope"},
+            "input_data": {"session_id": "claude-envelope", "machine_id": get_machine_id()},
             "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
@@ -3612,7 +3614,11 @@ class TestHooksEndpoints:
         assert mock_adapter.handle_native.call_args.args[0] == {
             "hook_type": "PreToolUse",
             "source": "droid",
-            "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+            "input_data": {
+                "session_id": "droid-123",
+                "cwd": "/tmp",
+                "machine_id": get_machine_id(),
+            },
             "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
@@ -4480,7 +4486,7 @@ class TestHooksEndpoints:
         assert mock_adapter.handle_native.call_args.args[0] == {
             "hook_type": "SessionStart",
             "source": "codex",
-            "input_data": {"session_id": "test-123", "cwd": "/tmp"},
+            "input_data": {"session_id": "test-123", "cwd": "/tmp", "machine_id": get_machine_id()},
             "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
@@ -4590,7 +4596,11 @@ class TestHooksEndpoints:
         assert mock_adapter.handle_native.call_args.args[0] == {
             "hook_type": "SessionStart",
             "source": "codex",
-            "input_data": {"session_id": "test-envelope", "cwd": "/tmp"},
+            "input_data": {
+                "session_id": "test-envelope",
+                "cwd": "/tmp",
+                "machine_id": get_machine_id(),
+            },
             "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
@@ -4684,7 +4694,7 @@ class TestHooksEndpoints:
                 "hook_type": "post-tool-use",
                 "source": "claude",
                 "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
-                "input_data": {"tool_name": "Bash"},
+                "input_data": {"tool_name": "Bash", "machine_id": get_machine_id()},
             }
             responses = []
             normalized_payloads = []
@@ -4701,13 +4711,13 @@ class TestHooksEndpoints:
             {
                 "hook_type": "post-tool-use",
                 "source": "claude",
-                "input_data": {"tool_name": "Bash"},
+                "input_data": {"tool_name": "Bash", "machine_id": get_machine_id()},
                 "_enqueued_at": "2026-04-16T12:00:00Z",
             },
             {
                 "hook_type": "post-tool-use",
                 "source": "claude",
-                "input_data": {"tool_name": "Bash"},
+                "input_data": {"tool_name": "Bash", "machine_id": get_machine_id()},
                 "_enqueued_at": "2026-04-16T12:00:00Z",
             },
         ]

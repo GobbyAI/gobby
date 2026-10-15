@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -78,6 +79,50 @@ async def test_rule3_refuses_dirty_first_touch_naming_owner(guard_harness: Guard
     result = await h.handler._evaluate_rules(h.edit_event("unowned.txt"))
     assert result.reason is not None
     assert "no claimed task" in result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [0, 1, None])
+async def test_rule3_names_the_task_holding_the_live_interval(
+    guard_harness: GuardHarness, live: int | None
+) -> None:
+    h = guard_harness
+    second = LocalTaskManager(h.db).create_task(
+        project_id=h.project.id,
+        title="Second foreign task",
+        task_type="bug",
+        category="code",
+        implementation_domain="backend",
+        validation_criteria="Second foreign task paths remain isolated.",
+        claimed_by_session_id=h.foreign_session.id,
+    )
+    root = str(h.repo.resolve())
+    variables = SessionVariableManager(h.db)
+    tasks = (h.foreign_task, second)
+    variables.merge_variables(
+        h.foreign_session.id,
+        {
+            "claimed_tasks": {task.id: f"#{task.seq_num}" for task in tasks},
+            # Both claims edited foreign.txt; the history alone cannot tell which holds it now.
+            "task_edited_file_checkouts": {task.id: {root: ["foreign.txt"]} for task in tasks},
+        },
+    )
+    stored = list(variables.get_variables(h.foreign_session.id)["claimed_tasks"])
+    by_order = [next(task for task in tasks if task.id == task_id) for task_id in stored]
+    if live is not None:
+        variables.merge_variables(
+            h.foreign_session.id,
+            {"task_live_edit_starts": {by_order[live].id: {root: {"foreign.txt": 1.0}}}},
+        )
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    reason = result.reason or ""
+    assert h.foreign_session.ref in reason
+    # Without a live interval the first claim in the history scan keeps today's label.
+    named, other = (by_order[0], by_order[1]) if live in (0, None) else (by_order[1], by_order[0])
+    assert f"task #{named.seq_num}" in reason
+    assert f"task #{other.seq_num}" not in reason
 
 
 @pytest.mark.asyncio
@@ -504,7 +549,7 @@ async def test_rule3_allows_writes_under_project_marker_without_git(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("checkout", ["clone", "worktree"])
-async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
+async def test_rule3_judges_nested_checkout_under_project_marker_without_git(
     guard_harness: GuardHarness, tmp_path: Path, checkout: str
 ) -> None:
     from tests.fixtures.isolated_checkout import write_project_marker
@@ -513,21 +558,40 @@ async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
     export = tmp_path / "scratchpad" / "export"
     export.mkdir(parents=True)
     write_project_marker(export, project_id=h.project.id, name=h.project.name)
-    # The nested checkout carries no marker, so its writes resolve to the export root.
+    # The nested checkout carries no marker; its writes are judged by its own Git status.
     nested = export / "nested"
     if checkout == "clone":
         _git(tmp_path, "clone", "-q", str(h.repo), str(nested))
     else:
         _git(h.repo, "worktree", "add", "-q", "--detach", str(nested))
-    (nested / "owned.txt").write_text("nested dirt\n", encoding="utf-8")
+    (nested / "foreign.txt").write_text("nested dirt\n", encoding="utf-8")
+    root = str(nested.resolve())
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "session_dirty_files": ["foreign.txt"],
+            "session_dirty_file_checkouts": {root: ["foreign.txt"]},
+            "task_edited_file_checkouts": {h.foreign_task.id: {root: ["foreign.txt"]}},
+        },
+    )
     for event in (
-        h.event(f"mkdir -p {shlex.quote(str(export))}"),
-        h.event(f"touch {shlex.quote(str(nested / 'owned.txt'))}"),
-        h.edit_event(str(nested / "owned.txt")),
+        h.event(f"touch {shlex.quote(str(nested / 'fresh.txt'))}"),
+        h.edit_event(str(nested / "fresh.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+    for event in (
+        h.event(f"touch {shlex.quote(str(nested / 'foreign.txt'))}"),
+        h.edit_event(str(nested / "foreign.txt")),
     ):
         result = await h.handler._evaluate_rules(event)
         assert result.decision == "block"
-        assert "Retry once the repository is responsive" in (result.reason or "")
+        assert h.foreign_session.ref in (result.reason or "")
+        assert f"task #{h.foreign_task.seq_num}" in (result.reason or "")
+    # A directory write spanning the nested checkout has no Git status at the export root.
+    result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
 
 
 @pytest.mark.asyncio
@@ -544,6 +608,8 @@ async def test_rule3_refuses_directory_write_over_unreadable_subdirectory(
     # An unreadable subdirectory could hide a nested checkout.
     hidden.chmod(0)
     try:
+        if os.access(hidden, os.R_OK):
+            pytest.skip("this user reads directories regardless of their mode")
         result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
     finally:
         hidden.chmod(0o755)

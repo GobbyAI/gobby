@@ -62,16 +62,24 @@ node commits could then never pass a git gate. The ruling's no-decision
 items are decisions 10, 11 and 12 below.
 
 Option (4), node-local rule evaluation against a cached ruleset, was
-rejected. A node runs only gdaemon and holds no datastore credential
-(#24075; ROADMAP decision 17), so it has no engine to run a cached ruleset.
-Rule conditions and effects read and write hub-held, cross-session state:
-session variables, task claims, workflow step state, definitions and live
-session path owners. Evaluating on the node would need the engine on the
-node plus a replicated, write-back copy of that state. The node's checkout
-is the only input the hub lacks, so the hub reads it from the node. After
-#24151 ports the engine to Rust, the engine still runs on the hub, so the
-port does not change this decision, and `checkout.read` serves the Rust
-engine unchanged.
+rejected. Hub and node are the same gdaemon binary (ROADMAP decision 13),
+and after #24151 ports the rule engine to Rust a node carries the engine. A
+node could cache the definitions, which change rarely, under hub-pushed
+invalidation, as it fetches detection manifests (node-halves Decision 27);
+that does not change this decision. The state rules read and write on each
+call cannot be cached that way. Session variables, task claims, workflow
+step state and live session path owners are read from the hub database on
+every hook and written back there, and hub-side actors write them too:
+`claim_task` and `close_task` over MCP, reviewers and step transitions. A
+node copy would lag those writes inside a hook's decision window, and
+counters and flags written from two places would lose updates, unless every
+hook first confirmed its copy with the hub. That confirmation is the round
+trip node-local evaluation was meant to save, and the hook reaches the hub
+anyway, because the node's envelope ledger forwards every envelope (ROADMAP
+decision 17). Decision 13 also makes a lost hub a typed error, so
+node-local evaluation gains no offline enforcement. Evaluation stays on the
+hub before and after #24151, and the hub reads the node's checkout through
+`checkout.read`.
 
 1. **The old draft is withdrawn.** It is the draft stamped at `74f5b4ec32`
    and never approved. Gone with it are the envelope `file_facts` field,
@@ -131,10 +139,15 @@ engine unchanged.
    "Relations that set no edge").
 5. **One command, two queries.** The `checkout.read` payload is
    `{cwd, query}`. `query` takes one of two forms:
-   - `{kind: "files", paths: [str], read_limit: int|null}`, with at most 256
-     paths and `read_limit` from 0 to 8,388,608 bytes;
+   - `{kind: "files", paths: [str], read_limit: int|null}`, with at most
+     1,000 paths and `read_limit` from 0 to the 8 MiB reply budget
+     (8,388,608 bytes). 1,000 is the contract's existing list limit
+     (`LIST_LIMIT` in `crates/gdaemon/src/node_commands.rs`, `_LIST_LIMIT`
+     in `src/gobby/hub/node_commands.py`).
    - `{kind: "git", args: [str], stdin: str|null, timeout_ms: int}`, with
-     `stdin` in base64 and `timeout_ms` from 1 to 60,000.
+     `stdin` in base64 and `timeout_ms` from 1 to 600,000. That is the bound
+     the contract's internal route already sets on a command's `timeout_ms`
+     (`docs/contracts/node-commands.md`, "Internal route"; hub-mode 1.2).
 
    The reply is `{root, project_id, home, temp_dir, files, git}`:
    - `root` is R0, and `project_id` is its marker id.
@@ -160,15 +173,20 @@ engine unchanged.
 
    The `git` result is
    `{exit_code: int|null, timed_out, stdout, stderr, truncated}`. `stdout`
-   is base64 and at most 8 MiB. `stderr` is UTF-8 text with replacement and
-   at most 64 KiB. `truncated` is true when stdout was cut.
+   is base64 and at most the 8 MiB reply budget. `stderr` is UTF-8 text with
+   replacement and at most 64 KiB, the cap the hub's git service already
+   puts on the same output
+   (`src/gobby/utils/daemon_git.py::_MAX_STREAM_STDERR_BYTES`). `truncated`
+   is true when stdout was cut.
 
-   The whole reply carries at most 8 MiB of `data`. Entries fill in request
-   order, and an entry cut by the budget has `truncated: true`. Every
-   nullable field is required, which is hub-mode 4.1's strictness rule.
+   The 8 MiB reply budget bounds the whole reply's `data`, or a git
+   result's `stdout`. Entries fill in request order, and an entry cut by the
+   budget has `truncated: true`. Every nullable field is required, which is
+   hub-mode 4.1's strictness rule. The budget is listed under "Limits
+   needing operator approval".
 
    The node answers each of these errors with `stage: "none"`:
-   - `invalid_payload`: a malformed query, more than 256 paths, a refused git
+   - `invalid_payload`: a malformed query, more than 1,000 paths, a refused git
      argument, or a `cwd` that is not a directory;
    - `no_project_root`: no marker above `cwd`;
    - `outside`: a git `-C`, `--git-dir` or `--work-tree` path that is not
@@ -233,9 +251,11 @@ engine unchanged.
    raises it at once, without sending. The per-request node answers
    (`invalid_payload`, `no_project_root`, `outside`) and truncation do not
    latch.
-   - A files query sends `timeout_ms` 5,000. hub-mode 1.3's client waits
-     that plus 5 seconds when a reply is lost, so an unreachable node costs
-     one delivery at most one wait of 10 seconds.
+   - A files query sends `timeout_ms` 5,000, listed under "Limits needing
+     operator approval". hub-mode 1.3's client waits that plus 5 seconds
+     when a reply is lost (its read timeout is `timeout_ms` plus five
+     seconds), so an unreachable node costs one delivery at most one wait of
+     10 seconds.
    - A git query sends the caller's timeout, so a slow node git costs what a
      slow local git costs today.
    - Both bounds sit inside the existing ordering
@@ -302,9 +322,15 @@ engine unchanged.
 - Use `uv run` for every Python operation. Test runs use
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`.
 - Rust work loads the `rust` skill and follows `crates/CLAUDE.md`. Use
-  `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon ...`. The shipping
-  commit bumps `gdaemon` by one patch version and updates `Cargo.lock`.
-  Installs go through `promote_workspace_binary_set`.
+  `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon ...`.
+- 1.1 and 1.2 change gdaemon. Each one's shipping commit bumps `gdaemon` by
+  one patch version in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and
+  `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`. The number
+  is the next free patch at land time, under the Orchestrator's land-time
+  rebump rule. Activation is cutover-class: the change goes live only when
+  `gobby cutover` builds and promotes the native binary set through
+  `promote_workspace_binary_set` and restarts the daemon, with the global
+  restart notices.
 - No agent or test reads `~/.gobby/bootstrap.yaml`. A test that pins the
   bootstrap file as outside builds an isolated node home under `tmp_path`.
 - Tests build node trees under `tmp_path`, and fake nodes answer through
@@ -317,6 +343,36 @@ engine unchanged.
 - **Cross-plan edges.** The coverage grammar has no cross-plan dependency.
   "Cross-plan edges set at expansion" lists every edge; the Orchestrator sets
   them at expansion.
+
+## Limits needing operator approval
+`kind: framing`
+
+This plan sets two limits that no existing constant fixes. Orchestrator
+gobby#15977 presents them to Josh with the plan. Each stands as written
+unless Josh changes it.
+
+- **`checkout.read` reply budget: 8 MiB (8,388,608 bytes).** It bounds the
+  file `data` in one reply, or a git result's `stdout`, and it is the
+  largest `read_limit`. Local reads and the hub's local git stdout are
+  uncapped today, so no Gobby constant applies. In base64, 8 MiB is about
+  10.7 MiB, which keeps a reply under the 16 MiB frame limit both channel
+  ends apply: tungstenite's default `max_frame_size`, which
+  `crates/gdaemon/src/nodes/channel.rs` leaves unset. The files the plan's
+  sites read (guarded source files, Rust sources, `gcode.json`, script
+  bodies) are far smaller in practice.
+- **Files-query `timeout_ms`: 5,000 ms.** With hub-mode 1.3's 5-second
+  lost-reply margin, an unreachable node costs one delivery at most 10
+  seconds. That stays inside `workflow.timeout` (15 s) and
+  `hooks.adapter_timeout` (26 s), whose ordering `src/gobby/config/app.py`
+  enforces.
+
+The plan's other limits reuse existing bounds:
+- at most 1,000 paths per files query: the contract's list limit,
+  `LIST_LIMIT` in Rust and `_LIST_LIMIT` in Python;
+- git `timeout_ms` from 1 to 600,000: the contract's internal-route bound;
+- git `stderr` at most 64 KiB:
+  `src/gobby/utils/daemon_git.py::_MAX_STREAM_STDERR_BYTES`;
+- the 5-second lost-reply margin: hub-mode 1.3's read timeout.
 
 ## Cross-plan edges set at expansion
 `kind: framing`
@@ -430,6 +486,31 @@ Targets:
 - `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: every message changes to `v: 4`, `checkout.read` gains command and reply messages, and the `invalid` list gains entries
 - `crates/gdaemon/tests/node_command_parity.rs`
 - `tests/hub/test_node_command_parity.py`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Research context:**
 - hub-mode 4.1 sets `CONTRACT_VERSION` to 3 in both models. It adds
@@ -449,12 +530,16 @@ Targets:
 - Add `checkout.read`, hub to node, with Decision 5's payload, query, reply,
   entry and git-result shapes and limits. The query is a tagged union on
   `kind`, and a query that mixes the two forms' fields is invalid.
+- The paths limit reuses `LIST_LIMIT` through `at_most_1000` in Rust and
+  `Field(max_length=_LIST_LIMIT)` in Python. `timeout_ms` reuses
+  `positive_u64` in Rust and `Field(ge=1)` in Python, and is at most
+  600,000.
 - The contract gains a section "v4 commands", with a `checkout.read`
   subsection giving the payload, reply, limits and stage rule.
 - "Node duties" gains the node rules:
   - Decision 4's confinement;
   - Decision 6's allow-list and environment;
-  - the 8 MiB data budget and fill order;
+  - the 8 MiB reply budget and fill order;
   - `checkout.read` is read-only, so every error carries `stage: "none"`.
 - The node error table gains `no_project_root` and `outside`.
 - `corpus.json` gains a files command, a git command, a reply for each, an
@@ -465,10 +550,14 @@ Targets:
   - a files query carrying `timeout_ms`;
   - a git query carrying `paths`;
   - a git query carrying `read_limit`;
-  - 257 paths;
+  - 1,001 paths;
   - an omitted `read_limit`;
   - an omitted `stdin`;
   - a `v` of 3.
+- The shipping commit bumps `gdaemon` one patch version in
+  `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+  at the next free patch at land time. Activation is cutover-class
+  (Constraints).
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity)'`.
@@ -492,6 +581,31 @@ Targets:
 - `crates/gdaemon/tests/node_checkout_read.rs`
 - `crates/gdaemon/tests/fixtures/node_commands/checkout_read_facts.json`
 - `tests/hub/test_checkout_read_facts_golden.py`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Granularity:** six acceptance items, one outcome. The handler answers
 confined reads, and every item exercises the same handler against one
@@ -535,7 +649,8 @@ fixture tree.
   - a refused option or subcommand answers `invalid_payload`.
 
   git then runs in `cwd` with a scrubbed environment, its stdout capped at
-  8 MiB and stderr at 64 KiB, and is killed at `timeout_ms`.
+  the 8 MiB reply budget and its stderr at 64 KiB
+  (`daemon_git._MAX_STREAM_STDERR_BYTES`), and is killed at `timeout_ms`.
 - `checkout_read_facts.json` (new) describes a fixture tree and the expected
   entries. The tree has:
   - a project with a marker and a linked worktree;
@@ -556,6 +671,10 @@ fixture tree.
   `src/gobby/hooks/_path_scope.py::_temp_scratchpad_roots` to return
   `<fixture>/tmp`, the temp root the Rust test passes.
 - LAND requires the Security Reviewer verdict (Decision 17).
+- The shipping commit bumps `gdaemon` one patch version in
+  `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+  at the next free patch at land time, after 1.1's bump. Activation is
+  cutover-class (Constraints).
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_checkout_read)'`.
@@ -706,6 +825,7 @@ Consumers unchanged:
 - `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/servers/test_session_changes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/servers/websocket/chat/test_servers_websocket_chat_session.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/storage/test_task_close_reviews.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/tasks/test_acceptance_artifacts.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/tasks/test_land_commit.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/utils/test_task_dirty_state.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
@@ -806,7 +926,7 @@ Targets:
 - `src/gobby/workflows/hooks.py::_NO_REPO_SYSTEM_PROJECTS`
 - `src/gobby/workflows/hook_project_path.py`
 - `tests/workflows/test_workflow_hooks.py::*` — scope-reason: the `_NO_REPO_SYSTEM_PROJECTS` and `_is_known_no_repo_project` import moves to `gobby.workflows.hook_project_path`
-- `tests/hooks/test_session_binding.py`
+- `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`
 - `tests/hooks/test_node_origin_project.py`
 
 Consumers unchanged:
@@ -846,7 +966,7 @@ Consumers unchanged:
   it, so 2.1 splits it.
 - hub-mode 2.2.7 pins a remote event taking its project from its cwd, in
   `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`,
-  which hub-mode 2.2 creates.
+  which hub-mode 2.2 (#24272) created.
 
 **Implementation:**
 - Split: move the body of `WorkflowHookHandler._resolve_project_path`, with
@@ -1008,7 +1128,7 @@ Consumers unchanged:
     outcome.
   - A `file` decodes `data` as UTF-8 with replacement.
 - `outstanding_monolith_paths` prefetches every ledger path with one
-  `path_facts` call per 256 paths, then projects from the memo.
+  `path_facts` call per 1,000 paths, then projects from the memo.
 - When a guard path is unanswered, or truncated with a partial count under
   the limit, it is listed as
   `<relative> (checkout_read_unavailable: <code> (machine <id>))`, where
@@ -1021,7 +1141,7 @@ Verification planned:
 **Acceptance:**
 
 - 2.3.1 - A node `Write` that takes a node file from 990 to 1,000 lines is listed, and one that keeps it at 995 lines is not. A different file at the same path on the hub does not change either answer. test: `tests/workflows/test_node_origin_monolith.py::test_node_projection_reads_node_file`.
-- 2.3.2 - The ledger recount for a node session counts the node's files in one batched read per 256 paths. test: `tests/workflows/test_node_origin_monolith.py::test_node_ledger_recount_batches`.
+- 2.3.2 - The ledger recount for a node session counts the node's files in one batched read per 1,000 paths. test: `tests/workflows/test_node_origin_monolith.py::test_node_ledger_recount_batches`.
 - 2.3.3 - An unavailable node, or a truncated read under the limit, lists the guard path with the diagnostic, so the rule blocks. test: `tests/workflows/test_node_origin_monolith.py::test_unanswered_node_lists_diagnostic`.
 
 ### 2.4 Rust TDD evidence reads node files [category: code] (depends: 1.3)
@@ -1111,6 +1231,8 @@ Consumers unchanged:
 - `tests/workflows/test_commit_guard.py` — no-edit-reason: Its `_live_path_owners` patches replace the function whole, and its database tests run on the hub machine.
 - `tests/hooks/test_tool_handlers.py` — no-edit-reason: It calls or patches `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
 - `tests/workflows/test_task_claim_state.py` — no-edit-reason: It calls `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
+- `tests/mcp_proxy/tools/test_claim_task.py` — no-edit-reason: Its `_live_path_owners` patch replaces the function whole.
+- `tests/workflows/test_session_variable_mutation_scope.py` — no-edit-reason: Its path-owners case registers its session with `get_machine_id()` and calls `_live_path_owners` outside a hook delivery, so the machine filter keeps that session.
 
 **Research context:**
 - `resolve_edit_pair(file_path, cwd, *, project_id, db, variables)` does
@@ -1151,7 +1273,7 @@ Consumers unchanged:
   `event_machine_id()`. Outside a hook delivery that is the hub's machine.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_edits.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/hooks/test_tool_handlers.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_edits.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/hooks/test_tool_handlers.py tests/workflows/test_session_variable_mutation_scope.py -v`.
 
 **Acceptance:**
 
@@ -1349,6 +1471,44 @@ Verification planned:
 - 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
   gobby#16791 agree on this plan at `62d13774c7`, with no open findings.
   Option (4) is a closed rejection, and bare validation exits 0.
+- 2026-10-15: after Josh's pushback (hub and node are one gdaemon binary;
+  definitions are cached and synced), option (4) is revised: it drops the
+  "no engine on the node" reason and the sentence that #24151 keeps the engine
+  on the hub, notes that definitions could be cached on a node, and stays
+  rejected on per-call hub state, decision-window staleness, lost writes and
+  ROADMAP decisions 13 and 17. Josh approved the revised text. Scope, leaves,
+  Targets and acceptance are unchanged.
+- 2026-10-15: consumer coverage flags three tests that landed after the
+  2026-10-14 consensus. 1.4's Consumers unchanged adds
+  `tests/storage/test_task_close_reviews.py`. 2.6's adds
+  `tests/mcp_proxy/tools/test_claim_task.py` and
+  `tests/workflows/test_session_variable_mutation_scope.py`, and 2.6's
+  planned verification runs the latter, which calls `_live_path_owners`
+  directly. Targets and acceptance are unchanged.
+- 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
+  gobby#16791 agree on this plan at `d973d0bbcc`, with no open findings.
+  The revised option (4) is a closed rejection, and bare validation exits 0
+  with no warnings.
+- 2026-10-15: Plan Writer gobby#16490 withdraws the M1 stamped at
+  `e6b1c97d26` before the repairs from Orchestrator gobby#15977's review.
+- 2026-10-15: repairs from Orchestrator gobby#15977's review of
+  `e6b1c97d26`:
+  - 1.1 and 1.2 target `crates/gdaemon/Cargo.toml`, `Cargo.lock` and
+    `MANAGED_BIN_VERSION_PINS` for each one's gdaemon patch bump, at the next
+    free patch at land time, and both list the pins' 20 consumers under
+    Consumers unchanged. Constraints, 1.1, 1.2 and V2 mark activation as
+    cutover-class.
+  - Limits now reuse existing bounds where one exists. A files query takes
+    at most 1,000 paths, the contract's `LIST_LIMIT`, so the 1.1 corpus
+    entry, 2.3's batch and 2.3.2 move from 256 to 1,000. Git `timeout_ms`
+    takes the internal route's 1 to 600,000 in place of 1 to 60,000. Git
+    `stderr` cites `daemon_git._MAX_STREAM_STDERR_BYTES`.
+  - The new section "Limits needing operator approval" lists the 8 MiB
+    reply budget, which also bounds git `stdout` and `read_limit`, and the
+    5,000 ms files-query timeout, each with its reason.
+  - Found work: hub-mode 2.2 (#24272) landed
+    `tests/hooks/test_session_binding.py`, so 2.1 targets its exact symbol
+    `test_project_context_skips_foreign_rows`.
 
 ## V2: Verification
 `kind: verification`
@@ -1370,7 +1530,7 @@ each must hold before #23277 closes.
   The test-type audit must report no new findings for the changed tests.
 - After every leaf lands, 3.1 must pass on the live pair, and no test may
   have read `~/.gobby/bootstrap.yaml` or the user's daemon database.
-- Once the release with these leaves is promoted and the daemon restarts, a
-  local session's hook-path behavior must be unchanged. The local suites
+- Once `gobby cutover` activates the release with these leaves, a local
+  session's hook-path behavior must be unchanged. The local suites
   named in each leaf's verification must pass unchanged, except for the
   1.4.5 fix.

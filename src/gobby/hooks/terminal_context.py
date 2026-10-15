@@ -12,6 +12,7 @@ from uuid import UUID
 import psutil
 
 from gobby.sessions.tmux_context import parse_tmux_socket_path, query_tmux_identity
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +125,15 @@ def enrich_terminal_context_with_cwd(
     *,
     external_id: str | None = None,
     seat_available: SeatAvailable | None = None,
+    machine_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Copy terminal context and add cwd and parent-process identity.
 
     ``external_id`` is the CLI's own session handle (the Codex thread id). A hook fired
     by a shared Codex app-server host is re-identified from that thread's seat process;
     ``seat_available`` widens a fresh thread's search to the one seat no session owns.
+    ``machine_id`` is the event's machine: another machine's pids name no process here,
+    so its hook records no parent-process identity rather than a local stranger's.
     """
     cwd_text = _non_empty_str(cwd)
     if terminal_context is None:
@@ -138,6 +142,10 @@ def enrich_terminal_context_with_cwd(
     enriched = dict(terminal_context)
     if cwd_text and not _non_empty_str(enriched.get("cwd")):
         enriched["cwd"] = cwd_text
+    if machine_id and machine_id != get_machine_id():
+        enriched.pop("parent_create_time", None)
+        enriched.pop("parent_name", None)
+        return enriched
     _record_parent_process_identity(
         enriched,
         external_id=_non_empty_str(external_id),

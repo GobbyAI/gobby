@@ -25,6 +25,12 @@ AttentionStatus = Literal["blocked"]
 AttentionRosterKind = Literal["run", "session"]
 _EMPTY_ROW_SWEEP_LIMIT = 256
 _EMPTY_ROW_SWEEP_INTERVAL_SECONDS = 60.0
+# payload as text: the pool's jsonb loader would decode and re-dump it, and
+# AttentionState.from_row decodes it again (#23359).
+_STATE_COLUMNS = (
+    "entry_id, run_id, session_id, attention_id, state, reason, kind, fingerprint, "
+    "payload::text AS payload, since, seen_at, updated_at"
+)
 
 
 def run_attention_entry_id(run_id: str) -> str:
@@ -272,7 +278,7 @@ class AttentionStateManager:
     def get(self, entry_id: str) -> AttentionState | None:
         """Return the latest state for an entry."""
         row = self.db.fetchone(
-            "SELECT * FROM attention_states WHERE entry_id = %s",
+            f"SELECT {_STATE_COLUMNS} FROM attention_states WHERE entry_id = %s",
             (entry_id,),
         )
         return AttentionState.from_row(row) if row is not None else None
@@ -280,8 +286,8 @@ class AttentionStateManager:
     def list_blocked(self) -> list[AttentionState]:
         """Return currently blocked entries, newest first."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM attention_states
+            f"""
+            SELECT {_STATE_COLUMNS} FROM attention_states
             WHERE state = 'blocked'
             ORDER BY updated_at DESC, entry_id
             """
@@ -312,14 +318,14 @@ class AttentionStateManager:
                 run.model,
                 run.pid,
                 run.updated_at,
-                '{}'::jsonb AS terminal_context,
+                '{}'::text AS terminal_context,
                 run.terminal_id::text AS terminal_id,
                 terminal.backend AS terminal_backend,
                 terminal.state AS terminal_state,
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
-                terminal.locator AS terminal_locator,
+                terminal.locator::text AS terminal_locator,
                 task.title AS task_title,
                 COALESCE(
                     CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
@@ -363,14 +369,14 @@ class AttentionStateManager:
                 session.model,
                 NULL::bigint AS pid,
                 session.updated_at,
-                COALESCE(session.terminal_context, '{}'::jsonb) AS terminal_context,
+                COALESCE(session.terminal_context, '{}'::jsonb)::text AS terminal_context,
                 terminal.id::text AS terminal_id,
                 terminal.backend AS terminal_backend,
                 terminal.state AS terminal_state,
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
-                terminal.locator AS terminal_locator,
+                terminal.locator::text AS terminal_locator,
                 claimed.title AS task_title,
                 COALESCE(
                     CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
@@ -432,7 +438,7 @@ class AttentionStateManager:
         with self.ordering.synchronized():
             self._sweep_empty_rows_locked()
             rows = self.db.fetchall(
-                """SELECT * FROM attention_states
+                f"""SELECT {_STATE_COLUMNS} FROM attention_states
                 WHERE state IS NOT NULL
                    OR jsonb_typeof(payload->'turn_lifecycle'->'provider_error') = 'object'
                 ORDER BY entry_id"""
@@ -588,7 +594,7 @@ class AttentionStateManager:
         now = utc_now()
         with self.db.transaction() as transaction:
             existing_row = transaction.execute(
-                "SELECT * FROM attention_states WHERE entry_id = %s FOR UPDATE",
+                f"SELECT {_STATE_COLUMNS} FROM attention_states WHERE entry_id = %s FOR UPDATE",
                 (entry_id,),
             ).fetchone()
             existing = AttentionState.from_row(existing_row) if existing_row is not None else None
@@ -600,14 +606,14 @@ class AttentionStateManager:
                 serialized_payload = json.dumps(target_payload)
                 attention_id = str(uuid.uuid4())
                 inserted = transaction.execute(
-                    """
+                    f"""
                     INSERT INTO attention_states (
                         entry_id, run_id, session_id, attention_id, state, reason,
                         kind, fingerprint, payload, since, seen_at, updated_at
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                     ON CONFLICT (entry_id) DO NOTHING
-                    RETURNING *
+                    RETURNING {_STATE_COLUMNS}
                     """,
                     (
                         entry_id,
@@ -626,7 +632,7 @@ class AttentionStateManager:
                 ).fetchone()
                 if inserted is None:
                     current_row = transaction.execute(
-                        "SELECT * FROM attention_states WHERE entry_id = %s",
+                        f"SELECT {_STATE_COLUMNS} FROM attention_states WHERE entry_id = %s",
                         (entry_id,),
                     ).fetchone()
                     current = (
@@ -705,7 +711,7 @@ class AttentionStateManager:
                     seen_at = %s,
                     updated_at = %s
                 WHERE {" AND ".join(conditions)}
-                RETURNING *
+                RETURNING {_STATE_COLUMNS}
                 """,  # nosec B608
                 (
                     next_run_id,
@@ -724,7 +730,7 @@ class AttentionStateManager:
             ).fetchone()
             if updated is None:
                 current_row = transaction.execute(
-                    "SELECT * FROM attention_states WHERE entry_id = %s",
+                    f"SELECT {_STATE_COLUMNS} FROM attention_states WHERE entry_id = %s",
                     (entry_id,),
                 ).fetchone()
                 current = AttentionState.from_row(current_row) if current_row is not None else None
