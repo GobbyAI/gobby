@@ -62,16 +62,24 @@ node commits could then never pass a git gate. The ruling's no-decision
 items are decisions 10, 11 and 12 below.
 
 Option (4), node-local rule evaluation against a cached ruleset, was
-rejected. A node runs only gdaemon and holds no datastore credential
-(#24075; ROADMAP decision 17), so it has no engine to run a cached ruleset.
-Rule conditions and effects read and write hub-held, cross-session state:
-session variables, task claims, workflow step state, definitions and live
-session path owners. Evaluating on the node would need the engine on the
-node plus a replicated, write-back copy of that state. The node's checkout
-is the only input the hub lacks, so the hub reads it from the node. After
-#24151 ports the engine to Rust, the engine still runs on the hub, so the
-port does not change this decision, and `checkout.read` serves the Rust
-engine unchanged.
+rejected. Hub and node are the same gdaemon binary (ROADMAP decision 13),
+and after #24151 ports the rule engine to Rust a node carries the engine. A
+node could cache the definitions, which change rarely, under hub-pushed
+invalidation, as it fetches detection manifests (node-halves Decision 27);
+that does not change this decision. The state rules read and write on each
+call cannot be cached that way. Session variables, task claims, workflow
+step state and live session path owners are read from the hub database on
+every hook and written back there, and hub-side actors write them too:
+`claim_task` and `close_task` over MCP, reviewers and step transitions. A
+node copy would lag those writes inside a hook's decision window, and
+counters and flags written from two places would lose updates, unless every
+hook first confirmed its copy with the hub. That confirmation is the round
+trip node-local evaluation was meant to save, and the hook reaches the hub
+anyway, because the node's envelope ledger forwards every envelope (ROADMAP
+decision 17). Decision 13 also makes a lost hub a typed error, so
+node-local evaluation gains no offline enforcement. Evaluation stays on the
+hub before and after #24151, and the hub reads the node's checkout through
+`checkout.read`.
 
 1. **The old draft is withdrawn.** It is the draft stamped at `74f5b4ec32`
    and never approved. Gone with it are the envelope `file_facts` field,
@@ -706,6 +714,7 @@ Consumers unchanged:
 - `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/servers/test_session_changes.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/servers/websocket/chat/test_servers_websocket_chat_session.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/storage/test_task_close_reviews.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/tasks/test_acceptance_artifacts.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/tasks/test_land_commit.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/utils/test_task_dirty_state.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
@@ -1111,6 +1120,8 @@ Consumers unchanged:
 - `tests/workflows/test_commit_guard.py` — no-edit-reason: Its `_live_path_owners` patches replace the function whole, and its database tests run on the hub machine.
 - `tests/hooks/test_tool_handlers.py` — no-edit-reason: It calls or patches `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
 - `tests/workflows/test_task_claim_state.py` — no-edit-reason: It calls `resolve_edit_pair` with an unchanged signature for local events, whose behavior is unchanged.
+- `tests/mcp_proxy/tools/test_claim_task.py` — no-edit-reason: Its `_live_path_owners` patch replaces the function whole.
+- `tests/workflows/test_session_variable_mutation_scope.py` — no-edit-reason: Its path-owners case registers its session with `get_machine_id()` and calls `_live_path_owners` outside a hook delivery, so the machine filter keeps that session.
 
 **Research context:**
 - `resolve_edit_pair(file_path, cwd, *, project_id, db, variables)` does
@@ -1151,7 +1162,7 @@ Consumers unchanged:
   `event_machine_id()`. Outside a hook delivery that is the hub's machine.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_edits.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/hooks/test_tool_handlers.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_edits.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/hooks/test_tool_handlers.py tests/workflows/test_session_variable_mutation_scope.py -v`.
 
 **Acceptance:**
 
@@ -1349,6 +1360,20 @@ Verification planned:
 - 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
   gobby#16791 agree on this plan at `62d13774c7`, with no open findings.
   Option (4) is a closed rejection, and bare validation exits 0.
+- 2026-10-15: after Josh's pushback (hub and node are one gdaemon binary;
+  definitions are cached and synced), option (4) is revised: it drops the
+  "no engine on the node" reason and the sentence that #24151 keeps the engine
+  on the hub, notes that definitions could be cached on a node, and stays
+  rejected on per-call hub state, decision-window staleness, lost writes and
+  ROADMAP decisions 13 and 17. Josh approved the revised text. Scope, leaves,
+  Targets and acceptance are unchanged.
+- 2026-10-15: consumer coverage flags three tests that landed after the
+  2026-10-14 consensus. 1.4's Consumers unchanged adds
+  `tests/storage/test_task_close_reviews.py`. 2.6's adds
+  `tests/mcp_proxy/tools/test_claim_task.py` and
+  `tests/workflows/test_session_variable_mutation_scope.py`, and 2.6's
+  planned verification runs the latter, which calls `_live_path_owners`
+  directly. Targets and acceptance are unchanged.
 
 ## V2: Verification
 `kind: verification`
