@@ -179,6 +179,14 @@
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/cron.py:273` (`create_cron_router::toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
   },
+  "HTTP POST /api/nodes/hooks/replay": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.replay` shares hub replay decisions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port replay decisions and node machine ownership checks to Rust."
+  },
+  "HTTP POST /api/nodes/receipts": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.receipts` applies hub receipt actions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port receipt authorization, UUID validation and compare-and-set side effects to Rust."
+  },
   "HTTP POST /api/webhooks/test": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/mcp/webhooks.py:71` (`create_webhooks_router::test_webhook`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch."
