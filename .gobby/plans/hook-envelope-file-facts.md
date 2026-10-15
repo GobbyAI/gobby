@@ -1518,6 +1518,10 @@ Verification planned:
   The section is renamed "Operator-approved limits" and records the
   decisions, and Decisions 5 and 8 point to it. Values, scope, leaves and
   Targets are unchanged.
+- 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
+  gobby#16983 agree on this plan at `6bbaa37b3f`, with no open findings. F1
+  is resolved by Josh's recorded decisions, and bare validation exits 0 with
+  no warnings.
 
 ## V2: Verification
 `kind: verification`
