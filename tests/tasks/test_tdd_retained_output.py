@@ -364,6 +364,14 @@ def test_stub_first_retained_output_is_bounded_by_its_window(
     assert _rust_result(tmp_path, records).passed is credited
 
 
+def test_red_after_the_closing_edit_earns_no_credit(tmp_path: Path) -> None:
+    # The only production edit precedes the job, so no window closes after this RED.
+    _retain(tmp_path / "tasks/job.output", _nextest_file("expected 2"), NOTICE + 0.3)
+    result = _rust_result(tmp_path, _rust_cycle(tmp_path, production_at=1.5))
+    assert not result.passed
+    assert result.red_runs == ()
+
+
 @pytest.mark.parametrize("job_file", ["notes/job.output", "tasks/other.output"])
 def test_job_output_must_be_the_jobs_own_tasks_file(tmp_path: Path, job_file: str) -> None:
     # The receipt names this path, but only tasks/<job_id>.output is the job's own file.
