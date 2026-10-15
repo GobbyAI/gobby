@@ -67,7 +67,7 @@ from gobby.storage.hub.protocol import (
     WebChatSessionBootstrap,
 )
 from gobby.storage.hub.read_scope import record_closed_writes, written_tables
-from gobby.storage.hub.transaction_deadline import TransactionDeadline
+from gobby.storage.hub.transaction_deadline import TransactionDeadline, lone_read_timeouts
 from gobby.telemetry.instruments import observe_histogram
 from gobby.telemetry.query_timing import record_pool_acquire, record_query
 from gobby.utils.datetime import to_aware_utc, to_json_safe
@@ -367,19 +367,37 @@ def autocommit_read(
     connection: Callable[[], AbstractContextManager[psycopg.Connection[Any]]],
     sql: str,
     params: Sequence[Any] | Mapping[str, Any] = (),
-) -> PostgresCursor:
+) -> PostgresCursor | None:
     """Run one read-only statement without the BEGIN/COMMIT round trips (#23359).
 
     PostgreSQL runs a lone statement atomically either way, so autocommit only
-    drops the transaction bookkeeping around it. Rows are buffered before the
-    connection returns to the pool in the mode it was handed over in.
+    drops the transaction bookkeeping around it. A deadline's bounds ride a
+    local set_config in the same pipeline: everything before its one Sync is a
+    single implicit transaction, so they bound the read and revert at its end.
+    Returns None when the deadline needs a transaction instead. Rows are
+    buffered before the connection returns to the pool in the mode it was
+    handed over in.
     """
+    deadline = current_database_operation_deadline()
     open_pool()
     with connection() as conn:
+        bounds = None if deadline is None else lone_read_timeouts(conn, deadline, sql)
+        if deadline is not None and bounds is None:
+            return None
         conn.autocommit = True
         started_at = time.perf_counter()
         try:
-            result = conn.execute(sql, params) if params else conn.execute(sql)
+            with nullcontext() if bounds is None else conn.pipeline():
+                if bounds is not None:
+                    conn.execute(
+                        "SELECT set_config('statement_timeout', %s, true), "
+                        "set_config('lock_timeout', %s, true)",
+                        (f"{bounds[0]}ms", f"{bounds[1]}ms"),
+                    )
+                result = conn.execute(sql, params) if params else conn.execute(sql)
+            if deadline is not None:
+                # A deadline transaction checks the budget again before COMMIT.
+                deadline.remaining_seconds()
             return PostgresCursor(result).materialize()
         finally:
             record_query(time.perf_counter() - started_at)
