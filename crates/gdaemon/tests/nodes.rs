@@ -22,7 +22,7 @@ use gobby_daemon::{
     front_door::routes::{FAMILIES, RouteTable},
     front_door::{
         FrontDoorState,
-        auth::{AuthState, PostgresKeyResolver},
+        auth::{AuthState, KeyResolver, PostgresKeyResolver},
         health::BackendState,
     },
     nodes::{
@@ -666,15 +666,15 @@ async fn channel_database(case: impl AsyncFnOnce(&ChannelDb) -> Result<()>) -> R
 }
 
 impl ChannelDb {
-    fn pool(&self) -> Result<Pool> {
-        Ok(Pool::build(
+    fn pool(&self) -> Result<Arc<Pool>> {
+        Ok(Arc::new(Pool::build(
             &self.url,
             PoolSettings {
                 max_size: 4,
                 application_name: "gobby-gdaemon-nodes-test".into(),
                 acquire_timeout: Duration::from_secs(2),
             },
-        )?)
+        )?))
     }
 
     async fn row(&self) -> Result<(Option<f64>, Option<String>)> {
@@ -787,8 +787,9 @@ async fn channel_door(
     timing: ChannelTiming,
     native: Option<NativeRoutes>,
 ) -> Result<ChannelHub> {
+    let pool = db.pool()?;
     let nodes = Arc::new(HubNodes {
-        db: db.pool()?,
+        db: pool.clone(),
         registry: Registry::default(),
         timing,
     });
@@ -797,7 +798,7 @@ async fn channel_door(
     let path = write_bootstrap(home.path(), "http://127.0.0.1:1", None, None);
     let auth = Arc::new(AuthState::new(
         "test-secret".into(),
-        Some(Arc::new(PostgresKeyResolver::new(&db.url))),
+        Some(Arc::new(PostgresKeyResolver::new(pool))),
         path,
     )?);
     let state = FrontDoorState {
@@ -822,6 +823,24 @@ async fn channel_door(
         task,
         _home: home,
     })
+}
+
+#[tokio::test]
+async fn key_resolver_checks_out_from_the_injected_pool() -> Result<()> {
+    channel_database(async |db| {
+        let pool = db.pool()?;
+        let resolver = PostgresKeyResolver::new(pool.clone());
+        let identity = resolver
+            .resolve(&gobby_core::api_key_format::hash(KEY))
+            .await;
+        assert!(
+            matches!(&identity, Ok(Some(found)) if found.key_id == db.key_id.to_string()),
+            "resolver did not resolve through the injected pool: {identity:?}"
+        );
+        assert_eq!(pool.status().size, 1, "resolver used a pool of its own");
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
@@ -966,7 +985,7 @@ async fn machines_api_lists_rows_with_connection_state() -> Result<()> {
         let standalone = channel_door(
             db,
             channel_timing(),
-            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+            Some(NativeRoutes::Standalone(Some(db.pool()?))),
         )
         .await?;
         let (_, body) = send(standalone.addr, get("/api/machines")).await;
@@ -1066,7 +1085,7 @@ async fn machines_api_fallbacks_reject_invalid_keys() -> Result<()> {
         let standalone = channel_door(
             db,
             channel_timing(),
-            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+            Some(NativeRoutes::Standalone(Some(db.pool()?))),
         )
         .await?;
         for addr in [hub.addr, standalone.addr] {
@@ -1157,7 +1176,7 @@ async fn machines_api_item_head_preserves_owner_scope() -> Result<()> {
         let standalone = channel_door(
             db,
             channel_timing(),
-            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+            Some(NativeRoutes::Standalone(Some(db.pool()?))),
         )
         .await?;
         for (mode, addr) in [("hub", hub.addr), ("standalone", standalone.addr)] {
@@ -1943,7 +1962,7 @@ async fn channel_requires_a_key_on_a_hub() -> Result<()> {
         });
         let auth = Arc::new(AuthState::new(
             "test-secret".into(),
-            Some(Arc::new(PostgresKeyResolver::new(&db.url))),
+            Some(Arc::new(PostgresKeyResolver::new(db.pool()?))),
             hub._home.path().join("bootstrap.yaml"),
         )?);
         let state = FrontDoorState::new(target, BackendState::Down, auth);

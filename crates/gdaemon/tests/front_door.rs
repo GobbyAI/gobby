@@ -235,7 +235,16 @@ struct FailedResolver;
 #[tokio::test]
 async fn postgres_resolver_and_resolverless_door_fail_closed() {
     let target = refused_addr().await;
-    let resolver = Arc::new(PostgresKeyResolver::new("not a PostgreSQL DSN"));
+    let unreachable = gobby_core::postgres_pool::Pool::build(
+        "postgresql://test@127.0.0.1:1/test",
+        gobby_core::postgres_pool::PoolSettings {
+            max_size: 2,
+            application_name: "gobby-gdaemon-front-door-test".into(),
+            acquire_timeout: Duration::from_secs(5),
+        },
+    )
+    .expect("lazy pool");
+    let resolver = Arc::new(PostgresKeyResolver::new(Arc::new(unreachable)));
     let front_door = authenticated_front_door(target, resolver);
     let auth = Arc::new(
         AuthState::new("boot-secret".into(), None, Default::default()).expect("resolverless auth"),
