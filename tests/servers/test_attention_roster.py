@@ -779,10 +779,7 @@ def test_bounded_roster_query_joins_task_payload(
         task_id=task.id,
     )
 
-    rows = AttentionStateManager(temp_db).load_roster_rows(
-        require_machine_id(),
-        live_session_statuses=(),
-    )
+    rows = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=())
 
     row = next(item for item in rows if item.source_id == run.id)
     assert row.task_id == task.id
@@ -851,9 +848,7 @@ def test_running_roster_projects_child_lifecycle_and_seat_title(
     session_manager.update_session_status(child.id, status)
 
     entry = _live_roster_entry(temp_db, f"run:{run.id}")
-    rows = AttentionStateManager(temp_db).load_roster_rows(
-        require_machine_id(), live_session_statuses=(status,)
-    )
+    rows = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=(status,))
     session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
 
     assert entry["lifecycle_status"] == status
@@ -907,9 +902,7 @@ def test_roster_recovers_older_seat_titles_without_definition_title_variable(
     )
 
     entry = _live_roster_entry(temp_db, f"run:{run.id}")
-    rows = AttentionStateManager(temp_db).load_roster_rows(
-        require_machine_id(), live_session_statuses=(child.status,)
-    )
+    rows = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=(child.status,))
     session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
 
     assert entry["definition_title"] == "Lane 1 Developer"
