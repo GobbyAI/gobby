@@ -40,13 +40,16 @@ SYNC_ORPHAN_TAG = "sync-orphan"
 _STEP_BODY_KEYS = ("steps", "step_variables", "exit_condition", "step_workflow")
 _UPDATE_FIELDS = frozenset({"name", "description", "enabled", "definition_json", "tags"})
 _SYNC_FIELDS = _UPDATE_FIELDS
+# JSON columns come back as the server's text for AgentDefinitionRow.from_row to parse
+# once, where the pool's jsonb loader would decode and re-dump them first (#23359).
 _SELECT_HYDRATED = """
 SELECT
     a.id, a.project_id, a.name, a.description, a.enabled, a.enabled_pinned,
-    a.definition_json, a.source, a.tags, a.deleted_at, a.created_at, a.updated_at,
+    a.definition_json::text AS definition_json, a.source, a.tags::text AS tags,
+    a.deleted_at, a.created_at, a.updated_at,
     w.id AS step_workflow_id,
-    w.steps_json AS child_steps_json,
-    w.variables_json AS child_variables_json,
+    w.steps_json::text AS child_steps_json,
+    w.variables_json::text AS child_variables_json,
     w.exit_condition AS child_exit_condition
 FROM agent_definitions a
 LEFT JOIN agent_step_workflows w ON w.agent_definition_id = a.id
@@ -394,17 +397,13 @@ class AgentDefinitionManager:
         include_deleted: bool = False,
     ) -> AgentDefinitionRow | None:
         deleted = "" if include_deleted else " AND a.deleted_at IS NULL"
-        order = " ORDER BY a.deleted_at NULLS FIRST" if include_deleted else ""
-        if project_id is not None:
-            row = self.db.fetchone(
-                f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id = %s{deleted}{order}",
-                (name, project_id),
-            )
-            if row is not None:
-                return AgentDefinitionRow.from_row(row)
+        deleted_order = ", a.deleted_at NULLS FIRST" if include_deleted else ""
+        # One query: a project row shadows the global row of the same name.
         row = self.db.fetchone(
-            f"{_SELECT_HYDRATED} WHERE a.name = %s AND a.project_id IS NULL{deleted}{order}",
-            (name,),
+            f"{_SELECT_HYDRATED} WHERE a.name = %s"
+            " AND (a.project_id = %s OR a.project_id IS NULL)"
+            f"{deleted} ORDER BY a.project_id IS NULL{deleted_order} LIMIT 1",
+            (name, project_id),
         )
         return AgentDefinitionRow.from_row(row) if row is not None else None
 
