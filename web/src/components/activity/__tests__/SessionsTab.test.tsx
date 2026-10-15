@@ -342,7 +342,7 @@ const PAUSED_SESSION = makeSession({
   status: "paused",
   seq_num: 202,
   updated_at: "2026-04-08T12:10:00Z",
-  summary_markdown: "# Session Summary",
+  handoff_markdown: "# Session Summary",
 });
 
 function TerminalFocusHarness() {
@@ -1140,6 +1140,100 @@ describe("SessionsTab", () => {
     }
   });
 
+  describe.each(["detail", "catalog", "catalog during refresh"] as const)(
+    "summary selection from %s",
+    (source) => {
+      it.each([
+        ["active", "Expired report", "Continue work", "Continue work"],
+        ["paused", "Expired report", "Continue work", "Continue work"],
+        ["active", "Expired report", null, null],
+        ["paused", "Expired report", "\n\t", null],
+        ["expired", "Final report", "Earlier handoff", "Final report"],
+        ["expired", "\n\t", "Continue work", "Continue work"],
+        ["expired", null, "Continue work", "Continue work"],
+        ["expired", "\n\t", "  ", null],
+        ["expired", null, null, null],
+      ] as const)(
+        "%s selects content from summary=%j and handoff=%j",
+        async (status, summary, handoff, expected) => {
+          const contentSession = makeSession({
+            ...LIVE_SESSION,
+            status,
+            summary_markdown: summary,
+            handoff_markdown: handoff,
+          });
+          const emptySession = {
+            ...contentSession,
+            summary_markdown: null,
+            handoff_markdown: null,
+          };
+          const detailBySource = {
+            detail: contentSession,
+            catalog: null,
+            "catalog during refresh": emptySession,
+          };
+          mockUseSessionDetail.mockReturnValue({
+            session: detailBySource[source],
+            sessionError: null,
+            clearSessionError: vi.fn(),
+            messages: [],
+            isLoading: false,
+            transcriptStatus: { content_state: "missing" },
+          });
+
+          render(
+            <SessionsTab
+              sessions={[source === "detail" ? emptySession : contentSession]}
+              focusSessionId={contentSession.id}
+            />,
+          );
+          if (status === "expired") {
+            fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
+          }
+          await screen.findByText("Session has no transcript");
+
+          if (expected === null) {
+            expect(
+              screen.queryByRole("button", { name: "Summary" }),
+            ).not.toBeInTheDocument();
+          } else {
+            fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+            expect(screen.getByTestId("summary-markdown").textContent).toBe(
+              expected,
+            );
+          }
+        },
+      );
+    },
+  );
+
+  it("prefers an expired catalog summary to a detail handoff", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      session: {
+        ...EXPIRED_SESSION,
+        summary_markdown: null,
+        handoff_markdown: "Earlier handoff",
+      },
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [],
+      isLoading: false,
+      transcriptStatus: { content_state: "missing" },
+    });
+    render(
+      <SessionsTab
+        sessions={[EXPIRED_SESSION]}
+        focusSessionId={EXPIRED_SESSION.id}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
+    await screen.findByText("Session has no transcript");
+    fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown").textContent).toBe(
+      "# Expired Summary",
+    );
+  });
+
   it("renders handoff fallback for a live session with no summary", async () => {
     mockUseSessionDetail.mockReturnValue({
       session: {
@@ -1672,8 +1766,8 @@ describe("SessionsTab", () => {
   it("shows an explicit empty state only when summary mode loses both summary and handoff", async () => {
     let detailSession: GobbySession = {
       ...PAUSED_SESSION,
-      summary_markdown: "# Initial summary",
-      handoff_markdown: null,
+      summary_markdown: null,
+      handoff_markdown: "# Initial summary",
     };
     mockUseSessionDetail.mockImplementation(() => ({
       session: detailSession,
