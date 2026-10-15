@@ -432,3 +432,36 @@ def test_job_output_requires_its_exit_trailer(tmp_path: Path, trailer: str) -> N
         NOTICE + 0.3,
     )
     _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+
+
+@pytest.mark.timeout(5)
+def test_job_output_fifo_is_refused_without_blocking(tmp_path: Path) -> None:
+    # A FIFO has no writer here, so a blocking open would hang the close evaluation.
+    output_path = tmp_path / "tasks/job.output"
+    output_path.parent.mkdir(parents=True)
+    os.mkfifo(output_path)
+    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+
+
+@pytest.mark.parametrize("restamp", ["late", "original"])
+def test_job_output_mutated_between_stat_and_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restamp: str
+) -> None:
+    output_path = tmp_path / "tasks/job.output"
+    full = _nextest_file("expected 2")
+    _retain(output_path, full, NOTICE + 0.3)
+    inode = output_path.stat().st_ino
+    real_fstat = os.fstat
+    rewritten: list[bool] = []
+
+    def fstat_then_rewrite(descriptor: int) -> os.stat_result:
+        info = real_fstat(descriptor)
+        if info.st_ino == inode and not rewritten:
+            # A writer lands after the first snapshot and before the read.
+            rewritten.append(True)
+            _retain(output_path, full, 20 if restamp == "late" else NOTICE + 0.3)
+        return info
+
+    monkeypatch.setattr(os, "fstat", fstat_then_rewrite)
+    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert rewritten

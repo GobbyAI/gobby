@@ -4,8 +4,8 @@ Compaction can trim the failure bodies a test run delivered into the transcript.
 The provider's ``tasks/<job_id>.output`` file or the RTK recall row named by the
 compacted output still holds them. Gate 12 may read that artifact only while it
 provably is the original job's output: named by the job, settled no later than
-its completion, untouched before the first production edit, and containing what
-the transcript delivered.
+its completion, untouched before the production edit that closes its window,
+unchanged while it is read, and containing what the transcript delivered.
 """
 
 from __future__ import annotations
@@ -70,13 +70,18 @@ def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | 
     ):
         return None
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        # O_NONBLOCK: opening a FIFO planted at the path must not wait for a writer.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as handle:
-            info = os.fstat(handle.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_RETAINED_BYTES:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > _MAX_RETAINED_BYTES:
                 return None
             data = handle.read(_MAX_RETAINED_BYTES + 1)
+            info = os.fstat(handle.fileno())
     except OSError:
+        return None
+    # A write between the snapshot and the read would credit bytes the checks never saw.
+    if _settled(before) != _settled(info):
         return None
     modified = info.st_mtime_ns / 1_000_000_000
     if (
@@ -90,6 +95,10 @@ def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | 
     if not lines or lines[-1].strip() != f"[exited with code {run.exit_code}]":
         return None
     return text
+
+
+def _settled(info: os.stat_result) -> tuple[int, int, int]:
+    return info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
 def _recall_artifact(run: TranscriptValidationRun, production_at: datetime) -> str | None:
