@@ -133,9 +133,9 @@ once when the new image takes over.
 - An attached `gclient` pane reconnects straight to the host, so it recovers
   even when the daemon is down for the whole window.
 - When the new image takes over, `~/.gobby/logs/gterm.log` records
-  `gterm host restored ... outcome=Succeeded`. If the new image fails to
-  restore, the host execs its previous image once, which records
-  `gterm host restored ... outcome=Fallback` (see
+  `gterm host restored ... outcome=Succeeded`. If the new image's restore
+  fails with an error or a panic, the host execs its previous image once,
+  which records `gterm host restored ... outcome=Fallback` (see
   [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
 - An attempt that ends before the exec writes no `gterm host restored` line,
   and the host reports its outcome only to the daemon: the new image refused
@@ -144,6 +144,11 @@ once when the new image takes over.
   running its current image. The daemon tries a deferred attempt again on a
   later check. It does not offer a refused, aborted or rolled-back image again
   until the daemon restarts or a different gterm is installed.
+- Three cases end the host process instead, through `SIGALRM`, and report no
+  outcome: a rollback that cannot resume every pane, a pane capture that
+  times out and then cannot finish, and any attempt still unfinished 15 seconds
+  after it began. The 15-second alarm also covers the new image's restore, so
+  a restore that hangs gets no fallback.
 
 `--terminals` remains the way to end every native terminal. Use it when that is
 the goal, never as a follow-up to an upgrade: it hangs up every pane the
