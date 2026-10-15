@@ -4216,6 +4216,44 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("short_host_deadline")
+async def test_adopted_host_spawns_while_first_reconcile_outlasts_ready_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = _host_manager(
+        tmp_path, connector=_connector(FakeControlClient()), spawner=_missing_gterm
+    )
+    write_pidfile(tmp_path, FakeControlClient.host_pid)
+    reconciling = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_reconcile(**_kwargs: object) -> None:
+        reconciling.set()
+        await release.wait()
+
+    monkeypatch.setattr(host, "reconcile", slow_reconcile)
+    with patch("gobby.utils.machine_id._cached_machine_id", _LOCAL_MACHINE_ID):
+        starting = asyncio.create_task(host.start())
+        await reconciling.wait()
+    request, native, tmux, manager = _host_backed_request(host)
+    try:
+        result = await execute_spawn(request)
+        # The first start is still reconciling, so startup never settled.
+        still_starting = not starting.done()
+    finally:
+        release.set()
+        await starting
+        await host.stop()
+
+    assert still_starting is True
+    assert result.success is True
+    assert result.backend == "native"
+    assert native.create_calls == 1
+    assert tmux.create_calls == 0
+    assert manager.rows[str(result.terminal_id)].backend == "native"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
 @pytest.mark.parametrize("lifetime", ["run", "persistent_role"])
 async def test_every_lifetime_fails_closed_without_host(
     tmp_path: Path, lifetime: TerminalLifetime
