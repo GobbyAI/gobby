@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from gobby.providers import registry as provider_registry
 from gobby.providers.capabilities.collectors import (
     SourceSpec,
     collectors,
@@ -88,7 +89,17 @@ class _FakeCollector:
 
 
 @pytest.mark.asyncio
-async def test_fake_provider_end_to_end(postgres_db: HubDatabase) -> None:
+async def test_fake_provider_end_to_end(
+    postgres_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        provider_registry,
+        "_PROVIDERS",
+        (
+            *provider_registry.provider_metadata(),
+            provider_registry.ProviderMetadata(_PROVIDER, "fake", "Fake", ".fake"),
+        ),
+    )
     collector = _FakeCollector()
     register_collector(collector)
 
