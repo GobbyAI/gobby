@@ -28,8 +28,10 @@ _ensure_admission_watchdog = adapter_execution._ensure_admission_watchdog
 
 @pytest.fixture(autouse=True)
 def _no_background_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Each test drives the watchdog pass itself, at a chosen time.
+    # Each test drives the watchdog pass itself, at a chosen time. A watchdog thread
+    # another test already started resolves the pass by module name, so it idles here.
     monkeypatch.setattr(adapter_execution, "_ensure_admission_watchdog", lambda: None)
+    monkeypatch.setattr(adapter_execution, "abandon_wedged_admissions", lambda _now: 0)
 
 
 @pytest.fixture
