@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from gobby.tasks.acceptance_rust_modules import (
     RustModuleCache,
     resolve_rust_module,
+    resolve_rust_target,
     rust_evidence_names_test,
     rust_inline_test_module,
 )
@@ -96,6 +97,7 @@ class AcceptanceTest:
     # Same-file functions the test reaches through bare calls (braced languages).
     helpers: tuple[str, ...] = ()
     rust_module: tuple[str, ...] | None = None
+    rust_target: tuple[str, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,10 +286,17 @@ async def resolve_acceptance_tests_async(
             )
             if rust_module is not None:
                 rust_module += rust_inline_test_module(source_cache.get(path, ""), symbol)
+            rust_target = (
+                await resolve_rust_target(path, candidate, repo_path, cache=source_cache)
+                if rust_module is not None
+                else None
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
-        tests.append(AcceptanceTest(reference, path, symbol, body, helpers, rust_module))
+        tests.append(
+            AcceptanceTest(reference, path, symbol, body, helpers, rust_module, rust_target)
+        )
     return tuple(tests), tuple(findings)
 
 
@@ -365,7 +374,9 @@ def validation_run_covers_test(
 
 def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
     """Return whether one evidence line names a Rust test under its source module."""
-    return rust_evidence_names_test(evidence, test.path, test.symbol, test.rust_module)
+    return rust_evidence_names_test(
+        evidence, test.path, test.symbol, test.rust_module, test.rust_target
+    )
 
 
 def _line_contains_word(value: str, word: str) -> bool:
