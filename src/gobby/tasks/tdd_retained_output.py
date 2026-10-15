@@ -83,7 +83,8 @@ def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | 
     # A write between the snapshot and the read would credit bytes the checks never saw.
     if _settled(before) != _settled(info):
         return None
-    modified = info.st_mtime_ns / 1_000_000_000
+    # os.utime can set mtime back but not ctime, so a backdated rewrite still shows late.
+    modified = max(info.st_mtime_ns, info.st_ctime_ns) / 1_000_000_000
     if (
         len(data) > _MAX_RETAINED_BYTES
         or modified > (run.completed_at + RETAINED_OUTPUT_FLUSH_GRACE).timestamp()

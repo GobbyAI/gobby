@@ -20,7 +20,9 @@ from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 
 pytestmark = pytest.mark.unit
 
-START = datetime(2026, 10, 14, tzinfo=UTC)
+# Retained files are written while a test runs; a future timeline keeps their real
+# ctime before the job's completion, as it is for a genuine job file.
+START = datetime(2100, 1, 1, tzinfo=UTC)
 RUST_TEST = "crates/feature/tests/golden.rs"
 RUST_CODE = "crates/feature/src/lib.rs"
 NEXTEST = "cargo nextest run -p feature --test golden"
@@ -431,6 +433,15 @@ def test_job_output_requires_its_exit_trailer(tmp_path: Path, trailer: str) -> N
         _nextest_file("expected 2", exit_line=trailer),
         NOTICE + 0.3,
     )
+    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+
+
+def test_backdated_job_output_earns_no_credit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The job ran in the past; the file is forged now and its mtime set back with os.utime.
+    monkeypatch.setattr(f"{__name__}.START", datetime(2026, 10, 14, tzinfo=UTC))
+    _retain(tmp_path / "tasks/job.output", _nextest_file("expected 2"), NOTICE + 0.3)
     _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
 
 
