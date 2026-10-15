@@ -103,7 +103,10 @@ fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHa
     (format!("http://{addr}"), handle)
 }
 
-fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Result<TcpStream> {
+pub(crate) fn accept_with_timeout(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> std::io::Result<TcpStream> {
     let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
@@ -125,7 +128,7 @@ fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Re
     }
 }
 
-fn read_http_request(stream: &mut TcpStream) -> String {
+pub(crate) fn read_http_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set read timeout");
