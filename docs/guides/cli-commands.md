@@ -409,8 +409,10 @@ a Gobby source checkout:
 gobby cutover [--path PATH] [--allow-dirty] [--wait]
 ```
 
-The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
-proves the candidate, and stops the running daemon before promoting all three
+The command runs one locked release build for `gcode`, `gdaemon`, `ghook`, and
+`gclient`, so `gobby-core` compiles once for every dependent. If that shared build
+fails, cutover rebuilds the three-binary set alone and only `gclient` is lost. It
+proves the candidate, and stops the running daemon before promoting the three set binaries
 through the shared workspace installer. A refused stop leaves the installed
 binaries and identity pin unchanged. The installer signs staged binaries when
 required, installs through new inodes, writes
@@ -421,6 +423,13 @@ fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion. A promotion or verification failure
 leaves the daemon stopped; resolve the reported failure, then run `gobby start`.
+
+`gclient` sits outside the stamped set. After the daemon set is live, cutover
+promotes `gclient` separately through the same signed new-inode path and refreshes
+its version stamp, then prints `gclient matches this build.` A `gclient` build or
+promotion failure prints `gclient was not promoted: ...` on stderr with the
+remedy `uv run gobby install gclient`, leaves the daemon set live, and still exits
+0.
 
 The command refuses before it builds when the schema inputs carry uncommitted
 changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and
