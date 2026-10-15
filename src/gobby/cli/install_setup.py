@@ -554,6 +554,14 @@ def _install_gclient_from_submodule(bin_dir: Path) -> str | None:
     return _gclient_impl.install_gclient_from_submodule(_module(), bin_dir)
 
 
+def _promote_gclient_workspace_artifact(
+    src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    return _gclient_impl.promote_gclient_workspace_artifact(
+        _module(), src_bin, bin_dir, workspace_root
+    )
+
+
 def _install_gclient_from_cargo_git(bin_dir: Path) -> bool:
     return _gclient_impl.install_gclient_from_cargo_git(_module(), bin_dir)
 
