@@ -43,9 +43,40 @@ _BRIEF_SESSION_COLUMNS = """
     spawned_by_agent_id, workflow_name, agent_run_id, context_injected,
     NULL AS original_prompt, usage_input_tokens, usage_output_tokens,
     usage_cache_creation_tokens, usage_cache_read_tokens, model, is_local,
-    terminal_context, seq_num, had_edits, message_count, turn_count, tool_call_count,
-    session_type, sandbox_enabled, sandbox_policy_hash, workspace_path, workspace_generation
+    terminal_context::text AS terminal_context, seq_num, had_edits, message_count, turn_count,
+    tool_call_count, session_type, sandbox_enabled, sandbox_policy_hash, workspace_path,
+    workspace_generation
 """
+
+# Every sessions column, for full-row reads. terminal_context is read as text: the
+# pool's jsonb loader would decode and re-dump it, and Session.from_row decodes it
+# again (#23359). approved_tools_json keeps the loader's canonical text, which
+# Session.to_dict hands out unchanged.
+_SESSION_COLUMN_NAMES = tuple(
+    """
+    id external_id machine_id source project_id title title_source reasoning_effort status
+    transcript_path summary_path summary_markdown handoff_markdown
+    summary_source_context_hash summary_generation_mode summary_generated_at git_branch
+    parent_session_id transcript_processed transcript_processing_failure_count
+    transcript_processing_last_error_code transcript_processing_last_error
+    transcript_processing_last_failed_at agent_depth spawned_by_agent_id workflow_name
+    agent_run_id context_injected original_prompt usage_input_tokens usage_output_tokens
+    usage_cache_creation_tokens usage_cache_read_tokens context_window context_used_tokens
+    context_usage_ratio context_usage_source context_usage_confidence context_usage_updated_at
+    last_prompt_input_tokens last_prompt_uncached_input_tokens last_prompt_cache_read_tokens
+    last_prompt_cache_creation_tokens last_completion_output_tokens terminal_context seq_num
+    model is_local had_edits chat_mode message_count turn_count tool_call_count
+    last_assistant_content approved_tools_json session_type sandbox_enabled
+    sandbox_policy_hash created_at updated_at last_activity workspace_path
+    workspace_generation startup_claim_generation startup_claim_owner startup_claim_state
+    """.split()
+)
+_SESSION_COLUMNS = ", ".join(
+    "sessions.terminal_context::text AS terminal_context"
+    if name == "terminal_context"
+    else f"sessions.{name}"
+    for name in _SESSION_COLUMN_NAMES
+)
 
 
 def _read_session_page(
@@ -53,7 +84,7 @@ def _read_session_page(
     conditions: list[str],
     params: list[Any],
     limit: int,
-    columns: str = "sessions.*",
+    columns: str = _SESSION_COLUMNS,
 ) -> _Sessions:
     where_clause = " AND ".join(conditions)
     rows = db.fetchall(
