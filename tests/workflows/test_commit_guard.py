@@ -450,6 +450,76 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
 
 
 @pytest.mark.asyncio
+async def test_rule3_allows_writes_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    # A git-archive export in a scratchpad carries the project marker but no .git.
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    (export / "a.txt").write_text("exported\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(export / 'a.txt'))}"),
+        h.edit_event(str(export / "a.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkout", ["clone", "worktree"])
+async def test_rule3_refuses_nested_checkout_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path, checkout: str
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # The nested checkout carries no marker, so its writes resolve to the export root.
+    nested = export / "nested"
+    if checkout == "clone":
+        _git(tmp_path, "clone", "-q", str(h.repo), str(nested))
+    else:
+        _git(h.repo, "worktree", "add", "-q", "--detach", str(nested))
+    (nested / "owned.txt").write_text("nested dirt\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(nested / 'owned.txt'))}"),
+        h.edit_event(str(nested / "owned.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_rule3_refuses_directory_write_over_unreadable_subdirectory(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    hidden = export / "hidden"
+    hidden.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # An unreadable subdirectory could hide a nested checkout.
+    hidden.chmod(0)
+    try:
+        result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    finally:
+        hidden.chmod(0o755)
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation",
     [

@@ -8,11 +8,13 @@ import os
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
@@ -288,6 +290,9 @@ async def foreign_dirty_edit_conflict(
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
         for root, rels in roots.items():
+            rels = await asyncio.to_thread(_git_backed_targets, root, rels)
+            if not rels:
+                continue
             own = session_dirty_file_set_for_checkout(variables, root)
             candidates = {
                 rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
@@ -340,6 +345,24 @@ async def foreign_dirty_edit_conflict(
             f"Edit blocked: Gobby could not verify dirty-path ownership ({exc}). "
             "Fix that cause, or retry once the daemon and repository are available."
         )
+
+
+def _git_backed_targets(root: str, rels: set[str]) -> set[str]:
+    """Keep targets inside, or holding, a Git checkout; the rest hold no uncommitted work."""
+    return {rel for rel in rels if _may_hold_git(Path(root, rel))}
+
+
+def _may_hold_git(target: Path) -> bool:
+    if checkout_root(target) is not None:
+        return True
+    if not target.is_dir():
+        return False
+    errors: list[OSError] = []
+    for _, dirs, files in os.walk(target, onerror=errors.append):
+        if ".git" in dirs or ".git" in files:
+            return True
+    # An unreadable subdirectory could hide a checkout.
+    return bool(errors)
 
 
 def _write_paths(event_data: dict[str, Any]) -> list[str]:
