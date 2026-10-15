@@ -110,7 +110,12 @@ async def test_handed_off_claim_lets_the_session_claim_another_task(
 
     claimed = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
 
-    assert claimed == {"success": True, "task_id": nxt.id, "title": "Next"}
+    assert claimed == {
+        "success": True,
+        "task_id": nxt.id,
+        "ref": f"#{nxt.seq_num}",
+        "title": "Next",
+    }
     assert manager.get_task(landed.id).claimed_by_session_id == canonical_task_session.id
     assert manager.get_task(nxt.id).claimed_by_session_id == canonical_task_session.id
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == nxt.id
@@ -350,7 +355,12 @@ async def test_reclaiming_the_sole_survivor_is_a_full_claim_that_close_evidence_
         order=1,
     )
 
-    assert reclaimed == {"success": True, "task_id": landed.id, "title": "Landed"}
+    assert reclaimed == {
+        "success": True,
+        "task_id": landed.id,
+        "ref": f"#{landed.seq_num}",
+        "title": "Landed",
+    }
     state = _variables(temp_db, canonical_task_session)
     assert state["active_task_id"] == landed.id
     assert state["task_edited_files"] == {landed.id: ["a.py"]}
@@ -375,7 +385,12 @@ async def test_a_reclaim_activates_one_of_several_handed_off_claims(
 
     reclaimed = await _call(registry, canonical_task_session, "claim_task", task_id=second.id)
 
-    assert reclaimed == {"success": True, "task_id": second.id, "title": "Second"}
+    assert reclaimed == {
+        "success": True,
+        "task_id": second.id,
+        "ref": f"#{second.seq_num}",
+        "title": "Second",
+    }
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == second.id
 
 
@@ -395,7 +410,12 @@ async def test_reclaim_selects_a_task_while_another_claim_remains_active(
     await _claim(registry, canonical_task_session, active)
 
     selected = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
-    assert selected == {"success": True, "task_id": landed.id, "title": "Landed"}
+    assert selected == {
+        "success": True,
+        "task_id": landed.id,
+        "ref": f"#{landed.seq_num}",
+        "title": "Landed",
+    }
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
     assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
 

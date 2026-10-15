@@ -123,9 +123,9 @@ def test_source_failure_updates_health_only(postgres_db: HubDatabase) -> None:
 def test_source_failure_without_rows_is_error(postgres_db: HubDatabase) -> None:
     store = ProviderCapabilityStore(postgres_db)
 
-    store.record_source_failure("extension", "provider-api", "not reachable")
+    store.record_source_failure("codex", "provider-api", "not reachable")
 
-    snapshot = store.get_provider_snapshot("extension")
+    snapshot = store.get_provider_snapshot("codex")
     assert snapshot is not None
     assert snapshot.models == ()
     assert snapshot.generation == 0
@@ -151,13 +151,13 @@ def test_replace_bumps_generation_and_replaces_provider_rows(
 
 def test_all_snapshots_follow_provider_display_order(postgres_db: HubDatabase) -> None:
     store = ProviderCapabilityStore(postgres_db)
-    store.replace_provider_snapshot(_snapshot(provider="extension", model_name="extension-model"))
+    store.replace_provider_snapshot(_snapshot(provider="agy", model_name="agy-model"))
     store.replace_provider_snapshot(_snapshot(provider="grok", model_name="grok-model"))
     store.replace_provider_snapshot(_snapshot(provider="claude", model_name="claude-model"))
 
     snapshots = store.get_all_snapshots()
 
-    assert [snapshot.provider for snapshot in snapshots] == ["claude", "grok", "extension"]
+    assert [snapshot.provider for snapshot in snapshots] == ["claude", "grok", "agy"]
 
 
 def test_store_round_trips_structured_local_context_provenance(

@@ -96,15 +96,15 @@ class ToolMetricsManager:
         except Exception as e:
             logger.warning("Failed to record event: %s", e)
 
-        # 3. OTel Observability
+        # 3. OTel Observability. No session_id label: the cumulative exporter keeps every
+        # series and re-renders it on each scrape, so per-session series grow without
+        # bound (#23359). Per-session calls stay in the event log above.
         attributes = {
             "server_name": server_name,
             "tool_name": tool_name,
             "success": str(success).lower(),
             "project_id": project_id,
         }
-        if session_id:
-            attributes["session_id"] = session_id
 
         # Increment total calls
         self.metrics.inc_counter("mcp_tool_calls_total", attributes=attributes)

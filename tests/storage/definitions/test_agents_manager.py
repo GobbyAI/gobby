@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -87,6 +89,29 @@ def test_reads_hydrate_nested_step_workflow(definition_db: PostgresHubDatabase) 
     assert [row.name for row in listed] == ["coder"]
     assert listed[0].definition_json["step_workflow"] == _STEPS
     assert listed[0].step_workflow_id == fetched.step_workflow_id
+
+
+def test_project_lookup_of_a_global_agent_is_one_query_without_redumping(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    # Each hook's step lookup resolves its agent by name for the session's project. A
+    # global agent took a missed project query first, and the pool's jsonb loader
+    # re-dumped every JSON column the row decoder then parsed again (#23359).
+    manager = _mgr(definition_db)
+    created = manager.upsert_with_steps("coder", _body("coder"), _STEPS, tags=["agent"])
+
+    with (
+        patch.object(definition_db, "fetchone", wraps=definition_db.fetchone) as fetchone,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        resolved = manager.get_by_name("coder", project_id=_PROJECT)
+
+    assert fetchone.call_count == 1
+    assert dumps.call_count == 0
+    assert resolved == manager.get(created.id)
+    assert resolved is not None
+    assert resolved.definition_json["step_workflow"] == _STEPS
+    assert resolved.tags == ["agent"]
 
 
 def test_upsert_with_steps_atomic(definition_db: PostgresHubDatabase) -> None:
