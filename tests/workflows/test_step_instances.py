@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
@@ -124,6 +126,30 @@ def test_one_instance_per_session_upsert(instance_db: PostgresHubDatabase) -> No
     assert again.step_action_count == 3
     assert again.agent_name == "coder"
     assert again.snapshot.model_dump() == _require_step_workflow(agent).model_dump()
+
+
+def test_read_decodes_each_json_column_once_without_redumping(
+    instance_db: PostgresHubDatabase,
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped the snapshot and variables, and the
+    # manager decoded them again, on every hook's step lookup (#23359).
+    from gobby.workflows.step_instances import build_step_instance
+
+    manager = _mgr(instance_db)
+    agent = _agent("coder", ["implement", "review"], {"goal": "ship"})
+    manager.save(build_step_instance(agent, session_id=S1, step_workflow_id=LINEAGE_A))
+
+    with (
+        patch("json.loads", wraps=json.loads) as loads,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        instance = manager.get_for_session(S1)
+
+    assert dumps.call_count == 0
+    assert loads.call_count == 2
+    assert instance is not None
+    assert instance.variables == {"goal": "ship"}
+    assert instance.snapshot.model_dump() == _require_step_workflow(agent).model_dump()
 
 
 def test_snapshot_immutable_on_upsert(instance_db: PostgresHubDatabase) -> None:
