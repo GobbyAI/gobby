@@ -214,6 +214,19 @@ def create_workspaces_registry(
         return await _run(lambda actor: ops().tab_close(actor, tab, node=node))
 
     @registry.tool(
+        description=(
+            "Move a tab to zero-based `position` among its workspace's tabs, or into "
+            f"another `workspace`. {_NODE}"
+        )
+    )
+    async def move_tab(
+        tab: str, position: int, workspace: str | None = None, node: str | None = None
+    ) -> dict[str, Any]:
+        return await _run(
+            lambda actor: ops().tab_move(actor, tab, position, workspace=workspace, node=node)
+        )
+
+    @registry.tool(
         description=f"Split a pane, opening a new shell or adopting `terminal_id`. {_NODE}"
     )
     async def split_pane(

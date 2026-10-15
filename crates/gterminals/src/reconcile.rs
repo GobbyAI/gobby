@@ -399,3 +399,75 @@ async fn absent_process_status(
         .map_err(|_| ReconcileError::RuntimeTimeout)?
         .map_err(Into::into)
 }
+
+/// How long a preserved input grant waits for its gclient to rebind (#23076).
+pub const INPUT_HANDOFF_REBIND: Duration = Duration::from_secs(30);
+
+/// Rebind deadlines per handoff record, carried by the caller across passes.
+pub type HandoffDeadlines = BTreeMap<(Uuid, repository::InputHandoff), std::time::Instant>;
+
+pub trait InputRevoke: Sync {
+    /// Revoke `attachment_id`'s grant only while the host slot still holds it.
+    fn revoke_input(
+        &self,
+        host_epoch: &str,
+        host_terminal_id: &str,
+        attachment_id: Uuid,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+}
+
+pub async fn expire_input_handoffs(
+    pool: &Pool,
+    machine: Uuid,
+    host_epoch: &str,
+    deadlines: &mut HandoffDeadlines,
+    now: std::time::Instant,
+    effects: &impl InputRevoke,
+) -> Result<(), ReconcileError> {
+    let rows = pool
+        .transaction(None, async |tx| {
+            Ok::<_, ReconcileError>(repository::list_input_handoffs(tx, machine).await?)
+        })
+        .await?;
+    let mut present = BTreeSet::new();
+    for row in rows {
+        let Some(handoff) = repository::InputHandoff::of(&row) else {
+            continue;
+        };
+        let key = (row.id, handoff);
+        present.insert(key.clone());
+        let handoff = &key.1;
+        let bound = handoff.host_epoch == host_epoch
+            && row.host_epoch.as_deref() == Some(host_epoch)
+            && row
+                .locator
+                .as_ref()
+                .and_then(|locator| locator.get("host_terminal_id"))
+                .and_then(Value::as_str)
+                == Some(handoff.host_terminal_id.as_str());
+        if bound {
+            let deadline = *deadlines
+                .entry(key.clone())
+                .or_insert(now + INPUT_HANDOFF_REBIND);
+            if now < deadline {
+                continue;
+            }
+            let revoke =
+                effects.revoke_input(host_epoch, &handoff.host_terminal_id, handoff.attachment_id);
+            if !matches!(timeout(RUNTIME_DEADLINE, revoke).await, Ok(Ok(()))) {
+                // The record keeps the authority discoverable; the next pass retries.
+                continue;
+            }
+        }
+        // An old host identity carries no authority into a new host. Only the
+        // record read here is cleared, so a rebind or replacement that landed wins.
+        pool.transaction(None, async |tx| {
+            repository::clear_input_handoff(tx, row.id, Some(handoff)).await?;
+            Ok::<_, ReconcileError>(())
+        })
+        .await?;
+        deadlines.remove(&key);
+    }
+    deadlines.retain(|key, _| present.contains(key));
+    Ok(())
+}

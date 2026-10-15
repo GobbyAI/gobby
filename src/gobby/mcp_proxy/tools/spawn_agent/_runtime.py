@@ -98,6 +98,15 @@ async def build_spawn_context(
     if isinstance(base_commit_sha, str) and base_commit_sha:
         effective_initial_variables["base_commit_sha"] = base_commit_sha
 
+    # Isolation has already selected the base; preserve it without resolving Git again.
+    # Unisolated launches have no fork base and retain HEAD as the default symbolic ref.
+    selected_base_branch = isolation_ctx.extra.get("base_branch")
+    effective_base_branch = (
+        selected_base_branch
+        if isinstance(selected_base_branch, str) and selected_base_branch
+        else spawn_config.base_branch or "HEAD"
+    )
+
     # Build resume metadata without seeding an automatic session title.
     stage_name = effective_initial_variables.get("stage_name")
     stage_state = effective_initial_variables.get("stage_state")
@@ -118,7 +127,7 @@ async def build_spawn_context(
         worktree_id=isolation_ctx.worktree_id,
         clone_id=isolation_ctx.clone_id,
         branch_name=isolation_ctx.branch_name,
-        base_branch=spawn_config.base_branch,
+        base_branch=effective_base_branch,
         base_commit_sha=base_commit_sha if isinstance(base_commit_sha, str) else None,
         task_id=spawn_config.task_id,
         task_ref=f"#{spawn_config.task_seq_num}"

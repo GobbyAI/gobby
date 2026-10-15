@@ -119,12 +119,12 @@ def worktrees() -> None:
 
 @worktrees.command("create")
 @click.argument("branch_name")
-@click.option("--base", "-b", "base_branch", default="main", help="Base branch to create from")
+@click.option("--base", "-b", "base_branch", default=None, help="Base ref (default: caller HEAD)")
 @click.option("--task", "-t", "task_id", help="Link worktree to a task")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def create_worktree(
     branch_name: str,
-    base_branch: str,
+    base_branch: str | None,
     task_id: str | None,
     json_format: bool,
 ) -> None:

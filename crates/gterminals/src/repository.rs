@@ -182,3 +182,185 @@ pub(crate) async fn settle(
         .await?
         == 1)
 }
+
+const HANDOFF_KEY: &str = "native_input_handoff";
+
+/// A daemon-shutdown input grant kept for the adopting daemon in `process`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct InputHandoff {
+    pub attachment_id: Uuid,
+    pub host_epoch: String,
+    pub host_terminal_id: String,
+}
+
+impl InputHandoff {
+    pub fn of(terminal: &Terminal) -> Option<Self> {
+        serde_json::from_value(terminal.process.as_ref()?.get(HANDOFF_KEY)?.clone()).ok()
+    }
+}
+
+pub async fn record_input_handoff(
+    tx: &Transaction<'_>,
+    terminal: Uuid,
+    machine: Uuid,
+    handoff: &InputHandoff,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET process = COALESCE(process, '{}'::jsonb)
+             || jsonb_build_object('native_input_handoff', $1::text::jsonb), updated_at = now()
+             WHERE id=$2::text::uuid AND machine_id=$3::text::uuid
+             AND backend='native' AND state='live'
+             AND host_epoch=$4 AND locator->>'host_terminal_id'=$5",
+            &[
+                &serde_json::to_string(handoff)?,
+                &terminal.to_string(),
+                &machine.to_string(),
+                &handoff.host_epoch,
+                &handoff.host_terminal_id,
+            ],
+        )
+        .await?
+        == 1)
+}
+
+pub async fn list_input_handoffs(
+    tx: &Transaction<'_>,
+    machine: Uuid,
+) -> Result<Vec<Terminal>, RepositoryError> {
+    // Rows settled since preservation stay listed until their record is retired.
+    tx.query(
+        "SELECT to_jsonb(t)::text AS terminal FROM terminals t
+         WHERE machine_id=$1::text::uuid AND backend='native'
+         AND process ? 'native_input_handoff' ORDER BY created_at,id",
+        &[&machine.to_string()],
+    )
+    .await?
+    .into_iter()
+    .map(|row| {
+        let encoded: String = row.try_get("terminal").map_err(TransactionError::from)?;
+        Ok(serde_json::from_str(&encoded)?)
+    })
+    .collect()
+}
+
+pub async fn clear_input_handoff(
+    tx: &Transaction<'_>,
+    terminal: Uuid,
+    expected: Option<&InputHandoff>,
+) -> Result<bool, RepositoryError> {
+    let expected = expected.map(serde_json::to_string).transpose()?;
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET process = process - 'native_input_handoff', updated_at = now()
+             WHERE id=$1::text::uuid AND backend='native' AND process ? 'native_input_handoff'
+             AND ($2::text IS NULL OR process->'native_input_handoff' = $2::text::jsonb)",
+            &[&terminal.to_string(), &expected],
+        )
+        .await?
+        == 1)
+}
+
+/// Replaces the unresolved-write map of a row the caller read `FOR UPDATE`.
+pub(crate) async fn set_unresolved_writes(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    writes: &Value,
+) -> Result<(), RepositoryError> {
+    tx.execute(
+        "UPDATE terminals SET unresolved_writes=$1::text::jsonb, updated_at=now()
+         WHERE id=$2::text::uuid",
+        &[&serde_json::to_string(writes)?, &id.to_string()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Drops one unresolved write and nothing else. False when the row is gone.
+pub(crate) async fn clear_unresolved_write(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes=unresolved_writes - $1::text, updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Drops one unresolved write and lifts the quarantine only when it names the
+/// same action. False when the row is gone.
+pub(crate) async fn resolve_unresolved_write(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes=unresolved_writes - $1::text,
+             automatic_write_quarantined_at=CASE
+                WHEN automatic_write_quarantine_action_key=$1::text THEN NULL
+                ELSE automatic_write_quarantined_at END,
+             automatic_write_quarantine_action_key=NULLIF(automatic_write_quarantine_action_key, $1::text),
+             updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Sets both quarantine columns together. False when the row is gone.
+pub(crate) async fn set_write_quarantine(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET automatic_write_quarantined_at=now(),
+             automatic_write_quarantine_action_key=$1::text, updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Clears both quarantine columns when a quarantine is set; unresolved writes
+/// are untouched.
+pub(crate) async fn release_write_quarantine(
+    tx: &Transaction<'_>,
+    id: Uuid,
+) -> Result<(), RepositoryError> {
+    tx.execute(
+        "UPDATE terminals SET automatic_write_quarantined_at=NULL,
+         automatic_write_quarantine_action_key=NULL, updated_at=now()
+         WHERE id=$1::text::uuid AND automatic_write_quarantined_at IS NOT NULL",
+        &[&id.to_string()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Terminal exit: every unresolved write and the quarantine pair go together.
+/// False when the row is gone.
+pub(crate) async fn clear_write_evidence(
+    tx: &Transaction<'_>,
+    id: Uuid,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes='{}'::jsonb,
+             automatic_write_quarantined_at=NULL, automatic_write_quarantine_action_key=NULL,
+             updated_at=now()
+             WHERE id=$1::text::uuid",
+            &[&id.to_string()],
+        )
+        .await?
+        == 1)
+}

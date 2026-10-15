@@ -15,6 +15,7 @@ from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.claude_config import claude_config_path, update_claude_config
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -92,6 +93,7 @@ async def _copy_cli_hooks(
 
     Claude and Codex use copied project directories, and Droid generates its hook
     files separately.
+    If tracked-file inspection fails, repair aborts before copying parent bytes.
 
     Args:
         source_path: Path to the source repository
@@ -121,8 +123,23 @@ async def _copy_cli_hooks(
         logger.debug("CLI hooks directory not found in source repo: %s", src_path)
         return
 
+    tracked_result = await daemon_git.run(
+        ["ls-files", "-z", "--", cli_dir], cwd=Path(target_path), timeout=10
+    )
+    if not isinstance(tracked_result, GitOk):
+        raise RuntimeError("Cannot inspect tracked provider files; refusing to copy parent hooks")
+    tracked = set(tracked_result.stdout.split("\0")) - {""}
+    if cli_dir in tracked:
+        return
+
+    def skip_tracked(directory: str, names: list[str]) -> set[str]:
+        relative = Path(directory).relative_to(Path(source_path))
+        return {name for name in names if (relative / name).as_posix() in tracked}
+
     try:
-        await asyncio.to_thread(shutil.copytree, src_path, dst_path, dirs_exist_ok=True)
+        await asyncio.to_thread(
+            shutil.copytree, src_path, dst_path, dirs_exist_ok=True, ignore=skip_tracked
+        )
         logger.debug("Copied CLI hooks from %s to %s", src_path, dst_path)
     except shutil.Error:
         logger.warning(
@@ -243,6 +260,10 @@ async def _patch_mcp_config_for_isolation(
 
     For Claude provider, also patches ``~/.claude.json`` to register the
     isolated path as a project with the correct MCP server config.
+
+    Malformed selected ``.mcp.json`` (invalid JSON, non-object root or
+    ``mcpServers``) raises ValueError and aborts spawn, preserving its bytes.
+    Repair never replaces malformed selected config with the parent's config.
     """
 
     mcp_config = {
@@ -262,7 +283,14 @@ async def _patch_mcp_config_for_isolation(
 
     mcp_json_path = Path(isolated_path) / ".mcp.json"
     try:
-        await asyncio.to_thread(mcp_json_path.write_text, json.dumps(mcp_config, indent=2) + "\n")
+        selected_config = await asyncio.to_thread(_load_json_object, mcp_json_path)
+        servers = selected_config.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise ValueError("MCP servers configuration must be an object")
+        servers["gobby"] = mcp_config["mcpServers"]["gobby"]
+        await asyncio.to_thread(
+            mcp_json_path.write_text, json.dumps(selected_config, indent=2) + "\n"
+        )
         logger.info("Wrote MCP config to %s", mcp_json_path)
     except OSError as e:
         logger.warning("Failed to write .mcp.json to %s: %s", isolated_path, e)

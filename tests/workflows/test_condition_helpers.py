@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import warnings
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -29,7 +28,6 @@ from gobby.workflows.condition_helpers import (
     shell_command_runs_ocr_review,
     task_commit_project_path_allowlist_violation,
     task_needs_human_review,
-    task_tree_complete,
     task_type_in,
     touches_claude_memory_path,
     touches_docker_policy_path,
@@ -253,186 +251,10 @@ class TestIsTaskComplete:
         assert is_task_complete(escalated) is False
 
 
-class TestTaskTreeCompleteIntHandling:
-    def test_int_task_id_closed(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-        manager.close_task(task.id, force=True)
-
-        assert task_tree_complete(manager, task.seq_num) is True
-
-    def test_int_task_id_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-
-        assert task_tree_complete(manager, task.seq_num) is False
-
-    def test_int_task_id_not_found(self, temp_db: HubDatabase) -> None:
-        assert task_tree_complete(_manager(temp_db), 9438) is False
-
-    def test_int_does_not_raise_type_error(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-
-        assert task_tree_complete(manager, task.seq_num) is False
-
-
 def test_task_needs_human_review_returns_false_for_invalid_uuid_bytes(
     temp_db: HubDatabase,
 ) -> None:
     assert task_needs_human_review(_manager(temp_db), b"short") is False
-
-
-class TestTaskTreeCompleteString:
-    def test_string_task_id_closed(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-        manager.close_task(task.id, force=True)
-
-        assert task_tree_complete(manager, task.id) is True
-
-    def test_string_task_id_open(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-
-        assert task_tree_complete(manager, task.id) is False
-
-
-class TestTaskTreeCompleteList:
-    def test_list_of_strings_all_closed(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-        manager.close_task(second.id, force=True)
-
-        assert task_tree_complete(manager, [first.id, second.id]) is True
-
-    def test_list_of_ints_all_closed(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-        manager.close_task(second.id, force=True)
-
-        assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is True
-
-    def test_mixed_list(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-        manager.close_task(second.id, force=True)
-
-        assert task_tree_complete(manager, [first.id, second.seq_num]) is True
-
-    def test_list_one_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-
-        assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is False
-
-
-class TestTaskTreeCompleteIterableInputs:
-    def test_tuple_of_strings_all_closed(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-        manager.close_task(second.id, force=True)
-
-        assert task_tree_complete(manager, (first.id, second.id)) is True
-
-    def test_generator_of_ints_all_closed(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        first = _task(manager, sample_project, title="First")
-        second = _task(manager, sample_project, title="Second")
-        manager.close_task(first.id, force=True)
-        manager.close_task(second.id, force=True)
-
-        assert task_tree_complete(manager, (task.seq_num for task in (first, second))) is True
-
-    @pytest.mark.parametrize(
-        "bytes_factory",
-        [
-            bytes,
-            bytearray,
-            memoryview,
-        ],
-    )
-    def test_bytes_like_uuid_is_scalar_task_id(
-        self,
-        temp_db: HubDatabase,
-        sample_project: dict[str, Any],
-        bytes_factory: Callable[[bytes], bytes | bytearray | memoryview],
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-        manager.close_task(task.id, force=True)
-
-        assert task_tree_complete(manager, bytes_factory(UUID(task.id).bytes)) is True
-
-
-class TestTaskTreeCompleteEdgeCases:
-    def test_none_returns_true(self, temp_db: HubDatabase) -> None:
-        assert task_tree_complete(_manager(temp_db), None) is True
-
-    def test_no_task_manager_returns_false(self) -> None:
-        assert task_tree_complete(None, "#1") is False
-
-    def test_subtree_all_closed(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        parent = _task(manager, sample_project, title="Parent")
-        child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
-        child_b = _task(manager, sample_project, title="Child B", parent_task_id=parent.id)
-        manager.close_task(child_a.id, force=True)
-        manager.close_task(child_b.id, force=True)
-
-        assert task_tree_complete(manager, parent.id) is True
-
-    def test_subtree_one_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        parent = _task(manager, sample_project, title="Parent")
-        child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
-        _task(manager, sample_project, title="Child B", parent_task_id=parent.id)
-        manager.close_task(child_a.id, force=True)
-
-        assert task_tree_complete(manager, parent.id) is False
-
-    def test_nested_subtree(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
-        manager = _manager(temp_db)
-        parent = _task(manager, sample_project, title="Parent")
-        child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
-        grandchild = _task(manager, sample_project, title="Grandchild", parent_task_id=child.id)
-        manager.close_task(grandchild.id, force=True)
-
-        assert task_tree_complete(manager, parent.id) is True
-
-    def test_nested_subtree_incomplete(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        parent = _task(manager, sample_project, title="Parent")
-        child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
-        _task(manager, sample_project, title="Grandchild", parent_task_id=child.id)
-
-        assert task_tree_complete(manager, parent.id) is False
 
 
 class TestTaskNeedsHumanReview:

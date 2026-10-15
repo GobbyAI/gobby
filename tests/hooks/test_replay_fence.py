@@ -276,7 +276,7 @@ async def test_live_or_processed_envelope_precedes_stale_fence(
         envelope_dedupe.mark_envelope_processed(envelope_id, processed_dir=processed_dir)
     fence = Mock(side_effect=AssertionError("live ownership must precede the stale fence"))
     post = AsyncMock()
-    monkeypatch.setattr(inbox, "archive_superseded_hook", fence)
+    monkeypatch.setattr("gobby.hooks.replay_decision.archive_superseded_hook", fence)
     monkeypatch.setattr(inbox, "_post_envelope", post)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     assert (

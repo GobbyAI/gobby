@@ -126,12 +126,13 @@ class TerminalCreateMixin:
         if not result.success:
             payload["code"] = _bounded_code(result.error, "spawn_failed")
         await self._send_json(websocket, payload)
-        if result.success:
-            row = await asyncio.to_thread(manager.get, result.terminal_id)
+        if result.success and result.terminal_id is not None:
+            terminal_id = result.terminal_id
+            row = await asyncio.to_thread(manager.get, terminal_id)
             if row is not None:
                 await self.broadcast_tmux_session_event(
                     "created",
-                    terminal_id=result.terminal_id,
+                    terminal_id=terminal_id,
                     terminal=inventory_item(row),
                 )
 

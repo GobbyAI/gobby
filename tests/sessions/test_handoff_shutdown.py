@@ -4,10 +4,13 @@ import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 
+from gobby.cli._daemon_handoffs import protect_pending_handoffs
+from gobby.cli.runtime import CliRuntime
 from gobby.sessions.handoff import (
     consume_pending_handoff,
     restore_handoff_attempt,
@@ -43,6 +46,81 @@ def handoff_session(temp_db: HubDatabase, machine_id: str) -> str:
     return SessionManager(temp_db).register_session(
         external_id=str(uuid4()), machine_id=machine_id, source="codex", project_id=project.id
     )
+
+
+@pytest.mark.parametrize("move_marker", [False, True], ids=["unchanged", "marker-moved"])
+def test_cli_wait_logs_each_stale_marker_once_per_wait(
+    temp_db: HubDatabase,
+    machine_id: str,
+    handoff_session: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    move_marker: bool,
+) -> None:
+    sessions = SessionManager(temp_db)
+    original = sessions.get(handoff_session)
+    assert original is not None
+    second_stale, active = (
+        sessions.register_session(
+            external_id=str(uuid4()),
+            machine_id=machine_id,
+            source="codex",
+            project_id=original.project_id,
+        )
+        for _ in range(2)
+    )
+    handoff = build_handoff_payload(current_state="Ready", next_steps=["Continue"])
+    variables = SessionVariableManager(temp_db)
+    stale_attempts: list[str] = []
+    old_time = utc_now() - timedelta(minutes=HANDOFF_IN_FLIGHT_MINUTES + 5)
+    for session in (handoff_session, second_stale):
+        state = stage_handoff_attempt(
+            temp_db, session, attempt_id=uuid4().hex, handoff=handoff, clear_session=False
+        )
+        stale_attempts.append(state.attempt_id)
+        marker = dict(variables.get_variables(session)["set_handoff_pending"])
+        marker["created_at"] = old_time.isoformat()
+        variables.merge_variables(session, {"set_handoff_pending": marker})
+
+    runtime = MagicMock(spec=CliRuntime)
+    runtime.require_database.return_value = temp_db
+    messages: list[str] = []
+    caplog.set_level(logging.WARNING, logger="gobby.sessions.handoff_shutdown")
+    for wait_index in range(2):
+        logged_stale_markers: set[tuple[str, str | None, str]] = set()
+        stage_handoff_attempt(
+            temp_db, active, attempt_id=uuid4().hex, handoff=handoff, clear_session=False
+        )
+        sleeps = 0
+
+        def acknowledge_after_retries(_seconds: float, *, current_wait: int = wait_index) -> None:
+            nonlocal sleeps
+            sleeps += 1
+            if move_marker and current_wait == 0 and sleeps == 1:
+                marker = dict(variables.get_variables(handoff_session)["set_handoff_pending"])
+                marker["created_at"] = (old_time + timedelta(minutes=1)).isoformat()
+                variables.merge_variables(handoff_session, {"set_handoff_pending": marker})
+            if sleeps == 3:
+                assert consume_pending_handoff(temp_db, active) is not None
+
+        monkeypatch.setattr("gobby.cli._daemon_handoffs.time.sleep", acknowledge_after_retries)
+        with protect_pending_handoffs(
+            runtime, wait=True, report=messages.append, logged_stale_markers=logged_stale_markers
+        ):
+            assert sleeps == 3
+        # Cutover releases preflight's fence and reacquires it for the actual stop.
+        with protect_pending_handoffs(
+            runtime, wait=True, report=messages.append, logged_stale_markers=logged_stale_markers
+        ):
+            assert variables.get_variables(handoff_session)["set_handoff_pending"]
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert sum(stale_attempts[0] in message for message in warnings) == (3 if move_marker else 2)
+    assert sum(stale_attempts[1] in message for message in warnings) == 2
+    assert len(messages) == 2
+    for session in (handoff_session, second_stale):
+        consumed = consume_pending_handoff(temp_db, session)
+        assert consumed is not None and consumed.markdown == handoff.rendered_markdown
 
 
 @pytest.mark.parametrize("clear_session", [False, True])

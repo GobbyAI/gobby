@@ -19,12 +19,13 @@ rules:
       )
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
-        and event.data.get('mcp_tool') == 'review_task_memories'
+        and event.data.get('mcp_tool') in ('get_memory', 'search_memories', 'review_task_memories')
       )
       and not (
         event.data.get('mcp_server') == 'gobby-agents'
         and event.data.get('mcp_tool') in (
-          'send_message', 'get_inter_session_messages', 'end_agent_run', 'wait_for_coordination'
+          'send_message', 'get_inter_session_messages', 'get_inter_session_message',
+          'end_agent_run', 'wait_for_coordination', 'wait_for_agent'
         )
       )
       and not (
@@ -115,12 +116,12 @@ rules:
       )
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
-        and event.data.get('mcp_tool') == 'review_task_memories'
+        and event.data.get('mcp_tool') in ('get_memory', 'search_memories', 'review_task_memories')
       )
       and not (
         event.data.get('mcp_server') == 'gobby-agents'
         and event.data.get('mcp_tool') in (
-          'send_message', 'get_inter_session_messages', 'end_agent_run',
+          'send_message', 'get_inter_session_messages', 'get_inter_session_message', 'end_agent_run',
           'wait_for_coordination', 'wait_for_agent'
         )
       )

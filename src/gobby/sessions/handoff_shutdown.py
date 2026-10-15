@@ -38,12 +38,18 @@ def lock_handoff_staging(conn: Transaction, machine_id: str) -> None:
 
 
 @contextmanager
-def guard_handoff_shutdown(db: HubDatabase, machine_id: str) -> Iterator[None]:
+def guard_handoff_shutdown(
+    db: HubDatabase,
+    machine_id: str,
+    *,
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
+) -> Iterator[None]:
     """Keep admission closed across a caller's shutdown, refusing live handoffs.
 
     A marker that last moved more than ``HANDOFF_IN_FLIGHT_MINUTES`` ago is stale:
     nothing automatic will consume it and a restart loses nothing it needs, so it is
     logged and skipped instead of holding the daemon up.
+    Callers retrying a wait can share ``logged_stale_markers`` to warn once per marker.
     """
     with db.transaction() as conn:
         row = conn.execute(
@@ -82,6 +88,11 @@ def guard_handoff_shutdown(db: HubDatabase, machine_id: str) -> Iterator[None]:
             attempt = f"{_session_label(row)} ({row['attempt_id'] or 'unknown attempt'})"
             moved_at = _marker_last_moved_at(row)
             if moved_at is not None and moved_at <= cutoff:
+                identity = (str(row["id"]), row["attempt_id"], moved_at.isoformat())
+                if logged_stale_markers is not None:
+                    if identity in logged_stale_markers:
+                        continue
+                    logged_stale_markers.add(identity)
                 logger.warning(
                     "Ignoring stale set_handoff marker in %s: it last moved at %s and nothing "
                     "automatic will consume it; get_handoff still reads it after the restart",

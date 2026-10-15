@@ -72,8 +72,8 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
             new=AsyncMock(),
         ) as repair_isolation,
         patch(
-            "gobby.agents.isolation_worktree.worktree_reuse.capture_worktree_base_commit_sha",
-            return_value="base-sha",
+            "gobby.agents.isolation_worktree.select_worktree_base",
+            new=AsyncMock(return_value=("main", "base-sha")),
         ) as capture_base_commit,
         patch(
             "gobby.agents.isolation_worktree.TaskArtifactManager",
@@ -86,13 +86,12 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
     assert context.worktree_id == "fresh-wt"
     assert context.cwd == "/tmp/fresh-wt"
     assert context.branch_name == "feature/fresh"
-    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
-    capture_base_commit.assert_called_once_with(
-        git_manager=git_manager,
-        worktree_path="/tmp/fresh-wt",
-        base_branch="main",
-        use_local=False,
-    )
+    assert context.extra == {
+        "base_branch": "main",
+        "base_commit_sha": "base-sha",
+        "main_repo_path": "/repo",
+    }
+    capture_base_commit.assert_awaited_once_with(git_manager, "main")
     repair_isolation.assert_awaited_once_with(
         main_repo_path="/repo",
         isolated_path="/tmp/fresh-wt",
@@ -114,6 +113,8 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
 async def test_reused_worktree_survives_failure() -> None:
     git_manager = MagicMock(spec=WorktreeGitManager, repo_path="/repo")
     git_manager.get_current_branch.return_value = "main"
+    git_manager.get_local_commit.return_value = "base-sha"
+    git_manager.run_git_command.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
     worktree_storage = MagicMock(db=MagicMock())
     worktree_storage.get_by_branch.return_value = SimpleNamespace(
         id="reused-wt",
@@ -123,8 +124,10 @@ async def test_reused_worktree_survives_failure() -> None:
     worktree_storage.is_claimed_by_live_session.return_value = False
     handler = WorktreeIsolationHandler(git_manager, worktree_storage)
     config = _worktree_spawn_config("feature/reused")
+    artifacts = MagicMock()
 
     with (
+        patch("gobby.agents.isolation_worktree.TaskArtifactManager", return_value=artifacts),
         patch("gobby.agents.isolation_worktree.Path.is_dir", return_value=True),
         patch(
             "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
@@ -141,7 +144,19 @@ async def test_reused_worktree_survives_failure() -> None:
     assert context.worktree_id == "reused-wt"
     assert context.cwd == "/tmp/reused-wt"
     assert context.branch_name == "feature/reused"
-    assert context.extra == {"base_commit_sha": "base-sha", "main_repo_path": "/repo"}
+    assert context.extra == {
+        "base_branch": "main",
+        "base_commit_sha": "base-sha",
+        "main_repo_path": "/repo",
+    }
+    artifacts.set_artifacts_atomic.assert_called_once_with(
+        "task-123",
+        worktree_path="/tmp/reused-wt",
+        worktree_id="reused-wt",
+        base_commit_sha="base-sha",
+        clone_path=None,
+        clone_id=None,
+    )
     sync_reused_worktree.assert_awaited_once()
     repair_isolation.assert_awaited_once_with(
         main_repo_path="/repo",

@@ -469,6 +469,7 @@ async def test_successful_upgrade_changes_no_rows(
     deaths.assert_not_awaited()
     assert _identity(terminals, rows) == before
     assert rig.manager.host_epoch == host.host_epoch
+    assert rig.manager.host_generation == host.generation == 1
     assert host.requests == [(str(exe), attempt_id)]
     await rig.manager.stop()
 
@@ -603,8 +604,21 @@ async def test_expired_window_recovery_clears_outage_error(
         host.finish(attempt_id, "succeeded", installed, running=installed)
         rig.clock.now += REQUEST_TIMEOUT_SECONDS + HOST_BUDGET_SECONDS + INTERVAL + 0.5
         caplog.clear()
-        with caplog.at_level(logging.WARNING, logger="gobby.terminals.host_manager"):
+        # The web relay waits on the window and then reads the generation, so
+        # the settled generation must be current before anything awaits.
+        seen: list[tuple[bool, int | None]] = []
+        close_client = rig.manager._close_client
+
+        async def record_close(client: Any) -> None:
+            seen.append((rig.manager.upgrade.is_open, rig.manager.host_generation))
+            await close_client(client)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.terminals.host_manager"),
+            patch.object(rig.manager, "_close_client", new=record_close),
+        ):
             await rig.ticks.run()
+        assert seen == [(False, host.generation)]
         reconnects = [r for r in caplog.records if "reconnecting live host" in r.getMessage()]
         assert reconnects == [], "the tick must settle the expired window, not reconnect"
         assert rig.manager.upgrade.is_open is False

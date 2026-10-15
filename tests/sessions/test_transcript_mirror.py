@@ -280,9 +280,11 @@ def record(index: int, role: str, content: str, content_type: str = "text") -> P
 
 
 @pytest.fixture
-def attached(temp_db: HubDatabase) -> tuple[CommunicationsManager, str, AsyncMock]:
+def attached(
+    temp_db: HubDatabase, sample_project: dict[str, str]
+) -> tuple[CommunicationsManager, str, AsyncMock]:
     sessions = SessionManager(temp_db)
-    session = sessions.register("mirror-test", None, "claude", None)
+    session = sessions.register("mirror-test", None, "claude", sample_project["id"])
     store = LocalCommunicationsStore(temp_db)
     channel = store.create_channel(
         ChannelConfig(
@@ -290,7 +292,7 @@ def attached(temp_db: HubDatabase) -> tuple[CommunicationsManager, str, AsyncMoc
             name="mirror-test",
             channel_type="telegram",
             enabled=True,
-            config_json={},
+            config_json={"operator_project_id": sample_project["id"]},
             created_at=TS,
             updated_at=TS,
         )

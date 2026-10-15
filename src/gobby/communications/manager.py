@@ -642,6 +642,32 @@ class CommunicationsManager:
             return session_id
 
     def attach_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
+        """Attach an agent only within the channel's configured projects."""
+        channel = self._channel_by_name.get(channel_name)
+        if channel is None or channel.channel_type != "telegram":
+            raise ValueError("An active Telegram channel is required")
+        session = self._session_store.get(session_id)
+        if (
+            session is None
+            or session.status not in LIVE_SESSION_STATUSES
+            or session.source in {"comms", "web-chat", "web_chat"}
+        ):
+            raise ValueError("A live non-comms session is required")
+        responder = channel.config_json.get("responder")
+        chat_project = responder.get("project_id") if isinstance(responder, dict) else None
+        projects = {
+            value
+            for value in (channel.config_json.get("operator_project_id"), chat_project)
+            if isinstance(value, str) and value
+        }
+        if session.project_id not in projects:
+            raise ValueError("Conversation attachment requires matching channel project ownership")
+        self._attach_conversation_unchecked(channel_name, conversation_id, session_id)
+
+    def _attach_conversation_unchecked(
+        self, channel_name: str, conversation_id: str, session_id: str
+    ) -> None:
+        """Bind an attachment; operator switches may cross project boundaries."""
         channel = self._channel_by_name.get(channel_name)
         if channel is None or channel.channel_type != "telegram":
             raise ValueError("An active Telegram channel is required")
@@ -704,7 +730,7 @@ class CommunicationsManager:
             previous = self._conversation_attachments.pop(key, None)
             was_managed = key in self._managed_telegram_targets
             try:
-                self.attach_conversation(channel_name, conversation_id, session_id)
+                self._attach_conversation_unchecked(channel_name, conversation_id, session_id)
             except Exception:
                 self._conversation_attachments.pop(key, None)
                 if previous is not None:

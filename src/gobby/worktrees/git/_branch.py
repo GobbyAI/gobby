@@ -99,6 +99,9 @@ async def get_current_branch(runner: GitRunner) -> str | None:
 
     Returns:
         Branch name, or None if in detached HEAD state
+
+    Raises:
+        subprocess.TimeoutExpired: Git could not inspect the branch in time.
     """
     try:
         result = await runner._run_git(
@@ -109,6 +112,8 @@ async def get_current_branch(runner: GitRunner) -> str | None:
             branch = result.stdout.strip()
             return branch if branch else None
         return None
+    except subprocess.TimeoutExpired:
+        raise
     except Exception:
         return None
 

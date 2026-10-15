@@ -57,7 +57,6 @@ async def test_creation_uses_exact_local_branch_tip(
         branch_name="new-seat",
         base_branch=base_branch,
         worktree_path=str(tmp_path / "worktree"),
-        use_local=True,
         event_emitter=lambda *_args, **_kwargs: {},
     )
     assert result.success, result.error
@@ -80,14 +79,10 @@ async def test_creation_refuses_stale_destination_branch(
         branch_name="new-seat",
         base_branch="seat-base",
         worktree_path=str(tmp_path / "worktree"),
-        use_local=True,
         event_emitter=lambda *_args, **_kwargs: {},
     )
     assert not result.success
-    assert result.error is not None
-    assert "new-seat" in result.error
-    assert stale_tip in result.error
-    assert "seat-base" in result.error
+    assert result.error == "existing_branch_commit_mismatch"
     assert not (tmp_path / "worktree").exists()
     assert storage.get_by_branch(project_id, "new-seat") is None
     assert _git(root, "rev-parse", "refs/heads/new-seat") == stale_tip
@@ -108,12 +103,11 @@ async def test_creation_refuses_missing_local_branch(
         branch_name="new-seat",
         base_branch=base_branch,
         worktree_path=str(tmp_path / "worktree"),
-        use_local=True,
         event_emitter=lambda *_args, **_kwargs: {},
     )
     assert not result.success
     assert result.error is not None
-    assert f"refs/heads/{base_branch}" in result.error
+    assert base_branch in result.error
     assert not (tmp_path / "worktree").exists()
     assert storage.get_by_branch(project_id, "new-seat") is None
 
@@ -162,7 +156,6 @@ async def test_creation_registers_canonical_root_for_overlay_grants(
         branch_name="ask-caller",
         base_branch="main",
         worktree_path=str(requested),
-        use_local=True,
         event_emitter=lambda *_args, **_kwargs: {},
     )
     assert result.success, result.error

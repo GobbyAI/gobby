@@ -62,6 +62,65 @@ from gobby.workflows.validation_cover import cargo_package_selection_failed
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    ("suffix", "status", "expected_outcome", "expected_exit"),
+    [
+        ("completed (exit code 0)", "completed", "success", 0),
+        ("failed with exit code 1", "failed", "failure", 1),
+    ],
+)
+async def test_claude_background_description_notice_settles_original_call(
+    tmp_path: Path, suffix: str, status: str, expected_outcome: str, expected_exit: int
+) -> None:
+    transcript = tmp_path / "background-description.jsonl"
+    command = "uv run pytest tests/tasks/test_transcript_background.py -q"
+    description = "Run background receipt tests (focused)"
+    output_path = "/tmp/claude-test/tasks/job-1.output"
+    records = _claude_tool_pair(
+        command=command,
+        description=description,
+        call_id="toolu-original",
+        start=BASE_TIME,
+        result=(
+            "Command did not complete within its 120s timeout and was moved to the "
+            f"background (ID: job-1). Output is being written to: {output_path}. "
+            "You will be notified when it completes."
+        ),
+    )
+    records.append(
+        {
+            "type": "user",
+            "timestamp": (BASE_TIME + timedelta(seconds=4)).isoformat(),
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification><task-id>job-1</task-id>"
+                    "<tool-use-id>toolu-original</tool-use-id>"
+                    f"<output-file>{output_path}</output-file><status>{status}</status>"
+                    f'<summary>Background command "{description}" {suffix}</summary>'
+                    "</task-notification>"
+                ),
+            },
+        }
+    )
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert len(evidence.validation_runs) == 1
+    run = evidence.validation_runs[0]
+    assert (run.outcome, run.exit_code) == (expected_outcome, expected_exit)
+    assert run.command == command
+    assert run.background_description == description
+    assert run.completed_at == BASE_TIME + timedelta(seconds=4)
+
+
 @pytest.mark.parametrize("receipt", ["valid", "missing", "wrong-job", "wrong-call", "assistant"])
 async def test_claude_background_validation_requires_matching_terminal_receipt(
     tmp_path: Path, receipt: str
@@ -503,6 +562,7 @@ def _claude_tool_pair(
     start: datetime,
     result: Any,
     is_error: bool = False,
+    description: str | None = None,
 ) -> list[dict[str, Any]]:
     transport: Any = None
     if isinstance(result, dict) and "exit_code" in result:
@@ -527,7 +587,10 @@ def _claude_tool_pair(
                         "type": "tool_use",
                         "id": call_id,
                         "name": "Bash",
-                        "input": {"command": command},
+                        "input": {
+                            "command": command,
+                            **({"description": description} if description is not None else {}),
+                        },
                     }
                 ],
             },

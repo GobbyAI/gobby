@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from gobby.tasks import acceptance_artifacts as artifacts_module
 from gobby.tasks.acceptance_artifacts import (
@@ -32,6 +33,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.utils.daemon_git import daemon_git
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -792,17 +794,20 @@ def test_rust_validation_runs_reject_different_symbol() -> None:
     assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
 
 
-def test_rust_validation_runs_reject_inconsistent_module_prefix() -> None:
+@pytest.mark.parametrize("module", ["other_mod", "unrelated::config", "config::config"])
+def test_rust_validation_runs_reject_inconsistent_module_prefix(module: str) -> None:
     test = AcceptanceTest(
         reference="crates/gcode/src/config/tests.rs::expected_symbol",
         path="crates/gcode/src/config/tests.rs",
         symbol="expected_symbol",
         body="fn expected_symbol() {}",
     )
-    output = "    FAIL [0.004s] gobby-code other_mod::tests::expected_symbol"
+    output = f"    PASS [0.004s] gobby-code {module}::tests::expected_symbol"
 
     assert not validation_run_covers_test("cargo nextest run -p gobby-code", output, test)
-    assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
+    assert not validation_run_names_test(
+        "cargo nextest run -p gobby-code", output.replace("PASS", "FAIL"), test
+    )
 
 
 def test_rust_validation_runs_require_symbol_word_boundary() -> None:
@@ -842,6 +847,158 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
     assert len(result.tests) == 1
     assert "'committed'" in result.tests[0].body
     assert "'working-tree'" not in result.tests[0].body
+
+
+@pytest.mark.parametrize("path_attribute", [True, False])
+@pytest.mark.parametrize("inline", [False, True])
+def test_rust_validation_runs_match_integration_path_module(
+    tmp_path: Path, path_attribute: bool, inline: bool
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/tests"
+    test_file = source_dir / ("parity/mod.rs" if path_attribute else "parity/keep_set.rs")
+    test_file.parent.mkdir(parents=True)
+    test_body = "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n"
+    if inline:
+        test_body = f"mod project_rows {{\nmod nested {{\n{test_body}}}\n}}\n"
+    test_body = "// mod decoy { fn ties_are_numeric() {} }\n" + test_body
+    test_file.write_text(test_body, encoding="utf-8")
+    (source_dir / "parity.rs").write_text(
+        '#[path = "parity/mod.rs"]\nmod parity;\n' if path_attribute else "mod parity;\n",
+        encoding="utf-8",
+    )
+    if not path_attribute:
+        (source_dir / "parity/mod.rs").write_text("mod keep_set;\n", encoding="utf-8")
+    linked_sha = _commit(repo, "Integration crate root path module fixture")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=f"test: {test_file.relative_to(repo).as_posix()}::ties_are_numeric",
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+    assert result.passed, result.findings
+    test = result.tests[0]
+    module = "parity" if path_attribute else "parity::keep_set"
+    if inline:
+        module += "::project_rows::nested"
+    assert test.rust_module == tuple(module.split("::"))
+    assert validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity {module}::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity {module}::unrelated::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity parity::{module}::ties_are_numeric",
+        test,
+    )
+
+
+@pytest.mark.parametrize("declaring_file", ["render.rs", "render/mod.rs"])
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_rust_validation_runs_match_committed_path_module(
+    tmp_path: Path, declaring_file: str, inline: bool, wrapped: bool
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/src/commands"
+    source_dir.mkdir(parents=True)
+    test_file = source_dir / ("render/nested/render_tests.rs" if inline else "render_tests.rs")
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text(
+        "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n",
+        encoding="utf-8",
+    )
+    declaration = source_dir / declaring_file
+    declaration.parent.mkdir(parents=True, exist_ok=True)
+    relative_path = (
+        "../render_tests.rs"
+        if declaring_file.endswith("mod.rs") and not inline
+        else "render_tests.rs"
+    )
+    declaration_body = (
+        f'// #[path = "{relative_path}"] mod fake;\n'
+        f'#[cfg(test)]\n#[path = "{relative_path}"]\nmod tests;\n'
+    )
+    if inline:
+        declaration_body = f"mod nested {{\n{declaration_body}}}\n"
+    if wrapped:
+        declaration_body = f"cfg_if::cfg_if! {{\nif #[cfg(test)] {{\n{declaration_body}}}\n}}\n"
+    declaration.write_text(declaration_body, encoding="utf-8")
+    linked_sha = _commit(repo, "Rust path module acceptance fixture")
+    declaration.write_text("mod unrelated;\n", encoding="utf-8")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=f"test: {test_file.relative_to(repo).as_posix()}::ties_are_numeric",
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+    assert result.passed, result.findings
+    test = result.tests[0]
+    module = "commands::render::nested::tests" if inline else "commands::render::tests"
+    assert validation_run_covers_test(
+        "cargo nextest run -p example",
+        f"PASS [0.001s] example {module}::ties_are_numeric",
+        test,
+    )
+    assert validation_run_names_test(
+        "cargo test -p example",
+        f"test {module}::ties_are_numeric ... FAILED\npanicked at 'tie order'",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example",
+        "PASS [0.001s] example commands::unrelated::tests::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example",
+        "PASS [0.001s] example commands::render_tests::ties_are_numeric",
+        test,
+    )
+
+
+def test_rust_path_module_discovery_is_shared_and_skips_non_attributes(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/src"
+    source_dir.mkdir(parents=True)
+    (source_dir / "render.rs").write_text(
+        '#[path = "render_tests.rs"]\nmod tests;\n', encoding="utf-8"
+    )
+    (source_dir / "render_tests.rs").write_text(
+        "#[test]\nfn first() { assert!(check_first()); }\n"
+        "#[test]\nfn second() { assert!(check_second()); }\n",
+        encoding="utf-8",
+    )
+    noise = "crates/example/src/path_values.rs"
+    (repo / noise).write_text('fn value() { let path = "unused"; }\n', encoding="utf-8")
+    sha = _commit(repo, "module lookup cost fixture")
+    spy = mocker.spy(daemon_git, "run")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=(
+            "test: crates/example/src/render_tests.rs::first\n"
+            "test: crates/example/src/render_tests.rs::second"
+        ),
+        repo_path=str(repo),
+        commit_shas=[sha],
+    )
+
+    assert result.passed, result.findings
+    assert [test.symbol for test in result.tests] == ["first", "second"]
+    commands = [call.args[0] for call in spy.call_args_list]
+    assert sum(command[0] == "grep" for command in commands) == 1
+    assert commands.count(("show", f"{sha}:crates/example/src/render.rs")) == 1
+    assert ("show", f"{sha}:{noise}") not in commands
 
 
 def test_rust_test_body_is_extracted_from_linked_commit(tmp_path: Path) -> None:
@@ -905,6 +1062,9 @@ fn protocol_frame_roundtrip() {
 }
 """
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("frame_protocol",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=(
@@ -958,6 +1118,9 @@ def test_test_named_helper_call_is_not_delegation(
     body: str,
 ) -> None:
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -1015,6 +1178,9 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     finding: str,
 ) -> None:
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -1634,7 +1800,7 @@ def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
     assert result.green_runs
 
 
-def test_tdd_evidence_accepts_later_repair_cycle() -> None:
+def test_tdd_evidence_rejects_unproven_later_repair_cycle() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
@@ -1669,9 +1835,9 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
 
     result = evaluate_tdd_evidence((test,), repaired)
 
-    assert result.passed is True
-    assert result.red_runs
-    assert result.green_runs
+    assert result.passed is False
+    assert not result.red_runs
+    assert not result.green_runs
 
     post_implementation_red = TranscriptEvidence(
         edits=repaired.edits[:2],

@@ -28,7 +28,6 @@ from gobby.terminals.runtime import (
 )
 from gobby.terminals.write_coordinator import WriteRequest
 from gobby.utils.hashing import is_sha256
-from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -270,7 +269,6 @@ def create_attention_router(
             )
             rows = await profiled_run_db(
                 manager.load_roster_rows,
-                require_machine_id(),
                 live_session_statuses=LIVE_SESSION_STATUS_ORDER,
             )
             resolver = getattr(server.services, "provider_capability_resolver", None)
@@ -474,7 +472,6 @@ async def _resolve_prompt_detector(
         return None
     rows = await services.run_db(
         manager.load_roster_rows,
-        require_machine_id(),
         live_session_statuses=LIVE_SESSION_STATUS_ORDER,
     )
     for row in rows:

@@ -62,9 +62,9 @@ async def create_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
     branch_name: str,
-    base_branch: str = "main",
+    base_branch: str,
+    base_commit_sha: str,
     create_branch: bool = True,
-    use_local: bool = False,
 ) -> GitOperationResult:
     """
     Create a new git worktree.
@@ -72,19 +72,18 @@ async def create_worktree(
     Args:
         worktree_path: Path where worktree will be created
         branch_name: Name of the branch for the worktree
-        base_branch: Branch to base the new branch on (if create_branch=True)
+        base_branch: Recorded destination branch for later merge and cleanup
+        base_commit_sha: Exact selected fork commit
         create_branch: Whether to create a new branch or use existing
-        use_local: If True, create from local branch ref instead of origin/
-                   This preserves unpushed commits in the worktree.
 
     Returns:
         GitOperationResult with success status and message
     """
-    if base_branch.startswith(("origin/", "refs/remotes/")):
+    if base_branch.removeprefix("refs/heads/") == branch_name.removeprefix("refs/heads/"):
         return GitOperationResult(
             success=False,
-            message=f"Remote-style base branch is not allowed: {base_branch}",
-            error="remote_base_branch_not_allowed",
+            message="Choose a merge base different from the worktree branch",
+            error="merge_target_is_source_branch",
         )
     if await rejects_unreferenced_sha_base(runner, base_branch):
         return GitOperationResult(
@@ -101,99 +100,61 @@ async def create_worktree(
             message=f"Path already exists: {worktree_path}",
         )
 
-    # Ensure parent directory exists
-    worktree_path.parent.mkdir(parents=True, exist_ok=True)
-
     try:
-        if create_branch:
-            if use_local:
-                # Create worktree from local branch (preserves unpushed commits)
-                base_ref = (
-                    base_branch
-                    if base_branch.startswith("refs/heads/")
-                    else f"refs/heads/{base_branch}"
-                )
-                verify_result = await runner._run_git(
-                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
-                )
-                if verify_result.returncode != 0:
-                    error = (
-                        f"Local base branch '{base_branch}' could not be resolved as "
-                        f"'{base_ref}': {verify_result.stderr.strip()}"
-                    )
-                    return GitOperationResult(
-                        success=False,
-                        message=error,
-                        error=error,
-                    )
-
-                # Create worktree with new branch based on local ref
-                result = await runner._run_git(
-                    [
-                        "worktree",
-                        "add",
-                        "-b",
-                        branch_name,
-                        str(worktree_path),
-                        verify_result.stdout.strip(),
-                    ],
-                    timeout=60,
-                )
-            else:
-                # Fetch and resolve the exact remote branch, avoiding tag ambiguity.
-                # First, fetch to ensure we have latest refs
-                fetch_result = await runner._run_git(["fetch", "origin", base_branch], timeout=60)
-                if fetch_result.returncode != 0:
-                    return GitOperationResult(
-                        success=False,
-                        message=f"Failed to fetch origin/{base_branch}: {fetch_result.stderr}",
-                        error=fetch_result.stderr,
-                    )
-
-                base_name = base_branch.removeprefix("refs/heads/")
-                base_ref = f"refs/remotes/origin/{base_name}"
-                verify_result = await runner._run_git(
-                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
-                )
-                if verify_result.returncode != 0:
-                    error = f"Remote base branch '{base_ref}' could not be resolved"
-                    return GitOperationResult(success=False, message=error, error=error)
-
-                # Create worktree with new branch from the captured commit.
-                result = await runner._run_git(
-                    [
-                        "worktree",
-                        "add",
-                        "-b",
-                        branch_name,
-                        str(worktree_path),
-                        verify_result.stdout.strip(),
-                    ],
-                    timeout=60,
-                )
+        # The branch can move after selection; creation consumes only the captured SHA.
+        selected = await runner._run_git(
+            ["rev-parse", "--verify", f"{base_commit_sha}^{{commit}}"], timeout=5
+        )
+        if selected.returncode != 0 or selected.stdout.strip() != base_commit_sha:
+            return GitOperationResult(
+                success=False,
+                message="Selected fork commit is unavailable",
+                error="invalid_fork_commit",
+            )
+        branch_ref = (
+            branch_name if branch_name.startswith("refs/heads/") else f"refs/heads/{branch_name}"
+        )
+        existing = await runner._run_git(
+            ["rev-parse", "--verify", "--quiet", f"{branch_ref}^{{commit}}"], timeout=5
+        )
+        if existing.returncode == 0 and existing.stdout.strip() != base_commit_sha:
+            return GitOperationResult(
+                success=False,
+                message=f"Existing branch '{branch_name}' at {existing.stdout.strip()} "
+                f"differs from selected commit {base_commit_sha}",
+                error="existing_branch_commit_mismatch",
+            )
+        if existing.returncode not in {0, 1}:
+            return GitOperationResult(
+                success=False,
+                message=f"Cannot inspect branch '{branch_name}'",
+                error=existing.stderr,
+            )
+        if not create_branch and existing.returncode != 0:
+            return GitOperationResult(
+                success=False,
+                message=f"Branch '{branch_name}' does not exist",
+                error="branch_not_found",
+            )
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        args = ["worktree", "add"]
+        if existing.returncode == 0:
+            args.extend([str(worktree_path), branch_name])
         else:
-            # Use existing branch
-            result = await runner._run_git(
-                ["worktree", "add", str(worktree_path), branch_name],
-                timeout=60,
-            )
-
-        if create_branch and result.returncode != 0 and _is_branch_exists_error(result.stderr):
-            branch_ref = (
-                branch_name
-                if branch_name.startswith("refs/heads/")
-                else f"refs/heads/{branch_name}"
-            )
-            existing = await runner._run_git(
-                ["show-ref", "--verify", "--hash", branch_ref], timeout=5
-            )
-            tip = existing.stdout.strip() if existing.returncode == 0 else "unresolved"
-            error = (
-                f"Destination branch '{branch_name}' already exists at {tip}; "
-                f"refusing to create it from requested base '{base_branch}'. "
-                "Use create_branch=False to explicitly check out the existing branch."
-            )
-            return GitOperationResult(success=False, message=error, error=error)
+            args.extend(["-b", branch_name, str(worktree_path), base_commit_sha])
+        result = await runner._run_git(args, timeout=60)
+        if result.returncode == 0:
+            head = await runner._run_git(["rev-parse", "HEAD"], cwd=worktree_path, timeout=5)
+            if head.returncode != 0 or head.stdout.strip() != base_commit_sha:
+                cleanup = await runner._run_git(
+                    ["worktree", "remove", str(worktree_path)], timeout=60
+                )
+                detail = "Destination branch moved after fork selection"
+                if cleanup.returncode != 0:
+                    detail += f"; cleanup failed: {cleanup.stderr.strip()}"
+                return GitOperationResult(
+                    success=False, message=detail, error="fork_commit_changed"
+                )
 
         if result.returncode == 0:
             return GitOperationResult(

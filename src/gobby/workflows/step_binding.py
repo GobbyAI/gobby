@@ -41,12 +41,6 @@ def _read_task(db: HubDatabase, task_id: str) -> Task | None:
         return None
 
 
-def bound_task_commits(db: HubDatabase, task_id: str) -> list[str]:
-    """Commits already linked to the bound task."""
-    task = _read_task(db, task_id)
-    return list(task.commits or []) if task is not None else []
-
-
 def release_lost_binding(
     db: HubDatabase,
     instance: AgentStepInstance,

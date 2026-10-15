@@ -24,6 +24,12 @@ export interface UseChatTestContext {
   };
 }
 
+// The context whose mocks currently own the globals. loadUseChatModule checks it
+// once, after the dynamic import returns, and refuses to hand useChat to a test
+// whose context was cleared or replaced while the module loaded. It does not
+// isolate renders from a hook already returned to a test that later times out.
+let activeContext: UseChatTestContext | null = null;
+
 export function createUseChatTestContext(): UseChatTestContext {
   const consoleSpy = {
     log: vi.spyOn(console, "log").mockImplementation(() => {}),
@@ -64,10 +70,13 @@ export function createUseChatTestContext(): UseChatTestContext {
     configurable: true,
   });
 
-  return { mockWs, mockFetch, originalLocalStorage, consoleSpy };
+  const context = { mockWs, mockFetch, originalLocalStorage, consoleSpy };
+  activeContext = context;
+  return context;
 }
 
 export function cleanupUseChatTestContext(context: UseChatTestContext): void {
+  if (activeContext === context) activeContext = null;
   context.mockWs.restore();
   context.mockFetch.restore();
   Object.defineProperty(globalThis, "localStorage", {
@@ -85,7 +94,13 @@ export function cleanupUseChatTestContext(context: UseChatTestContext): void {
 export async function loadUseChatModule(): Promise<
   typeof import("../useChat").useChat
 > {
+  const owner = activeContext;
   vi.resetModules();
   const mod = await import("../useChat");
+  if (owner === null || owner !== activeContext) {
+    throw new Error(
+      "useChat test outlived its test context (timed out); refusing to render against another test's mocks",
+    );
+  }
   return mod.useChat;
 }

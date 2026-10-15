@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import click
 import httpx
 import pytest
+from click.testing import CliRunner
 
 from gobby.cli import daemon_lifecycle as lifecycle
 from gobby.cli.runtime import CliRuntime
@@ -13,6 +14,26 @@ from gobby.config.app import DaemonConfig
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 
 pytestmark = pytest.mark.unit
+
+
+def test_restart_shares_warning_set_with_full_stop_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = MagicMock(return_value=None)
+    stop = MagicMock(return_value=False)
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr(lifecycle, "_restart_backend", backend)
+    monkeypatch.setattr(lifecycle, "_do_stop", stop)
+
+    result = CliRunner().invoke(lifecycle.restart, ["--wait"])
+
+    assert result.exit_code == 1
+    backend.assert_called_once()
+    stop.assert_called_once()
+    assert (
+        backend.call_args.kwargs["logged_stale_markers"]
+        is stop.call_args.kwargs["logged_stale_markers"]
+    )
 
 
 @pytest.fixture

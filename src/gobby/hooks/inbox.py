@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,11 +28,8 @@ from gobby.hooks.envelope_dedupe import (
     remove_envelope_marker,
 )
 from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
-from gobby.hooks.receipt_effects import apply_acknowledged_receipt
-from gobby.hooks.replay_fence import archive_superseded_hook, defer_live_hook
-from gobby.hooks.runtime_compat import (
-    envelope_has_hook_response_capability,
-)
+from gobby.hooks.replay_decision import acknowledge_and_apply_receipt, decide_replay
+from gobby.hooks.replay_fence import defer_live_hook
 from gobby.utils import daemon_url as daemon_address
 from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
 
@@ -91,8 +89,6 @@ def _consume_inbox_delivery_receipt(
     stranded before the CAS (``_restore_orphaned_receipt_claims``).
     """
 
-    from gobby.storage.hook_receipts import acknowledge_receipt
-
     claimed = path.with_name(f"{path.name}.{_RECEIPT_CLAIM_OWNER}{_RECEIPT_CLAIM_SUFFIX}")
     try:
         path.rename(claimed)
@@ -117,10 +113,14 @@ def _consume_inbox_delivery_receipt(
         )
     if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
         try:
-            committed = acknowledge_receipt(
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            committed = acknowledge_and_apply_receipt(
                 db,
                 receipt_id=receipt_id,
                 delivery_generation=generation,
+                message_manager=getattr(hook_manager, "_inter_session_msg_manager", None),
+                variable_manager=SessionVariableManager(db),
             )
             if committed is None:
                 logger.debug(
@@ -129,13 +129,6 @@ def _consume_inbox_delivery_receipt(
                     generation,
                 )
             if committed is not None:
-                from gobby.workflows.state_manager import SessionVariableManager
-
-                apply_acknowledged_receipt(
-                    committed,
-                    message_manager=getattr(hook_manager, "_inter_session_msg_manager", None),
-                    variable_manager=SessionVariableManager(db),
-                )
                 # The acknowledged delivery terminalizes every envelope that
                 # carried it; a retained original must never replay its hook.
                 _mark_carrying_envelopes_processed(
@@ -263,27 +256,6 @@ def _mark_carrying_envelopes_processed(
                 getattr(receipt, "receipt_id", None),
                 exc,
             )
-
-
-def _terminalize_below_floor_receipts(app: Any, envelope_id: str) -> None:
-    """Best-effort: any prepared receipt for this envelope becomes undelivered."""
-    from gobby.storage.hook_receipts import terminalize_receipts_for_envelope
-
-    state = getattr(app, "state", None)
-    db = getattr(state, "database", None)
-    if db is None:
-        hook_manager = getattr(state, "hook_manager", None)
-        db = getattr(hook_manager, "db", None)
-    if db is None:
-        return
-    try:
-        terminalize_receipts_for_envelope(db, envelope_id=envelope_id)
-    except Exception as exc:
-        logger.warning(
-            "Failed to terminalize receipts for below-floor envelope %s: %s",
-            envelope_id,
-            exc,
-        )
 
 
 async def _post_envelope(
@@ -450,46 +422,48 @@ async def _drain_hook_inbox_once_locked(
             continue
 
         hook_manager = getattr(getattr(app, "state", None), "hook_manager", None)
-        if (
-            envelope_has_hook_response_capability(envelope.get("response_capability"))
-            and envelope_id
-            and hook_manager is not None
-            and grok_pending_context.handle_ack_pending_inbox_envelope(
-                hook_manager,
-                envelope_id,
-                envelope,
-                path,
-                remove_marker=lambda current_id: remove_envelope_marker(
-                    current_id,
-                    processed_dir=processed_dir,
-                ),
-            )
-        ):
+        try:
+            age_seconds = max(0.0, time.time() - path.stat().st_mtime)
+        except FileNotFoundError:
             continue
-        if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
+        decision = await asyncio.to_thread(
+            decide_replay,
+            app,
+            envelope_id,
+            envelope,
+            age_seconds=age_seconds,
+            processed=bool(
+                envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir)
+            ),
+            live=defer_live_hook(path, envelope_id, processed_dir, include_fresh),
+        )
+        if decision.disposition == "retain":
+            continue
+        if decision.disposition == "requeued":
+            path.unlink(missing_ok=True)
+            if envelope_id:
+                remove_envelope_marker(envelope_id, processed_dir=processed_dir)
+            continue
+        if decision.disposition == "unlink":
             logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
             path.unlink(missing_ok=True)
             continue
-        if envelope_has_hook_response_capability(
-            envelope.get("response_capability")
-        ) and defer_live_hook(path, envelope_id, processed_dir, include_fresh):
-            continue
-        archived = await asyncio.to_thread(
-            archive_superseded_hook, app, envelope, path, inbox_envelopes.quarantine_file
-        )
-        if archived is not None:
-            if archived:
+        if decision.disposition == "archived":
+            if await asyncio.to_thread(
+                inbox_envelopes.quarantine_file,
+                path,
+                reason="superseded_hook",
+                detail=decision.detail,
+            ):
                 hook_settled()
             continue
-
-        if not envelope_has_hook_response_capability(envelope.get("response_capability")):
+        if decision.disposition == "below_floor":
             if envelope_id:
                 release_envelope_processing_claim(envelope_id, processed_dir=processed_dir)
-                _terminalize_below_floor_receipts(app, envelope_id)
             inbox_envelopes.quarantine_or_warn(
                 path,
                 reason="below_floor_response_capability",
-                detail="request-carried response_capability is below hook-response.v1",
+                detail=decision.detail,
             )
             hook_settled()
             continue

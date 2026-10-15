@@ -497,7 +497,7 @@
   },
   "MCP gobby-sessions:capture_baseline_dirty_files": {
     "status": "dropped by decision #23563",
-    "note": "#23563 Retire capture_baseline_dirty_files and baseline_dirty_files explicitly deletes this tool and registration; removal is in flight. Still registered at this snapshot by `src/gobby/mcp_proxy/tools/sessions/_actions.py::capture_baseline_dirty_files_tool`; no Rust port is planned."
+    "note": "Retired capture_baseline_dirty_files and its inert baseline variable under #23563 Retire baseline dirty tracking; edit ledgers remain authoritative. No Rust port is planned."
   },
   "MCP gobby-sessions:capture_output": {
     "status": "proxied",

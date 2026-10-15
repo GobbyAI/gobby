@@ -8,6 +8,14 @@ cases equal.
 
 ## Case format
 
+The `hooks` family freezes `POST /api/hooks/execute` as `parity: "proxy"`,
+`origin: "python"`; see [Hook ingress](../../../docs/contracts/hook-ingress.md).
+Its operator-authenticated cases cover an envelope v1 Notification without a
+session row, replay using the same fixed envelope ID, a below-floor capability,
+and rejection of a flat body without `schema_version`. Replay order is material:
+`hooks_execute_replay` follows `hooks_execute_ok` on the same isolated daemon.
+Envelope version 1 is independent of corpus version 2.
+
 Each case is one JSON file at `schema_version` 2:
 
 ```json

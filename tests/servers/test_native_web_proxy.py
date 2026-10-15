@@ -7,8 +7,9 @@ import asyncio
 import base64
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import (
     AttachLocator,
+    HostEpochMismatchError,
     Terminal,
     TerminalManager,
     native_locator_key,
@@ -117,10 +119,19 @@ class FakeProxyFrame:
     # Recorded from the production handshake call; FrameClient defaults to
     # "semantic_frame", which the web proxy must override with "terminal_ansi".
     encoding: str | None = None
+    # Awaited inside the named verb ("handshake" or "attach"), so a test can
+    # park the relay there or act from the relay's own task.
+    hooks: dict[str, Callable[[], Awaitable[None]]] = field(default_factory=dict)
+
+    async def _hook(self, verb: str) -> None:
+        hook = self.hooks.get(verb)
+        if hook is not None:
+            await hook()
 
     async def handshake(self, locator: AttachLocator, *, encoding: str = "semantic_frame") -> None:
         self.handshake_epochs.append(locator.frame_host_epoch)
         self.encoding = encoding
+        await self._hook("handshake")
 
     async def attach_terminal(
         self,
@@ -130,6 +141,7 @@ class FakeProxyFrame:
     ) -> None:
         del locator
         self.reservation_ids.append(reservation_id)
+        await self._hook("attach")
 
     async def read_message(self) -> dict[str, Any]:
         item = await self.queue.get()
@@ -178,11 +190,14 @@ class RecordingRuntime:
     snapshot_result: SnapshotResult | None = None
     snapshot_error: BaseException | None = None
     snapshot_calls: list[tuple[str, int, str]] = field(default_factory=list)
+    snapshot_hook: Callable[[], Awaitable[None]] | None = None
 
     async def snapshot(
         self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
     ) -> SnapshotResult:
         self.snapshot_calls.append((terminal.id, lines, mode))
+        if self.snapshot_hook is not None:
+            await self.snapshot_hook()
         if self.snapshot_error is not None:
             raise self.snapshot_error
         if self.snapshot_result is not None:
@@ -381,6 +396,66 @@ class _ThemedHost:
 
     async def wait_startup_settled(self, timeout: float) -> bool:
         return True
+
+
+@dataclass
+class _Window:
+    deadline: float
+
+
+class _Upgrade:
+    """The slice of HostUpgradeCoordinator the relay reads."""
+
+    def __init__(self) -> None:
+        self.window: _Window | None = None
+        self._closed = asyncio.Event()
+        self._closed.set()
+        self.waits = 0
+
+    @property
+    def is_open(self) -> bool:
+        return self.window is not None
+
+    async def wait_closed(self) -> None:
+        self.waits += 1
+        await self._closed.wait()
+
+    def open(self, seconds: float = 5.0) -> None:
+        self.window = _Window(deadline=time.monotonic() + seconds)
+        self._closed.clear()
+
+    def close(self) -> None:
+        self.window = None
+        self._closed.set()
+
+
+class _UpgradingHost(_ThemedHost):
+    """A themed host that replaces its binary in place, holding attaches meanwhile."""
+
+    def __init__(self) -> None:
+        self.host_epoch = "epoch-1"
+        self.host_generation = 1
+        self.upgrade = _Upgrade()
+
+    async def wait_startup_settled(self, timeout: float) -> bool:
+        return not self.upgrade.is_open
+
+    def settle(self, *, epoch: str = "epoch-1") -> None:
+        """Answer a ping after the exec or a verified fallback: the window closes."""
+        self.host_epoch = epoch
+        self.host_generation += 1
+        self.upgrade.close()
+
+
+_OUTPUT = {"type": "terminal", "seq": 1, "width": 80, "height": 24, "full": True, "bytes": b"$ "}
+
+
+Opener = Callable[[AttachLocator], Awaitable[FakeProxyFrame]]
+
+
+async def _park(parked: asyncio.Event) -> None:
+    parked.set()
+    await asyncio.Event().wait()
 
 
 def _frame_for(harness: _Harness, row: Terminal) -> FakeProxyFrame:
@@ -1567,3 +1642,293 @@ async def test_an_observer_theme_waits_until_the_observer_holds_the_lease(
 
     assert frame_b.themes == [(att_b, _OBSERVER_THEME)]
     assert frame_a.themes == [(att_a, _THEME)]
+
+
+def _relayed(ws: MockWebSocket) -> list[dict[str, Any]]:
+    return [
+        message
+        for message in ws.all_messages()
+        if message.get("type") in {"terminal_attach_history", "terminal_output"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_relay_reconnects_across_host_upgrade(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    host = _UpgradingHost()
+    harness.server.terminal_host_manager = host
+    hub = harness.server._proxy()
+    ws = MockWebSocket()
+    attachment = await _attach(harness, ws, harness.native_row)
+    first = harness.frame_list[0]
+    await first.queue.put(_OUTPUT)
+    await _until(lambda: len(ws.messages_of_type("terminal_output")) == 1)
+    await _send(
+        harness.server,
+        ws,
+        {"type": "terminal_set_viewport", "attachment_id": attachment, "rows": 30, "cols": 100},
+    )
+    await _send(
+        harness.server,
+        ws,
+        {
+            "type": "terminal_set_scroll_offset",
+            "terminal_id": harness.native_row.id,
+            "attachment_id": attachment,
+            "rows_from_live_edge": 7,
+            "max_rows": 40,
+        },
+    )
+    assert (first.viewports, first.scrolls) == ([(30, 100)], [7])
+
+    # The exec closes the host's frames while the daemon holds the window;
+    # nothing reopens until the host answers again.
+    host.upgrade.open()
+    await first.queue.put(None)
+    await _until(lambda: host.upgrade.waits == 1)
+    assert hub.attachments[attachment].frame is first
+    assert len(harness.frame_list) == 1
+
+    host.settle()
+    await _until(lambda: len(ws.messages_of_type("terminal_attach_history")) == 2)
+    second = harness.frame_list[1]
+    await second.queue.put(_OUTPUT)
+    await _until(lambda: len(ws.messages_of_type("terminal_output")) == 2)
+    assert first.closed
+    assert (second.handshake_epochs, second.encoding, second.reservation_ids) == (
+        ["epoch-1"],
+        "terminal_ansi",
+        [None],
+    )
+    # The reopened frame renders at the attachment's viewport and scroll.
+    assert (second.viewports, second.scrolls) == ([(30, 100)], [7])
+    assert hub.attachments[attachment].frame is second
+    assert hub.attachments[attachment].host_generation == 2
+
+    # A verified fallback closes the window before the relay reads EOF; the
+    # higher generation alone is enough to reconnect.
+    host.upgrade.open()
+    host.settle()
+    await second.queue.put(None)
+    await _until(lambda: len(ws.messages_of_type("terminal_attach_history")) == 3)
+    third = harness.frame_list[2]
+    await third.queue.put(_OUTPUT)
+    await _until(lambda: len(ws.messages_of_type("terminal_output")) == 3)
+    assert second.closed
+    assert hub.attachments[attachment].host_generation == 3
+
+    # One attachment, one message sequence across both reconnects.
+    relayed = _relayed(ws)
+    assert {message["attachment_id"] for message in relayed} == {attachment}
+    assert [message["type"] for message in relayed] == [
+        "terminal_attach_history",
+        "terminal_output",
+    ] * 3
+    lease = harness.server.lease_registry.get(attachment)
+    assert lease is not None
+    assert lease.message_seq == len(relayed)
+    assert ws.messages_of_type("terminal_attachment_finalized") == []
+
+
+@pytest.mark.asyncio
+async def test_relay_finalizes_when_reconnect_is_not_possible(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    host = _UpgradingHost()
+    harness.server.terminal_host_manager = host
+    hub = harness.server._proxy()
+    opener = harness.server.open_proxy_frame
+
+    async def refuse(locator: AttachLocator) -> FakeProxyFrame:
+        raise OSError(f"frame socket refused for {locator.host_terminal_id}")
+
+    def reopen_fails() -> None:
+        harness.server.open_proxy_frame = refuse
+        host.settle()
+
+    def locator_is_stale() -> None:
+        harness.native_rt.locator_error = HostEpochMismatchError("epoch moved")
+        host.settle()
+
+    def epoch_changes() -> None:
+        host.settle(epoch="epoch-2")
+
+    cases: tuple[tuple[str, float | None, Callable[[], None]], ...] = (
+        ("reopen fails", 5.0, reopen_fails),
+        ("locator is stale", 5.0, locator_is_stale),
+        ("epoch changes", 5.0, epoch_changes),
+        ("window expires", 0.05, lambda: None),
+        ("no upgrade", None, lambda: None),
+    )
+    for label, window, step in cases:
+        host.upgrade.close()
+        host.host_epoch = "epoch-1"
+        harness.server.open_proxy_frame = opener
+        harness.native_rt.locator_error = None
+        ws = MockWebSocket()
+        attachment = await _attach(harness, ws, harness.native_row, request_id=label)
+        frame = harness.frame_list[-1]
+        opened = len(harness.frame_list)
+        waits = host.upgrade.waits
+        if window is not None:
+            host.upgrade.open(window)
+        await frame.queue.put(None)
+        if window is not None:
+            # The relay took the reconnect path and is holding for the window.
+            await _until(lambda waits=waits: host.upgrade.waits == waits + 1)
+        step()
+
+        await _until(lambda ws=ws: ws.messages_of_type("terminal_attachment_finalized"))
+        assert host.upgrade.waits == waits + (0 if window is None else 1), label
+        finalized = ws.messages_of_type("terminal_attachment_finalized")[-1]
+        assert (finalized["reason"], finalized["attachment_id"]) == (
+            "proxy_frame_eof",
+            attachment,
+        ), label
+        assert attachment not in hub.attachments, label
+        assert harness.server.lease_registry.get(attachment) is None, label
+        assert len(harness.frame_list) == opened, label
+        assert frame.closed, label
+
+
+@pytest.mark.asyncio
+async def test_relay_reconnect_settles_on_cancel_and_tracks_generation(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    host = _UpgradingHost()
+    harness.server.terminal_host_manager = host
+    hub = harness.server._proxy()
+    row = harness.native_row
+    opener = cast(Opener, harness.server.open_proxy_frame)
+
+    async def detach(ws: MockWebSocket, attachment: str) -> None:
+        await _send(
+            harness.server,
+            ws,
+            {"type": "terminal_detach", "terminal_id": row.id, "attachment_id": attachment},
+        )
+
+    async def close_socket(ws: MockWebSocket, attachment: str) -> None:
+        del attachment
+        await harness.server._cleanup_terminal_client(ws)
+
+    ends: tuple[tuple[str, Callable[[MockWebSocket, str], Awaitable[None]]], ...] = (
+        ("detach", detach),
+        ("ws_close", close_socket),
+    )
+    for point in ("window", "open", "handshake", "attach", "history"):
+        for end_label, end in ends:
+            label = f"{point}/{end_label}"
+            host.upgrade.close()
+            harness.server.open_proxy_frame = opener
+            harness.native_rt.snapshot_hook = None
+            ws = MockWebSocket()
+            attachment = await _attach(harness, ws, row, request_id=label)
+            parked = asyncio.Event()
+
+            async def parked_open(
+                locator: AttachLocator, point: str = point, parked: asyncio.Event = parked
+            ) -> FakeProxyFrame:
+                if point == "open":
+                    await _park(parked)
+                frame = await opener(locator)
+                if point in {"handshake", "attach"}:
+                    frame.hooks[point] = lambda: _park(parked)
+                return frame
+
+            harness.server.open_proxy_frame = parked_open
+            if point == "history":
+                harness.native_rt.snapshot_hook = partial(_park, parked)
+            waits = host.upgrade.waits
+            host.upgrade.open()
+            await harness.frame_list[-1].queue.put(None)
+            if point == "window":
+                await _until(lambda waits=waits: host.upgrade.waits > waits)
+            else:
+                host.settle()
+                await _until(parked.is_set)
+
+            await end(ws, attachment)
+            await _until(lambda: all(frame.closed for frame in harness.frame_list))
+            assert attachment not in hub.attachments, label
+            assert harness.server.lease_registry.get(attachment) is None, label
+
+    # A detach that lands inside the relay's own reopen leaves the reopened
+    # frame closed instead of installed on the finalized record.
+    host.upgrade.close()
+    harness.server.open_proxy_frame = opener
+    harness.native_rt.snapshot_hook = None
+    ws = MockWebSocket()
+    attachment = await _attach(harness, ws, row, request_id="in-relay")
+
+    async def detach_from_relay(locator: AttachLocator) -> FakeProxyFrame:
+        frame = await opener(locator)
+        frame.hooks["attach"] = lambda: hub.finalize_attachment(attachment, "detach")
+        return frame
+
+    harness.server.open_proxy_frame = detach_from_relay
+    host.upgrade.open()
+    await harness.frame_list[-1].queue.put(None)
+    host.settle()
+    await _until(lambda: ws.messages_of_type("terminal_attachment_finalized"))
+    await _until(lambda: all(frame.closed for frame in harness.frame_list))
+    assert attachment not in hub.attachments
+    assert ws.messages_of_type("terminal_attachment_finalized")[-1]["reason"] == "detach"
+
+    # Two upgrades in a row each reconnect and record the new generation; an
+    # EOF with no upgrade after them finalizes as it always did.
+    harness.server.open_proxy_frame = opener
+    ws = MockWebSocket()
+    attachment = await _attach(harness, ws, row, request_id="consecutive")
+    for generation in (host.host_generation + 1, host.host_generation + 2):
+        frame = hub.attachments[attachment].frame
+        host.upgrade.open()
+        await frame.queue.put(None)
+        host.settle()
+        await _until(lambda frame=frame: hub.attachments[attachment].frame is not frame)
+        assert hub.attachments[attachment].host_generation == generation
+        assert frame.closed
+    await hub.attachments[attachment].frame.queue.put(None)
+    await _until(lambda: ws.messages_of_type("terminal_attachment_finalized"))
+    assert ws.messages_of_type("terminal_attachment_finalized")[-1]["reason"] == ("proxy_frame_eof")
+    assert all(frame.closed for frame in harness.frame_list)
+
+
+@pytest.mark.asyncio
+async def test_relay_reconnect_redeclares_holder_theme_only(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    host = _UpgradingHost()
+    harness.server.terminal_host_manager = host
+    hub = harness.server._proxy()
+    row = harness.native_row
+    ws_a = MockWebSocket()
+    ws_b = MockWebSocket()
+    att_a = await _attach(harness, ws_a, row, request_id="a")
+    att_b = await _attach(harness, ws_b, row, request_id="b")
+    frame_a, frame_b = harness.frame_list
+    await _take(harness, ws_a, row, att_a)
+    await _until(lambda: ws_a.messages_of_type("terminal_control_result"))
+    await _send(harness.server, ws_a, _set_theme(row, att_a))
+    await _send(harness.server, ws_b, _set_theme(row, att_b, _OBSERVER_THEME))
+
+    host.upgrade.open()
+    await frame_a.queue.put(None)
+    await frame_b.queue.put(None)
+    host.settle()
+    await _until(lambda: len(ws_a.messages_of_type("terminal_attach_history")) == 2)
+    await _until(lambda: len(ws_b.messages_of_type("terminal_attach_history")) == 2)
+
+    new_a = hub.attachments[att_a].frame
+    new_b = hub.attachments[att_b].frame
+    assert new_a is not frame_a and new_b is not frame_b
+    assert new_a.themes == [(att_a, _THEME)]
+    assert new_b.themes == []
+    assert _theme_errors(ws_a) == []
+    assert ws_a.messages_of_type("terminal_attachment_finalized") == []
+    assert ws_b.messages_of_type("terminal_attachment_finalized") == []

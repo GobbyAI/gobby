@@ -204,6 +204,26 @@ When `allow_from` is empty, only first-owner binding through the exact private
 `/start` path is accepted. Unknown senders are denied before persistence both
 during and after enrollment.
 
+## Agent operator-DM binding
+
+Set `operator_project_id` in the Telegram channel configuration to the exact
+project UUID whose seats may send to its enrolled operator DM. Configure it
+through the authenticated operator API, or through `add_channel` as an agent
+whose installed definition grants `communications_admin: true`. Each sending
+seat also needs `operator_messaging: true` in its installed definition. Sending
+fails closed unless exactly one enabled Telegram channel binds that project.
+
+`operator_project_id` is independent of `responder.project_id`, which selects
+the project for chat turns. An authorized `set_channel_project` changes only
+the chat project; it preserves the seat operator-DM binding. MCP channel
+creation, removal and project switching require `communications_admin: true`;
+the bundled `comms-agent` definition grants it. Both grants default to false
+and are read from installed definitions, not caller-supplied session variables.
+
+A live agent can attach a conversation only when its project matches the
+channel's operator binding or selected chat project. Missing or malformed
+ownership and foreign projects are rejected before target persistence.
+
 ## Group authorization
 
 Group chat IDs and user IDs are numeric strings. Telegram supergroup chat IDs
@@ -550,4 +570,4 @@ platform limits and rate guidance remain governed by the
 [telegram-features]: https://core.telegram.org/bots/features
 [telegram-faq]: https://core.telegram.org/bots/faq
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-14_

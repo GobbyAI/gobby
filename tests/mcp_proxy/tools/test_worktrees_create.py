@@ -14,11 +14,59 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
     install_provider_hooks,
 )
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_project_context
-from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
+from gobby.worktrees.git import WorktreeGitManager
 
 STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("base", [None, "main"])
+async def test_omitted_base_uses_project_head_and_explicit_main_stays_main(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    tmp_path: Path,
+    base: str | None,
+) -> None:
+    mock_git_manager.get_current_branch = AsyncMock(return_value="caller")
+    mock_git_manager.get_local_commit = AsyncMock(
+        side_effect=lambda ref: "a" * 40 if ref == "HEAD^{commit}" else "b" * 40
+    )
+    mock_git_manager.run_git_command = AsyncMock(
+        return_value=subprocess.CompletedProcess([], 0, "", "")
+    )
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="fork",
+        project_id="project",
+        branch_name="child",
+        worktree_path=str(tmp_path / "child"),
+        base_branch="caller" if base is None else "main",
+        task_id=None,
+        agent_session_id=None,
+        status="active",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
+        merged_at=None,
+    )
+    arguments = {"branch_name": "child", "worktree_path": str(tmp_path / "child")}
+    if base is not None:
+        arguments["base_branch"] = base
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree", new=AsyncMock()
+        ),
+        patch("gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event", return_value={}),
+    ):
+        result = await registry.call("create_worktree", arguments)
+    assert result["success"], result
+    create = mock_git_manager.create_worktree.call_args.kwargs
+    assert create["base_branch"] == ("caller" if base is None else "main")
+    assert create["base_commit_sha"] == ("a" * 40 if base is None else "b" * 40)
+
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +85,9 @@ def mock_worktree_storage() -> MagicMock:
 def mock_git_manager() -> MagicMock:
     manager = MagicMock(spec=WorktreeGitManager)
     manager.repo_path = "/tmp/repo"
+    manager.get_current_branch.return_value = "main"
+    manager.get_local_commit.return_value = "base-sha"
+    manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
     return manager
 
 
@@ -118,7 +169,7 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
         branch_name="feature/test",
         base_branch="main",
         create_branch=True,
-        use_local=False,
+        base_commit_sha="base-sha",
     )
     mock_worktree_storage.create.assert_called_once()
     emit_event.assert_called_once_with(
@@ -134,29 +185,23 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
-async def test_create_worktree_rejects_remote_base_before_side_effects(
+async def test_create_worktree_missing_remote_ref_has_no_artifacts(
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
     mock_git_manager: MagicMock,
     base_branch: str,
 ) -> None:
-    with patch(
-        "gobby.mcp_proxy.tools.worktrees._create.resolve_project_context"
-    ) as resolve_project_context:
-        result = await registry.call(
-            "create_worktree",
-            {"branch_name": "feature/test", "base_branch": base_branch},
-        )
-
-    assert result == {
-        "success": False,
-        "error": f"Remote-style base branch is not allowed: {base_branch}",
-        "error_code": "remote_base_branch_not_allowed",
-    }
-    resolve_project_context.assert_not_called()
-    mock_git_manager.has_unpushed_commits.assert_not_called()
+    mock_git_manager.run_git_command.side_effect = [
+        subprocess.CompletedProcess([], 0, "", ""),
+        subprocess.CompletedProcess([], 128, "", "missing remote branch"),
+    ]
+    result = await registry.call(
+        "create_worktree", {"branch_name": "feature/test", "base_branch": base_branch}
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "base_ref_unavailable"
+    assert "missing remote branch" in result["error"]
     mock_git_manager.create_worktree.assert_not_called()
-    mock_worktree_storage.get_by_branch.assert_not_called()
     mock_worktree_storage.create.assert_not_called()
 
 
@@ -284,7 +329,6 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
                 "branch_name": "feature/actual-newline",
                 "base_branch": "main",
                 "worktree_path": str(worktree_path),
-                "use_local": True,
             },
         )
 
@@ -420,15 +464,20 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolution_error",
+    [ValueError("bad task ref"), TaskNotFoundError("Task #99999 not found")],
+    ids=["invalid-format", "unknown-seq-ref"],
+)
 async def test_invalid_task_cleanup_preserves_preexisting_branch(
-    registry, mock_worktree_storage, mock_git_manager
+    registry, mock_worktree_storage, mock_git_manager, resolution_error: Exception
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
 
     with patch(
         "gobby.mcp_proxy.tools.worktrees._context.RegistryContext.resolve_task_id",
-        side_effect=ValueError("bad task ref"),
+        side_effect=resolution_error,
     ):
         result = await registry.call(
             "create_worktree",
@@ -537,10 +586,10 @@ async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktr
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_use_local_explicit(
+async def test_create_worktree_explicit_local_branch(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
-    """Test create_worktree with explicit use_local=True passes through."""
+    """Explicit bare branches select their local commit."""
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -562,7 +611,6 @@ async def test_create_worktree_use_local_explicit(
             "branch_name": "feature/local",
             "base_branch": "develop",
             "worktree_path": "/tmp/wt/feature-local",
-            "use_local": True,
         },
     )
     assert result["success"] is True
@@ -571,16 +619,16 @@ async def test_create_worktree_use_local_explicit(
         branch_name="feature/local",
         base_branch="develop",
         create_branch=True,
-        use_local=True,
+        base_commit_sha="base-sha",
     )
     mock_git_manager.has_unpushed_commits.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_auto_detects_unpushed(
+async def test_create_worktree_omitted_base_keeps_unpushed_head(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
-    """Test create_worktree auto-sets use_local=True when base_branch has unpushed commits."""
+    """Omitted bases use HEAD without querying remote divergence."""
     mock_git_manager.has_unpushed_commits.return_value = (True, 3)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -605,23 +653,23 @@ async def test_create_worktree_auto_detects_unpushed(
         },
     )
     assert result["success"] is True
-    mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
+    mock_git_manager.has_unpushed_commits.assert_not_called()
     mock_git_manager.create_worktree.assert_called_once_with(
         worktree_path=_canonical("/tmp/wt/feature-auto-local"),
         branch_name="feature/auto-local",
         base_branch="main",
         create_branch=True,
-        use_local=True,
+        base_commit_sha="base-sha",
     )
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_no_unpushed_uses_remote(
+async def test_create_worktree_omitted_base_stays_local_when_pushed(
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
     mock_git_manager: MagicMock,
 ) -> None:
-    """Test create_worktree defaults to use_local=False when no unpushed commits."""
+    """Pushed caller heads still select the local commit."""
     mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -646,26 +694,24 @@ async def test_create_worktree_no_unpushed_uses_remote(
         },
     )
     assert result["success"] is True
-    mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
+    mock_git_manager.has_unpushed_commits.assert_not_called()
     mock_git_manager.create_worktree.assert_called_once_with(
         worktree_path=_canonical("/tmp/wt/feature-remote"),
         branch_name="feature/remote",
         base_branch="main",
         create_branch=True,
-        use_local=False,
+        base_commit_sha="base-sha",
     )
 
 
-async def test_create_worktree_fails_closed_when_base_divergence_is_unavailable(
+async def test_create_worktree_fails_closed_when_selected_commit_is_unavailable(
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
     mock_git_manager: MagicMock,
 ) -> None:
-    """An unavailable auto-detection probe creates no Git or storage artifacts."""
+    """An unavailable selected commit creates no Git or storage artifacts."""
     mock_worktree_storage.get_by_branch.return_value = None
-    mock_git_manager.has_unpushed_commits.side_effect = BranchDivergenceUnavailableError(
-        "main", "git rev-list timed out after 5 seconds"
-    )
+    mock_git_manager.get_local_commit.return_value = None
 
     result = await registry.call(
         "create_worktree",
@@ -676,8 +722,8 @@ async def test_create_worktree_fails_closed_when_base_divergence_is_unavailable(
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "branch_divergence_unavailable"
-    assert "main" in result["error"]
+    assert result["error_code"] == "base_ref_unavailable"
+    assert "HEAD" in result["error"]
     mock_git_manager.create_worktree.assert_not_called()
     mock_worktree_storage.create.assert_not_called()
 
@@ -755,7 +801,6 @@ async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file
                 "branch_name": "feature/one-file",
                 "base_branch": "main",
                 "worktree_path": str(worktree_path),
-                "use_local": True,
             },
         )
     assert created["success"] is True

@@ -804,10 +804,10 @@ async def mcp_proxy(
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
-        cli_token = cli_internal_request.set(
-            request.headers.get("X-Gobby-CLI-Internal") == "1"
-            and not is_mcp_wrapper_request(request)
-        )
+        cli_internal = request.headers.get(
+            "X-Gobby-CLI-Internal"
+        ) == "1" and not is_mcp_wrapper_request(request)
+        cli_token = cli_internal_request.set(cli_internal)
         try:
             enforce_workflow = await _enforce_workflow_for_request(request, server)
             timeout = _mcp_call_timeout(server)
@@ -824,6 +824,8 @@ async def mcp_proxy(
                     wrapper_originated=True,
                     intent=intent,
                     project_id=scope_project,
+                    # CLI commands render the whole payload; an offload envelope breaks them.
+                    offload=not cli_internal,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)

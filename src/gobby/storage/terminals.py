@@ -622,6 +622,17 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def native_epoch_machine_ids(self, host_epoch: str) -> set[str]:
+        """Machines whose native rows, in any state, are bound to a host epoch."""
+        rows = self.db.fetchall(
+            """
+            SELECT DISTINCT machine_id::text AS machine_id FROM terminals
+            WHERE backend = 'native' AND host_epoch = %s
+            """,
+            (host_epoch,),
+        )
+        return {_as_str(row["machine_id"]) for row in rows}
+
     def get_live_by_session_name(self, session_name: str) -> Terminal | None:
         """Newest live or pending terminal with this session or spawn name."""
         row = self.db.fetchone(

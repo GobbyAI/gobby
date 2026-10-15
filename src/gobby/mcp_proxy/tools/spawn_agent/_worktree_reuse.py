@@ -16,6 +16,7 @@ from gobby.agents.worktree_reuse import (
     sync_reused_worktree_to_base,
 )
 from gobby.storage.tasks import TaskArtifactManager
+from gobby.worktrees.base_branch import select_worktree_base
 
 
 async def prepare_reused_worktree(
@@ -27,11 +28,14 @@ async def prepare_reused_worktree(
     main_repo_path: str,
 ) -> tuple[IsolationContext, Any]:
     """Prepare an explicit reused worktree for a new run, synced onto its base."""
+    base_branch, base_commit_sha = await select_worktree_base(git_manager, spawn_config.base_branch)
     sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
         git_manager=git_manager,
         worktree_path=existing_worktree.worktree_path,
-        base_branch=spawn_config.base_branch,
+        base_branch=base_branch,
+        base_commit_sha=base_commit_sha,
     )
+    await asyncio.to_thread(worktree_storage.update, existing_worktree.id, base_branch=base_branch)
     await repair_isolation_environment(
         main_repo_path=main_repo_path,
         isolated_path=existing_worktree.worktree_path,
@@ -39,7 +43,11 @@ async def prepare_reused_worktree(
         phase_timings_ms=spawn_config.phase_timings_ms,
     )
 
-    extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
+    extra = {
+        "main_repo_path": main_repo_path,
+        "reused_worktree": True,
+        "base_branch": base_branch,
+    }
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha
         if spawn_config.task_id is not None:
@@ -87,7 +95,11 @@ async def prepare_resumed_worktree(
             branch_name=existing_worktree.branch_name,
             worktree_id=existing_worktree.id,
             isolation_type="worktree",
-            extra={"main_repo_path": main_repo_path, "reused_worktree": True},
+            extra={
+                "main_repo_path": main_repo_path,
+                "reused_worktree": True,
+                "base_branch": existing_worktree.base_branch,
+            },
         ),
         get_isolation_handler("none"),
     )

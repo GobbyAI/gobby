@@ -22,9 +22,11 @@ from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_python_keyword_stub,
     _has_python_module_stub,
+    _has_python_test_tightening,
     _has_python_unchanged_api,
     _original_test_module,
     _original_test_node,
+    _retains_python_red_source,
 )
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -192,6 +194,16 @@ def evaluate_tdd_evidence(
                 evidence,
                 test_edit.order,
                 production_edit,
+                require_not_implemented=not test.path.endswith(".rs")
+                and any(
+                    edit.order < test_edit.order
+                    and is_implementation_edit_path(
+                        edit.path,
+                        named_test_paths=named_test_paths,
+                        test_infrastructure_paths=infrastructure_paths,
+                    )
+                    for edit in evidence.edits
+                ),
                 parse_cache=parse_cache,
                 binding_cache=binding_cache,
                 red_cache=red_cache,
@@ -344,6 +356,7 @@ def _red_run_proof(
             _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
+            or _test_tightening_proof(test, evidence, run, parse_cache)
         ):
             return True, None
         else:
@@ -351,6 +364,35 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _test_tightening_proof(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    red: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Verify transcript and source continuity, not semantic non-interference.
+
+    Accepted residuals include pre-existing executable mutation in an existing
+    test node, an unchanged module helper, or a pre-GREEN fixture.
+    """
+    prior_green = max(
+        (
+            candidate
+            for candidate in evidence.validation_runs
+            if candidate.session_id == red.session_id
+            and candidate.outcome == "success"
+            and candidate.order < red.order
+            and candidate.completed_at is not None
+            and candidate.completed_at < red.started_at
+            and _is_test_execution_run(candidate)
+            and _green_run_covers_test(candidate, test)
+        ),
+        key=lambda candidate: candidate.order,
+        default=None,
+    )
+    return _has_python_test_tightening(test, evidence, red, prior_green, parse_cache)
 
 
 def _has_pytest_fail_placeholder(
@@ -535,6 +577,8 @@ def _has_named_red_failure(
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
+    if _has_failed_node_summary(output, test):
+        return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
@@ -548,6 +592,10 @@ def _has_named_red_failure(
     )
     lines = output.splitlines()
     for index, line in enumerate(lines):
+        # Summaries carry their own path/node identity. Never borrow an assertion
+        # from a sibling summary through the generic symbol/section fallback.
+        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
+            continue
         if _PYTEST_LOCATION_RE.match(line):
             continue
         if not any(pattern.search(line) for pattern in symbol_patterns):
@@ -558,6 +606,45 @@ def _has_named_red_failure(
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True, ""
     return False, reason
+
+
+def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
+    """Credit pytest summaries or legacy sections carrying node-bound assertion detail."""
+    if not test.path.endswith(".py"):
+        return False
+    expected = test.symbol.replace("::", ".")
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line)
+        if match is None or not _path_matches_artifact(match[1], test):
+            continue
+        reported = match[2].replace("::", ".")
+        if "[" not in expected:
+            reported = reported.split("[", maxsplit=1)[0]
+        if reported != expected:
+            continue
+        detail = match[3]
+        if detail is None:
+            # Older provider output uses FAILED as a section header before E assert.
+            # A complete pytest report instead belongs to the ordered body parser.
+            if _has_ordered_pytest_failure(lines, test) is not None:
+                continue
+            section = _failure_section(lines, index)
+            if (
+                index + 1 < len(lines)
+                and re.match(r"\s*E\s+(?:assert\b|AssertionError\b)", lines[index + 1])
+                and not any(_PYTEST_LOCATION_RE.match(item) for item in section.splitlines())
+                and is_assertion_failure(section)
+            ):
+                return True
+            continue
+        # Identity alone cannot recover discarded failure detail. In particular,
+        # an assertion elsewhere in this run belongs to its own node only.
+        if re.match(
+            r"(?:AssertionError\b|assert\s|Failed:\s+DID NOT RAISE\b)", detail
+        ) and is_assertion_failure(detail):
+            return True
+    return False
 
 
 def _has_pytest_body_failure(
@@ -796,6 +883,7 @@ def _find_green_run(
     *,
     after_order: int,
 ) -> TranscriptValidationRun | None:
+    retain_source = _test_tightening_proof(test, evidence, red)
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "success"
@@ -803,9 +891,54 @@ def _find_green_run(
             or run.order <= max(red.order, after_order)
         ):
             continue
-        if validation_run_covers_test(run.core_command, run.output, test):
+        if _green_run_covers_test(run, test) and (
+            not retain_source or _retains_python_red_source(test, evidence, red, run)
+        ):
             return run
     return None
+
+
+def _green_run_covers_test(run: TranscriptValidationRun, test: AcceptanceTest) -> bool:
+    if not validation_run_covers_test(run.core_command, run.output, test):
+        return False
+    if not test.path.endswith(".py"):
+        return True
+    try:
+        tokens = shlex.split(run.core_command or "")
+    except ValueError:
+        return False
+    pytest_index = next(
+        (
+            index
+            for index, token in enumerate(tokens)
+            if PurePosixPath(token).name in {"pytest", "py.test"}
+        ),
+        None,
+    )
+    if pytest_index is not None:
+        tokens = tokens[pytest_index + 1 :]
+    for index, token in enumerate(tokens):
+        if token.startswith("-m"):
+            return validation_run_names_test("", run.output, test)
+        if not token.startswith("-k"):
+            continue
+        expression = (
+            tokens[index + 1]
+            if token == "-k" and index + 1 < len(tokens)
+            else token[2:].removeprefix("=")
+        )
+        # A simple pytest keyword matches the node's path/class/function names.
+        # Complex expressions need an explicit node receipt in the output.
+        if not re.fullmatch(r"\w+", expression) or expression.lower() not in test.reference.lower():
+            return validation_run_names_test("", run.output, test)
+    artifact_nodes, same_file_nodes = _selected_pytest_nodes(run.core_command or "", test)
+    if not same_file_nodes or artifact_nodes:
+        return True
+    if any(_path_matches_artifact(token, test) for token in tokens if "::" not in token):
+        return True
+    # Selecting a class covers its methods; selecting a sibling method does not.
+    name = test.symbol.replace("::", ".")
+    return any(name.startswith(f"{selected}.") for selected in same_file_nodes)
 
 
 __all__ = ["TddEvidenceResult", "evaluate_tdd_evidence"]

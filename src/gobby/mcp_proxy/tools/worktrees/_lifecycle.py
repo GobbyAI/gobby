@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gobby.agents.frozen_workspace import frozen_workspace_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 from gobby.storage.worktrees import WorktreeStatus
+from gobby.utils.session_context import get_current_session_id
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
@@ -57,6 +59,13 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolved_session_id = ctx.resolve_session_id(session_id)
         except ValueError as e:
             return {"success": False, "error": str(e)}
+
+        if resolved_session_id == get_current_session_id():
+            refusal = frozen_workspace_refusal(
+                ctx.worktree_storage.db, "claim_worktree", claimed_worktree_id=worktree_id
+            )
+            if refusal is not None:
+                return refusal
 
         updated = ctx.worktree_storage.claim_if_available(
             worktree_id,

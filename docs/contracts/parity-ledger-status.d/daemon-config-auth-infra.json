@@ -1,1 +1,606 @@
-{}
+{
+  "CLI gobby auth": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth.py::auth (line 13)`; blocked on Rust CLI dispatcher for `gobby auth`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby auth credentials": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth.py::credentials (line 22)`; blocked on Rust CLI dispatcher for `gobby auth credentials`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby auth key": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth_login.py::key (line 570)`; blocked on Rust CLI dispatcher for `gobby auth key`. Owner: #21568 Remaining route families. #21555 API keys/node registration delivered the key/login contract; this registered CLI callback remains Python."
+  },
+  "CLI gobby auth key list": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth_login.py::key_list (line 608)`; blocked on Rust CLI dispatcher for `gobby auth key list`. Owner: #21568 Remaining route families. #21555 API keys/node registration delivered the key/login contract; this registered CLI callback remains Python."
+  },
+  "CLI gobby auth key revoke": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth_login.py::key_revoke (line 629)`; blocked on Rust CLI dispatcher for `gobby auth key revoke`. Owner: #21568 Remaining route families. #21555 API keys/node registration delivered the key/login contract; this registered CLI callback remains Python."
+  },
+  "CLI gobby auth login": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/auth_login.py::login (line 348)`; blocked on Rust CLI dispatcher for `gobby auth login`. Owner: #21568 Remaining route families. #21555 API keys/node registration delivered the key/login contract; this registered CLI callback remains Python."
+  },
+  "CLI gobby cutover": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/cutover.py::cutover (line 288)`; blocked on Rust CLI dispatcher for `gobby cutover`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby datastores": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/datastores.py::datastores (line 406)`; blocked on Rust CLI dispatcher for `gobby datastores`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby datastores expose": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/datastores.py::expose (line 411)`; blocked on Rust CLI dispatcher for `gobby datastores expose`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby datastores rotate-password": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/datastores.py::rotate_password (line 650)`; blocked on Rust CLI dispatcher for `gobby datastores rotate-password`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby mcp-proxy": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::mcp_proxy (line 130)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy add-server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::add_server (line 334)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy add-server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy auth": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_oauth.py::auth_server (line 26)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy auth`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy call-tool": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::call_tool (line 252)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy call-tool`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy get-schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::get_schema (line 220)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy get-schema`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy import-server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::import_server (line 644)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy import-server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy list-servers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::list_servers (line 136)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy list-servers`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy list-templates": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy_templates.py::list_templates (line 16)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy list-templates`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy list-tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::list_tools (line 174)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy list-tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy oauth-shape": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_oauth.py::oauth_shape (line 82)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy oauth-shape`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy recommend-tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::recommend_tools (line 508)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy recommend-tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy refresh": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::refresh_tools (line 756)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy refresh`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy remove-server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::remove_server (line 472)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy remove-server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy search-tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::search_tools (line 578)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy search-tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy show-template": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy_templates.py::show_template (line 44)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy show-template`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby mcp-proxy status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/mcp_proxy.py::proxy_status (line 832)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy status`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "CLI gobby postgres": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::postgres_cli (line 30)`; blocked on Rust CLI dispatcher for `gobby postgres`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres backup": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::backup_cmd (line 127)`; blocked on Rust CLI dispatcher for `gobby postgres backup`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres force-revoke-run": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::force_revoke_run_cmd (line 106)`; blocked on Rust CLI dispatcher for `gobby postgres force-revoke-run`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres install": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::install_cmd (line 35)`; blocked on Rust CLI dispatcher for `gobby postgres install`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres repair-code-index": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::repair_code_index_cmd (line 59)`; blocked on Rust CLI dispatcher for `gobby postgres repair-code-index`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres restore": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::restore_cmd (line 144)`; blocked on Rust CLI dispatcher for `gobby postgres restore`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres scoped-roles": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::scoped_roles_cmd (line 83)`; blocked on Rust CLI dispatcher for `gobby postgres scoped-roles`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby postgres status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/postgres.py::status_cmd (line 42)`; blocked on Rust CLI dispatcher for `gobby postgres status`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby qdrant": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/qdrant.py::qdrant (line 16)`; blocked on Rust CLI dispatcher for `gobby qdrant`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby qdrant install": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/qdrant.py::qdrant_install (line 21)`; blocked on Rust CLI dispatcher for `gobby qdrant install`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby qdrant status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/qdrant.py::qdrant_status (line 37)`; blocked on Rust CLI dispatcher for `gobby qdrant status`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/schema.py::schema (line 10)`; blocked on Rust CLI dispatcher for `gobby schema`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby schema apply": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/schema.py::apply_schema (line 15)`; blocked on Rust CLI dispatcher for `gobby schema apply`. Owner: #21568 Remaining route families. Native schema application exists in `crates/gcore/src/schema/runner.rs`; the registered CLI dispatcher remains Python."
+  },
+  "CLI gobby secrets": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::secrets (line 82)`; blocked on Rust CLI dispatcher for `gobby secrets`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby secrets delete": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::delete_secret (line 180)`; blocked on Rust CLI dispatcher for `gobby secrets delete`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby secrets get": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::get_secret (line 225)`; blocked on Rust CLI dispatcher for `gobby secrets get`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby secrets list": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::list_secrets (line 150)`; blocked on Rust CLI dispatcher for `gobby secrets list`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby secrets rekey": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::rekey_secrets (line 247)`; blocked on Rust CLI dispatcher for `gobby secrets rekey`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby secrets set": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/secrets.py::set_secret (line 87)`; blocked on Rust CLI dispatcher for `gobby secrets set`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::service (line 21)`; blocked on Rust CLI dispatcher for `gobby service`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service disable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::disable (line 146)`; blocked on Rust CLI dispatcher for `gobby service disable`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service enable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::enable (line 134)`; blocked on Rust CLI dispatcher for `gobby service enable`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service install": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::install (line 26)`; blocked on Rust CLI dispatcher for `gobby service install`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::status (line 91)`; blocked on Rust CLI dispatcher for `gobby service status`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby service uninstall": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/service.py::uninstall (line 76)`; blocked on Rust CLI dispatcher for `gobby service uninstall`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby tokens": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/tokens.py::tokens (line 25)`; blocked on Rust CLI dispatcher for `gobby tokens`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby tokens audit": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/tokens.py::audit_tokens (line 123)`; blocked on Rust CLI dispatcher for `gobby tokens audit`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby tokens stats": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/tokens.py::token_stats (line 230)`; blocked on Rust CLI dispatcher for `gobby tokens stats`. Owner: #21568 Remaining route families."
+  },
+  "HTTP * /mcp": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/app_factory.py::_register_mcp_http_route (ASGI MCP transport)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP * /mcp`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP DELETE /api/admin/test/unregister-agent/{run_id}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_testing.py::register_testing_routes.<locals>.unregister_test_agent (line 224)`; blocked on native Rust handler for `HTTP DELETE /api/admin/test/unregister-agent/{run_id}`. Owner: #21568 Remaining route families."
+  },
+  "HTTP DELETE /api/auth/keys/{key_id}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.revoke_key (line 179)`; blocked on native Rust handler for `HTTP DELETE /api/auth/keys/{key_id}`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python."
+  },
+  "HTTP DELETE /api/config/prompts/{path:path}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_prompts.py::register_prompt_routes.<locals>.delete_prompt_override (line 187)`; blocked on Rust config/runtime family handler for `HTTP DELETE /api/config/prompts/{path:path}` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP DELETE /api/config/secrets/{name}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_secrets.py::register_secret_routes.<locals>.delete_secret (line 144)`; blocked on Rust config/runtime family handler for `HTTP DELETE /api/config/secrets/{name}` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP DELETE /api/mcp/servers/{name}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::remove_mcp_server (line 422)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP DELETE /api/mcp/servers/{name}`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/admin/config": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_config.py::register_config_routes.<locals>.get_config (line 18)`; blocked on native Rust handler for `HTTP GET /api/admin/config`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/cron/protected-runs": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_lifecycle.py::register_lifecycle_routes.<locals>.protected_cron_runs (line 78)`; blocked on Rust protected-run restart-safety queries for `HTTP GET /api/admin/cron/protected-runs`. Owner: #21582 Cron and scheduler route family under #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/metrics": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_health.py::register_health_routes.<locals>.get_metrics (line 779)`; blocked on native Rust handler for `HTTP GET /api/admin/metrics`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/startup-progress": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_health.py::register_health_routes.<locals>.startup_progress (line 403)`; blocked on native Rust handler for `HTTP GET /api/admin/startup-progress`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/stats": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_stats.py::register_stats_routes.<locals>.get_stats (line 65)`; blocked on native Rust handler for `HTTP GET /api/admin/stats`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_health.py::register_health_routes.<locals>.status_check (line 421)`; blocked on native Rust handler for `HTTP GET /api/admin/status`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/tokens/timeseries": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_token_timeseries.py::register_token_timeseries_routes.<locals>.get_token_timeseries (line 26)`; blocked on native Rust handler for `HTTP GET /api/admin/tokens/timeseries`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/usage": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_usage.py::register_usage_routes.<locals>.get_usage (line 19)`; blocked on native Rust handler for `HTTP GET /api/admin/usage`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/auth/keys": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.list_keys (line 173)`; blocked on native Rust handler for `HTTP GET /api/auth/keys`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python."
+  },
+  "HTTP GET /api/auth/status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.auth_status (line 190)`; blocked on native Rust handler for `HTTP GET /api/auth/status`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/config/effective": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_effective.py::register_effective_routes.<locals>.get_effective_config (line 82)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/effective` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/prompts": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_prompts.py::register_prompt_routes.<locals>.list_prompts (line 34)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/prompts` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/prompts/{path:path}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_prompts.py::register_prompt_routes.<locals>.get_prompt_detail (line 98)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/prompts/{path:path}` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_values.py::register_value_routes.<locals>.get_config_schema (line 20)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/schema` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/secrets": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_secrets.py::register_secret_routes.<locals>.list_secrets (line 108)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/secrets` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/template": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_templates.py::register_template_routes.<locals>.get_config_template (line 20)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/template` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/tool-approvals/global": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_tool_approvals.py::register_tool_approval_routes.<locals>.get_global_tool_approval_rules (line 27)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/tool-approvals/global` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/ui-settings": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_ui_settings.py::register_ui_setting_routes.<locals>.get_ui_settings (line 37)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/ui-settings` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/config/values": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_values.py::register_value_routes.<locals>.get_config_values (line 24)`; blocked on Rust config/runtime family handler for `HTTP GET /api/config/values` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP GET /api/health": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_health.py::create_health_router.<locals>.health_check (line 376)`; blocked on backend-independent Rust health response handler. Owner: #21568 Remaining route families. Rust `crates/gdaemon/src/front_door/health.rs::native_health` forwards the Python response via `proxy::forward`; HealthFamily registration alone does not absorb its body."
+  },
+  "HTTP GET /api/mcp/bridge/tool-timeouts": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/bridge.py::get_bridge_tool_timeouts (line 41)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/bridge/tool-timeouts`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/mcp/servers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::list_mcp_servers (line 87)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/servers`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/mcp/status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/registry.py::get_mcp_status (line 99)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/status`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/mcp/templates": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/templates.py::list_mcp_templates (line 20)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/templates`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/mcp/tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/discovery.py::list_all_mcp_tools (line 213)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/mcp/{server_name}/tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/execution.py::list_mcp_tools (line 252)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/{server_name}/tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP GET /api/providers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/providers.py::create_providers_router.<locals>.list_providers (line 325)`; blocked on native Rust handler for `HTTP GET /api/providers`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/providers/models": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/providers.py::create_providers_router.<locals>.list_provider_models (line 345)`; blocked on native Rust handler for `HTTP GET /api/providers/models`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/providers/{provider}/usage": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/providers.py::create_providers_router.<locals>.get_provider_usage (line 404)`; blocked on native Rust handler for `HTTP GET /api/providers/{provider}/usage`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/runtime/config": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/runtime_config.py::create_runtime_config_router.<locals>.get_runtime_config (line 22)`; blocked on Rust config/runtime family handler for `HTTP GET /api/runtime/config` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP PATCH /api/config/values": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_values.py::register_value_routes.<locals>.patch_config_values (line 32)`; blocked on Rust config/runtime family handler for `HTTP PATCH /api/config/values` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP PATCH /api/mcp/servers/{name}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::patch_mcp_server (line 316)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP PATCH /api/mcp/servers/{name}`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/admin/lease/handoff": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_lease.py::register_lease_routes.<locals>.handoff (line 35)`; blocked on native Rust handler for `HTTP POST /api/admin/lease/handoff`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/restart": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_lifecycle.py::register_lifecycle_routes.<locals>.restart (line 173)`; blocked on native Rust handler for `HTTP POST /api/admin/restart`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/shutdown": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_lifecycle.py::register_lifecycle_routes.<locals>.shutdown (line 90)`; blocked on native Rust handler for `HTTP POST /api/admin/shutdown`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/test/register-agent": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_testing.py::register_testing_routes.<locals>.register_test_agent (line 134)`; blocked on native Rust handler for `HTTP POST /api/admin/test/register-agent`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/test/register-project": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_testing.py::register_testing_routes.<locals>.register_test_project (line 37)`; blocked on native Rust handler for `HTTP POST /api/admin/test/register-project`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/test/set-session-usage": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_testing.py::register_testing_routes.<locals>.set_test_session_usage (line 287)`; blocked on native Rust handler for `HTTP POST /api/admin/test/set-session-usage`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/admin/workflows/reload": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_lifecycle.py::register_lifecycle_routes.<locals>.reload_workflows (line 273)`; blocked on Rust workflow/variable handler for `HTTP POST /api/admin/workflows/reload`. Owner: #21567 Workflows, rules, pipelines, build, and validation."
+  },
+  "HTTP POST /api/auth/keys": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.mint_key (line 155)`; blocked on native Rust handler for `HTTP POST /api/auth/keys`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python."
+  },
+  "HTTP POST /api/auth/keys/bootstrap": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.bootstrap_key (line 120)`; blocked on native Rust handler for `HTTP POST /api/auth/keys/bootstrap`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python."
+  },
+  "HTTP POST /api/auth/login": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.login (line 134)`; blocked on native Rust handler for `HTTP POST /api/auth/login`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/auth/logout": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.logout (line 178)`; blocked on native Rust handler for `HTTP POST /api/auth/logout`. Owner: #21568 Remaining route families."
+  },
+  "HTTP POST /api/config/export": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_import_export.py::register_import_export_routes.<locals>.export_config (line 23)`; blocked on Rust config/runtime family handler for `HTTP POST /api/config/export` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP POST /api/config/import": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_import_export.py::register_import_export_routes.<locals>.import_config (line 34)`; blocked on Rust config/runtime family handler for `HTTP POST /api/config/import` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP POST /api/config/secrets": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_secrets.py::register_secret_routes.<locals>.save_secret (line 124)`; blocked on Rust config/runtime family handler for `HTTP POST /api/config/secrets` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP POST /api/config/validation-detection/preview": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_validation_detection.py::register_validation_detection_routes.<locals>.preview_validation_detection (line 34)`; blocked on Rust config/runtime family handler for `HTTP POST /api/config/validation-detection/preview` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP POST /api/mcp/bridge/ready": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/bridge.py::report_bridge_ready (line 16)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/bridge/ready`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/refresh": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/registry.py::refresh_mcp_tools (line 160)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/refresh`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/servers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::add_mcp_server (line 175)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/servers`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/servers/import": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::import_mcp_server (line 329)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/servers/import`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/tools/call": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/execution.py::call_mcp_tool (line 608)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/tools/call`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/tools/embed": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/registry.py::embed_mcp_tools (line 33)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/tools/embed`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/tools/recommend": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/discovery.py::recommend_mcp_tools (line 330)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/tools/recommend`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/tools/schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/execution.py::get_tool_schema (line 425)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/tools/schema`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/tools/search": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/discovery.py::search_mcp_tools (line 420)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/tools/search`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/mcp/{server_name}/tools/{tool_name}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/execution.py::mcp_proxy (line 766)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/{server_name}/tools/{tool_name}`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "HTTP POST /api/runtime/handshake": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/runtime_handshake.py::create_runtime_handshake_router.<locals>.handshake (line 147)`; blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/handshake` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP POST /api/runtime/handshake/challenge": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/runtime_handshake.py::create_runtime_handshake_router.<locals>.challenge (line 113)`; blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/handshake/challenge` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing. Rust `crates/gdaemon/src/front_door/challenge.rs::answer` answers interactive proof natively but forwards managed challenges to this Python endpoint."
+  },
+  "HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_generation_endpoints.py::register_generation_endpoint_routes.<locals>.activate_generation_endpoint (line 43)`; blocked on Rust config/runtime family handler for `HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP PUT /api/config/prompts/{path:path}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_prompts.py::register_prompt_routes.<locals>.save_prompt_override (line 138)`; blocked on Rust config/runtime family handler for `HTTP PUT /api/config/prompts/{path:path}` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP PUT /api/config/template": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/configuration_templates.py::register_template_routes.<locals>.save_config_template (line 31)`; blocked on Rust config/runtime family handler for `HTTP PUT /api/config/template` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "HTTP PUT /api/mcp/servers/{name}": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/mcp/endpoints/server.py::update_mcp_server (line 249)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP PUT /api/mcp/servers/{name}`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:add_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.add_mcp_server (line 409)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:add_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:call_tool": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.call_tool (line 212)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:call_tool`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:get_tool_schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.get_tool_schema (line 390)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:get_tool_schema`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:get_variable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.get_variable (line 579)`; blocked on Rust workflow/variable handler for `MCP HTTP gobby:get_variable`. Owner: #21567 Workflows, rules, pipelines, build, and validation."
+  },
+  "MCP HTTP gobby:import_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.import_mcp_server (line 447)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:import_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:list_mcp_servers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.list_mcp_servers (line 165)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:list_mcp_servers`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:list_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.list_tools (line 381)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:list_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:read_mcp_resource": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.read_mcp_resource (line 401)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:read_mcp_resource`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:recommend_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.recommend_tools (line 459)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:recommend_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:remove_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.remove_mcp_server (line 441)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:remove_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:search_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.search_tools (line 492)`; blocked on Rust MCP transport/discovery/execution handler for `MCP HTTP gobby:search_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP HTTP gobby:set_variable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.set_variable (line 546)`; blocked on Rust workflow/variable handler for `MCP HTTP gobby:set_variable`. Owner: #21567 Workflows, rules, pipelines, build, and validation."
+  },
+  "MCP HTTP gobby:status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.status (line 151)`; blocked on Rust daemon status MCP tool handler. Owner: #21568 Remaining route families."
+  },
+  "MCP gobby-config:get_config_schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/config.py::create_config_registry.<locals>.get_config_schema (line 36)`; blocked on Rust config/runtime family handler for `MCP gobby-config:get_config_schema` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "MCP gobby-config:get_config_values": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/config.py::create_config_registry.<locals>.get_config_values (line 44)`; blocked on Rust config/runtime family handler for `MCP gobby-config:get_config_values` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "MCP gobby-config:patch_config_values": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/config.py::create_config_registry.<locals>.patch_config_values (line 52)`; blocked on Rust config/runtime family handler for `MCP gobby-config:patch_config_values` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
+  "MCP stdio gobby:add_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.add_mcp_server`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:add_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:call_tool": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.call_tool`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:call_tool`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:get_tool_schema": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.get_tool_schema`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:get_tool_schema`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:get_variable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.get_variable`; blocked on Rust workflow/variable handler for `MCP stdio gobby:get_variable`. Owner: #21567 Workflows, rules, pipelines, build, and validation."
+  },
+  "MCP stdio gobby:import_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.import_mcp_server`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:import_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:init_project": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.init_project`; blocked on Rust project initialization tool dispatcher. Owner: #21568 Remaining route families."
+  },
+  "MCP stdio gobby:list_mcp_servers": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.list_mcp_servers`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:list_mcp_servers`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:list_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.list_tools`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:list_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:recommend_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.recommend_tools`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:recommend_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:remove_mcp_server": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.remove_mcp_server`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:remove_mcp_server`. Owner: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:search_tools": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.search_tools`; blocked on Rust MCP transport/discovery/execution handler for `MCP stdio gobby:search_tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer."
+  },
+  "MCP stdio gobby:set_variable": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools.set_variable`; blocked on Rust workflow/variable handler for `MCP stdio gobby:set_variable`. Owner: #21567 Workflows, rules, pipelines, build, and validation."
+  }
+}

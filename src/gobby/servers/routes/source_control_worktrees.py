@@ -32,7 +32,7 @@ class CreateClientWorktreeRequest(BaseModel):
 
     project_id: str
     branch_name: str
-    base_branch: str = "main"
+    base_branch: str | None = None
     workspace_role: Literal["client"]
 
 
@@ -64,7 +64,8 @@ def create_source_control_worktrees_router(
     async def create_client_worktree(body: CreateClientWorktreeRequest) -> dict[str, Any]:
         """Create a client-owned worktree with no task binding."""
         validate_git_ref(body.branch_name, "branch_name")
-        validate_git_ref(body.base_branch, "base_branch")
+        if body.base_branch is not None:
+            validate_git_ref(body.base_branch, "base_branch")
         worktree_storage = server.services.worktree_storage
         if worktree_storage is None:
             raise HTTPException(503, "Worktree storage not available")

@@ -299,6 +299,44 @@ class TestRegisterSessionEdgeCases:
 # ============================================================================
 
 
+@pytest.mark.parametrize("status", ["active", "paused", "expired"])
+@pytest.mark.parametrize(
+    ("summary", "handoff"),
+    [("Final report", "Continue work"), (" \n", "Continue work"), (None, None)],
+)
+def test_detail_and_catalog_preserve_summary_selection_inputs(
+    client: TestClient,
+    session_storage: SessionManager,
+    test_project: dict[str, Any],
+    status: str,
+    summary: str | None,
+    handoff: str | None,
+) -> None:
+    """Both UI sources retain status and the independent Markdown fields."""
+    session = session_storage.register(
+        external_id="summary-selection",
+        machine_id="21000000-0000-4000-8000-000000000003",
+        source="codex",
+        project_id=test_project["id"],
+    )
+    session_storage.db.execute(
+        "UPDATE sessions SET status = %s, summary_markdown = %s, "
+        "handoff_markdown = %s WHERE id = %s",
+        (status, summary, handoff, session.id),
+    )
+
+    detail = client.get(f"/api/sessions/{session.id}")
+    catalog = client.get("/api/sessions", params={"project_id": test_project["id"]})
+
+    assert detail.status_code == catalog.status_code == 200
+    assert catalog.json()["count"] == 1
+    for payload in (detail.json()["session"], catalog.json()["sessions"][0]):
+        assert payload["id"] == session.id
+        assert payload["status"] == status
+        assert payload["summary_markdown"] == summary
+        assert payload["handoff_markdown"] == handoff
+
+
 class TestListSessionsEdgeCases:
     """Tests for list_sessions edge cases and error paths."""
 

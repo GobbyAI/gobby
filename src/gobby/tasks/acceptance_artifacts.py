@@ -11,6 +11,13 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from gobby.tasks.acceptance_rust_modules import (
+    RustModuleCache,
+    resolve_rust_module,
+    resolve_rust_target,
+    rust_evidence_names_test,
+    rust_inline_test_module,
+)
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _ARTIFACT_REF_RE = re.compile(
@@ -89,6 +96,8 @@ class AcceptanceTest:
     body: str
     # Same-file functions the test reaches through bare calls (braced languages).
     helpers: tuple[str, ...] = ()
+    rust_module: tuple[str, ...] | None = None
+    rust_target: tuple[str, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +256,8 @@ async def resolve_acceptance_tests_async(
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
     """Resolve every named acceptance test from one authoritative close candidate."""
     tests: list[AcceptanceTest] = []
+    rust_module_cache: RustModuleCache = {}
+    source_cache: dict[str, str] = {}
     findings = list(malformed_test_reference_findings(criteria))
     candidate = _close_candidate(commit_shas, candidate_commit_sha)
     for reference in extract_artifact_references(criteria, "test"):
@@ -265,11 +276,27 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
-            body, helpers = await _resolve_test_body(path, symbol, repo_path, candidate)
+            body, helpers = await _resolve_test_body(
+                path, symbol, repo_path, candidate, source_cache=source_cache
+            )
+            rust_module = (
+                await resolve_rust_module(path, candidate, repo_path, cache=rust_module_cache)
+                if _is_rust(path)
+                else None
+            )
+            if rust_module is not None:
+                rust_module += rust_inline_test_module(source_cache.get(path, ""), symbol)
+            rust_target = (
+                await resolve_rust_target(path, candidate, repo_path, cache=source_cache)
+                if rust_module is not None
+                else None
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
-        tests.append(AcceptanceTest(reference, path, symbol, body, helpers))
+        tests.append(
+            AcceptanceTest(reference, path, symbol, body, helpers, rust_module, rust_target)
+        )
     return tuple(tests), tuple(findings)
 
 
@@ -347,31 +374,8 @@ def validation_run_covers_test(
 
 def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
     """Return whether one evidence line names a Rust test under its source module."""
-    if Path(test.path).suffix != ".rs":
-        return False
-
-    path_parts = list(PurePosixPath(test.path).with_suffix("").parts)
-    if len(path_parts) >= 3 and path_parts[0] == "crates":
-        path_parts = path_parts[2:]
-
-    is_integration_test = bool(path_parts and path_parts[0] == "tests")
-    if path_parts and path_parts[0] in {"src", "tests"}:
-        path_parts = path_parts[1:]
-    if path_parts and path_parts[-1] in {"lib", "main", "mod"}:
-        path_parts.pop()
-    if not path_parts:
-        return False
-
-    module_prefix = "::".join(re.escape(part) for part in path_parts)
-    symbol = re.escape(test.symbol)
-    module_test = re.compile(rf"\b{module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b")
-    integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(test.path).stem)}\b")
-    symbol_word = re.compile(rf"\b{symbol}\b")
-
-    return any(
-        module_test.search(line)
-        or (is_integration_test and integration_stem.search(line) and symbol_word.search(line))
-        for line in evidence.splitlines()
+    return rust_evidence_names_test(
+        evidence, test.path, test.symbol, test.rust_module, test.rust_target
     )
 
 
@@ -473,9 +477,18 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
 
 
 async def _resolve_test_body(
-    path: str, symbol: str, repo_path: str, commit_sha: str
+    path: str,
+    symbol: str,
+    repo_path: str,
+    commit_sha: str,
+    *,
+    source_cache: dict[str, str] | None = None,
 ) -> tuple[str, tuple[str, ...]]:
-    source = await _read_test_file_from_commit(path, commit_sha, repo_path)
+    source = source_cache.get(path) if source_cache is not None else None
+    if source is None:
+        source = await _read_test_file_from_commit(path, commit_sha, repo_path)
+        if source_cache is not None:
+            source_cache[path] = source
     if Path(path).suffix.casefold() == ".py":
         return _extract_python_test_body(source, symbol), ()
     body = _extract_braced_test_body(source, symbol, path)

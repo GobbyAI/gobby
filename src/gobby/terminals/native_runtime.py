@@ -29,7 +29,9 @@ from gobby.terminals.host_client import (
     HostEpochChangedError,
     HostManagerStopped,
     HostNotAdoptedError,
+    HostReasonUnavailableError,
     HostUnavailableError,
+    HostUnavailableReason,
     encode_control_line,
 )
 from gobby.terminals.host_protocol import control_socket_path, frames_socket_path
@@ -125,6 +127,8 @@ def classify_native_spawn_failure(
         return "host_epoch_changed", str(exc), "fail_pending"
     if isinstance(exc, HostNotAdoptedError):
         return "host_not_adopted", exc.detail, "fail_pending"
+    if isinstance(exc, HostReasonUnavailableError):
+        return f"host_unavailable:{exc.reason}", exc.detail, "fail_pending"
     if isinstance(exc, CommitTransportError):
         if exc.request_written:
             return "commit_indeterminate", exc.detail, "pending"
@@ -156,6 +160,16 @@ def classify_native_spawn_failure(
     if isinstance(exc, CommitSpawnRefusedError):
         return "commit_refused:invalid_state", str(exc), "fail_pending"
     return _bounded_spawn_code(str(exc)), str(exc) or None, "fail_pending"
+
+
+async def refuse_unavailable_host(runtime: object) -> tuple[str, str | None] | None:
+    """The (code, detail) a spawn fails closed with before creating anything, or None."""
+    refusal = getattr(runtime, "spawn_refusal", None)
+    reason = await refusal() if callable(refusal) else None
+    if reason is None:
+        return None
+    code, detail, _settlement = classify_native_spawn_failure(HostReasonUnavailableError(reason))
+    return code, detail
 
 
 @dataclass(frozen=True)
@@ -210,6 +224,10 @@ class HostManagerControl:
         if getattr(self._manager, "_client", None) is None:
             raise HostUnavailableError("gterm host unavailable")
 
+    async def spawn_refusal(self) -> HostUnavailableReason | None:
+        refusal = getattr(self._manager, "spawn_refusal", None)
+        return await refusal() if callable(refusal) else None
+
     def __getattr__(self, name: str) -> Any:
         client = getattr(self._manager, "_client", None)
         if client is None:
@@ -225,6 +243,7 @@ __all__ = [
     "NativeBatchTarget",
     "NativeTerminalRuntime",
     "classify_native_spawn_failure",
+    "refuse_unavailable_host",
 ]
 
 
@@ -273,6 +292,11 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             return
         if getattr(self._client, "closed", False):
             raise HostUnavailableError("gterm host unavailable")
+
+    async def spawn_refusal(self) -> HostUnavailableReason | None:
+        """The supervisor's fail-closed reason; a bare control client has none."""
+        refusal = getattr(self._client, "spawn_refusal", None)
+        return await refusal() if callable(refusal) else None
 
     def _host_id(self, terminal: Terminal) -> str:
         locator = terminal.locator or terminal.process or {}

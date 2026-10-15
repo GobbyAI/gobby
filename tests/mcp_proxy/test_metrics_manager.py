@@ -3,12 +3,14 @@
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.metrics import ToolMetrics, ToolMetricsManager
+from gobby.mcp_proxy.metrics import ToolMetricsManager
+from gobby.mcp_proxy.metrics_store import ToolMetrics
 from gobby.storage.hub import operation_deadline
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
@@ -28,7 +30,7 @@ SESSION_ID = "99999999-9999-4999-9999-999999999994"
 
 
 @pytest.fixture
-def mock_telemetry():
+def mock_telemetry() -> Iterator[MagicMock]:
     """Mock telemetry metrics."""
     with patch("gobby.mcp_proxy.metrics.get_telemetry_metrics") as mock_get:
         mock_metrics = MagicMock()
@@ -37,7 +39,7 @@ def mock_telemetry():
 
 
 @pytest.fixture
-def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManager:
+def metrics_manager(temp_db: "HubDatabase", mock_telemetry: MagicMock) -> ToolMetricsManager:
     """Create a metrics manager with temp database."""
     # Create test projects for foreign key constraints
     temp_db.execute(
@@ -170,7 +172,6 @@ def test_record_call_keeps_database_failures_best_effort(
         "server_name": "rejected-server",
         "tool_name": "rejected_tool",
         "project_id": PROJECT_1,
-        "session_id": SESSION_ID,
         "success": "false",
     }
     mock_telemetry.inc_counter.assert_any_call("mcp_tool_calls_total", attributes=attributes)
@@ -179,6 +180,29 @@ def test_record_call_keeps_database_failures_best_effort(
     mock_telemetry.observe_histogram.assert_called_once_with(
         "mcp_tool_call_duration_seconds", 0.125, attributes=attributes
     )
+
+
+@pytest.mark.integration
+def test_record_call_keeps_one_metric_series_per_tool_across_sessions(
+    metrics_manager: ToolMetricsManager,
+    mock_telemetry: MagicMock,
+) -> None:
+    # Every session-labelled series stayed in the cumulative exporter and was re-rendered
+    # on each /api/admin/metrics scrape, holding the daemon GIL (#23359).
+    session_ids = [f"99999999-9999-4999-9999-99999999990{n}" for n in range(3)]
+    for session_id in session_ids:
+        metrics_manager.record_call(
+            "series-server", "series_tool", PROJECT_1, 50.0, session_id=session_id
+        )
+
+    series = {
+        (call.args[0], tuple(sorted(call.kwargs["attributes"].items())))
+        for call in mock_telemetry.inc_counter.call_args_list
+        + mock_telemetry.observe_histogram.call_args_list
+    }
+    assert len(series) == 3
+    events = metrics_manager.event_store.query_events(event_type="tool_call")
+    assert sorted(event["session_id"] for event in events) == session_ids
 
 
 class TestToolMetrics:
@@ -224,9 +248,9 @@ class TestToolMetrics:
             failure_count=2,
             total_latency_ms=1000.0,
             avg_latency_ms=100.0,
-            last_called_at="2024-01-01T12:00:00",
-            created_at="2024-01-01T10:00:00",
-            updated_at="2024-01-01T12:00:00",
+            last_called_at=datetime(2024, 1, 1, 12, tzinfo=UTC),
+            created_at=datetime(2024, 1, 1, 10, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, 12, tzinfo=UTC),
         )
         result = metrics.to_dict()
 
@@ -252,8 +276,8 @@ class TestToolMetrics:
             total_latency_ms=0.0,
             avg_latency_ms=None,
             last_called_at=None,
-            created_at="2024-01-01T10:00:00",
-            updated_at="2024-01-01T10:00:00",
+            created_at=datetime(2024, 1, 1, 10, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, 10, tzinfo=UTC),
         )
         result = metrics.to_dict()
         assert result["success_rate"] is None
@@ -263,7 +287,7 @@ class TestRecordCall:
     """Tests for record_call method."""
 
     def test_record_first_call_success(
-        self, metrics_manager: ToolMetricsManager, mock_telemetry
+        self, metrics_manager: ToolMetricsManager, mock_telemetry: MagicMock
     ) -> None:
         """Test recording first successful call creates new record."""
         metrics_manager.record_call(
@@ -310,7 +334,7 @@ class TestRecordCall:
         )
 
     def test_record_first_call_failure(
-        self, metrics_manager: ToolMetricsManager, mock_telemetry
+        self, metrics_manager: ToolMetricsManager, mock_telemetry: MagicMock
     ) -> None:
         """Test recording first failed call creates new record."""
         metrics_manager.record_call(

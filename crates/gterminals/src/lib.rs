@@ -6,8 +6,8 @@
 //! gterm implementation, is the seam: the frame types here mirror gterm's and
 //! are pinned to its golden corpus by `tests/protocol_contract.rs`.
 //!
-//! `RouteFamily` is defined in gdaemon, which links this crate, so the family
-//! identity is exported as constants for gdaemon's routing table to use.
+//! `RouteFamily` is defined in gcore (`gobby_core::route_family`); this crate
+//! exports the family identity as constants for gdaemon's routing table to use.
 
 pub mod control;
 pub mod family;
@@ -16,6 +16,7 @@ pub mod host;
 pub mod leases;
 pub mod reconcile;
 pub mod repository;
+pub mod write;
 
 /// The family key in bootstrap `front_door.routes`.
 pub const FAMILY_NAME: &str = "terminal_ws";

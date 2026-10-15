@@ -23,17 +23,17 @@ class WorktreeGitManager(GitRunner):
         self,
         worktree_path: str | Path,
         branch_name: str,
-        base_branch: str = "main",
+        base_branch: str,
+        base_commit_sha: str,
         create_branch: bool = True,
-        use_local: bool = False,
     ) -> GitOperationResult:
         return await _lifecycle.create_worktree(
             self,
             worktree_path,
             branch_name,
             base_branch=base_branch,
+            base_commit_sha=base_commit_sha,
             create_branch=create_branch,
-            use_local=use_local,
         )
 
     async def delete_worktree(

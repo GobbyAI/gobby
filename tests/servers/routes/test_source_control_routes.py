@@ -1997,6 +1997,8 @@ def test_create_client_worktree(
     storage = MagicMock()
     git_manager = MagicMock()
     git_manager.repo_path = "/repo"
+    git_manager.get_current_branch = AsyncMock(return_value="main")
+    git_manager.get_local_commit = AsyncMock(return_value="base-sha")
     git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
     git_manager.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True, error=None))
     worktree = MagicMock(
@@ -2088,7 +2090,7 @@ def test_create_client_worktree(
         branch_name="feature/client",
         base_branch="main",
         create_branch=True,
-        use_local=False,
+        base_commit_sha="base-sha",
     )
     emit_event.assert_called_once_with(
         "worktree_created",

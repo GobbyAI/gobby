@@ -595,6 +595,19 @@ async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
 # and deadlocked against `review-closed-task-memories-before-handoff`, which
 # holds `set_handoff` until `review_task_memories` runs. One list, two gates.
 HANDOFF_PREREQUISITE_EVENTS = [
+    pytest.param({"mcp_server": "gobby-memory", "mcp_tool": "get_memory"}, id="get-memory"),
+    pytest.param(
+        {"mcp_server": "gobby-memory", "mcp_tool": "search_memories"}, id="search-memories"
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-agents", "mcp_tool": "get_inter_session_messages"},
+        id="get-messages",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-agents", "mcp_tool": "get_inter_session_message"},
+        id="get-message",
+    ),
+    pytest.param({"mcp_server": "gobby-agents", "mcp_tool": "wait_for_agent"}, id="wait-for-agent"),
     pytest.param(
         {"mcp_server": "gobby-sessions", "mcp_tool": "set_handoff"},
         id="set-handoff",

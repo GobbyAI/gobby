@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -306,7 +307,8 @@ def _cleanup(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> No
 @contextmanager
 def _authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
     _require_isolated_hub(postgres_database_url)
-    database_name = f"gobby_test_agent_auth_{uuid4().hex[:12]}"
+    # The fixture reaper's per-process shape, so a killed run's database is reclaimed.
+    database_name = f"gobby_test_{os.getpid()}_{uuid4().hex[:12]}"
     parameters = conninfo_to_dict(postgres_database_url)
     parameters["dbname"] = database_name
     isolated_url = make_conninfo("", **parameters)

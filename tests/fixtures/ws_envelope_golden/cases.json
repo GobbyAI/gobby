@@ -1,0 +1,1747 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "direct_absent_filters_every_broadcast",
+      "description": "A direct connection that never subscribed has no subscriptions attribute and receives no broadcast, gated or not.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "trace_event",
+            "span": {
+              "name": "op",
+              "ok": true,
+              "ms": 1.5,
+              "parent": null
+            }
+          },
+          "deliveries": {
+            "a": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "direct_unsubscribe_before_subscribe_stays_absent",
+      "description": "Unsubscribe before the first subscribe acknowledges an empty set and leaves the attribute absent, so broadcasts stay filtered.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\"}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"*\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "direct_subscribe_omitted_events_initializes",
+      "description": "Subscribe with no events key initializes an empty set; non-event messages then pass while gated event types stay filtered.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\"}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "direct_subscribe_empty_events_initializes",
+      "description": "Subscribe with an empty events array initializes an empty set like the omitted form.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "agent_event",
+            "event": "started",
+            "run_id": "run-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "browser_initialized_empty_passes_non_events",
+      "description": "A browser connection starts with an initialized empty set: non-event messages reach it before any subscribe, unlike an absent direct connection. Unsubscribe-before-subscribe keeps it initialized.",
+      "clients": {
+        "a": {
+          "entry": "browser",
+          "initial_state": []
+        },
+        "b": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "direct_explicit_null_lifecycle",
+      "description": "Explicit null filters everything. Unsubscribe raises AttributeError into the connection wrapper's generic error reply and leaves null; subscribe initializes the set.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "explicit_null": true,
+          "initial_state": null
+        }
+      },
+      "steps": [
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"Internal server error\"}"
+          ],
+          "subscriptions": null,
+          "handler_exception": "AttributeError"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\"}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"Internal server error\"}"
+          ],
+          "subscriptions": null,
+          "handler_exception": "AttributeError"
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "browser_explicit_null_lifecycle",
+      "description": "The browser entry in the explicit-null state behaves like the direct one: unsubscribe errors through the generic path, an empty subscribe initializes it.",
+      "clients": {
+        "a": {
+          "entry": "browser",
+          "explicit_null": true,
+          "initial_state": null
+        }
+      },
+      "steps": [
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"*\"]}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"Internal server error\"}"
+          ],
+          "subscriptions": null,
+          "handler_exception": "AttributeError"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate_and_additive_subscriptions",
+      "description": "Subscriptions form a set: duplicates collapse, later subscribes add, and an empty subscribe changes nothing.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\",\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"agent_event\",\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event",
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event",
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event",
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event",
+            "session_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "agent_event",
+            "event": "started",
+            "run_id": "run-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"agent_event\", \"event\": \"started\", \"run_id\": \"run-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "exact_type_subscriptions_gate_event_types",
+      "description": "Gated event types reach only clients subscribed to that exact type; non-event messages reach every initialized client.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"agent_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "agent_event",
+            "event": "started",
+            "run_id": "run-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"agent_event\", \"event\": \"started\", \"run_id\": \"run-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "hook_event",
+            "event_type": "session_start",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "wildcard_receives_gated_events_until_cleared",
+      "description": "The * subscription receives every gated type; unsubscribing * clears the whole set back to initialized-empty.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"*\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "*"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "*"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "trace_event",
+            "span": {
+              "name": "op",
+              "ok": true,
+              "ms": 1.5,
+              "parent": null
+            }
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"trace_event\", \"span\": {\"name\": \"op\", \"ok\": true, \"ms\": 1.5, \"parent\": null}}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "hook_event",
+            "event_type": "session_start",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"hook_event\", \"event_type\": \"session_start\", \"session_id\": \"sess-1\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"*\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "trace_event",
+            "span": {
+              "name": "op",
+              "ok": true,
+              "ms": 1.5,
+              "parent": null
+            }
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ],
+            "b": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "parameter_selectors_use_string_equality",
+      "description": "type:key=value selectors match only the named type when the message field equals the value string; an integer field never equals the string, and the value may itself contain =.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_message:session_id=abc123\",\"session_message:note=k=v\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_message:note=k=v",
+                  "session_message:session_id=abc123"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_message:note=k=v",
+            "session_message:session_id=abc123"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_message:session_id=123\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_message:session_id=123"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_message:session_id=123"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "session_id": "abc123",
+            "text": "hi"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_message\", \"session_id\": \"abc123\", \"text\": \"hi\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "session_id": "other",
+            "text": "hi"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "session_id": 123,
+            "text": "hi"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "session_id": "123",
+            "text": "hi"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"session_message\", \"session_id\": \"123\", \"text\": \"hi\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "text": "hi"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_message",
+            "note": "k=v"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_message\", \"note\": \"k=v\"}"
+            ],
+            "b": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "session_id": "abc123"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "hook_event_subtype_selector",
+      "description": "A bare hook subtype name selects hook_event messages whose event_type matches; it does not select other types carrying the same event_type.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_start\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_start"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_start"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"hook_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "hook_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "hook_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "hook_event",
+            "event_type": "session_start",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"hook_event\", \"event_type\": \"session_start\", \"session_id\": \"sess-1\"}"
+            ],
+            "b": [
+              "{\"type\": \"hook_event\", \"event_type\": \"session_start\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "hook_event",
+            "event_type": "pre_tool_use",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"hook_event\", \"event_type\": \"pre_tool_use\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "hook_event",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"hook_event\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "agent_event",
+            "event_type": "session_start"
+          },
+          "deliveries": {
+            "a": [],
+            "b": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "unsubscribe_removes_listed_members",
+      "description": "Unsubscribe removes each listed member and ignores members that were never subscribed.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\",\"agent_event\",\"trace_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event",
+                  "session_event",
+                  "trace_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event",
+            "session_event",
+            "trace_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"agent_event\",\"never_subscribed\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": [
+                  "session_event",
+                  "trace_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event",
+            "trace_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "agent_event",
+            "event": "started",
+            "run_id": "run-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "unsubscribe_clear_all_variants",
+      "description": "An empty events array, an omitted events key, and any array containing * each clear every subscription, leaving an initialized empty set.",
+      "clients": {
+        "a": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\",\"agent_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event",
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event",
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\"}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\",\"agent_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event",
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event",
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":[\"session_event\",\"*\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "unsubscribe_success",
+                "events": []
+              }
+            }
+          ],
+          "subscriptions": []
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": []
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "event": "created",
+            "task_id": "task-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"event\": \"created\", \"task_id\": \"task-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "events_not_a_list_is_rejected",
+      "description": "An events value that is not an array (string, object or null) is rejected with an error frame and leaves the state unchanged, for subscribe and unsubscribe.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":\"session_event\"}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":{}}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":null}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"unsubscribe\",\"events\":\"session_event\"}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": "absent"
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"session_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "session_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"unsubscribe\",\"events\":\"session_event\"}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"unsubscribe\",\"events\":null}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":{\"agent_event\":true}}",
+          "replies": [
+            "{\"type\": \"error\", \"code\": \"ERROR\", \"message\": \"events must be a list of strings\"}"
+          ],
+          "subscriptions": [
+            "session_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "fragmented_broadcast_filters_on_message",
+      "description": "Filtering uses the original message, never the fragment frames: recipients get each fragment string in order, and a terminal_ws_fragment subscription selects nothing. The same message unfragmented reaches the same recipients.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        },
+        "c": {
+          "entry": "browser",
+          "initial_state": []
+        },
+        "d": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "e": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "a",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"workspace_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "workspace_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "workspace_event"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "b",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"terminal_ws_fragment\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "terminal_ws_fragment"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "terminal_ws_fragment"
+          ]
+        },
+        {
+          "op": "send",
+          "client": "e",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"*\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "*"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "*"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "workspace_event",
+            "kind": "updated",
+            "workspace_id": "ws-1",
+            "seq": 7,
+            "tabs": []
+          },
+          "frames": [
+            {
+              "type": "terminal_ws_fragment",
+              "event": "workspace_event",
+              "terminal_id": "ws-1",
+              "attachment_id": "ws-1",
+              "message_seq": 7,
+              "fragment_index": 0,
+              "more": true,
+              "encoding": "utf8-b64",
+              "payload": "eyJraW5kIjoidXBkYXRlZCIsInNlcSI6NywidGFicyI6W10sInR5cGU="
+            },
+            {
+              "type": "terminal_ws_fragment",
+              "event": "workspace_event",
+              "terminal_id": "ws-1",
+              "attachment_id": "ws-1",
+              "message_seq": 7,
+              "fragment_index": 1,
+              "more": false,
+              "encoding": "utf8-b64",
+              "payload": "Ijoid29ya3NwYWNlX2V2ZW50Iiwid29ya3NwYWNlX2lkIjoid3MtMSJ9"
+            }
+          ],
+          "deliveries": {
+            "a": [
+              "{\"type\": \"terminal_ws_fragment\", \"event\": \"workspace_event\", \"terminal_id\": \"ws-1\", \"attachment_id\": \"ws-1\", \"message_seq\": 7, \"fragment_index\": 0, \"more\": true, \"encoding\": \"utf8-b64\", \"payload\": \"eyJraW5kIjoidXBkYXRlZCIsInNlcSI6NywidGFicyI6W10sInR5cGU=\"}",
+              "{\"type\": \"terminal_ws_fragment\", \"event\": \"workspace_event\", \"terminal_id\": \"ws-1\", \"attachment_id\": \"ws-1\", \"message_seq\": 7, \"fragment_index\": 1, \"more\": false, \"encoding\": \"utf8-b64\", \"payload\": \"Ijoid29ya3NwYWNlX2V2ZW50Iiwid29ya3NwYWNlX2lkIjoid3MtMSJ9\"}"
+            ],
+            "b": [],
+            "c": [],
+            "d": [],
+            "e": [
+              "{\"type\": \"terminal_ws_fragment\", \"event\": \"workspace_event\", \"terminal_id\": \"ws-1\", \"attachment_id\": \"ws-1\", \"message_seq\": 7, \"fragment_index\": 0, \"more\": true, \"encoding\": \"utf8-b64\", \"payload\": \"eyJraW5kIjoidXBkYXRlZCIsInNlcSI6NywidGFicyI6W10sInR5cGU=\"}",
+              "{\"type\": \"terminal_ws_fragment\", \"event\": \"workspace_event\", \"terminal_id\": \"ws-1\", \"attachment_id\": \"ws-1\", \"message_seq\": 7, \"fragment_index\": 1, \"more\": false, \"encoding\": \"utf8-b64\", \"payload\": \"Ijoid29ya3NwYWNlX2V2ZW50Iiwid29ya3NwYWNlX2lkIjoid3MtMSJ9\"}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "workspace_event",
+            "kind": "updated",
+            "workspace_id": "ws-1",
+            "seq": 7,
+            "tabs": []
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"workspace_event\", \"kind\": \"updated\", \"workspace_id\": \"ws-1\", \"seq\": 7, \"tabs\": []}"
+            ],
+            "b": [],
+            "c": [],
+            "d": [],
+            "e": [
+              "{\"type\": \"workspace_event\", \"kind\": \"updated\", \"workspace_id\": \"ws-1\", \"seq\": 7, \"tabs\": []}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "terminal_attach_history",
+            "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "text": "ready.\n",
+            "truncated": false,
+            "dropped_bytes": 0,
+            "total_bytes": 7
+          },
+          "frames": [
+            {
+              "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "encoding": "utf8-b64",
+              "event": "terminal_attach_history",
+              "fragment_index": 0,
+              "message_seq": 1,
+              "more": true,
+              "payload": "eyJhdHRhY2htZW50X2lkIjoiYmJiYmJiYmItYmJiYi00YmJiLThiYmItYmJiYmJiYmJiYmJiIiwiZHJvcHBlZF9ieXRlcyI6MCwidGVybWluYWxfaWQiOiJhYWFhYWFhYS1hYWFhLTRhYQ==",
+              "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "type": "terminal_ws_fragment"
+            },
+            {
+              "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "encoding": "utf8-b64",
+              "event": "terminal_attach_history",
+              "fragment_index": 1,
+              "message_seq": 1,
+              "more": false,
+              "payload": "YS04YWFhLWFhYWFhYWFhYWFhYSIsInRleHQiOiJyZWFkeS5cbiIsInRvdGFsX2J5dGVzIjo3LCJ0cnVuY2F0ZWQiOmZhbHNlLCJ0eXBlIjoidGVybWluYWxfYXR0YWNoX2hpc3RvcnkifQo=",
+              "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "type": "terminal_ws_fragment"
+            }
+          ],
+          "deliveries": {
+            "a": [
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 0, \"message_seq\": 1, \"more\": true, \"payload\": \"eyJhdHRhY2htZW50X2lkIjoiYmJiYmJiYmItYmJiYi00YmJiLThiYmItYmJiYmJiYmJiYmJiIiwiZHJvcHBlZF9ieXRlcyI6MCwidGVybWluYWxfaWQiOiJhYWFhYWFhYS1hYWFhLTRhYQ==\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}",
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 1, \"message_seq\": 1, \"more\": false, \"payload\": \"YS04YWFhLWFhYWFhYWFhYWFhYSIsInRleHQiOiJyZWFkeS5cbiIsInRvdGFsX2J5dGVzIjo3LCJ0cnVuY2F0ZWQiOmZhbHNlLCJ0eXBlIjoidGVybWluYWxfYXR0YWNoX2hpc3RvcnkifQo=\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}"
+            ],
+            "b": [
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 0, \"message_seq\": 1, \"more\": true, \"payload\": \"eyJhdHRhY2htZW50X2lkIjoiYmJiYmJiYmItYmJiYi00YmJiLThiYmItYmJiYmJiYmJiYmJiIiwiZHJvcHBlZF9ieXRlcyI6MCwidGVybWluYWxfaWQiOiJhYWFhYWFhYS1hYWFhLTRhYQ==\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}",
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 1, \"message_seq\": 1, \"more\": false, \"payload\": \"YS04YWFhLWFhYWFhYWFhYWFhYSIsInRleHQiOiJyZWFkeS5cbiIsInRvdGFsX2J5dGVzIjo3LCJ0cnVuY2F0ZWQiOmZhbHNlLCJ0eXBlIjoidGVybWluYWxfYXR0YWNoX2hpc3RvcnkifQo=\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}"
+            ],
+            "c": [
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 0, \"message_seq\": 1, \"more\": true, \"payload\": \"eyJhdHRhY2htZW50X2lkIjoiYmJiYmJiYmItYmJiYi00YmJiLThiYmItYmJiYmJiYmJiYmJiIiwiZHJvcHBlZF9ieXRlcyI6MCwidGVybWluYWxfaWQiOiJhYWFhYWFhYS1hYWFhLTRhYQ==\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}",
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 1, \"message_seq\": 1, \"more\": false, \"payload\": \"YS04YWFhLWFhYWFhYWFhYWFhYSIsInRleHQiOiJyZWFkeS5cbiIsInRvdGFsX2J5dGVzIjo3LCJ0cnVuY2F0ZWQiOmZhbHNlLCJ0eXBlIjoidGVybWluYWxfYXR0YWNoX2hpc3RvcnkifQo=\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}"
+            ],
+            "d": [],
+            "e": [
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 0, \"message_seq\": 1, \"more\": true, \"payload\": \"eyJhdHRhY2htZW50X2lkIjoiYmJiYmJiYmItYmJiYi00YmJiLThiYmItYmJiYmJiYmJiYmJiIiwiZHJvcHBlZF9ieXRlcyI6MCwidGVybWluYWxfaWQiOiJhYWFhYWFhYS1hYWFhLTRhYQ==\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}",
+              "{\"attachment_id\": \"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\", \"encoding\": \"utf8-b64\", \"event\": \"terminal_attach_history\", \"fragment_index\": 1, \"message_seq\": 1, \"more\": false, \"payload\": \"YS04YWFhLWFhYWFhYWFhYWFhYSIsInRleHQiOiJyZWFkeS5cbiIsInRvdGFsX2J5dGVzIjo3LCJ0cnVuY2F0ZWQiOmZhbHNlLCJ0eXBlIjoidGVybWluYWxfYXR0YWNoX2hpc3RvcnkifQo=\", \"terminal_id\": \"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\", \"type\": \"terminal_ws_fragment\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "non_ascii_payload_bytes",
+      "description": "Broadcast frames escape non-ASCII text as \\uXXXX (with surrogate pairs) and keep message key order, separators and literals exactly.",
+      "clients": {
+        "a": {
+          "entry": "browser",
+          "initial_state": []
+        }
+      },
+      "steps": [
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "title": "café ✓ 日本 🚀",
+            "tags": [
+              "a",
+              "ß"
+            ],
+            "n": -0.5,
+            "big": 9007199254740993,
+            "flag": false,
+            "none": null,
+            "nested": {
+              "z": 1,
+              "a": [
+                true,
+                {}
+              ]
+            }
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"title\": \"caf\\u00e9 \\u2713 \\u65e5\\u672c \\ud83d\\ude80\", \"tags\": [\"a\", \"\\u00df\"], \"n\": -0.5, \"big\": 9007199254740993, \"flag\": false, \"none\": null, \"nested\": {\"z\": 1, \"a\": [true, {}]}}"
+            ]
+          }
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "task_event",
+            "quote": "say \"hi\"\\\n\t</script>"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"task_event\", \"quote\": \"say \\\"hi\\\"\\\\\\n\\t</script>\"}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "direct_reply_bypasses_broadcast_filter",
+      "description": "A direct application reply with an event-like type reaches its one target whatever its subscription state; broadcasting the same message reaches no client that lacks the subscription.",
+      "clients": {
+        "a": {
+          "entry": "direct",
+          "initial_state": "absent"
+        },
+        "b": {
+          "entry": "browser",
+          "initial_state": []
+        },
+        "c": {
+          "entry": "direct",
+          "explicit_null": true,
+          "initial_state": null
+        },
+        "d": {
+          "entry": "direct",
+          "initial_state": "absent"
+        }
+      },
+      "steps": [
+        {
+          "op": "send",
+          "client": "d",
+          "text": "{\"type\":\"subscribe\",\"events\":[\"agent_event\"]}",
+          "replies": [
+            {
+              "ack": {
+                "type": "subscribe_success",
+                "events": [
+                  "agent_event"
+                ]
+              }
+            }
+          ],
+          "subscriptions": [
+            "agent_event"
+          ]
+        },
+        {
+          "op": "broadcast",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [],
+            "c": [],
+            "d": []
+          }
+        },
+        {
+          "op": "direct",
+          "client": "a",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ],
+            "b": [],
+            "c": [],
+            "d": []
+          }
+        },
+        {
+          "op": "direct",
+          "client": "b",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ],
+            "c": [],
+            "d": []
+          }
+        },
+        {
+          "op": "direct",
+          "client": "c",
+          "message": {
+            "type": "session_event",
+            "event": "updated",
+            "session_id": "sess-1"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [],
+            "c": [
+              "{\"type\": \"session_event\", \"event\": \"updated\", \"session_id\": \"sess-1\"}"
+            ],
+            "d": []
+          }
+        },
+        {
+          "op": "direct",
+          "client": "d",
+          "message": {
+            "type": "terminal_output",
+            "terminal_id": "t-1",
+            "attachment_id": "att-1",
+            "data": "ok\r\n"
+          },
+          "deliveries": {
+            "a": [],
+            "b": [],
+            "c": [],
+            "d": [
+              "{\"type\": \"terminal_output\", \"terminal_id\": \"t-1\", \"attachment_id\": \"att-1\", \"data\": \"ok\\r\\n\"}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

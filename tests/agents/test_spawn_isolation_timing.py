@@ -133,7 +133,11 @@ async def test_isolation_paths_share_spawn_timing_map(
 
     storage = MagicMock()
     existing = SimpleNamespace(
-        worktree_path=str(tmp_path), clone_path=str(tmp_path), id="workspace", branch_name="timing"
+        worktree_path=str(tmp_path),
+        clone_path=str(tmp_path),
+        id="workspace",
+        branch_name="timing",
+        base_branch="main",
     )
     storage.get_by_branch.return_value = None if fresh else existing
     storage.create.return_value = existing
@@ -141,6 +145,8 @@ async def test_isolation_paths_share_spawn_timing_map(
     git = MagicMock()
     git.repo_path = tmp_path
     git.get_current_branch = AsyncMock(return_value="main")
+    git.get_local_commit = AsyncMock(return_value="base-sha")
+    git.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
     git.has_unpushed_commits = AsyncMock(return_value=(False, 0))
     git.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True))
     git.create_clone = AsyncMock(return_value=SimpleNamespace(success=True))

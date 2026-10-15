@@ -51,7 +51,7 @@ from ._failure_cleanup import (
     cleanup_created_isolation,
     cleanup_failed_spawn,
 )
-from ._isolation_prepare import prepare_spawn_isolation
+from ._isolation_prepare import prepare_spawn_isolation, requested_base_branch
 from ._placement import preflight_placement, run_placed_spawn, task_active_refusal
 from ._provider_resolution import (
     concrete_provider,
@@ -61,7 +61,12 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._request import build_spawn_request
-from ._resume import resolve_resume_target, resume_isolation
+from ._resume import (
+    ResumeSeatGone,
+    resolve_resume_target,
+    resume_isolation,
+    resumed_seat_placement,
+)
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import (
     _normalize_optional_model,
@@ -401,19 +406,9 @@ async def spawn_agent_impl(
                 "error": f"Could not create clone manager for project '{project_id}': {exc}",
             }
 
-    effective_base_branch = base_branch
-    if effective_base_branch is None and agent_body:
-        effective_base_branch = agent_body.base_branch
-    # "inherit" means "resolve from context", treat as unset
-    if effective_base_branch == "inherit":
-        effective_base_branch = None
-    if effective_base_branch is None and target_git_manager:
-        try:
-            effective_base_branch = await target_git_manager.get_current_branch()
-        except Exception as e:
-            logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
-            effective_base_branch = None
-    effective_base_branch = effective_base_branch or "main"
+    effective_base_branch = requested_base_branch(
+        base_branch, agent_body.base_branch if agent_body else None
+    )
     # Effective sandboxes combine config-store defaults with the agent definition;
     # the definition's network setting governs egress.
     gated = await resolve_spawn_sandbox(daemon_config, write_grant, agent_body)
@@ -428,6 +423,17 @@ async def spawn_agent_impl(
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
+    if placement is None and resume_target is not None and agent_pane_reserver is not None:
+        # A resumed seat returns to its lane tab; only a never-placed seat launches unplaced.
+        try:
+            placement = await asyncio.to_thread(
+                resumed_seat_placement,
+                resume_target,
+                runner.run_storage,
+                agent_pane_reserver.workspaces,
+            )
+        except ResumeSeatGone as exc:
+            return {"success": False, "placement_error": "not_found", "error": str(exc)}
     placed = await preflight_placement(
         placement,
         reserver=agent_pane_reserver,
@@ -598,7 +604,11 @@ async def spawn_agent_impl(
             branch_name=existing_clone.branch_name,
             clone_id=existing_clone.id,
             isolation_type="clone",
-            extra={"source_repo": resolved_project_path, "reused_clone": True},
+            extra={
+                "source_repo": resolved_project_path,
+                "reused_clone": True,
+                "base_branch": existing_clone.base_branch,
+            },
         )
         effective_checkout_mode = "clone"
         handler = get_isolation_handler("none")

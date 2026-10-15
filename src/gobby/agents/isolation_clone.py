@@ -21,6 +21,7 @@ from gobby.agents.isolation_models import (
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
+from gobby.worktrees.base_branch import WorktreeBaseError
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -74,6 +75,17 @@ class CloneIsolationHandler(IsolationHandler):
         - Create new shallow clone if needed
         - Return IsolationContext with clone info
         """
+        base_branch = config.base_branch
+        if base_branch is None:
+            base_branch = (
+                await self._git_manager.get_current_branch() if self._git_manager else None
+            )
+            if not base_branch:
+                raise WorktreeBaseError(
+                    "detached_head_requires_base",
+                    "Clone creation requires an explicit base on detached HEAD",
+                )
+
         # Reset partial state
         state_key = spawn_state_key(config)
         partial_state: dict[str, str | None] = {"path": None, "id": None}
@@ -100,7 +112,10 @@ class CloneIsolationHandler(IsolationHandler):
                     branch_name=existing.branch_name,
                     clone_id=existing.id,
                     isolation_type="clone",
-                    extra={"source_repo": config.project_path},
+                    extra={
+                        "source_repo": config.project_path,
+                        "base_branch": existing.base_branch,
+                    },
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
@@ -122,19 +137,8 @@ class CloneIsolationHandler(IsolationHandler):
                     )
                 await asyncio.to_thread(self._clone_storage.delete, existing.id)
 
-        # Determine base branch - use parent's current branch if default "main" was passed
-        base_branch = config.base_branch
         use_local = False
-
-        # If base_branch is the default "main", check if parent is on a different branch
         if self._git_manager is not None:
-            current_branch = await self._git_manager.get_current_branch()
-            if current_branch and base_branch == "main" and current_branch != "main":
-                # Use parent's current branch instead
-                base_branch = current_branch
-
-                logger.info("Using parent's current branch '%s' for clone", base_branch)
-
             # Check for unpushed commits on the base branch
             try:
                 has_unpushed, unpushed_count = await self._git_manager.has_unpushed_commits(
@@ -213,6 +217,7 @@ class CloneIsolationHandler(IsolationHandler):
             isolation_type="clone",
             extra={
                 "source_repo": config.project_path,
+                "base_branch": base_branch,
                 **({"base_commit_sha": base_commit_sha} if base_commit_sha else {}),
             },
         )

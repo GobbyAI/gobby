@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "name": "hooks_execute_bad_schema",
+  "family": "hooks",
+  "backend": "up",
+  "credential": "operator",
+  "request": {
+    "method": "POST",
+    "path": "/api/hooks/execute",
+    "query": {},
+    "headers": {
+      "X-Gobby-Envelope-Id": "hooks_execute_bad_schema"
+    },
+    "body": {
+      "hook_type": "Notification",
+      "input_data": {},
+      "source": "claude"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "detail": "Unsupported schema_version: None. Supported: 1"
+    }
+  },
+  "mask": []
+}

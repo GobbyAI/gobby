@@ -652,12 +652,16 @@ def process_response(
 def _envelope_session_id(
     handler: PendingContextHandler,
     envelope: dict[str, Any],
+    *,
+    machine_id: str | None = None,
 ) -> str | None:
     headers = envelope.get("headers")
     if isinstance(headers, dict):
         candidate = headers.get("X-Gobby-Session-Id")
-        if isinstance(candidate, str) and candidate and handler._session_manager.get(candidate):
-            return candidate
+        if isinstance(candidate, str) and candidate:
+            session = handler._session_manager.get(candidate)
+            if session is not None:
+                return candidate if machine_id is None or session.machine_id == machine_id else None
 
     input_data = envelope.get("input_data")
     external_id = input_data.get("session_id") if isinstance(input_data, dict) else None
@@ -672,21 +676,23 @@ def _envelope_session_id(
         project_id if isinstance(project_id, str) else None,
         source,
     )
-    return str(session.id) if session is not None else None
+    if session is None or (machine_id is not None and session.machine_id != machine_id):
+        return None
+    return str(session.id)
 
 
-def handle_ack_pending_inbox_envelope(
+def decide_pending_inbox_envelope(
     handler: PendingContextHandler,
     envelope_id: str,
     envelope: dict[str, Any],
-    path: Path,
     *,
-    remove_marker: Callable[[str], object],
-) -> bool:
-    """Retain or expire a daemon-owned envelope awaiting ghook acknowledgment."""
-    session_id = _envelope_session_id(handler, envelope)
+    age_seconds: float,
+    machine_id: str | None = None,
+) -> Literal["retain", "requeued"] | None:
+    """Decide pending delivery from hub state without touching a spool file."""
+    session_id = _envelope_session_id(handler, envelope, machine_id=machine_id)
     if session_id is None:
-        return False
+        return None
     variable_manager = SessionVariableManager(handler._session_manager.db)
     delivery = _delivery(
         variable_manager.get_variable_subset(session_id, (DELIVERY_VARIABLE,)).get(
@@ -694,14 +700,9 @@ def handle_ack_pending_inbox_envelope(
         )
     )
     if delivery is None or delivery["envelope_id"] != envelope_id:
-        return False
-
-    try:
-        age = max(0.0, time.time() - path.stat().st_mtime)
-    except FileNotFoundError:
-        return True
-    if age < GROK_DELIVERY_RETENTION_SECONDS:
-        return True
+        return None
+    if age_seconds < GROK_DELIVERY_RETENTION_SECONDS:
+        return "retain"
 
     def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
         current = _delivery(variables.get(DELIVERY_VARIABLE))
@@ -720,12 +721,32 @@ def handle_ack_pending_inbox_envelope(
         mutate,
         keys=(BRIEFING_VARIABLE, DELIVERY_VARIABLE),
     ):
-        return False
-    path.unlink(missing_ok=True)
-    remove_marker(envelope_id)
+        return None
     logger.warning(
         "Requeued expired Grok pending delivery: session=%s envelope=%s",
         session_id,
         envelope_id,
     )
-    return True
+    return "requeued"
+
+
+def handle_ack_pending_inbox_envelope(
+    handler: PendingContextHandler,
+    envelope_id: str,
+    envelope: dict[str, Any],
+    path: Path,
+    *,
+    remove_marker: Callable[[str], object],
+) -> bool:
+    """Apply the file effects of the shared hub pending-delivery decision."""
+    try:
+        age_seconds = max(0.0, time.time() - path.stat().st_mtime)
+    except FileNotFoundError:
+        age_seconds = 0.0
+    decision = decide_pending_inbox_envelope(
+        handler, envelope_id, envelope, age_seconds=age_seconds
+    )
+    if decision == "requeued":
+        path.unlink(missing_ok=True)
+        remove_marker(envelope_id)
+    return decision is not None

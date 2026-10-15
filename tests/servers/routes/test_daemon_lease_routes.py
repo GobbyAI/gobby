@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.admin._lease import register_lease_routes
+from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 
 
 @dataclass
@@ -109,7 +111,10 @@ def test_handoff_rejects_agent_and_local_cron_blockers() -> None:
     assert runner.shutdown_requested is False
 
 
-def test_handoff_requests_shutdown_after_quiescence() -> None:
+def test_handoff_requests_shutdown_after_quiescence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     client, runner = _client(0)
 
     response = client.post("/api/admin/lease/handoff")
@@ -117,3 +122,8 @@ def test_handoff_requests_shutdown_after_quiescence() -> None:
     assert response.status_code == 200
     assert response.json() == {"handoff": "accepted"}
     assert runner.shutdown_requested is True
+    # gdaemon reads this marker after the backend exits; without it the exit
+    # looks like a crash and gdaemon respawns the backend still holding the lease.
+    record = read_active_shutdown_intent(home=tmp_path)
+    assert record is not None
+    assert (record.intent, record.source) == (ShutdownIntent.STOP, "lease_handoff")

@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "name": "hooks_execute_replay",
+  "family": "hooks",
+  "backend": "up",
+  "credential": "operator",
+  "request": {
+    "method": "POST",
+    "path": "/api/hooks/execute",
+    "query": {},
+    "headers": {
+      "X-Gobby-Envelope-Id": "n-1767225600000-00000000-0000-4000-8000-000000000e2e"
+    },
+    "body": {
+      "schema_version": 1,
+      "hook_type": "Interrupt",
+      "input_data": {
+        "message": "HTTP contract probe"
+      },
+      "source": "codex",
+      "critical": false,
+      "enqueued_at": "2026-01-01T00:00:00Z",
+      "response_capability": "hook-response.v1"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "continue": true
+    }
+  },
+  "mask": []
+}

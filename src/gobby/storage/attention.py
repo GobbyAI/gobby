@@ -179,6 +179,8 @@ class AttentionRosterRow:
     terminal: AttentionRosterTerminal | None
     task_title: str | None = None
     definition_title: str | None = None
+    machine_id: str | None = None
+    project_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
@@ -221,6 +223,8 @@ class AttentionRosterRow:
             definition_title=(
                 str(row["definition_title"]) if row.get("definition_title") is not None else None
             ),
+            machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
+            project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
         )
 
 
@@ -286,11 +290,10 @@ class AttentionStateManager:
 
     def load_roster_rows(
         self,
-        machine_id: str,
         *,
         live_session_statuses: Sequence[str],
     ) -> list[AttentionRosterRow]:
-        """Load runs, sessions, tasks, and terminals in one database round trip."""
+        """Load every machine's runs, sessions, tasks, and terminals in one round trip."""
         rows = self.db.fetchall(
             """
             SELECT
@@ -324,9 +327,12 @@ class AttentionStateManager:
                     CASE WHEN jsonb_typeof(run.resume_metadata_json->'placement'->'title') = 'string'
                          THEN NULLIF(BTRIM(run.resume_metadata_json->'placement'->>'title'), '') END,
                     NULLIF(BTRIM(run.agent_name), '')
-                ) AS definition_title
+                ) AS definition_title,
+                run.machine_id::text AS machine_id,
+                COALESCE(child.project_id, parent.project_id)::text AS project_id
             FROM agent_runs run
             LEFT JOIN sessions child ON child.id = run.child_session_id
+            LEFT JOIN sessions parent ON parent.id = run.parent_session_id
             LEFT JOIN session_variables seat ON seat.session_id = child.id
             LEFT JOIN tasks task ON task.id = run.task_id
             LEFT JOIN LATERAL (
@@ -338,7 +344,6 @@ class AttentionStateManager:
             ) current_stage ON TRUE
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
             WHERE run.status IN ('queued', 'running', 'pending')
-              AND run.machine_id = %s
 
             UNION ALL
 
@@ -372,7 +377,9 @@ class AttentionStateManager:
                          THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
                     CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
                          THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
-                ) AS definition_title
+                ) AS definition_title,
+                session.machine_id::text AS machine_id,
+                session.project_id::text AS project_id
             FROM sessions session
             LEFT JOIN session_variables seat ON seat.session_id = session.id
             LEFT JOIN LATERAL (
@@ -412,7 +419,7 @@ class AttentionStateManager:
 
             ORDER BY roster_kind, source_id
             """,
-            (machine_id, list(live_session_statuses)),
+            (list(live_session_statuses),),
         )
         return [AttentionRosterRow.from_row(row) for row in rows]
 

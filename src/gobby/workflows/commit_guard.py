@@ -73,6 +73,16 @@ def _normalized_command_cwd(event: HookEvent, project_path: str) -> str:
     return effective_tool_cwd(event.cwd, event.data) or project_path
 
 
+def _missing_commit_directory(invocation: GitCommitInvocation, command_cwd: str) -> str | None:
+    """Return the directory this commit navigates through that does not exist, if any."""
+    if invocation.chdir is None:
+        return None
+    if not os.path.isabs(invocation.chdir) and not os.path.isdir(command_cwd):
+        return command_cwd
+    target = os.path.normpath(os.path.join(command_cwd, invocation.chdir))
+    return None if os.path.isdir(target) else target
+
+
 async def _resolve_commit_checkout_root(
     invocation: GitCommitInvocation,
     *,
@@ -131,9 +141,21 @@ async def foreign_staged_commit_conflict(
         staged_paths_by_checkout: dict[str, set[str]] = {}
         command_cwd = _normalized_command_cwd(event, project_path)
         for invocation in invocations:
+            missing_directory = _missing_commit_directory(invocation, command_cwd)
+            if missing_directory is not None:
+                return (
+                    f"Commit blocked: its working directory {missing_directory} does not "
+                    "exist, so Gobby cannot resolve the repository it targets. Run the "
+                    "commit from an existing directory, creating a new repository in an "
+                    "earlier command."
+                )
+            # A vanished caller cwd leaves Git nothing to start from. An absolute
+            # target ignores it, and a cwd-relative commit can only reach the
+            # session's checkout, so inspect from there.
+            git_cwd = command_cwd if os.path.isdir(command_cwd) else project_path
             checkout_root = await _resolve_commit_checkout_root(
                 invocation,
-                command_cwd=command_cwd,
+                command_cwd=git_cwd,
             )
             if checkout_root is None:
                 continue
@@ -158,7 +180,7 @@ async def foreign_staged_commit_conflict(
 
             inspect_cwd = resolve_commit_inspect_cwd(
                 invocation,
-                event_cwd=command_cwd,
+                event_cwd=git_cwd,
                 project_path=project_path,
             )
             if invocation.is_path_scoped:

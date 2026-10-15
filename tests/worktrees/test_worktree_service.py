@@ -108,7 +108,6 @@ async def _create(
         branch_name=branch_name,
         base_branch=base_branch,
         worktree_path=str(worktree_path),
-        use_local=True,
         event_emitter=lambda *_args, **_kwargs: {},
     )
 
@@ -283,7 +282,7 @@ async def test_spawn_isolation_refuses_unreferenced_sha_base(tmp_path: Path) -> 
         parent_session_id="sess",
     )
     spawned = Path.home() / ".gobby" / "worktrees" / root.name / "spawned"
-    with pytest.raises(RuntimeError, match="base_branch_is_commit_sha"):
+    with pytest.raises(RuntimeError, match="not a commit sha"):
         await handler.prepare_environment(config)
     assert storage.created == []
     assert not spawned.exists()
@@ -348,7 +347,7 @@ async def test_spawn_worktree_create_refuses_unreferenced_sha_base(tmp_path: Pat
         branch_name="spawned",
         base_branch=short,
         create_branch=True,
-        use_local=True,
+        base_commit_sha=_git(root, "rev-parse", "moving"),
     )
     assert result.success is False
     assert result.error == "base_branch_is_commit_sha"

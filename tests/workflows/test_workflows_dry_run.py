@@ -581,7 +581,9 @@ class TestStepTrace:
             _make_step(
                 "work",
                 description="Do the work",
-                transitions=[{"to": "report", "when": "task_tree_complete(vars.session_task)"}],
+                transitions=[
+                    {"to": "report", "when": "task_state_in(vars.session_task, 'closed')"}
+                ],
             ),
             _make_step(
                 "report",

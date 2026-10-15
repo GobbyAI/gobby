@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections import deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeGuard
 
-from gobby.agents.watchdog._scan import ScanVerdict, scan_jsonl
+from gobby.agents.watchdog._scan import ResumableScanner, ResumableScanState, ScanVerdict
 from gobby.agents.watchdog.models import (
-    WATCHDOG_TAIL_LIMIT,
     ActivityKind,
     TranscriptEventSummary,
     TurnEventKind,
@@ -98,8 +97,8 @@ def _activity_kind(update_type: str) -> ActivityKind | None:
     return None
 
 
-def _read_grok_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    tail: deque[TranscriptEventSummary] = deque(maxlen=WATCHDOG_TAIL_LIMIT)
+@dataclass
+class _GrokScanState(ResumableScanState):
     turn_started_event: TranscriptEventSummary | None = None
     latest_turn_event: TranscriptEventSummary | None = None
     latest_turn_kind: TurnEventKind | None = None
@@ -107,14 +106,7 @@ def _read_grok_snapshot(path: str) -> WatchdogTranscriptSnapshot:
     latest_activity_kind: ActivityKind | None = None
     latest_model_output_line_num: int | None = None
 
-    def classify(line_num: int, data: dict[str, object]) -> ScanVerdict:
-        nonlocal turn_started_event
-        nonlocal latest_turn_event
-        nonlocal latest_turn_kind
-        nonlocal provider_error_event
-        nonlocal latest_activity_kind
-        nonlocal latest_model_output_line_num
-
+    def classify(self, line_num: int, data: dict[str, object]) -> ScanVerdict:
         method = data.get("method")
         if not isinstance(method, str) or method not in _UPDATE_METHODS:
             return ScanVerdict.IGNORED
@@ -150,38 +142,38 @@ def _read_grok_snapshot(path: str) -> WatchdogTranscriptSnapshot:
             event_type="session_update",
             payload_type=update_type,
         )
-        tail.append(summary)
+        self.tail.append(summary)
 
         activity_kind = _activity_kind(update_type)
         if activity_kind is not None:
-            latest_activity_kind = activity_kind
+            self.latest_activity_kind = activity_kind
         if activity_kind in {"message", "reasoning", "tool"}:
-            latest_model_output_line_num = line_num
+            self.latest_model_output_line_num = line_num
         if update_type == "user_message_chunk":
-            turn_started_event = summary
-            latest_turn_event = summary
-            latest_turn_kind = "started"
+            self.turn_started_event = summary
+            self.latest_turn_event = summary
+            self.latest_turn_kind = "started"
         elif update_type == "turn_completed":
-            latest_turn_event = summary
-            latest_turn_kind = _turn_event_kind(update)
+            self.latest_turn_event = summary
+            self.latest_turn_kind = _turn_event_kind(update)
         elif update_type == "retry_state":
-            provider_error_event = summary
+            self.provider_error_event = summary
         return ScanVerdict.VALID
 
-    result = scan_jsonl(path, classify)
-    return WatchdogTranscriptSnapshot(
-        provider="grok",
-        tail=tuple(tail),
-        turn_started_event=turn_started_event,
-        latest_turn_event=latest_turn_event,
-        latest_turn_kind=latest_turn_kind,
-        provider_error_event=provider_error_event,
-        provider_error_kind="retry" if provider_error_event is not None else None,
-        provider_error_reason="retrying" if provider_error_event is not None else None,
-        latest_activity_kind=latest_activity_kind,
-        latest_model_output_line_num=latest_model_output_line_num,
-        last_malformed_line_num=result.last_malformed_line_num,
-    )
+    def snapshot(self) -> WatchdogTranscriptSnapshot:
+        return WatchdogTranscriptSnapshot(
+            provider="grok",
+            tail=tuple(self.tail),
+            turn_started_event=self.turn_started_event,
+            latest_turn_event=self.latest_turn_event,
+            latest_turn_kind=self.latest_turn_kind,
+            provider_error_event=self.provider_error_event,
+            provider_error_kind="retry" if self.provider_error_event is not None else None,
+            provider_error_reason="retrying" if self.provider_error_event is not None else None,
+            latest_activity_kind=self.latest_activity_kind,
+            latest_model_output_line_num=self.latest_model_output_line_num,
+            last_malformed_line_num=self.last_malformed_line_num,
+        )
 
 
 class GrokTranscriptWatchdogReader:
@@ -189,8 +181,11 @@ class GrokTranscriptWatchdogReader:
     capacity_pane_message: str | None = None
     supports_reasoning_interrupt: bool = False
 
+    def __init__(self) -> None:
+        self._scanner = ResumableScanner(_GrokScanState)
+
     async def read(self, transcript_path: str) -> WatchdogTranscriptSnapshot:
-        return await asyncio.to_thread(_read_grok_snapshot, transcript_path)
+        return await asyncio.to_thread(self._scanner.snapshot, transcript_path)
 
 
 GROK_WATCHDOG_READER = GrokTranscriptWatchdogReader()

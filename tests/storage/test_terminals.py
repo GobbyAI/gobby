@@ -1082,6 +1082,39 @@ def test_orphan_sweep_clears_only_dead_epochs_on_this_machine(
     assert set(memory.rows[memory_other.id].unresolved_writes) == {"ws:other-machine:1"}
 
 
+def test_native_epoch_machine_ids_span_states_and_machines(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The adoption matrix reads every native row bound to an epoch (plan 1.2.2)."""
+    other_machine_id = "22000000-0000-4000-8000-000000000002"
+    manager = _manager(temp_db)
+    LocalMachineManager(temp_db).upsert_seen(other_machine_id, TEST_USER_ID)
+    epoch = str(uuid.uuid4())
+
+    def live_native_row() -> str:
+        row = _create_pending(manager, sample_project["id"], backend="native")
+        host_terminal_id = str(uuid.uuid4())
+        promoted = manager.promote_to_live(
+            row.id,
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(epoch, host_terminal_id),
+            host_epoch=epoch,
+        )
+        assert promoted is not None
+        return row.id
+
+    _create_pending(manager, sample_project["id"])
+    live_native_row()
+    assert manager.native_epoch_machine_ids(epoch) == {LOCAL_MACHINE_ID}
+
+    with patch("gobby.utils.machine_id._cached_machine_id", other_machine_id):
+        foreign_id = live_native_row()
+        assert manager.mark_orphaned(foreign_id) is not None
+    assert manager.native_epoch_machine_ids(epoch) == {LOCAL_MACHINE_ID, other_machine_id}
+    assert manager.native_epoch_machine_ids(str(uuid.uuid4())) == set()
+
+
 def test_title_is_byte_bounded(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

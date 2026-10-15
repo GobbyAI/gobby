@@ -46,6 +46,11 @@ def register_lease_routes(router: APIRouter, server: HTTPServer) -> None:
                     "blockers": blockers,
                 },
             )
+        from gobby.runner_maintenance import write_shutdown_source
+
+        # gdaemon owns the lease: a stop marker makes it release and exit, while an
+        # unmarked backend exit reads as a crash and is respawned under the lease.
+        write_shutdown_source("lease_handoff", intent="stop")
         background_tasks.add_task(runner.request_shutdown)
         return {"handoff": "accepted"}
 

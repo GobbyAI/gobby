@@ -6,7 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,22 +26,21 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_worktree_handler_captures_merge_base(
+async def test_worktree_handler_captures_selected_commit(
     temp_db, sample_project, tmp_path: Path
 ) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Worktree base",
         validation_criteria=(
-            "Worktree isolation records the merge base in task artifacts and runtime context."
+            "Worktree isolation records the selected commit in task artifacts and runtime context."
         ),
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
-    ctx = await _prepare_worktree_with_merge_base(
+    ctx = await _prepare_worktree_with_selected_commit(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
-        expected_git_cwd=worktree_path,
     )
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
@@ -90,6 +89,7 @@ async def test_base_captured_before_first_agent_run(
     )
     handler, _worktree_path = _worktree_handler(temp_db, tmp_path)
     handler._git_manager.run_git_command.return_value = _git_head("abc123")
+    handler._git_manager.get_local_commit.return_value = "abc123"
 
     async def assert_base_before_hook_copy(*_args: object, **_kwargs: object) -> None:
         artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
@@ -188,23 +188,26 @@ async def _prepare_with_git_head(
     return ctx
 
 
-async def _prepare_worktree_with_merge_base(
+async def _prepare_worktree_with_selected_commit(
     handler: WorktreeIsolationHandler,
     config: SpawnConfig,
-    *,
-    expected_git_cwd: str,
 ) -> IsolationContext:
     handler._git_manager.run_git_command.return_value = _git_head("base123")
+    handler._git_manager.get_local_commit.return_value = "base123"
     with (
         patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
     ):
         ctx = await handler.prepare_environment(config)
 
-    assert handler._git_manager.run_git_command.await_args_list == [
-        call(["show-ref", "--verify", "--hash", "refs/remotes/origin/main"], cwd=None, timeout=30),
-        call(["merge-base", "base123", "HEAD"], cwd=Path(expected_git_cwd), timeout=30),
-    ]
+    handler._git_manager.get_local_commit.assert_awaited_once_with("refs/heads/main^{commit}")
+    handler._git_manager.create_worktree.assert_awaited_once_with(
+        worktree_path=ctx.cwd,
+        branch_name=ctx.branch_name,
+        base_branch="main",
+        base_commit_sha="base123",
+        create_branch=True,
+    )
     return ctx
 
 
