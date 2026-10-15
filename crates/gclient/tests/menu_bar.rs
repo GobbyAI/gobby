@@ -199,6 +199,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
             "New project…",
             "Open project…",
             "Rename tab",
+            "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
             "Detach",

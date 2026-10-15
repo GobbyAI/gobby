@@ -104,6 +104,7 @@ pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
             tab: tab.id.clone(),
             pane: None,
         })),
+        sort_tabs_item(chrome),
         item("Close tab", MenuAction::Act(Action::CloseTab)),
     ]
 }
@@ -439,6 +440,15 @@ pub(in crate::app::live_loop) fn item(label: &'static str, action: MenuAction) -
 
 pub(in crate::app::live_loop) fn enabled_if(item: MenuItem, enabled: bool) -> MenuItem {
     MenuItem { enabled, ..item }
+}
+
+/// "Sort tabs A–Z", live once the bar shows two daemon tabs to order.
+pub(in crate::app::live_loop) fn sort_tabs_item(chrome: &Chrome) -> MenuItem {
+    let daemon_tabs = chrome.tabs().tabs.iter().filter(|tab| !tab.is_local());
+    enabled_if(
+        item("Sort tabs A–Z", MenuAction::Act(Action::SortTabs)),
+        daemon_tabs.count() >= 2,
+    )
 }
 
 fn control_item(state: &crate::app::Pane, pane: PaneId) -> MenuItem {

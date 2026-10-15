@@ -116,6 +116,7 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         "next_attention",
         "focus_attention",
         "switch_project",
+        "sort_tabs",
         "last_pane",
     ] {
         assert!(

@@ -67,6 +67,38 @@ fn selected_theme_and_appearance_choices_remain_enabled() {
     }
 }
 
+/// Sorting reorders daemon tabs only, so the item waits for two of them;
+/// a local draft tab on the bar does not count.
+#[test]
+fn sort_tabs_needs_two_daemon_tabs_on_the_bar() {
+    let mut ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    for (index, terminal) in ["term-a", "term-b", "term-c"].into_iter().enumerate() {
+        let pane = ws.open_terminal(terminal, "native", "epoch").unwrap();
+        chrome.open_tab(pane, terminal);
+        if index < 2 {
+            chrome.tabs_mut().tabs[index].id = format!("daemon-tab-{index}");
+        }
+    }
+    let sort_enabled = |chrome: &Chrome| {
+        let menu = build_menu(&ws, chrome, ContextMenuKind::Tab(0), (3, 0));
+        let file = build_menu(
+            &ws,
+            chrome,
+            ContextMenuKind::MenuBar(MenuBarMenu::File),
+            (0, 0),
+        );
+        [&menu, &file].map(|menu| {
+            let sort = menu.items.iter().find(|item| item.label == "Sort tabs A–Z");
+            sort.expect("sort item").enabled
+        })
+    };
+    assert_eq!(sort_enabled(&chrome), [true, true]);
+
+    chrome.tabs_mut().tabs[1].id = "local-draft".to_owned();
+    assert_eq!(sort_enabled(&chrome), [false, false]);
+}
+
 #[test]
 fn menus_list_items_per_target_and_state() {
     let mut ws = Workspace::scripted();
@@ -164,7 +196,13 @@ fn menus_list_items_per_target_and_state() {
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(
         labels(&menu),
-        ["New tab", "Rename tab", "Arrange ▸", "Close tab"]
+        [
+            "New tab",
+            "Rename tab",
+            "Arrange ▸",
+            "Sort tabs A–Z",
+            "Close tab"
+        ]
     );
     assert_eq!(
         menu.items[2].action,
@@ -173,7 +211,9 @@ fn menus_list_items_per_target_and_state() {
             pane: None,
         }))
     );
-    assert_eq!(menu.items[3].action, MenuAction::Act(Action::CloseTab));
+    assert_eq!(menu.items[3].action, MenuAction::Act(Action::SortTabs));
+    assert!(!menu.items[3].enabled, "one tab has nothing to sort");
+    assert_eq!(menu.items[4].action, MenuAction::Act(Action::CloseTab));
     let gone = build_menu(&ws, &chrome, ContextMenuKind::Tab(9), (3, 0));
     assert!(
         !gone.items[2].enabled,
@@ -277,6 +317,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             "New project…",
             "Open project…",
             "Rename tab",
+            "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
             "Detach",
@@ -290,6 +331,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::NewProject),
             MenuAction::Act(Action::OpenProject),
             MenuAction::Act(Action::RenameTab),
+            MenuAction::Act(Action::SortTabs),
             MenuAction::Act(Action::CloseTab),
             MenuAction::DestroyOrphans,
             MenuAction::Act(Action::Detach),

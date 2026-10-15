@@ -441,6 +441,27 @@ pub(super) fn move_active_daemon_tab(
     move_daemon_tab(workspace, outcomes, source.id.clone(), position);
 }
 
+/// `tab.reorder` every workspace tab into title order (`tab_sort`).
+pub(super) fn sort_daemon_tabs(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
+) {
+    let Some(model) = workspace.workspace_model() else {
+        return;
+    };
+    let Some(order) = model.sorted_tab_order() else {
+        chrome.notify(Toast::info("Tabs are already sorted"));
+        return;
+    };
+    let op = WorkspaceOp::TabReorder {
+        workspace: model.workspace.id.clone(),
+        order,
+        node: None,
+    };
+    issue_op(workspace, outcomes, op, None);
+}
+
 /// Where a moved pane goes: a tab that exists, or one `TabCreate` makes.
 enum MoveTarget {
     Tab(String),

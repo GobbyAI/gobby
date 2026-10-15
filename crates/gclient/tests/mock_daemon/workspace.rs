@@ -605,6 +605,33 @@ impl WorkspaceSim {
                     .map(str::to_string);
                 vec![self.event("tab.moved", project.as_deref(), tabs, Vec::new())]
             }
+            "tab.reorder" => {
+                let order: Vec<&str> = op
+                    .get("order")
+                    .and_then(Value::as_array)
+                    .map(|order| order.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                let mut tabs = Vec::with_capacity(order.len());
+                for tab_id in &order {
+                    match self.tabs.iter().position(|tab| tab["id"] == *tab_id) {
+                        Some(index) => tabs.push(self.tabs.remove(index)),
+                        None => break,
+                    }
+                }
+                if !self.tabs.is_empty() || tabs.len() != order.len() {
+                    // Like the daemon's busy refusal: the order must name
+                    // every tab once, so a mismatch leaves the layout alone.
+                    tabs.append(&mut self.tabs);
+                    tabs.sort_by_key(|tab| tab["position"].as_u64());
+                    self.tabs = tabs;
+                    return Vec::new();
+                }
+                for (position, tab) in tabs.iter_mut().enumerate() {
+                    tab["position"] = json!(position as u64);
+                }
+                self.tabs = tabs;
+                vec![self.event("tab.moved", None, self.tabs.clone(), Vec::new())]
+            }
             "pane.rename" => {
                 let Some(pane_id) = field("pane") else {
                     return Vec::new();
