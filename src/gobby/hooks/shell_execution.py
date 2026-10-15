@@ -1,6 +1,8 @@
 """Resolve shell programs, executable signatures and bounded shell-script bodies."""
 
 import re
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +20,20 @@ SCRIPT_BODY_LIMIT = 64 * 1024
 SCRIPT_READ_BUDGET = 8
 # Room for a `#!` line: the kernel reads at most this much of it.
 _HEADER_LIMIT = 512
+# A file read slower than this stays opaque. A macOS privacy prompt (TCC, for
+# ~/Desktop and similar) blocks open() until someone answers it, and a hook worker
+# parked there would hold its session's adapter admission the whole time (#24505).
+SCRIPT_READ_TIMEOUT_SECONDS = 2.0
+# Reads run here, off the hook worker. A read parked on a prompt keeps its thread
+# until the prompt is answered, so at most this many threads park.
+_SCRIPT_READ_WORKERS = 2
+_SCRIPT_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_SCRIPT_READ_WORKERS, thread_name_prefix="gobby-hook-script-read"
+)
+# Timed-out reads still running. While every read thread is parked, reads fail
+# closed at once, so a command's read budget cannot spend its hook's timeout waiting.
+_parked_reads: set[Future[tuple[Path, bytes] | None]] = set()
+_parked_reads_lock = threading.Lock()
 # env options that take no value; any other option leaves the interpreter unknown.
 _ENV_FLAGS = frozenset({"-", "-i", "-S", "-0", "-v", "--ignore-environment", "--debug"})
 # ELF, then thin Mach-O (32/64-bit, both byte orders), then universal Mach-O (32/64-bit
@@ -87,14 +103,10 @@ def path_execution(words: list[str], base: Path | None) -> ShellExecution | None
     words = _unwrap(words)
     if not words or "/" not in words[0]:
         return None
-    try:
-        path = resolve_tool_path(words[0], base)
-        if path is None or not path.is_file():
-            return ShellExecution(script_file=True)
-        with path.open("rb") as executable:
-            header = executable.read(_HEADER_LIMIT)
-    except (OSError, RuntimeError):
+    read = _bounded_read(words[0], base, _HEADER_LIMIT)
+    if read is None:
         return ShellExecution(script_file=True)
+    path, header = read
     first_line = header.split(b"\n", 1)[0]
     if header[:4] in _NATIVE_EXECUTABLE_MAGIC and b"\x00" in first_line:
         return None
@@ -132,17 +144,50 @@ def _shebang_interpreter(line: bytes) -> str | None:
 def read_script_body(word: str, base: Path | None) -> tuple[Path, str] | None:
     """Read a whole shell script, or ``None`` when it is missing, unreadable, too large
     or not UTF-8."""
-    try:
-        path = resolve_tool_path(word, base)
-        if path is None or not path.is_file():
-            return None
-        with path.open("rb") as script:
-            body = script.read(SCRIPT_BODY_LIMIT + 1)
-        if len(body) > SCRIPT_BODY_LIMIT:
-            return None
-        return path, body.decode()
-    except (OSError, RuntimeError, UnicodeDecodeError):
+    read = _bounded_read(word, base, SCRIPT_BODY_LIMIT + 1)
+    if read is None:
         return None
+    path, body = read
+    if len(body) > SCRIPT_BODY_LIMIT:
+        return None
+    try:
+        return path, body.decode()
+    except UnicodeDecodeError:
+        return None
+
+
+def _bounded_read(word: str, base: Path | None, limit: int) -> tuple[Path, bytes] | None:
+    """Read up to ``limit`` bytes of the file ``word`` names, or ``None`` when it is
+    missing, unreadable or slower than ``SCRIPT_READ_TIMEOUT_SECONDS``."""
+    with _parked_reads_lock:
+        if len(_parked_reads) >= _SCRIPT_READ_WORKERS:
+            return None
+    future = _SCRIPT_READ_EXECUTOR.submit(_read_prefix, word, base, limit)
+    try:
+        return future.result(timeout=SCRIPT_READ_TIMEOUT_SECONDS)
+    except TimeoutError:
+        # A read still queued never starts; a running one is parked until it returns.
+        if not future.cancel():
+            with _parked_reads_lock:
+                _parked_reads.add(future)
+            future.add_done_callback(_unpark_read)
+        return None
+    except (OSError, RuntimeError):
+        return None
+
+
+def _unpark_read(future: Future[tuple[Path, bytes] | None]) -> None:
+    with _parked_reads_lock:
+        _parked_reads.discard(future)
+
+
+def _read_prefix(word: str, base: Path | None, limit: int) -> tuple[Path, bytes] | None:
+    # Resolving and stat-ing the path can block on the prompt too, so they run here.
+    path = resolve_tool_path(word, base)
+    if path is None or not path.is_file():
+        return None
+    with path.open("rb") as handle:
+        return path, handle.read(limit)
 
 
 def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution | None:
