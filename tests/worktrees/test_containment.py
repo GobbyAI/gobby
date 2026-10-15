@@ -1,5 +1,6 @@
 """#23280 item 5: a session binds to the worktree its workspace resolves into."""
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -144,3 +145,35 @@ def test_an_unreadable_machine_id_binds_nothing(
     core._bind_worktrees(server, rows)
 
     assert rows[0]["worktree_id"] is None
+
+
+class _ProbeCountingRoots(Mapping[Path, str]):
+    """Roots that count keyed probes and refuse a scan over every root."""
+
+    def __init__(self, roots: Mapping[Path, str]) -> None:
+        self._roots = dict(roots)
+        self.probes = 0
+
+    def __getitem__(self, key: Path) -> str:
+        self.probes += 1
+        return self._roots[key]
+
+    def __len__(self) -> int:
+        return len(self._roots)
+
+    def __iter__(self) -> Iterator[Path]:
+        raise AssertionError("containment must not scan every worktree root")
+
+
+def test_containment_probes_the_workspace_ancestors_instead_of_every_root(tree: Path) -> None:
+    # A sessions page bound each row by testing it against every project root,
+    # which held the GIL in proportion to rows times roots (#23359).
+    siblings = [_Worktree(f"sibling-{i}", str(tree / f"sibling-{i}")) for i in range(500)]
+    duplicate = _Worktree("wt-duplicate", str(tree / "wt"))
+    roots = _ProbeCountingRoots(worktree_roots([*siblings, *_worktrees(tree), duplicate]))
+    workspace = (tree / "wt" / "inner" / "src").resolve()
+
+    assert containing_worktree_id(str(workspace), roots) == "wt-inner"
+    assert roots.probes <= len(workspace.parts)
+    assert containing_worktree_id(str(tree / "wt" / "src"), roots) == "wt"
+    assert containing_worktree_id(str(tree / "outside" / "src"), roots) is None
