@@ -26,6 +26,7 @@ def create_placeholder_deferral_tasks(
     provenance_label: str,
     plan_ref_block: str,
     created_task_map: Mapping[str, str],
+    prior_holders: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Create the task each placeholder ``kind: deferred`` section still lacks.
 
@@ -63,6 +64,20 @@ def create_placeholder_deferral_tasks(
                     "which produced no task in this expansion run"
                 )
             blockers.append(blocker)
+        existing_id = (prior_holders or {}).get(section_id)
+        if isinstance(existing_id, str):
+            row = conn.execute(
+                "SELECT closed_at, closed_reason FROM tasks WHERE id = %s FOR UPDATE",
+                (existing_id,),
+            ).fetchone()
+            if row is not None and not (
+                row["closed_at"] is not None and row["closed_reason"] == "obsolete"
+            ):
+                created[section_id] = existing_id
+                if row["closed_at"] is None:
+                    for blocker in blockers:
+                        self._add_dependency(existing_id, blocker)
+                continue
         item_lines = "\n".join(
             f"- {item['item_id']}: {item.get('prose') or item['item_id']}"
             for item in deferral.get("original_acceptance_items") or []
