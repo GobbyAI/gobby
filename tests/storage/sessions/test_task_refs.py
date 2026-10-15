@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from unittest.mock import patch
 
 import pytest
@@ -208,3 +208,36 @@ class TestFetchTaskRefsBySession:
 
         assert result[sid_a]["claimed"] == [5]
         assert result[sid_b] == {"claimed": [], "created": [], "closed": []}
+
+    def test_reads_one_row_per_session_role_however_many_tasks(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The sessions list loads refs for every listed session; Python builds
+        # and normalizes each returned row, so tasks are aggregated in SQL (#23359).
+        sid = _register_session(session_manager, sample_project, external_id="busy")
+        for seq in (6, 2, 4, 1, 5, 3):
+            _insert_task(
+                session_manager,
+                sample_project,
+                task_id=f"t-{seq}",
+                seq_num=seq,
+                created_in=sid,
+                closed_in=sid if seq % 2 else None,
+            )
+        read_sizes: list[int] = []
+        fetchall = session_manager.db.fetchall
+
+        def sized_fetchall(sql: str, params: Sequence[object] = ()) -> list[Mapping[str, object]]:
+            rows = fetchall(sql, params)
+            read_sizes.append(len(rows))
+            return rows
+
+        monkeypatch.setattr(session_manager.db, "fetchall", sized_fetchall)
+
+        result = session_manager.fetch_task_refs_by_session([sid, sid])
+
+        assert result == {sid: {"claimed": [], "created": [1, 2, 3, 4, 5, 6], "closed": [1, 3, 5]}}
+        assert read_sizes == [2]

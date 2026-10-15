@@ -3,11 +3,11 @@
 import pytest
 
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.workflows.commit_guard_shell import parse_git_commit_invocations
 from gobby.workflows.engine.command_matching import (
     command_patterns_match,
     executable_command_subjects,
 )
+from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
 
 pytestmark = pytest.mark.unit
 

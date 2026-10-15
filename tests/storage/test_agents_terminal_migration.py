@@ -63,7 +63,7 @@ def test_storage_readers_use_terminal_rows(
         """,
         (started.id,),
     )
-    terminal_runs = manager.list_terminal_with_tmux()
+    terminal_runs = manager.list_terminal_with_tmux(LOCAL_MACHINE_ID)
     assert started.id in {run.id for run in terminal_runs}
     assert never_started.id not in {run.id for run in terminal_runs}
 
@@ -74,7 +74,7 @@ def test_storage_readers_use_terminal_rows(
     after = manager.get(started.id)
     assert after is not None
     assert after.terminal_id == live.id
-    assert started.id not in {run.id for run in manager.list_terminal_with_tmux()}
+    assert started.id not in {run.id for run in manager.list_terminal_with_tmux(LOCAL_MACHINE_ID)}
     reloaded = terminals.get(live.id)
     assert reloaded is not None
     assert reloaded.state not in {"pending", "live"}
@@ -115,10 +115,10 @@ def test_orphaned_terminal_rows_stay_eligible_for_the_sweep(
     )
     terminals = TerminalManager(temp_db)
     terminals.mark_orphaned(terminal.id)
-    assert run.id in {row.id for row in manager.list_terminal_with_tmux()}
+    assert run.id in {row.id for row in manager.list_terminal_with_tmux(LOCAL_MACHINE_ID)}
 
     terminals.mark_exited(terminal.id)
-    assert run.id not in {row.id for row in manager.list_terminal_with_tmux()}
+    assert run.id not in {row.id for row in manager.list_terminal_with_tmux(LOCAL_MACHINE_ID)}
 
 
 @pytest.mark.parametrize("transition", ["complete", "fail", "timeout", "cancel"])

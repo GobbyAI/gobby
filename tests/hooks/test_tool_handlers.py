@@ -20,6 +20,7 @@ from gobby.skills.parser import ParsedSkill
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import resolve_edit_pair
 from gobby.workflows.task_dirty_state import task_dirty_paths
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
@@ -418,6 +419,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with (
             caplog.at_level(logging.WARNING),
@@ -453,6 +456,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         handlers.handle_after_tool(event)
 
@@ -461,10 +466,10 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
     def test_after_tool_edit_marks_had_edits_for_in_repo_path(
-        self, mock_dependencies: dict[str, Any]
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """Test AFTER_TOOL marks had_edits when the edited path resolves inside cwd."""
-        repo_root = Path("/tmp/project")
+        repo_root = tmp_path
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -476,6 +481,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(repo_root)
+        write_project_marker(repo_root, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         handlers.handle_after_tool(event)
 
@@ -614,6 +621,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with (
             patch(
@@ -650,6 +659,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
         event.timestamp = datetime.now(UTC) - timedelta(minutes=5)
         variables = self._claimed(
             "task-123",
@@ -732,6 +743,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
@@ -764,6 +777,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
@@ -806,6 +821,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with (
             patch.object(handlers, "_notify_code_index", notify_code_index),
@@ -1045,6 +1062,7 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": session.id},
         )
         event.cwd = str(deep_cwd)
+        event.project_id = project.id
 
         handlers.handle_after_tool(event)
 
@@ -1120,6 +1138,7 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": session_id},
         )
         event.cwd = str(tmp_path)
+        event.project_id = project.id
         normalize_tool_fields(event.data)
         guarded_scope = operation != "switch feature"
         assert bool(event.data.get("canonical_repo_mutation")) is (guarded_scope or copy_file)
@@ -1243,6 +1262,7 @@ class TestToolHandlerEdgeCases:
             "task-123",
             claimed_tasks={"task-123": "#123", "other-task": "#456"},
             task_edited_file_checkouts={"other-task": {str(tmp_path): ["nested"]}},
+            task_live_edit_starts={"other-task": {str(tmp_path): {"nested": 100.0}}},
         )
         event = make_event(
             HookEventType.BEFORE_TOOL,
@@ -1258,7 +1278,10 @@ class TestToolHandlerEdgeCases:
         assert event.data["canonical_edit_file_paths"] == []
         with (
             patch("gobby.hooks.event_handlers._tool.SessionVariableManager") as manager,
-            patch.object(handlers, "_resolve_repo_edit_paths", return_value=(tmp_path, "nested")),
+            patch(
+                "gobby.workflows.task_claim_state.resolve_edit_pair",
+                return_value=(str(tmp_path), "nested"),
+            ),
         ):
             manager.return_value.get_variables.return_value = variables
             handlers._assert_edit_path_selection(event, "session-123")
@@ -1273,6 +1296,7 @@ class TestToolHandlerEdgeCases:
         tmp_path: Path,
     ) -> None:
         """`.gobby` files remain task-owned even though gcode does not index them."""
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
         ]  # Has claimed task
@@ -1287,6 +1311,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with (
             patch.object(handlers, "_notify_code_index", notify_code_index),
@@ -1297,9 +1323,13 @@ class TestToolHandlerEdgeCases:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        assert handlers._resolve_repo_edit_paths(
-            str(tmp_path / ".gobby" / "tasks.jsonl"), str(tmp_path)
-        ) == (tmp_path.resolve(), ".gobby/tasks.jsonl")
+        assert resolve_edit_pair(
+            str(tmp_path / ".gobby" / "tasks.jsonl"),
+            str(tmp_path),
+            project_id="hook-project",
+            db=None,
+            variables={},
+        ) == (str(tmp_path.resolve()), ".gobby/tasks.jsonl")
         record_files.assert_called_once_with(
             "sess-123",
             [".gobby/tasks.jsonl"],
@@ -1341,6 +1371,7 @@ class TestToolHandlerEdgeCases:
         tmp_path: Path,
     ) -> None:
         """Relative `.gobby` paths are attributed against the current checkout."""
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
         ]  # Has claimed task
@@ -1354,6 +1385,8 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
         event.cwd = str(tmp_path)
+        write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
+        event.project_id = "hook-project"
 
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
@@ -1361,8 +1394,14 @@ class TestToolHandlerEdgeCases:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        assert handlers._resolve_repo_edit_paths(".gobby/memories.jsonl", str(tmp_path)) == (
-            tmp_path.resolve(),
+        assert resolve_edit_pair(
+            ".gobby/memories.jsonl",
+            str(tmp_path),
+            project_id="hook-project",
+            db=None,
+            variables={},
+        ) == (
+            str(tmp_path.resolve()),
             ".gobby/memories.jsonl",
         )
         record_files.assert_called_once_with(

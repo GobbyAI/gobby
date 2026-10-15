@@ -210,6 +210,7 @@ async def test_snapshot_carries_validated_placement(placed: _Harness, kind: str)
         "workspace_id": h.workspace.id,
         "title": SEAT,
         "beside_pane_id": None if kind == "tab" else beside.id,
+        "tab_id": None if kind == "tab" else beside.tab_id,
         "axis": None if kind == "tab" else "balanced" if kind == "balanced" else "horizontal",
     }
     if kind == "balanced":
@@ -259,10 +260,36 @@ async def test_placed_resume_replaces_before_exec(
     _assert_pane_held(h)
 
 
+async def test_placed_resume_returns_to_tab_when_beside_pane_is_gone(
+    placed: _Harness, finalize: AsyncMock
+) -> None:
+    h = placed
+    lane = _held_seat(h, "Lane 1", state="exited")
+    snapshot = {
+        "kind": "split",
+        "workspace_id": h.workspace.id,
+        "title": SEAT,
+        "beside_pane_id": str(uuid.uuid4()),
+        "tab_id": lane.tab_id,
+        "axis": "vertical",
+    }
+
+    result = await _resume(h, _parked_original(h), _metadata(h, snapshot))
+
+    assert result.success is True, result.error
+    assert _successor_status(h, result.run_id) == ("running", None)
+    assert _tabs(h) == {lane.tab_id}
+    [seat] = [pane for pane in h.workspaces.list_panes(h.workspace.id) if pane.id != lane.id]
+    assert seat.tab_id == lane.tab_id
+    assert seat.terminal_id is not None
+    assert finalize.await_count == 1
+
+
 @pytest.mark.parametrize(
     "case",
     [
         "missing",
+        "swept",
         "moved",
         "forbidden",
         "parent_unresolved",
@@ -285,6 +312,17 @@ async def test_placed_resume_refusals_park_successor(
     expected = f"placement_error:{case}"
     if case == "missing":
         snapshot["workspace_id"] = str(uuid.uuid4())
+        expected = "placement_error:not_found"
+    elif case == "swept":
+        # The beside pane and its whole tab were swept since the agent was placed.
+        snapshot = {
+            "kind": "split",
+            "workspace_id": h.workspace.id,
+            "title": SEAT,
+            "beside_pane_id": str(uuid.uuid4()),
+            "tab_id": str(uuid.uuid4()),
+            "axis": "vertical",
+        }
         expected = "placement_error:not_found"
     elif case == "moved":
         # The beside pane now lives in another workspace than the one recorded.

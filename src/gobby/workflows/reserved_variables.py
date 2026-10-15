@@ -21,6 +21,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # so only their dedicated writers may place or clear them.
         "contested_terminal_expiry",
         "handoff_compact_continue_pending",
+        "handoff_pull_pending",
         "operator_claim_hold",
         "grok_pending_briefing",
         "grok_pending_delivery",

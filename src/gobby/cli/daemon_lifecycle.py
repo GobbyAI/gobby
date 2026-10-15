@@ -204,6 +204,7 @@ def _do_stop(
     force: bool = False,
     wait: bool = False,
     drain_terminals: bool = False,
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
 ) -> bool:
     """Stop the daemon and return whether shutdown succeeded.
 
@@ -240,7 +241,13 @@ def _do_stop(
     ):
         return False
     try:
-        with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
+        with protect_pending_handoffs(
+            get_cli_runtime(ctx),
+            force=force,
+            wait=wait,
+            report=_step,
+            logged_stale_markers=logged_stale_markers,
+        ):
             previous_pid = _read_pid_file()
             # The CLI already checked protected runs and holds the handoff guard
             # through exit; the route must not try to acquire that same lock.
@@ -473,8 +480,15 @@ def restart(
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
 
+    logged_stale_markers: set[tuple[str, str | None, str]] = set()
     if os.name != "nt" and not full and not docker_flag and expected_identity is None:
-        result = _restart_backend(ctx, force=force, wait=wait, drain_terminals=drain_terminals)
+        result = _restart_backend(
+            ctx,
+            force=force,
+            wait=wait,
+            drain_terminals=drain_terminals,
+            logged_stale_markers=logged_stale_markers,
+        )
         if result is not None:
             if not result:
                 sys.exit(1)
@@ -487,6 +501,7 @@ def restart(
         force=force,
         wait=wait,
         drain_terminals=drain_terminals,
+        logged_stale_markers=logged_stale_markers,
     ):
         sys.exit(1)
 
@@ -496,7 +511,12 @@ def restart(
 
 
 def _restart_backend(
-    ctx: click.Context, *, force: bool, wait: bool, drain_terminals: bool
+    ctx: click.Context,
+    *,
+    force: bool,
+    wait: bool,
+    drain_terminals: bool,
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
 ) -> bool | None:
     """Restart a serving backend; None requires a full lifecycle replacement."""
     from gobby.cli.runtime import get_cli_runtime
@@ -514,7 +534,13 @@ def _restart_backend(
     ):
         return False
     try:
-        with protect_pending_handoffs(runtime, force=force, wait=wait, report=_step):
+        with protect_pending_handoffs(
+            runtime,
+            force=force,
+            wait=wait,
+            report=_step,
+            logged_stale_markers=logged_stale_markers,
+        ):
             try:
                 response = httpx.post(
                     f"http://localhost:{port}/api/admin/restart",
@@ -550,13 +576,15 @@ def _restart_backend(
                     _step("Previous backend did not exit after restart request", error=True)
                     return False
                 time.sleep(0.1)
-            if not _poll_startup_progress(port):
-                _step("Backend did not finish startup readiness", error=True)
-                return False
-            return True
     except HandoffShutdownBlocked as exc:
         _step(f"Refusing to restart: {exc}", error=True)
         return False
+    # The old backend is gone: release shutdown admission before waiting for
+    # its replacement. Startup readiness owns the restart outcome from here.
+    if not _poll_startup_progress(port):
+        _step("Backend did not finish startup readiness", error=True)
+        return False
+    return True
 
 
 @click.command()

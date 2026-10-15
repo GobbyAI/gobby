@@ -14,8 +14,14 @@ from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.terminal_reap_queries import TerminalReapQueryMixin
 from gobby.storage.terminal_settlement import (
     ALLOWED_EDGES as ALLOWED_EDGES,
+)
+from gobby.storage.terminal_settlement import (
+    TERMINAL_COLUMNS,
+    TerminalSettlementMixin,
+    terminal_columns,
 )
 from gobby.storage.terminal_settlement import (
     UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES as UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
@@ -28,9 +34,6 @@ from gobby.storage.terminal_settlement import (
 )
 from gobby.storage.terminal_settlement import (
     IllegalTerminalTransitionError as IllegalTerminalTransitionError,
-)
-from gobby.storage.terminal_settlement import (
-    TerminalSettlementMixin,
 )
 from gobby.storage.terminal_settlement import (
     UnresolvedWriteCapacityError as UnresolvedWriteCapacityError,
@@ -334,7 +337,7 @@ def mint_terminal_id() -> str:
     return str(uuid4())
 
 
-class TerminalManager(TerminalSettlementMixin):
+class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
     """Hub-transaction CRUD and CAS transitions for the terminals table."""
 
     def __init__(self, db: HubDatabase) -> None:
@@ -343,7 +346,9 @@ class TerminalManager(TerminalSettlementMixin):
 
     def get(self, terminal_id: str) -> Terminal | None:
         """Load a terminal row by id."""
-        row = self.db.fetchone("SELECT * FROM terminals WHERE id = %s", (str(UUID(terminal_id)),))
+        row = self.db.fetchone(
+            f"SELECT {TERMINAL_COLUMNS} FROM terminals WHERE id = %s", (str(UUID(terminal_id)),)
+        )
         return None if row is None else Terminal.from_row(row)
 
     def get_many(self, terminal_ids: Sequence[str]) -> dict[str, Terminal]:
@@ -351,7 +356,9 @@ class TerminalManager(TerminalSettlementMixin):
         if not terminal_ids:
             return {}
         ids = [str(UUID(terminal_id)) for terminal_id in dict.fromkeys(terminal_ids)]
-        rows = self.db.fetchall("SELECT * FROM terminals WHERE id = ANY(%s)", (ids,))
+        rows = self.db.fetchall(
+            f"SELECT {TERMINAL_COLUMNS} FROM terminals WHERE id = ANY(%s)", (ids,)
+        )
         terminals = (Terminal.from_row(row) for row in rows)
         return {terminal.id: terminal for terminal in terminals}
 
@@ -380,14 +387,14 @@ class TerminalManager(TerminalSettlementMixin):
         """Insert a pre-effect gobby-owned pending row with no locator."""
         resolved_machine = machine_id or require_machine_id()
         row = self.db.fetchone(
-            """
+            f"""
             INSERT INTO terminals (
                 id, backend, ownership, state, spawn_key, machine_id, project_id,
                 session_id, agent_run_id, rows, cols, title
             ) VALUES (
                 %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s, %s
             )
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (
                 str(UUID(terminal_id)),
@@ -474,7 +481,7 @@ class TerminalManager(TerminalSettlementMixin):
         )
         terminal_id = str(uuid4())
         row = self.db.fetchone(
-            """
+            f"""
             INSERT INTO terminals (
                 id, backend, ownership, state, spawn_key, machine_id, project_id,
                 locator, locator_key, session_name, window_id, title, host_epoch,
@@ -493,7 +500,7 @@ class TerminalManager(TerminalSettlementMixin):
                 liveness_at = now(),
                 updated_at = now()
             WHERE terminals.project_id = EXCLUDED.project_id
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (
                 terminal_id,
@@ -521,8 +528,8 @@ class TerminalManager(TerminalSettlementMixin):
         if occupying is not None and str(occupying["project_id"]) != str(UUID(project_id)):
             raise ProjectOwnershipConflictError()
         raised = self.db.fetchone(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE locator_key = %s AND state IN ('pending', 'live')
             """,
             (locator_key,),
@@ -531,23 +538,11 @@ class TerminalManager(TerminalSettlementMixin):
             raise RuntimeError("upsert_external conflict without occupying row")
         return Terminal.from_row(raised)
 
-    def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
-        """Pending rows whose attempt_started_at is older than the in-doubt deadline."""
-        rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
-            WHERE state = 'pending'
-              AND attempt_started_at <= now() - (%s * INTERVAL '1 second')
-            ORDER BY attempt_started_at ASC
-            """,
-            (max_age_seconds,),
-        )
-        return [Terminal.from_row(row) for row in rows]
-
     def list_by_project(self, project_id: str) -> list[Terminal]:
         """List terminals owned by a project."""
         rows = self.db.fetchall(
-            "SELECT * FROM terminals WHERE project_id = %s ORDER BY created_at ASC",
+            f"SELECT {TERMINAL_COLUMNS} FROM terminals WHERE project_id = %s"
+            " ORDER BY created_at ASC",
             (str(UUID(project_id)),),
         )
         return [Terminal.from_row(row) for row in rows]
@@ -587,7 +582,7 @@ class TerminalManager(TerminalSettlementMixin):
         params.append(limit + 1)
         rows = self.db.fetchall(
             f"""
-            SELECT * FROM terminals
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             {"WHERE " + " AND ".join(filters) if filters else ""}
             ORDER BY created_at ASC, id ASC
             LIMIT %s
@@ -603,8 +598,8 @@ class TerminalManager(TerminalSettlementMixin):
     def list_orphaned_by_epoch(self, host_epoch: str) -> list[Terminal]:
         """Orphaned native rows for a vanished host epoch."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE state = 'orphaned' AND host_epoch = %s
             """,
             (host_epoch,),
@@ -614,19 +609,30 @@ class TerminalManager(TerminalSettlementMixin):
     def list_live_by_epoch(self, host_epoch: str) -> list[Terminal]:
         """Live native rows for a host epoch."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE state = 'live' AND host_epoch = %s
             """,
             (host_epoch,),
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def native_epoch_machine_ids(self, host_epoch: str) -> set[str]:
+        """Machines whose native rows, in any state, are bound to a host epoch."""
+        rows = self.db.fetchall(
+            """
+            SELECT DISTINCT machine_id::text AS machine_id FROM terminals
+            WHERE backend = 'native' AND host_epoch = %s
+            """,
+            (host_epoch,),
+        )
+        return {_as_str(row["machine_id"]) for row in rows}
+
     def get_live_by_session_name(self, session_name: str) -> Terminal | None:
         """Newest live or pending terminal with this session or spawn name."""
         row = self.db.fetchone(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE state IN ('pending', 'live')
               AND (session_name = %s OR spawn_key = %s)
             ORDER BY updated_at DESC
@@ -639,8 +645,8 @@ class TerminalManager(TerminalSettlementMixin):
     def get_live_for_session(self, session_id: str) -> Terminal | None:
         """Newest pending or live terminal linked to a session."""
         row = self.db.fetchone(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE session_id = %s AND state IN ('pending', 'live')
             ORDER BY updated_at DESC
             LIMIT 1
@@ -652,8 +658,8 @@ class TerminalManager(TerminalSettlementMixin):
     def list_for_session(self, session_id: str) -> list[Terminal]:
         """All terminal evidence for a session, including settled and orphaned rows."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE session_id = %s
             ORDER BY updated_at DESC, id DESC
             """,
@@ -714,7 +720,7 @@ class TerminalManager(TerminalSettlementMixin):
                 return None
             previous_session_id = holder.id
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals t
             SET session_id = s.id, updated_at = now()
             FROM sessions s
@@ -724,7 +730,7 @@ class TerminalManager(TerminalSettlementMixin):
               AND t.state IN ('pending', 'live')
               AND s.session_type = 'terminal'
               AND (t.session_id IS NOT DISTINCT FROM %s OR t.session_id = s.id)
-            RETURNING t.*
+            RETURNING {terminal_columns("t")}
             """,
             (
                 terminal_id,
@@ -754,12 +760,12 @@ class TerminalManager(TerminalSettlementMixin):
         session that starts in it; a row already rebound is left alone.
         """
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET session_id = NULL, updated_at = now()
             WHERE id = %s AND session_id = %s
               AND ownership = 'gobby' AND agent_run_id IS NULL
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (str(UUID(terminal_id)), str(UUID(session_id))),
         )
@@ -768,8 +774,8 @@ class TerminalManager(TerminalSettlementMixin):
     def list_live_by_machine(self, machine_id: str) -> list[Terminal]:
         """Live and pending terminals on a machine."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE machine_id = %s AND state IN ('pending', 'live')
             ORDER BY created_at ASC
             """,
@@ -815,8 +821,8 @@ class TerminalManager(TerminalSettlementMixin):
     def list_native_input_handoffs(self, machine_id: str) -> list[Terminal]:
         """Load daemon-shutdown grants, including rows settled since preservation."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE machine_id = %s AND backend = 'native' AND process ? 'native_input_handoff'
             """,
             (str(UUID(machine_id)),),
@@ -841,8 +847,8 @@ class TerminalManager(TerminalSettlementMixin):
     def list_reconcilable_by_machine(self, machine_id: str) -> list[Terminal]:
         """Pending, live, and orphaned native-host candidates on a machine."""
         rows = self.db.fetchall(
-            """
-            SELECT * FROM terminals
+            f"""
+            SELECT {TERMINAL_COLUMNS} FROM terminals
             WHERE machine_id = %s AND state IN ('pending', 'live', 'orphaned')
             ORDER BY created_at ASC
             """,
@@ -888,11 +894,11 @@ class TerminalManager(TerminalSettlementMixin):
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
         """Record the PTY geometry the runtime was last told to apply."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET rows = %s, cols = %s, updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (rows, cols, str(UUID(terminal_id))),
         )
@@ -901,13 +907,13 @@ class TerminalManager(TerminalSettlementMixin):
     def set_automatic_write_quarantine(self, terminal_id: str, action_key: str) -> Terminal:
         """Set both quarantine columns together."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET automatic_write_quarantined_at = now(),
                 automatic_write_quarantine_action_key = %s,
                 updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (action_key, str(UUID(terminal_id))),
         )
@@ -918,13 +924,13 @@ class TerminalManager(TerminalSettlementMixin):
     def clear_automatic_write_quarantine(self, terminal_id: str) -> Terminal:
         """Clear both quarantine columns together."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET automatic_write_quarantined_at = NULL,
                 automatic_write_quarantine_action_key = NULL,
                 updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (str(UUID(terminal_id)),),
         )

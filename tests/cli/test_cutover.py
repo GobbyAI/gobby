@@ -17,8 +17,9 @@ import pytest
 from click.testing import CliRunner, Result
 
 from gobby.agents.cargo_target import cargo_release_dir
-from gobby.cli import cli, daemon_lifecycle
-from gobby.install import bin_set_coherence
+from gobby.cli import cli, daemon_lifecycle, install_setup_gclient
+from gobby.install import bin_freshness_promotion, bin_set_coherence
+from gobby.install.bin_release_identity import release_identity_path
 from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME
@@ -155,6 +156,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
 ) -> None:
     """Compile a stale candidate and use real native freshness against isolated60892."""
     repo = Path(__file__).resolve().parents[2]
+    # Reuse dependencies across temporary crate roots instead of cold-building each run.
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(cargo_release_dir(repo).parent / "catalog-fixture"))
     fixture = tmp_path / "candidate-core"
     fixture.mkdir()
     core = repo / "crates/gcore"
@@ -195,7 +198,9 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     )
     candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
     assert candidate.is_file(), "the native fixture build must produce its routed catalog candidate"
-    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
+    monkeypatch.setattr(
+        cutover_module, "_build_artifacts", lambda _root: _set_only({"gdaemon": candidate})
+    )
     monkeypatch.setattr(
         cutover_module,
         "_prove_catalog_freshness",
@@ -256,15 +261,65 @@ def _artifacts(root: Path, identity: dict[str, int | str]) -> dict[str, Path]:
     return artifacts
 
 
+def _set_only(artifacts: dict[str, Path]) -> object:
+    return cutover_module._Build(artifacts, "gclient is not built in this test")
+
+
+def _client_artifact(root: Path) -> Path:
+    crate = root / "crates" / "gclient"
+    crate.mkdir(parents=True, exist_ok=True)
+    (crate / "Cargo.toml").write_text(f'[package]\nname = "gobby-client"\nversion = "{VERSION}"\n')
+    artifact = root / "target" / "release" / "gclient"
+    _write_stub(artifact, {})
+    return artifact
+
+
+def _with_client(root: Path, artifacts: dict[str, Path]) -> object:
+    client = cutover_module._Client(
+        _client_artifact(root), cutover_module.workspace_source_identity(root, "gclient")
+    )
+    return cutover_module._Build(artifacts, client)
+
+
+def _sign_into(monkeypatch: pytest.MonkeyPatch, signed: list[str]) -> None:
+    def sign(binary: Path) -> None:
+        signed.append(binary.name)
+
+    monkeypatch.setattr(bin_set_coherence, "_codesign_workspace_binary", sign)
+    monkeypatch.setattr(install_setup_gclient, "_codesign_workspace_binary", sign)
+
+
+def _run_live_cutover(root: Path, bin_dir: Path, started: list[bytes]) -> str | None:
+    result: str | None = cutover_module.run_cutover(
+        root,
+        bin_dir,
+        stop_daemon=lambda: True,
+        start_daemon=lambda: started.append((bin_dir / "gdaemon").read_bytes()),
+        start_refusal=lambda _candidate: None,
+    )
+    return result
+
+
 def test_run_cutover_builds_and_promotes_through_shared_set_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
     bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
     identity = _identity(420)
     artifacts = _artifacts(root, identity)
-    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: artifacts)
+    build = _with_client(root, artifacts)
+    client_artifact = root / "target" / "release" / "gclient"
+    _git(root, "add", "-A")
+    _git(root, "commit", "--no-gpg-sign", "-q", "-m", "initial")
+    old_client = bin_dir / "gclient"
+    _write_stub(old_client, {}, "0.4.0")
+    os.utime(old_client, (1_000_000_000, 1_000_000_000))
+    old_inode = old_client.stat().st_ino
+    monkeypatch.setattr(bin_freshness_promotion, "_workspace_crates_root", lambda: root / "crates")
+    assert bin_freshness_promotion.native_bin_predates_source("gclient", bin_dir=bin_dir) is True
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: build)
     monkeypatch.setattr(cutover_module, "_platform_target", lambda: "test-target")
     monkeypatch.setattr(
         cutover_module,
@@ -272,26 +327,23 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
         lambda name: str(bin_dir / name) if name == "gdaemon" else None,
     )
     signed: list[str] = []
-    monkeypatch.setattr(
-        bin_set_coherence,
-        "_codesign_workspace_binary",
-        lambda binary: signed.append(binary.name),
-    )
+    _sign_into(monkeypatch, signed)
     promotion = Mock(wraps=bin_set_coherence.promote_workspace_binary_set)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     restarted: list[bytes] = []
 
-    cutover_module.run_cutover(
-        root,
-        bin_dir,
-        stop_daemon=lambda: True,
-        start_daemon=lambda: restarted.append((bin_dir / "gdaemon").read_bytes()),
-        start_refusal=lambda _candidate: None,
-    )
+    assert _run_live_cutover(root, bin_dir, restarted) is None
 
     assert promotion.call_count == 1
     assert tuple(promotion.call_args.args[0]) == SET_MEMBERS
-    assert signed == list(SET_MEMBERS)
+    assert signed == [*SET_MEMBERS, "gclient"]
+    assert (bin_dir / "gclient").read_bytes() == client_artifact.read_bytes()
+    assert (bin_dir / "gclient").stat().st_ino != old_inode
+    assert bin_freshness_promotion.read_source_hash(
+        bin_dir, "gclient"
+    ) == bin_freshness_promotion.file_sha256(client_artifact)
+    assert (bin_dir / ".gclient-version").read_text(encoding="utf-8") == f"{VERSION}\n"
+    assert bin_freshness_promotion.native_bin_predates_source("gclient", bin_dir=bin_dir) is False
     for member, artifact in artifacts.items():
         assert (bin_dir / member).read_bytes() == artifact.read_bytes()
         sidecar = json.loads((bin_dir / f".{member}-install.json").read_text(encoding="utf-8"))
@@ -314,7 +366,7 @@ def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(
     artifacts = _artifacts(root, identity)
     stale_gdaemon = tmp_path / "stale-gdaemon"
     _write_stub(stale_gdaemon, _identity(419))
-    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: artifacts)
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
     monkeypatch.setattr(cutover_module, "_platform_target", lambda: "test-target")
     monkeypatch.setattr(cutover_module, "resolve_native_bin", lambda _name: str(stale_gdaemon))
     monkeypatch.setattr(bin_set_coherence, "_codesign_workspace_binary", lambda _path: None)
@@ -337,39 +389,159 @@ def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(
     assert "restored prior install" not in message
 
 
-def test_build_uses_one_locked_release_command_for_all_set_packages(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    artifacts = _artifacts(tmp_path, _identity(420))
-    calls: list[list[str]] = []
+_SET_BUILD = [
+    "cargo",
+    "build",
+    "--release",
+    "--locked",
+    "-p",
+    "gobby-code",
+    "-p",
+    "gobby-daemon",
+    "-p",
+    "gobby-hooks",
+]
 
-    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+
+def _record_cargo(
+    monkeypatch: pytest.MonkeyPatch, calls: list[list[str]], *, failing: tuple[int, ...] = ()
+) -> None:
+    """Record cargo runs (the 1-based `failing` runs exit 101); other commands run for real."""
+    real_run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] != "cargo":
+            return real_run(args, **kwargs)
         calls.append(args)
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        code = 101 if len(calls) in failing else 0
+        return subprocess.CompletedProcess(args=args, returncode=code, stdout="", stderr="E0425")
 
     monkeypatch.setattr(cutover_module.subprocess, "run", run)
 
-    assert cutover_module._build_artifacts(tmp_path) == artifacts
-    assert calls == [
-        [
-            "cargo",
-            "build",
-            "--release",
-            "--locked",
-            "-p",
-            "gobby-code",
-            "-p",
-            "gobby-daemon",
-            "-p",
-            "gobby-hooks",
-        ]
-    ]
+
+def test_build_uses_one_locked_release_command_for_the_set_and_gclient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _artifacts(tmp_path, _identity(420))
+    client = _client_artifact(tmp_path)
+    calls: list[list[str]] = []
+    _record_cargo(monkeypatch, calls)
+
+    build = cutover_module._build_artifacts(tmp_path)
+
+    assert calls == [[*_SET_BUILD, "-p", "gobby-client"]]
+    assert build.artifacts == artifacts
+    assert build.client.artifact == client
+    assert build.client.source == cutover_module.workspace_source_identity(tmp_path, "gclient")
+
+
+def test_failed_shared_build_rebuilds_the_set_alone_and_reports_gclient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _artifacts(tmp_path, _identity(420))
+    _client_artifact(tmp_path)
+    calls: list[list[str]] = []
+    _record_cargo(monkeypatch, calls, failing=(1,))
+
+    build = cutover_module._build_artifacts(tmp_path)
+
+    assert calls == [[*_SET_BUILD, "-p", "gobby-client"], _SET_BUILD]
+    assert build.artifacts == artifacts
+    assert build.client == "release build failed: E0425"
+
+
+def test_set_build_failure_after_shared_failure_still_fails_the_cutover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _artifacts(tmp_path, _identity(420))
+    _client_artifact(tmp_path)
+    calls: list[list[str]] = []
+    _record_cargo(monkeypatch, calls, failing=(1, 2))
+
+    with pytest.raises(cutover_module.CutoverError, match="release build failed: E0425"):
+        cutover_module._build_artifacts(tmp_path)
+    assert calls == [[*_SET_BUILD, "-p", "gobby-client"], _SET_BUILD]
+
+
+def test_missing_gclient_artifact_is_reported_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _artifacts(tmp_path, _identity(420))
+    _client_artifact(tmp_path).unlink()
+    _record_cargo(monkeypatch, [])
+
+    build = cutover_module._build_artifacts(tmp_path)
+
+    assert build.artifacts == artifacts
+    assert build.client == f"release build omitted {tmp_path / 'target' / 'release' / 'gclient'}"
+
+
+def test_gclient_promotion_refusal_is_reported_and_leaves_the_set_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    artifacts = _artifacts(root, _identity(420))
+    build = _with_client(root, artifacts)
+    installed_client = bin_dir / "gclient"
+    _write_stub(installed_client, {"installed": True})
+    before = installed_client.read_bytes()
+    release_identity_path(bin_dir, "gclient").write_text(
+        json.dumps(
+            {"version": VERSION, "source_identity": "older-tree", "artifact_sha256": "0" * 64}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: build)
+    monkeypatch.setattr(cutover_module, "_platform_target", lambda: "test-target")
+    monkeypatch.setattr(
+        cutover_module,
+        "resolve_native_bin",
+        lambda name: str(bin_dir / name) if name == "gdaemon" else None,
+    )
+    _sign_into(monkeypatch, [])
+    restarted: list[bytes] = []
+
+    failure = _run_live_cutover(root, bin_dir, restarted)
+
+    assert failure == (
+        f"gclient: changed or unverified source under installed version {VERSION}; "
+        "bump its patch version before promotion"
+    )
+    assert restarted == [artifacts["gdaemon"].read_bytes()]
+    for member, artifact in artifacts.items():
+        assert (bin_dir / member).read_bytes() == artifact.read_bytes()
+    assert installed_client.read_bytes() == before
+
+
+def test_unbuilt_gclient_is_returned_after_the_set_goes_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    bin_dir = tmp_path / "bin"
+    artifacts = _artifacts(root, _identity(420))
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
+    monkeypatch.setattr(cutover_module, "_platform_target", lambda: "test-target")
+    monkeypatch.setattr(
+        cutover_module,
+        "resolve_native_bin",
+        lambda name: str(bin_dir / name) if name == "gdaemon" else None,
+    )
+    _sign_into(monkeypatch, [])
+    restarted: list[bytes] = []
+
+    assert _run_live_cutover(root, bin_dir, restarted) == "gclient is not built in this test"
+    assert restarted == [artifacts["gdaemon"].read_bytes()]
+    assert not (bin_dir / "gclient").exists()
 
 
 def _invoke_cli(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    run_cutover: Callable[..., None],
+    run_cutover: Callable[..., str | None],
     *,
     dirty: list[str] | None = None,
     identity: dict[str, int | str] | None = None,
@@ -400,6 +572,23 @@ def test_cli_targets_the_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     assert result.exit_code == 0, result.output
     assert observed == [tmp_path / "managed-bin"]
+    assert result.stdout.splitlines()[-1] == "gclient matches this build."
+
+
+def test_cli_reports_gclient_failure_after_the_set_completes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def run_cutover(*_args: object, **_kwargs: object) -> str:
+        return "release build failed: E0425"
+
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover)
+
+    assert result.exit_code == 0, result.output
+    assert "Cutover complete: gcode, gdaemon, ghook" in result.stdout
+    assert result.stderr == (
+        "gclient was not promoted: release build failed: E0425. The daemon set is live; "
+        "after resolving this, run `uv run gobby install gclient`.\n"
+    )
 
 
 def test_cli_preflights_candidate_against_selected_workspace_pin(
@@ -423,7 +612,9 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
         assert start_refusal(candidate) is None
 
     monkeypatch.setattr(cutover_module, "restart_start_refusal", restart_start_refusal)
-    monkeypatch.setattr(cutover_module, "_stop_admission_refusal", lambda _ctx, *, wait: None)
+    monkeypatch.setattr(
+        cutover_module, "_stop_admission_refusal", lambda _ctx, *, wait, logged_stale_markers: None
+    )
     result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
 
     assert result.exit_code == 0, result.output
@@ -435,7 +626,14 @@ def test_cli_stops_before_starting_the_selected_workspace(
 ) -> None:
     events: list[str] = []
 
-    def stop(_ctx: click.Context, docker_flag: bool, *, shutdown_intent: str, wait: bool) -> bool:
+    def stop(
+        _ctx: click.Context,
+        docker_flag: bool,
+        *,
+        shutdown_intent: str,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+    ) -> bool:
         assert (docker_flag, shutdown_intent, wait) == (False, "restart", True)
         events.append("stop")
         return True
@@ -524,7 +722,7 @@ def test_run_cutover_refuses_before_promotion_when_candidate_plan_fails(
     root.mkdir()
     bin_dir = tmp_path / "bin"
     artifacts = _artifacts(root, _identity(420))
-    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: artifacts)
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
     monkeypatch.setattr(cutover_module, "_platform_target", lambda: "test-target")
     promotion = Mock(side_effect=AssertionError("promotion must not run"))
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
@@ -621,7 +819,7 @@ def _stub_cutover_pipeline(
         events.append("promote")
 
     monkeypatch.setattr(
-        cutover_module, "_build_artifacts", lambda root: _artifacts(root, _identity(420))
+        cutover_module, "_build_artifacts", lambda root: _set_only(_artifacts(root, _identity(420)))
     )
     monkeypatch.setattr(cutover_module, "restart_start_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promote)
@@ -669,6 +867,7 @@ def test_cutover_waits_for_stop_before_promotion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     events: list[str] = []
+    warning_sets: list[set[tuple[str, str | None, str]]] = []
     real_run_cutover = cutover_module.run_cutover
     _stub_cutover_pipeline(monkeypatch, tmp_path, events)
 
@@ -678,13 +877,26 @@ def test_cutover_waits_for_stop_before_promotion(
 
     @contextmanager
     def protect_pending_handoffs(
-        _runtime: object, *, wait: bool, **_kwargs: object
+        _runtime: object,
+        *,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+        **_kwargs: object,
     ) -> Iterator[None]:
         events.append(f"handoffs wait={wait}")
+        warning_sets.append(logged_stale_markers)
         yield
 
-    def stop(_ctx: click.Context, _docker: bool, *, wait: bool, **_kwargs: object) -> bool:
+    def stop(
+        _ctx: click.Context,
+        _docker: bool,
+        *,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+        **_kwargs: object,
+    ) -> bool:
         events.append(f"stop wait={wait}")
+        warning_sets.append(logged_stale_markers)
         return True
 
     def restart(**_kwargs: object) -> None:
@@ -695,16 +907,26 @@ def test_cutover_waits_for_stop_before_promotion(
     monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
     monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
     monkeypatch.setattr(cutover_module, "start", restart)
-    result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover, extra_args=("--wait",))
-
-    assert result.exit_code == 0, result.output
-    assert events == [
-        "protected_runs wait=True",
-        "handoffs wait=True",
-        "stop wait=True",
-        "promote",
-        "start",
-    ]
+    for invocation in ("first", "second"):
+        result = _invoke_cli(
+            tmp_path / invocation, monkeypatch, real_run_cutover, extra_args=("--wait",)
+        )
+        assert result.exit_code == 0, result.output
+    assert (
+        events
+        == [
+            "protected_runs wait=True",
+            "handoffs wait=True",
+            "stop wait=True",
+            "promote",
+            "start",
+        ]
+        * 2
+    )
+    assert len(warning_sets) == 4
+    assert warning_sets[0] is warning_sets[1]
+    assert warning_sets[2] is warning_sets[3]
+    assert warning_sets[0] is not warning_sets[2]
 
 
 @pytest.mark.parametrize("status", [409, 401, 500])
@@ -721,7 +943,7 @@ def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
     paths = [*installed.values(), stamp]
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
     candidate = _artifacts(tmp_path, _identity(420))
-    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: candidate)
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(candidate))
     monkeypatch.setattr(daemon_lifecycle, "is_test_protect_enabled", lambda: False)
     monkeypatch.setattr(
         daemon_lifecycle,

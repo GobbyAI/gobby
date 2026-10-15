@@ -422,6 +422,7 @@ class InteractiveAttentionMonitor:
                 session_manager.list,
                 statuses=list(LIVE_SESSION_STATUS_ORDER),
                 modes=["interactive"],
+                machine_id=require_machine_id(),
                 limit=_INTERACTIVE_SESSION_PAGE_SIZE,
                 cursor_updated_at=cursor_updated_at,
                 cursor_id=cursor_id,

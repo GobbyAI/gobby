@@ -27,7 +27,7 @@ def background_job_receipt(output: object) -> dict[str, str] | None:
 
 
 def pending_background_run(
-    run: TranscriptValidationRun, call_id: str | None, description: object = None
+    run: TranscriptValidationRun, call_id: str | None, *, description: str | None = None
 ) -> TranscriptValidationRun:
     """The successful tool delivery announces a job, not a command exit."""
     receipt = background_job_receipt(run.output) if run.source == "claude" else None
@@ -41,7 +41,7 @@ def pending_background_run(
         provider_call_id=call_id,
         background_job_id=receipt["job"],
         background_output_path=receipt["path"],
-        background_description=description if isinstance(description, str) else None,
+        background_description=description,
     )
 
 
@@ -90,12 +90,12 @@ def recover_background_receipt(
     names = "|".join(re.escape(name) for name in (run.command, run.background_description) if name)
     summary = re.fullmatch(
         rf'Background command "(?:{names})" '
-        r"(?:failed|completed) with exit code (-?\d+)",
+        r"(?:(?:failed|completed) with exit code (-?\d+)|completed \(exit code (-?\d+)\))",
         notice["summary"],
     )
     if summary is None or message.timestamp < run.completed_at:
         return
-    exit_code = int(summary[1])
+    exit_code = int(summary[1] or summary[2])
     if notice["status"] != ("completed" if exit_code == 0 else "failed"):
         return
     if run.exit_code is not None:

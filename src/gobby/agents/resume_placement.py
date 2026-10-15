@@ -8,7 +8,7 @@ and has no unplaced fallback.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
@@ -25,6 +25,7 @@ from gobby.utils.git import run_to_completion
 
 if TYPE_CHECKING:
     from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
+    from gobby.storage.workspaces import WorkspaceManager
 
 RuntimeSpawn = Callable[[SpawnRequest, "ProviderSpawnPlan"], Awaitable[SpawnResult]]
 
@@ -37,12 +38,29 @@ def placement_snapshot(resolved: ResolvedPlacement) -> dict[str, Any]:
         "workspace_id": resolved.workspace_id,
         "title": placement.title,
         "beside_pane_id": resolved.beside_pane_id,
+        "tab_id": resolved.tab_id,
         "axis": placement.axis,
     }
     if placement.axis == "balanced":
         snapshot["columns"] = placement.columns
         snapshot["rows"] = placement.rows
     return snapshot
+
+
+def split_target(workspaces: WorkspaceManager, snapshot: Mapping[str, Any]) -> str | None:
+    """The pane a recorded split re-places beside: its own target, else any pane left in its tab.
+
+    The pane a seat split beside is often another seat that has since ended and been
+    swept, while the lane tab it sat in survives.
+    """
+    workspace_id = snapshot.get("workspace_id")
+    if not isinstance(workspace_id, str):
+        return None
+    panes = workspaces.list_panes(workspace_id)
+    beside, tab_id = snapshot.get("beside_pane_id"), snapshot.get("tab_id")
+    if any(pane.id == beside for pane in panes):
+        return str(beside)
+    return next((pane.id for pane in panes if tab_id is not None and pane.tab_id == tab_id), None)
 
 
 def _refusal(request: SpawnRequest, code: str) -> SpawnResult:
@@ -82,7 +100,12 @@ async def _preflight(
         return "parent_unresolved"
     kind = snapshot.get("kind")
     workspace_id = snapshot.get("workspace_id")
-    ref = workspace_id if kind == "tab" else snapshot.get("beside_pane_id")
+    if kind == "split":
+        ref = await asyncio.to_thread(split_target, reserver.workspaces, snapshot)
+        if ref is None:
+            return "not_found"
+    else:
+        ref = workspace_id
     title, axis = snapshot.get("title"), snapshot.get("axis")
     if (
         kind not in {"tab", "split"}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from gobby.providers.capabilities.local_context import LocalContextObservation
+from gobby.providers.capabilities.local_context_store import is_local_provider_namespace
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -21,6 +23,20 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.registry import provider_metadata
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
+
+logger = logging.getLogger(__name__)
+
+
+def _supported_provider(provider: str) -> bool:
+    return is_local_provider_namespace(provider) or any(
+        metadata.provider == provider for metadata in provider_metadata()
+    )
+
+
+def _require_supported_provider(provider: str) -> None:
+    if not _supported_provider(provider):
+        raise ValueError(f"Unsupported capability provider: {provider!r}")
+
 
 _GENERATION_SQL = """
 SELECT GREATEST(
@@ -132,6 +148,7 @@ class ProviderCapabilityStore:
     def replace_provider_snapshot(self, snapshot: ProviderSnapshot) -> None:
         """Atomically replace one provider's model rows with a new generation."""
         provider = snapshot.provider
+        _require_supported_provider(provider)
         with self._db.transaction() as transaction:
             self._lock_provider(transaction, provider)
             generation = self._current_generation(transaction, provider) + 1
@@ -166,6 +183,8 @@ class ProviderCapabilityStore:
 
     def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
         """Load one provider's last durable snapshot and current source health."""
+        if not _supported_provider(provider):
+            return None
         with self._db.transaction() as transaction:
             snapshots = self._load_snapshots(transaction, provider)
         return snapshots[0] if snapshots else None
@@ -173,7 +192,10 @@ class ProviderCapabilityStore:
     def get_all_snapshots(self) -> tuple[ProviderSnapshot, ...]:
         """Load all provider snapshots in canonical provider display order."""
         with self._db.transaction() as transaction:
+            removed = self._prune_unsupported_providers(transaction)
             snapshots = self._load_snapshots(transaction, None)
+        if removed:
+            logger.info("Pruned %d unsupported provider capability rows", removed)
         display_order = {
             metadata.provider: index for index, metadata in enumerate(provider_metadata())
         }
@@ -189,6 +211,7 @@ class ProviderCapabilityStore:
 
     def record_source_failure(self, provider: str, source_key: str, error: str) -> None:
         """Record a failed source attempt without replacing last-good model rows."""
+        _require_supported_provider(provider)
         with self._db.transaction() as transaction:
             self._lock_provider(transaction, provider)
             row = transaction.execute(
@@ -228,6 +251,8 @@ class ProviderCapabilityStore:
 
     def has_rows(self, provider: str) -> bool:
         """Return whether a provider has at least one durable capability row."""
+        if not _supported_provider(provider):
+            return False
         row = self._db.fetchone(
             """
             SELECT EXISTS(
@@ -237,6 +262,29 @@ class ProviderCapabilityStore:
             (provider,),
         )
         return bool(row and row["has_rows"])
+
+    @staticmethod
+    def _prune_unsupported_providers(transaction: Transaction) -> int:
+        rows = transaction.execute(
+            """
+            SELECT provider FROM provider_model_capabilities
+            UNION SELECT provider FROM provider_capability_refresh_state
+            """
+        ).fetchall()
+        unsupported = [
+            str(row["provider"]) for row in rows if not _supported_provider(str(row["provider"]))
+        ]
+        if not unsupported:
+            return 0
+        models = transaction.execute(
+            "DELETE FROM provider_model_capabilities WHERE provider = ANY(%s) RETURNING provider",
+            (unsupported,),
+        ).fetchall()
+        sources = transaction.execute(
+            "DELETE FROM provider_capability_refresh_state WHERE provider = ANY(%s) RETURNING provider",
+            (unsupported,),
+        ).fetchall()
+        return len(models) + len(sources)
 
     @staticmethod
     def _lock_provider(transaction: Transaction, provider: str) -> None:

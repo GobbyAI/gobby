@@ -28,6 +28,7 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
+from gobby.tasks.tdd_retained_output import late_job_output, retained_red_output
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -61,10 +62,16 @@ _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECAS
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
-    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
+    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
+    # Each Rust node's block ends where the next nextest status line or libtest
+    # per-test header starts, so a sibling's panic never lands in this section.
+    r"\s*(?:[A-Z][A-Z-]*|TRY \d+ [A-Z-]+)\s+\[\s*[\d.]+s\]|"
+    r"-{3,4} (?:\S+ std(?:out|err) -{4}|STD(?:OUT|ERR):\s))",
     re.IGNORECASE,
 )
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
+# (path, symbol, session, run order, require_not_implemented, window edit order)
+_RedCacheKey = tuple[str, str, str, int, bool, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +153,7 @@ def evaluate_tdd_evidence(
 
     parse_cache: PythonModuleCache = {}
     binding_cache: PythonBindingCache = {}
-    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] = {}
+    red_cache: dict[_RedCacheKey, tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
@@ -297,9 +304,16 @@ def _find_red_run(
     require_not_implemented: bool = False,
     parse_cache: PythonModuleCache | None = None,
     binding_cache: PythonBindingCache | None = None,
-    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] | None = None,
+    red_cache: dict[_RedCacheKey, tuple[bool, str | None]] | None = None,
 ) -> tuple[TranscriptValidationRun | None, str | None]:
+    """Find the first RED before ``first_non_test_edit``.
+
+    An original job's retained output may supply its failure bodies only when it
+    settled before ``first_non_test_edit``, the edit that closes this window.
+    """
     rejection = None
+    production_at = first_non_test_edit.timestamp if first_non_test_edit is not None else None
+    window = first_non_test_edit.order if first_non_test_edit is not None else -1
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "failure"
@@ -312,18 +326,48 @@ def _find_red_run(
         core_command = run.core_command
         if core_command is None:
             continue
-        key = (test.path, test.symbol, run.session_id, run.order, require_not_implemented)
+        key = (
+            test.path,
+            test.symbol,
+            run.session_id,
+            run.order,
+            require_not_implemented,
+            window,
+        )
         cached = red_cache.get(key) if red_cache is not None else None
         if cached is None:
+            # Output read back from the job's own file after the production edit
+            # was delivered too late to prove a pre-production failure.
+            delivered = (
+                replace(run, output=None)
+                if production_at is not None and late_job_output(run, production_at)
+                else run
+            )
             cached = _red_run_proof(
                 test,
                 evidence,
-                run,
+                delivered,
                 core_command,
                 require_not_implemented,
                 parse_cache,
                 binding_cache,
             )
+            retained = (
+                retained_red_output(run, production_at)
+                if production_at is not None and not cached[0]
+                else None
+            )
+            if retained is not None:
+                proof = _red_run_proof(
+                    test,
+                    evidence,
+                    replace(run, output=retained),
+                    core_command,
+                    require_not_implemented,
+                    parse_cache,
+                    binding_cache,
+                )
+                cached = proof if proof[0] else cached
             if red_cache is not None:
                 red_cache[key] = cached
         matched, reason = cached

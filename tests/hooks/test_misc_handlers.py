@@ -583,7 +583,6 @@ class TestWorktreeHandlers:
         )
 
     @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged", "raced"])
-    @pytest.mark.parametrize("use_local", [True, False])
     @pytest.mark.parametrize("registered", [True, False])
     @pytest.mark.parametrize("has_record", [True, False])
     async def test_worktree_create_handles_orphan_branch(
@@ -591,7 +590,6 @@ class TestWorktreeHandlers:
         mock_dependencies: dict[str, Any],
         tmp_path: Path,
         state: str,
-        use_local: bool,
         registered: bool,
         has_record: bool,
     ) -> None:
@@ -662,9 +660,6 @@ class TestWorktreeHandlers:
             patch(
                 "gobby.hooks.event_handlers._misc.resolve_project_context",
                 return_value=(git_manager, "proj-123", None),
-            ),
-            patch.object(
-                git_manager, "has_unpushed_commits", AsyncMock(return_value=(use_local, 0))
             ),
             patch.object(git_manager, "create_worktree", side_effect=create_at_current_tip),
             patch(

@@ -26,7 +26,7 @@ from psycopg import sql as psycopg_sql
 from psycopg.abc import Buffer
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.postgres import types as pg_types
-from psycopg.pq import TransactionStatus
+from psycopg.pq import ExecStatus, TransactionStatus
 from psycopg.rows import dict_row
 from psycopg.types.string import TextLoader
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -67,7 +67,7 @@ from gobby.storage.hub.protocol import (
     WebChatSessionBootstrap,
 )
 from gobby.storage.hub.read_scope import record_closed_writes, written_tables
-from gobby.storage.hub.transaction_deadline import TransactionDeadline
+from gobby.storage.hub.transaction_deadline import TransactionDeadline, lone_read_timeouts
 from gobby.telemetry.instruments import observe_histogram
 from gobby.telemetry.query_timing import record_pool_acquire, record_query
 from gobby.utils.datetime import to_aware_utc, to_json_safe
@@ -79,6 +79,9 @@ POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 # psycopg parses json/jsonb into plain JSON values, which need no datetime walk.
 _JSON_TYPE_OIDS = frozenset(pg_types[name].oid for name in ("json", "jsonb"))
+_TUPLE_STATUSES = frozenset(
+    {ExecStatus.TUPLES_OK, ExecStatus.SINGLE_TUPLE, ExecStatus.TUPLES_CHUNK}
+)
 _PLAIN_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -364,19 +367,37 @@ def autocommit_read(
     connection: Callable[[], AbstractContextManager[psycopg.Connection[Any]]],
     sql: str,
     params: Sequence[Any] | Mapping[str, Any] = (),
-) -> PostgresCursor:
+) -> PostgresCursor | None:
     """Run one read-only statement without the BEGIN/COMMIT round trips (#23359).
 
     PostgreSQL runs a lone statement atomically either way, so autocommit only
-    drops the transaction bookkeeping around it. Rows are buffered before the
-    connection returns to the pool in the mode it was handed over in.
+    drops the transaction bookkeeping around it. A deadline's bounds ride a
+    local set_config in the same pipeline: everything before its one Sync is a
+    single implicit transaction, so they bound the read and revert at its end.
+    Returns None when the deadline needs a transaction instead. Rows are
+    buffered before the connection returns to the pool in the mode it was
+    handed over in.
     """
+    deadline = current_database_operation_deadline()
     open_pool()
     with connection() as conn:
+        bounds = None if deadline is None else lone_read_timeouts(conn, deadline, sql)
+        if deadline is not None and bounds is None:
+            return None
         conn.autocommit = True
         started_at = time.perf_counter()
         try:
-            result = conn.execute(sql, params) if params else conn.execute(sql)
+            with nullcontext() if bounds is None else conn.pipeline():
+                if bounds is not None:
+                    conn.execute(
+                        "SELECT set_config('statement_timeout', %s, true), "
+                        "set_config('lock_timeout', %s, true)",
+                        (f"{bounds[0]}ms", f"{bounds[1]}ms"),
+                    )
+                result = conn.execute(sql, params) if params else conn.execute(sql)
+            if deadline is not None:
+                # A deadline transaction checks the budget again before COMMIT.
+                deadline.remaining_seconds()
             return PostgresCursor(result).materialize()
         finally:
             record_query(time.perf_counter() - started_at)
@@ -422,9 +443,10 @@ class _PostgresTransaction:
         try:
             self._deadline.prepare()
             # Extended protocol rejects a batch before executing any statement.
-            # A pipeline forces it even with prepare_threshold=None and no params;
-            # exiting synchronizes the result/error before this operation returns.
-            with self._conn.pipeline() if self._deadline.active else nullcontext():
+            # Params already select it; without them a pipeline forces it even with
+            # prepare_threshold=None, and exiting synchronizes the result/error
+            # before this operation returns (#23359).
+            with self._conn.pipeline() if self._deadline.active and not params else nullcontext():
                 result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
             self._deadline.observe(sql)
             return PostgresCursor(result)
@@ -505,17 +527,16 @@ class PostgresCursor:
         self._rowcount = rowcount
         self._rows: list[Row] | None = None
         self._position = 0
-        # psycopg builds a new Column list on every description read, so it is
-        # read once per cursor (#23359).
+        # Field types are read once per cursor (#23359).
         self._json_column_names: frozenset[str] | None = None
 
     def materialize(self) -> PostgresCursor:
         if self._cursor is None:
             return self
-        description = getattr(self._cursor, "description", None)
+        json_columns = _result_json_columns(self._cursor)
         rows: list[Row] = []
-        if description is not None:
-            self._json_column_names = _json_column_names(description)
+        if json_columns is not None:
+            self._json_column_names = json_columns
             rows = self.fetchall()
         self._rowcount = self.rowcount
         self._cursor = None
@@ -553,7 +574,7 @@ class PostgresCursor:
 
     def _json_columns(self) -> frozenset[str]:
         if self._json_column_names is None:
-            self._json_column_names = _json_column_names(getattr(self._cursor, "description", None))
+            self._json_column_names = _result_json_columns(self._cursor) or frozenset()
         return self._json_column_names
 
     @property
@@ -582,12 +603,19 @@ class _PostgresSavepoint:
         self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
-def _json_column_names(description: object) -> frozenset[str]:
-    if not isinstance(description, list):
-        return frozenset()
+def _result_json_columns(cursor: Any) -> frozenset[str] | None:
+    """Name the JSON-typed columns, or None when the result returned no tuples.
+
+    Reads the libpq result directly: psycopg's description builds a Column, with
+    type-registry lookups, for every field on every read (#23359).
+    """
+    result = getattr(cursor, "pgresult", None)
+    if result is None or not (result.nfields or result.status in _TUPLE_STATUSES):
+        return None
     # dict_row keeps the last column of a repeated name, so classify the same one.
-    is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
-    return frozenset(name for name, json_typed in is_json.items() if json_typed)
+    is_json = {result.fname(i): result.ftype(i) in _JSON_TYPE_OIDS for i in range(result.nfields)}
+    encoding = cursor.connection.info.encoding
+    return frozenset(name.decode(encoding) for name, json_typed in is_json.items() if json_typed)
 
 
 def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) -> Row | None:

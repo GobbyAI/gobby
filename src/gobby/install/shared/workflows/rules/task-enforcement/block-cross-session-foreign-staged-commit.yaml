@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, tasks, git, shared-worktree, default, guar
 
 rules:
   block-cross-session-foreign-staged-commit:
-    description: "Block commits that would capture paths owned by another active task session"
+    description: "Rule 2: block commits that capture another live session's dirty paths"
     event: before_tool
     enabled: true
     priority: 25

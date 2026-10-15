@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import httpx
+import psutil
 import psycopg
 import pytest
 from psycopg.rows import dict_row
@@ -25,12 +26,34 @@ from tests.e2e.conftest import (
     authenticated_daemon_client_for_home,
     authenticated_daemon_request,
     daemon_health_unavailable,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
 )
 
 pytestmark = pytest.mark.e2e
+
+# e2e_project_dir's .gobby/project.json marker; checkout registration validates it.
+E2E_PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
+
+
+def _crash(process: subprocess.Popen[bytes]) -> None:
+    """SIGKILL gdaemon and every descendant, so no backend drains or cleans up.
+
+    Killing gdaemon alone lets its backend drain gracefully on liveness EOF,
+    which is a supervised stop, not a crash.
+    """
+    root = psutil.Process(process.pid)
+    victims = [root, *root.children(recursive=True)]
+    for victim in victims:
+        try:
+            victim.kill()
+        except psutil.NoSuchProcess:
+            pass
+    process.wait(timeout=25)
+    _, alive = psutil.wait_procs(victims, timeout=10)
+    assert not alive, f"crash left survivors: {alive}"
 
 
 def _database_url_for_config(config_path: Path) -> str:
@@ -155,7 +178,9 @@ class TestCrashRecovery:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -178,8 +203,7 @@ class TestCrashRecovery:
                 assert response.status_code == 200
 
             # Forcefully kill the daemon (simulating crash)
-            os.kill(process.pid, signal.SIGKILL)
-            process.wait(timeout=25)
+            _crash(process)
 
             assert _database_has_schema(database_url), "Database should remain readable"
 
@@ -208,7 +232,9 @@ class TestCrashRecovery:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -231,8 +257,7 @@ class TestCrashRecovery:
                 initial_count = response.json().get("count", 0)
 
             # Forcefully kill (crash)
-            os.kill(process1.pid, signal.SIGKILL)
-            process1.wait(timeout=25)
+            _crash(process1)
 
             # Start second daemon (recovery)
             with (
@@ -240,7 +265,9 @@ class TestCrashRecovery:
                 open(log_dir / "daemon_error.log", "a") as err_f,
             ):
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    native_daemon_command(
+                        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                    ),
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
@@ -325,7 +352,9 @@ class TestStalePIDFile:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -375,7 +404,9 @@ class TestClientReconnection:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -412,7 +443,9 @@ class TestClientReconnection:
                 open(log_dir / "daemon_error.log", "a") as err_f,
             ):
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    native_daemon_command(
+                        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                    ),
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
@@ -464,7 +497,9 @@ class TestTaskStatePersistence:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -476,7 +511,7 @@ class TestTaskStatePersistence:
         try:
             wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
-            project_id = "00000000-0000-4000-8000-000000000001"
+            project_id = E2E_PROJECT_ID
             _register_test_project(
                 http_port,
                 gobby_home,
@@ -501,7 +536,9 @@ class TestTaskStatePersistence:
                 open(log_dir / "daemon_error.log", "a") as err_f,
             ):
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    native_daemon_command(
+                        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                    ),
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
@@ -548,7 +585,9 @@ class TestTaskStatePersistence:
             open(log_dir / "daemon_error.log", "w") as err_f,
         ):
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -560,7 +599,7 @@ class TestTaskStatePersistence:
         try:
             wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
-            project_id = "00000000-0000-4000-8000-000000000002"
+            project_id = E2E_PROJECT_ID
             _register_test_project(
                 http_port,
                 gobby_home,
@@ -575,8 +614,7 @@ class TestTaskStatePersistence:
             )
 
             # Crash the daemon
-            os.kill(process1.pid, signal.SIGKILL)
-            process1.wait(timeout=25)
+            _crash(process1)
 
             # Verify task survives crash (check database directly)
             row = _read_task_row(database_url, task_id)

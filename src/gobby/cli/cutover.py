@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
@@ -40,6 +41,9 @@ from gobby.utils.native_bin import (
 
 _PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks")
 _BINARY_NAMES = ("gcode", "gdaemon", "ghook")
+# gclient shares gobby-core with the set but is promoted separately, outside the stamp.
+_CLIENT_PACKAGE = "gobby-client"
+_CLIENT_NAME = "gclient"
 _PIN_PATH = Path("src/gobby/storage/schema_expected_identity.json")
 _INSTALL_METHOD = "workspace-cutover"
 _SCHEMA_INPUTS = (
@@ -98,19 +102,46 @@ def _run(
     return result
 
 
-def _build_artifacts(root: Path) -> dict[str, Path]:
+@dataclass(frozen=True)
+class _Client:
+    artifact: Path
+    source: str  # source identity taken before the build
+
+
+@dataclass(frozen=True)
+class _Build:
+    artifacts: dict[str, Path]
+    client: _Client | str  # the built gclient, or why there is none
+
+
+def _build_artifacts(root: Path) -> _Build:
+    """Build the set and gclient in one cargo run, so gobby-core compiles once.
+
+    gclient stays outside the coherent set: when the shared run fails, the set is
+    rebuilt alone (reusing the crates the shared run finished) and only gclient is lost.
+    """
     args = ["cargo", "build", "--release", "--locked"]
     for package in _PACKAGES:
         args.extend(("-p", package))
-    _run(args, cwd=root, label="release build", timeout=1800)
+    client_failure = None
+    try:
+        client_source = workspace_source_identity(root, _CLIENT_NAME)
+        _run([*args, "-p", _CLIENT_PACKAGE], cwd=root, label="release build", timeout=1800)
+    except (CutoverError, BinaryReleaseVersionError, OSError, ValueError) as exc:
+        client_failure = str(exc)
+        _run(args, cwd=root, label="release build", timeout=1800)
 
-    artifacts = {
-        name: cargo_release_dir(root, cwd=root) / native_bin_name(name) for name in _BINARY_NAMES
-    }
+    release_dir = cargo_release_dir(root, cwd=root)
+    artifacts = {name: release_dir / native_bin_name(name) for name in _BINARY_NAMES}
     missing = [str(path) for path in artifacts.values() if not path.is_file()]
     if missing:
         raise CutoverError("release build omitted required artifacts: " + ", ".join(missing))
-    return artifacts
+    if client_failure is not None:
+        return _Build(artifacts, client_failure)
+    client = release_dir / native_bin_name(_CLIENT_NAME)
+    if not client.is_file():
+        return _Build(artifacts, f"release build omitted {client}")
+    return _Build(artifacts, _Client(client, client_source))
 
 
 def _dirty_schema_inputs(root: Path) -> list[str]:
@@ -176,7 +207,12 @@ def _report(message: str, *, error: bool = False) -> None:
     click.echo(message, err=error)
 
 
-def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
+def _stop_admission_refusal(
+    ctx: click.Context,
+    *,
+    wait: bool,
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
+) -> str | None:
     """Apply the restart's stop-time admissions before anything is promoted.
 
     A protected cron run or an unresolved session handoff refuses the stop, so
@@ -190,7 +226,9 @@ def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
     ):
         return "a restart-protected cron run is active; re-run with --wait"
     try:
-        with protect_pending_handoffs(runtime, wait=wait, report=_report):
+        with protect_pending_handoffs(
+            runtime, wait=wait, report=_report, logged_stale_markers=logged_stale_markers
+        ):
             pass
     except HandoffShutdownBlocked as exc:
         return f"{exc}; re-run with --wait"
@@ -239,11 +277,15 @@ def run_cutover(
     stop_daemon: Callable[[], bool],
     start_daemon: Callable[[], None],
     start_refusal: Callable[[Path], str | None],
-) -> None:
-    """Build and prove the candidate, stop, then promote and start the new set."""
+) -> str | None:
+    """Build and prove the candidate, stop, then promote and start the new set.
+
+    gclient is promoted after the daemon is back; returns why it was not, or None.
+    """
     try:
         sources = {name: workspace_source_identity(root, name) for name in _BINARY_NAMES}
-        artifacts = _build_artifacts(root)
+        build = _build_artifacts(root)
+        artifacts = build.artifacts
         preflight_binary_promotions(
             artifacts, bin_dir=bin_dir, workspace_root=root, source_identities=sources
         )
@@ -277,6 +319,29 @@ def run_cutover(
         raise CutoverError(
             f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
         ) from exc
+    if isinstance(build.client, str):
+        return build.client
+    try:
+        _promote_client(root, bin_dir, build.client)
+    except (
+        CutoverError,
+        BinarySetCoherenceError,
+        BinaryReleaseVersionError,
+        OSError,
+        ValueError,
+    ) as exc:
+        return str(exc)
+    return None
+
+
+def _promote_client(root: Path, bin_dir: Path, client: _Client) -> None:
+    from gobby.cli import install_setup
+
+    _require_unchanged_sources(root, {_CLIENT_NAME: client.source})
+    if install_setup._promote_gclient_workspace_artifact(client.artifact, bin_dir, root) is None:
+        raise CutoverError("gclient: native binary update is already in progress")
+    if version := install_setup._get_installed_gclient_version(bin_dir):
+        install_setup._write_gclient_version_stamp(bin_dir, version)
 
 
 def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:
@@ -314,9 +379,16 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
             raise click.ClickException(refusal)
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
+    logged_stale_markers: set[tuple[str, str | None, str]] = set()
 
     def stop_daemon() -> bool:
-        return _do_stop(ctx, False, shutdown_intent="restart", wait=True)
+        return _do_stop(
+            ctx,
+            False,
+            shutdown_intent="restart",
+            wait=True,
+            logged_stale_markers=logged_stale_markers,
+        )
 
     def start_daemon() -> None:
         try:
@@ -333,16 +405,26 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
                 + "; commit or stash them, or pass --allow-dirty"
             )
         expected_identity = _read_workspace_pin(root)
-        run_cutover(
+        client_failure = run_cutover(
             root,
             bin_dir,
             stop_daemon=stop_daemon,
             start_daemon=start_daemon,
             start_refusal=lambda candidate: (
                 restart_start_refusal(ctx, candidate, expected_identity=expected_identity)
-                or _stop_admission_refusal(ctx, wait=wait)
+                or _stop_admission_refusal(
+                    ctx, wait=wait, logged_stale_markers=logged_stale_markers
+                )
             ),
         )
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo("Cutover complete: gcode, gdaemon, ghook, schema pin, and daemon agree.")
+    if client_failure is None:
+        click.echo("gclient matches this build.")
+    else:
+        _report(
+            f"gclient was not promoted: {client_failure}. The daemon set is live; "
+            "after resolving this, run `uv run gobby install gclient`.",
+            error=True,
+        )

@@ -22,7 +22,6 @@ from gobby.storage import schema_contract
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE, PostgresCapacity
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
-from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission as AgentCapAdmission,
 )
@@ -69,13 +68,17 @@ class PostgresHubDatabase:
         *,
         pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
         runtime_role: str | None = None,
+        lifecycle: Literal["independent", "runner"] = "independent",
     ) -> None:
         if runtime_role is not None:
             _postgres_pool.validate_identifier(runtime_role)
         self._conninfo = _postgres_pool.conninfo_with_utc_session_timezone(dsn)
         self._runtime_role = runtime_role
         self._deployment_token = deployment_token()
-        self._application_name = f"gobby-hub-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
+        # Only runner-owned pools participate in predecessor fencing. CLI, hook
+        # and tool transactions outlive a backend swap independently of its owner.
+        prefix = "gobby-hub" if lifecycle == "runner" else "gobby-client"
+        self._application_name = f"{prefix}-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
@@ -375,14 +378,9 @@ class PostgresHubDatabase:
     ) -> Cursor | None:
         """Run a lone read in autocommit, or return None when it needs a transaction.
 
-        Reads inside an ambient transaction must see its uncommitted writes, and
-        deadline bounds are SET LOCAL, which only a transaction block honors.
+        Reads inside an ambient transaction must see its uncommitted writes.
         """
-        if (
-            ambient_transaction(self) is not None
-            or current_database_operation_deadline() is not None
-            or not _postgres_pool.is_autocommit_read(sql)
-        ):
+        if ambient_transaction(self) is not None or not _postgres_pool.is_autocommit_read(sql):
             return None
         return _postgres_pool.autocommit_read(self.open, self._pool_connection, sql, params)
 

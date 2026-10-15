@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -386,3 +387,54 @@ async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:
 async def test_reader_raises_oserror_for_missing_path(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         await GrokTranscriptWatchdogReader().read(str(tmp_path / "missing.jsonl"))
+
+
+async def test_reader_decodes_only_records_appended_since_its_last_read(tmp_path: Path) -> None:
+    # Re-decoding the whole transcript on every poll held the daemon GIL (#23359).
+    path = tmp_path / "incremental.jsonl"
+    _write(
+        path,
+        [
+            _update("user_message_chunk", content={"text": "continue"}),
+            _update("agent_message_chunk", content={"text": "working"}),
+        ],
+    )
+    reader = GrokTranscriptWatchdogReader()
+    await reader.read(str(path))
+
+    completion = _update(
+        "turn_completed", method="_x.ai/session/update", prompt_id="p", stop_reason="end_turn"
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(completion) + "\n")
+    with patch("gobby.agents.watchdog._scan.json.loads", wraps=json.loads) as loads:
+        snapshot = await reader.read(str(path))
+
+    assert loads.call_count == 1
+    assert snapshot == await GrokTranscriptWatchdogReader().read(str(path))
+    assert snapshot.latest_turn_kind == "completed"
+
+
+async def test_reader_counts_an_unterminated_record_and_rescans_it_once_complete(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial.jsonl"
+    _write(path, [_update("user_message_chunk", content={"text": "continue"})])
+    reader = GrokTranscriptWatchdogReader()
+    completion = json.dumps(
+        _update(
+            "turn_completed", method="_x.ai/session/update", prompt_id="p", stop_reason="end_turn"
+        )
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(completion[:-1])
+
+    partial = await reader.read(str(path))
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(completion[-1] + "\n")
+    complete = await reader.read(str(path))
+
+    assert partial.last_malformed_line_num == 2
+    assert complete == await GrokTranscriptWatchdogReader().read(str(path))
+    assert complete.latest_turn_kind == "completed"
+    assert complete.last_malformed_line_num is None

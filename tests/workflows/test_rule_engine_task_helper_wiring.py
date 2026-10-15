@@ -43,7 +43,7 @@ def _make_event(event_type: HookEventType = HookEventType.STOP) -> HookEvent:
 
 
 @pytest.mark.asyncio
-async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -> None:
+async def test_require_task_close_blocks_claimed_epic(db: HubDatabase) -> None:
     _sync_bundled(db)
     task_manager = LocalTaskManager(db)
     project = LocalProjectManager(db).create(name="task-helper-wiring", repo_path=None)
@@ -69,7 +69,7 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
         variables={
             "_agent_type": "default",
             "_memory_initial_stop_checked": True,
-            "mode_level": 0,
+            "mode_level": 2,
             "task_claimed": True,
             "claimed_tasks": {parent.id: f"#{parent.seq_num}"},
             "stop_attempts": 0,
@@ -77,7 +77,7 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
     )
 
     assert response.decision == "block"
-    assert "Epic tree not complete" in (response.reason or "")
+    assert "require-task-close" in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ async def test_require_task_close_rejects_mixed_live_and_ordinary_claims(
 
 
 @pytest.mark.asyncio
-async def test_require_epic_tree_close_rejects_live_session_label(db: HubDatabase) -> None:
+async def test_require_task_close_rejects_live_epic_label(db: HubDatabase) -> None:
     _sync_bundled(db)
     task_manager = LocalTaskManager(db)
     project = LocalProjectManager(db).create(name="live-epic-gate", repo_path=None)
@@ -195,6 +195,8 @@ async def test_require_epic_tree_close_rejects_live_session_label(db: HubDatabas
     )
 
     assert response.decision == "block"
+
+    assert "require-task-close" in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -246,7 +248,6 @@ async def test_unresolved_dependency_yields_claim_gates_and_rearms_after_close(
 
     assert rearmed.decision == "block"
     assert "require-task-close" in (rearmed.reason or "")
-    assert "require-epic-tree-close" in (rearmed.reason or "")
     assert variables["stop_attempts"] == 8
 
 

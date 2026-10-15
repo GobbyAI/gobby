@@ -3092,20 +3092,131 @@ class TestExternalNavigationScope:
         assert data["canonical_tool_confidence"] == "low"
         assert not data.get("canonical_repo_mutation")
 
-    def test_git_restore_pathspecs_without_separator_are_write_paths(self) -> None:
-        for command, expected in (
-            ("git restore --staged src/gobby/x.py", ["src/gobby/x.py"]),
-            ("git restore -s HEAD~1 --worktree a.md b.md", ["a.md", "b.md"]),
-            ("git restore --staged -- notes.md", ["notes.md"]),
-            ("git checkout main", []),
+    def test_git_restore_classifies_index_and_worktree_targets(self) -> None:
+        for command, kind, expected in (
+            ("git restore --staged src/gobby/x.py", "execute", []),
+            ("git restore -s HEAD~1 --worktree a.md b.md", "write", ["a.md", "b.md"]),
+            ("git restore --staged -- notes.md", "execute", []),
+            ("git checkout main", "write", []),
         ):
             data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
 
             normalize_tool_fields(data)
 
-            assert data["canonical_tool_kind"] == "write", command
+            assert data["canonical_tool_kind"] == kind, command
             assert data["canonical_repo_mutation"] is True, command
             assert data.get("canonical_file_paths", []) == expected, command
+
+    @pytest.mark.parametrize(
+        "command, kind, paths",
+        [
+            ("git restore -- -S", "write", ["-S"]),
+            ("git restore -- -SW", "write", ["-SW"]),
+            ("git restore --staged -- -W", "execute", []),
+            ("git restore -S -- -W", "execute", []),
+            ("git restore -SW foreign.txt", "write", ["foreign.txt"]),
+            ("git restore -S --worktree foreign.txt", "write", ["foreign.txt"]),
+        ],
+    )
+    def test_git_restore_respects_path_separator(
+        self, command: str, kind: str, paths: list[str]
+    ) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+        assert data.get("canonical_file_paths", []) == paths
+
+    @pytest.mark.parametrize(
+        "options, kind",
+        [
+            ("-sSTABLE -- foreign.txt", "write"),
+            ("-s STABLE -- foreign.txt", "write"),
+            ("--source=STABLE -- foreign.txt", "write"),
+            ("--source STABLE -- foreign.txt", "write"),
+            ("--pathspec-from-file -S", "write"),
+            ("--pathspec-from-file=-S", "write"),
+            ("-SsSTABLE -- foreign.txt", "execute"),
+            ("-SWsSTABLE -- foreign.txt", "write"),
+            ("-S --pathspec-from-file -W", "execute"),
+        ],
+    )
+    def test_git_restore_consumes_option_values(self, options: str, kind: str) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"git restore {options}"},
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+
+    @pytest.mark.parametrize(
+        "command, kind, root_scoped",
+        [
+            ("git restore -S --workt -- foreign.txt", "write", True),
+            ("git restore -S --w -- foreign.txt", "write", True),
+            ("git switch --discard --detach HEAD", "write", True),
+            ("git checkout --for HEAD", "write", True),
+            ("git checkout --forc HEAD", "write", True),
+            ("git restore -S --gobby-unproven -- foreign.txt", "write", True),
+            ("git switch --gobby-unproven --detach HEAD", "write", True),
+            ("git checkout --gobby-unproven HEAD", "write", True),
+            ("git restore -S -- foreign.txt", "execute", False),
+            ("git restore -S --worktree -- foreign.txt", "write", False),
+            ("git switch --discard-changes --detach HEAD", "write", True),
+            ("git checkout --force HEAD", "write", True),
+            ("git switch --detach HEAD", "execute", False),
+            ("git restore -S --source --gobby-unproven -- foreign.txt", "execute", False),
+            ("git restore -S -s--gobby-unproven -- foreign.txt", "execute", False),
+            ("git restore -S -- --gobby-unproven", "execute", False),
+            ("git switch --create --gobby-unproven", "execute", False),
+            ("git checkout -qm HEAD", "write", True),
+            ("git checkout --merge HEAD", "write", True),
+            ("git switch -qm --detach HEAD", "write", True),
+            ("git switch --merge --detach HEAD", "write", True),
+        ],
+    )
+    def test_git_long_option_proof(
+        self, tmp_path: Path, command: str, kind: str, root_scoped: bool
+    ) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+        if root_scoped:
+            assert data["canonical_file_paths"] == [str(tmp_path.resolve())]
+            if "restore" not in command:
+                assert data["canonical_git_checkout_mutation"] is True
+                assert data["canonical_dirty_edit_paths"] == [str(tmp_path.resolve())]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git checkout --ours conflict.txt",
+            "git checkout --theirs conflict.txt",
+            "git restore --ours conflict.txt",
+            "git restore --theirs -- conflict.txt",
+        ],
+    )
+    def test_git_conflict_side_selection_targets_its_path(
+        self, tmp_path: Path, command: str
+    ) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        (tmp_path / "conflict.txt").write_text("conflict\n", encoding="utf-8")
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == [str(tmp_path.resolve() / "conflict.txt")]
 
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (

@@ -101,56 +101,7 @@ class TestLazyBool:
         assert calls == 1
 
 
-# --- task_tree_complete tests ---
-
-
-class TestTaskTreeComplete:
-    def test_returns_true_when_task_id_is_none(self, mock_task_manager: MagicMock) -> None:
-        ctx: dict[str, Any] = {"variables": {}}
-        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
-        assert ev.evaluate("task_tree_complete(None)") is True
-
-    def test_returns_true_when_task_closed(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task(closed=True)
-        mock_task_manager.get_task.return_value = task
-        mock_task_manager.list_tasks.return_value = []
-
-        ctx: dict[str, Any] = {"variables": {}}
-        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
-        assert ev.evaluate("task_tree_complete('task-123')") is True
-
-    def test_returns_false_when_task_open(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task()
-        mock_task_manager.get_task.return_value = task
-        mock_task_manager.list_tasks.return_value = []
-
-        ctx: dict[str, Any] = {"variables": {}}
-        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
-        assert ev.evaluate("task_tree_complete('task-123')") is False
-
-    def test_returns_false_when_subtask_open(self, mock_task_manager: MagicMock) -> None:
-        parent = _make_task(closed=True)
-        # _is_tree_complete resolves subtasks via the task row's own id
-        # (list_tasks(parent_task_id=task.id)), so the mock id must match the ref.
-        parent.id = "task-123"
-        child = _make_task()
-        child.id = "child-1"
-
-        mock_task_manager.get_task.side_effect = lambda task_id: (
-            parent if task_id == "task-123" else child
-        )
-        mock_task_manager.list_tasks.side_effect = lambda parent_task_id: (
-            [child] if parent_task_id == "task-123" else []
-        )
-
-        ctx: dict[str, Any] = {"variables": {}}
-        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
-        assert ev.evaluate("task_tree_complete('task-123')") is False
-
-    def test_no_task_manager_returns_false(self) -> None:
-        ctx: dict[str, Any] = {"variables": {}}
-        ev = _build_evaluator(ctx, task_manager=None)
-        assert ev.evaluate("task_tree_complete('task-123')") is False
+# --- task state tests ---
 
 
 class TestTaskTypeIn:
@@ -861,7 +812,7 @@ class TestCombinedExpressions:
         ev = _build_evaluator(ctx, task_manager=mock_task_manager)
         assert (
             ev.evaluate(
-                "task_tree_complete('task-123') and mcp_called('gobby-tasks', 'claim_task')"
+                "task_state_in('task-123', 'closed') and mcp_called('gobby-tasks', 'claim_task')"
             )
             is True
         )
@@ -990,8 +941,8 @@ class TestCombinedExpressions:
             "session_task": "task-456",  # Flattened into context
         }
         ev = _build_evaluator(ctx, task_manager=mock_task_manager)
-        # This simulates: task_tree_complete(variables.session_task)
-        assert ev.evaluate("task_tree_complete(session_task)") is True
+        # This simulates: task_state_in(variables.session_task, 'closed')
+        assert ev.evaluate("task_state_in(session_task, 'closed')") is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

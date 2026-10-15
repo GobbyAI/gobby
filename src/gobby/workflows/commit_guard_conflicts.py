@@ -1,6 +1,5 @@
 """Ownership conflict scope and actionable diagnostics, independent of I/O."""
 
-import json
 from collections.abc import Mapping, Set
 from dataclasses import dataclass, replace
 
@@ -15,7 +14,7 @@ class ForeignPathOwner:
     session_ref: str
     task_ref: str
     owner_session_id: str
-    owner_task_id: str
+    owner_task_id: str | None
 
 
 def scope_foreign_owners(
@@ -68,21 +67,15 @@ def format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
         conflicts, key=lambda item: (item.path, item.session_ref, item.task_ref)
     )
     lines = [
-        "Commit blocked: staged path(s) belong to another active task/session:",
+        "Commit blocked: staged path(s) hold another live session's uncommitted work "
+        "(rule 2: do not commit files you did not create or mutate):",
         *[
-            f"- {owner.path} — session {owner.session_ref}, task {owner.task_ref}"
+            f"- {owner.path} — session {owner.session_ref}, "
+            + (f"task {owner.task_ref}" if owner.owner_task_id else "no claimed task")
             for owner in ordered_conflicts
         ],
-        "Ask each owner with `gobby-agents.send_message` to verify its work is committed, "
-        "then run its matching release call:",
-        *[
-            f"- session {owner.session_ref}: "
-            f"`gobby-tasks.release_task_paths(task_id={json.dumps(owner.task_ref)}, "
-            f"paths=[{json.dumps(owner.path)}])`"
-            for owner in ordered_conflicts
-        ],
-        "Commit only your paths with `git commit --only -- <owned paths>`; "
-        "foreign staged entries will remain intact.",
+        "Commit only your own paths with `git commit --only -- <paths>`, or ask each "
+        "owner with `gobby-agents.send_message` to commit first.",
     ]
     return "\n".join(lines)
 
@@ -96,24 +89,23 @@ def format_unverified_dirty_edit_reason(paths: Set[str]) -> str:
     )
 
 
-def format_dirty_edit_reason(conflicts: set[ForeignPathOwner]) -> str:
+def format_dirty_edit_reason(
+    conflicts: set[ForeignPathOwner], unowned: Set[str] = frozenset()
+) -> str:
     ordered_conflicts = sorted(
         conflicts, key=lambda item: (item.path, item.session_ref, item.task_ref)
     )
     return "\n".join(
         [
-            "Edit blocked: dirty path(s) belong to another active task/session:",
+            "Edit blocked: dirty path(s) were changed outside this session "
+            "(rule 3: you may not mutate files that are dirty):",
             *[
-                f"- {owner.path} — session {owner.session_ref}, task {owner.task_ref}"
+                f"- {owner.path} — session {owner.session_ref}, "
+                + (f"task {owner.task_ref}" if owner.owner_task_id else "no claimed task")
                 for owner in ordered_conflicts
             ],
-            "Ask each owner with `gobby-agents.send_message` to make a buildable WIP "
-            "commit before you continue.",
-            "For work that cannot be committed, migrate it through `gobby-worktrees`.",
-            "For a stale owner, reclaim its task with:",
-            *[
-                f"- `gobby-tasks.claim_task(task_id={json.dumps(task_ref)}, force=true)`"
-                for task_ref in dict.fromkeys(owner.task_ref for owner in ordered_conflicts)
-            ],
+            *[f"- {path} — no live session owns it" for path in sorted(unowned)],
+            "Ask each owner with `gobby-agents.send_message` to commit its work; ask the "
+            "user about unowned paths. Then retry.",
         ]
     )

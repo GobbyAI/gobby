@@ -164,6 +164,83 @@ describe("useChat viewed session state", () => {
     expect(metadataRequestCount()).toBe(1);
   });
 
+  it("does not supersede an in-flight persisted restore when the socket connects first", async () => {
+    localStorage.setItem("gobby-viewing-session-id", "sess-missing");
+    localStorage.setItem("gobby-viewing-session-mode", "observe");
+
+    let answerMetadata!: (response: Response) => void;
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url === "/api/sessions/sess-missing") {
+        return new Promise<Response>((resolve) => {
+          answerMetadata = resolve;
+        });
+      }
+      return Promise.resolve(jsonResponse({ messages: [] }));
+    });
+    const metadataRequestCount = () =>
+      mockFetch.fn.mock.calls.filter(
+        ([input]) => requestUrl(input) === "/api/sessions/sess-missing",
+      ).length;
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await act(async () => {
+      mockWs.instances[0].simulateOpen();
+      await Promise.resolve();
+    });
+    expect(metadataRequestCount()).toBe(1);
+
+    await act(async () => {
+      answerMetadata(new Response("{}", { status: 404 }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.viewingSessionId).toBeNull();
+    });
+    expect(metadataRequestCount()).toBe(1);
+  });
+
+  it("retries a persisted restore that settles without data after the socket connected", async () => {
+    localStorage.setItem("gobby-viewing-session-id", "sess-late");
+    localStorage.setItem("gobby-viewing-session-mode", "none");
+
+    let answerMetadata!: (response: Response) => void;
+    mockFetch.fn.mockImplementation((input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url === "/api/sessions/sess-late" && !answerMetadata) {
+        return new Promise<Response>((resolve) => {
+          answerMetadata = resolve;
+        });
+      }
+      return Promise.resolve(jsonResponse({ messages: [] }));
+    });
+    const metadataRequestCount = () =>
+      mockFetch.fn.mock.calls.filter(
+        ([input]) => requestUrl(input) === "/api/sessions/sess-late",
+      ).length;
+
+    await loadModule();
+    renderHook(() => useChat());
+
+    await act(async () => {
+      mockWs.instances[0].simulateOpen();
+      await Promise.resolve();
+    });
+    expect(metadataRequestCount()).toBe(1);
+
+    await act(async () => {
+      answerMetadata(new Response("{}", { status: 503 }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(metadataRequestCount()).toBe(2);
+    });
+  });
+
   it("restores a proxy-attached terminal session on mount", async () => {
     localStorage.setItem("gobby-viewing-session-id", "sess-proxy-restore");
     localStorage.setItem("gobby-viewing-session-mode", "proxy");

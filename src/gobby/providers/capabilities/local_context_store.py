@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from gobby.providers.capabilities.local_context import LocalContextObservation
@@ -14,8 +15,10 @@ from gobby.providers.capabilities.models import (
     ProviderSnapshot,
     ReasoningSupport,
 )
-from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.utils.url_sanitize import sanitize_url
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.store import ProviderCapabilityStore
 
 _LOCAL_PROVIDER_PREFIX = "__local_context__"
 _CONTEXT_FACT = "context_length"

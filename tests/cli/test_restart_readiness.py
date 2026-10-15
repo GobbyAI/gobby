@@ -151,3 +151,22 @@ def test_startup_poll_rejects_unrecognized_503(
 
     assert daemon_start._poll_startup_progress(1, max_wait=1) is False
     get.assert_called_once()
+
+
+def test_startup_poll_waits_through_down_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    get = MagicMock(
+        side_effect=[
+            httpx.Response(
+                503,
+                json={"status": "unavailable", "backend": {"state": "down", "target": "test"}},
+            ),
+            httpx.Response(200, json={"done": True}),
+        ]
+    )
+    monkeypatch.setattr(httpx, "get", get)
+    sleep = MagicMock()
+    monkeypatch.setattr("gobby.cli.daemon_start.time.sleep", sleep)
+
+    assert daemon_start._poll_startup_progress(1, max_wait=1) is True
+    assert get.call_count == 2
+    sleep.assert_called_once_with(0.5)

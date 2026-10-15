@@ -192,7 +192,7 @@ describe("TerminalSessionList backend chips", () => {
     expect(within(rows[1]).getByText("gterm")).toBeInTheDocument();
   });
 
-  it("rendersBackendForEverySession from each stored row's backend", () => {
+  it("rendersBackendForEverySession", () => {
     const stored = [
       makeTmux({ name: "hand-started", backend: "tmux" }),
       makeTmux({ name: "agent", backend: "native" }),

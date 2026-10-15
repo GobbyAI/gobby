@@ -68,6 +68,7 @@ TOOLS = {
     "split_pane",
     "close_pane",
     "move_pane",
+    "move_tab",
     "swap_panes",
     "rebalance_tab",
     "rename_workspace_item",
@@ -232,6 +233,11 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         other_ref = f"{home}:{other_tab['ref']}"
         moved = await _ok(registry, "move_pane", pane=second_ref, tab=other_ref)
         assert {row["tab_id"] for row in moved["panes"]} == {other_tab["id"]}
+        reordered = await _ok(registry, "move_tab", tab=other_ref, position=0)
+        assert [row["id"] for row in reordered["tabs"]] == [other_tab["id"], tab["id"]]
+        assert [row["position"] for row in reordered["tabs"]] == [0, 1]
+        listed_tabs = stack.workspaces.list_tabs(created["id"])
+        assert [row.id for row in listed_tabs] == [other_tab["id"], tab["id"]]
 
         written = await _ok(registry, "send_text", pane=first_ref, text="make", submit=True)
         # This pane has no composer reader, so the submit remains unverified.
@@ -264,7 +270,13 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         for message in watcher.all_messages()
         if message["type"] == "workspace_event"
     }
-    assert {"tab.created", "pane.renamed", "tab.renamed", "workspace.renamed"} <= kinds
+    assert {
+        "tab.created",
+        "tab.moved",
+        "pane.renamed",
+        "tab.renamed",
+        "workspace.renamed",
+    } <= kinds
 
     unconfigured = setup_internal_registries(
         config_resolver=lambda: None,

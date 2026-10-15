@@ -122,6 +122,74 @@ def test_get_many_fetches_any_number_of_terminals_in_one_query(
     assert len(fetchall.call_args.args[1][0]) == 3
 
 
+def test_reads_decode_each_json_column_once_without_redumping(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped locator, process and unresolved
+    # writes, and Terminal.from_row decoded that text again, on every read (#23359).
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    process = {"host_terminal_id": "ht-decode", "pgid": 4242, "start_time": 1_700_000_000}
+    manager.record_process(
+        pending.id,
+        process,
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    epoch = str(uuid.uuid4())
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "ht-decode"},
+        locator_key=native_locator_key(epoch, "ht-decode"),
+        host_epoch=epoch,
+    )
+    assert live is not None
+    writes = {"ws:a": {"origin": "ws", "daemon_epoch": "e1"}}
+    temp_db.execute(
+        "UPDATE terminals SET unresolved_writes = %s::jsonb WHERE id = %s",
+        (json.dumps(writes), live.id),
+    )
+    stale = _create_pending(manager, sample_project["id"], backend="native")
+    manager.record_process(
+        stale.id,
+        process,
+        attempt_generation=stale.attempt_generation,
+        attempt_started_at=stale.attempt_started_at,
+    )
+    temp_db.execute(
+        "UPDATE terminals SET unresolved_writes = %s::jsonb WHERE id = %s",
+        (json.dumps(writes), stale.id),
+    )
+
+    with (
+        patch("json.loads", wraps=json.loads) as loads,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        reads = [
+            manager.get(live.id),
+            manager.get_many([live.id])[live.id],
+            *manager.list_live_by_epoch(epoch),
+            *manager.list_stale_pending(0),
+        ]
+
+    assert dumps.call_count == 0
+    live_reads = [read for read in reads if read is not None and read.id == live.id]
+    stale_reads = [read for read in reads if read is not None and read.id == stale.id]
+    assert len(live_reads) == 3
+    assert len(stale_reads) == 1
+    # Pending rows cannot store a locator. The reaper read still decodes the
+    # JSON columns that row is allowed to hold.
+    assert loads.call_count == 3 * len(live_reads) + 2 * len(stale_reads)
+    for read in live_reads:
+        assert read.locator == {"host_terminal_id": "ht-decode"}
+        assert read.process == process
+        assert read.unresolved_writes == writes
+    assert stale_reads[0].locator is None
+    assert stale_reads[0].process == process
+    assert stale_reads[0].unresolved_writes == writes
+
+
 def test_latest_for_session_includes_orphaned_terminal_evidence(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1080,6 +1148,39 @@ def test_orphan_sweep_clears_only_dead_epochs_on_this_machine(
     assert memory.clear_orphaned_attachment_writes(LOCAL_MACHINE_ID, current_epoch) == 1
     assert set(memory.rows[memory_local.id].unresolved_writes) == {"ws:current:1"}
     assert set(memory.rows[memory_other.id].unresolved_writes) == {"ws:other-machine:1"}
+
+
+def test_native_epoch_machine_ids_span_states_and_machines(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The adoption matrix reads every native row bound to an epoch (plan 1.2.2)."""
+    other_machine_id = "22000000-0000-4000-8000-000000000002"
+    manager = _manager(temp_db)
+    LocalMachineManager(temp_db).upsert_seen(other_machine_id, TEST_USER_ID)
+    epoch = str(uuid.uuid4())
+
+    def live_native_row() -> str:
+        row = _create_pending(manager, sample_project["id"], backend="native")
+        host_terminal_id = str(uuid.uuid4())
+        promoted = manager.promote_to_live(
+            row.id,
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(epoch, host_terminal_id),
+            host_epoch=epoch,
+        )
+        assert promoted is not None
+        return row.id
+
+    _create_pending(manager, sample_project["id"])
+    live_native_row()
+    assert manager.native_epoch_machine_ids(epoch) == {LOCAL_MACHINE_ID}
+
+    with patch("gobby.utils.machine_id._cached_machine_id", other_machine_id):
+        foreign_id = live_native_row()
+        assert manager.mark_orphaned(foreign_id) is not None
+    assert manager.native_epoch_machine_ids(epoch) == {LOCAL_MACHINE_ID, other_machine_id}
+    assert manager.native_epoch_machine_ids(str(uuid.uuid4())) == set()
 
 
 def test_title_is_byte_bounded(

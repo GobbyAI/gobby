@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace, UnionType
 from typing import ClassVar
+from uuid import UUID
 
 import pytest
-from psycopg.pq import TransactionStatus
+from psycopg.pq import ExecStatus, TransactionStatus
 
 from gobby.build import lifecycle as build_lifecycle
 from gobby.build.options import BuildOptions
@@ -105,7 +106,8 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
     checkout_active = True
 
     class Result:
-        description = object()
+        pgresult = _FakePgresult([_FakeColumn("id", 23)])
+        connection = _UTF8_CONNECTION
 
         @property
         def rowcount(self) -> int:
@@ -590,10 +592,32 @@ class _FakeColumn:
     type_code: int
 
 
+class _FakePgresult:
+    """The libpq result fields PostgresCursor reads."""
+
+    def __init__(
+        self, columns: list[_FakeColumn], status: ExecStatus = ExecStatus.TUPLES_OK
+    ) -> None:
+        self._columns = columns
+        self.nfields = len(columns)
+        self.status = status
+
+    def fname(self, index: int) -> bytes:
+        return self._columns[index].name.encode()
+
+    def ftype(self, index: int) -> int:
+        return self._columns[index].type_code
+
+
+_UTF8_CONNECTION = SimpleNamespace(info=SimpleNamespace(encoding="utf-8"))
+
+
 class _TypedFakeResult(_FakeResult):
+    connection = _UTF8_CONNECTION
+
     def __init__(self, rows: list[dict[str, object]], columns: list[_FakeColumn]) -> None:
         super().__init__(rows)
-        self.description = columns
+        self.pgresult = _FakePgresult(columns)
 
 
 def test_postgres_cursor_dumps_json_columns_without_python_walk(
@@ -631,9 +655,9 @@ def test_postgres_cursor_dumps_json_columns_without_python_walk(
     assert walked == [run_times]
 
 
-class _CountingDescriptionResult(_FakeResult):
+class _CountingDescriptionResult(_TypedFakeResult):
     def __init__(self, rows: list[dict[str, object]], columns: list[_FakeColumn]) -> None:
-        super().__init__(rows)
+        super().__init__(rows, columns)
         self._columns = columns
         self.description_reads = 0
 
@@ -642,16 +666,31 @@ class _CountingDescriptionResult(_FakeResult):
 
     @property
     def description(self) -> list[_FakeColumn]:
-        # psycopg builds a fresh Column list on every read (#23359).
+        # psycopg builds a Column, with type lookups, per field on every read (#23359).
         self.description_reads += 1
         return self._columns
 
 
+_REF = UUID("6f1c2d3e-0000-4000-8000-000000000001")
+
+
 @pytest.mark.parametrize("read", ["materialize", "fetchone"])
-def test_postgres_cursor_reads_the_description_once(read: str) -> None:
+@pytest.mark.parametrize(
+    ("columns", "ref"),
+    [
+        ([_FakeColumn("doc", 3802), _FakeColumn("ref", 2950)], str(_REF)),
+        # dict_row keeps the last column of a repeated name; a JSON-classified
+        # UUID passes through, a uuid-classified one becomes text.
+        ([_FakeColumn("doc", 3802), _FakeColumn("ref", 2950), _FakeColumn("ref", 3802)], _REF),
+        ([_FakeColumn("doc", 3802), _FakeColumn("ref", 3802), _FakeColumn("ref", 2950)], str(_REF)),
+    ],
+)
+def test_postgres_cursor_classifies_json_columns_without_reading_the_description(
+    read: str, columns: list[_FakeColumn], ref: object
+) -> None:
     module = _postgres_pool_module()
     result = _CountingDescriptionResult(
-        [{"doc": {"n": index}} for index in range(3)], [_FakeColumn("doc", 3802)]
+        [{"doc": {"n": index}, "ref": _REF} for index in range(3)], columns
     )
     cursor = module.PostgresCursor(result)
 
@@ -660,8 +699,19 @@ def test_postgres_cursor_reads_the_description_once(read: str) -> None:
     else:
         rows = [cursor.fetchone() for _ in range(3)]
 
-    assert rows == [{"doc": f'{{"n":{index}}}'} for index in range(3)]
-    assert result.description_reads == 1
+    assert rows == [{"doc": f'{{"n":{index}}}', "ref": ref} for index in range(3)]
+    assert result.description_reads == 0
+
+
+def test_postgres_cursor_materializes_no_rows_from_a_command_result() -> None:
+    module = _postgres_pool_module()
+    result = _TypedFakeResult([{"id": 1}], [])
+    result.pgresult = _FakePgresult([], ExecStatus.COMMAND_OK)
+
+    cursor = module.PostgresCursor(result).materialize()
+
+    assert cursor.fetchall() == []
+    assert cursor.rowcount == 1
 
 
 def test_plain_scalars_skip_the_value_type_checks(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -351,16 +351,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_memory_watchdog.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 83,
-      "message": "Argument \"created_at\" to \"AgentRun\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 3,
-      "path": "tests/agents/test_memory_watchdog.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_prompt_detector.py::::mypy:func-returns-value",
       "issue_code": "mypy:func-returns-value",
       "line": 385,
@@ -1601,16 +1591,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/e2e/test_full_workflow.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 42,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 3,
-      "path": "tests/e2e/test_full_workflow.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/e2e/test_inter_agent_messages.py::::mypy:no-any-return",
       "issue_code": "mypy:no-any-return",
       "line": 36,
@@ -1707,16 +1687,6 @@
       "message": "Missing type parameters for generic type \"dict\"",
       "occurrences": 2,
       "path": "tests/e2e/test_sequential_review_loop.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/e2e/test_session_tracking.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 184,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/e2e/test_session_tracking.py",
       "severity": "high",
       "test_name": ""
     },

@@ -194,6 +194,12 @@ workflows:
       - "name:no-send-keys"
     exclude:
       - "tag:task-skill-gates"
+      # The daemon consumes this run's verdict and end_agent_run payload, so the
+      # survey and handoff-authoring gates on end_agent_run do not apply. The
+      # review step names neither tool those gates demand, and a reviewer held
+      # by them stalls after its verdict instead of ending the run.
+      - "name:require-handoff-feedback-before-authoring"
+      - "name:require-handoff-discipline"
 step_workflow:
   variables:
     required_skills:

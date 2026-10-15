@@ -159,28 +159,34 @@ def install_gclient_from_submodule(module: Any, bin_dir: Path) -> str | None:
         src_bin = release_dir / module._GCLIENT_BIN_NAME
         if not src_bin.exists():
             return None
-
-        dest = bin_dir / module._GCLIENT_BIN_NAME
-        if workspace_binary_is_current(
-            bin_dir, "gclient", src_bin, dest, workspace_root=manifest.parent
-        ):
-            return "current"
-        lock = try_acquire_native_bin_lock("gclient", bin_dir=bin_dir)
-        if lock is None:
-            module.logger.warning("gclient: native binary update is already in progress")
-            return None
-        with lock:
-            stage_and_promote_binary_file(
-                src_bin,
-                destination=dest,
-                prepare_staged=_codesign_workspace_binary,
-                workspace_root=manifest.parent,
-            )
-            write_source_hash(bin_dir, "gclient", file_sha256(src_bin))
-        return "promoted"
+        return promote_gclient_workspace_artifact(module, src_bin, bin_dir, manifest.parent)
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gclient: local workspace build failed: %s", e)
         return None
+
+
+def promote_gclient_workspace_artifact(
+    module: Any, src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    """Promote a built gclient through a signed new inode; None when another update holds it."""
+    dest = bin_dir / module._GCLIENT_BIN_NAME
+    if workspace_binary_is_current(
+        bin_dir, "gclient", src_bin, dest, workspace_root=workspace_root
+    ):
+        return "current"
+    lock = try_acquire_native_bin_lock("gclient", bin_dir=bin_dir)
+    if lock is None:
+        module.logger.warning("gclient: native binary update is already in progress")
+        return None
+    with lock:
+        stage_and_promote_binary_file(
+            src_bin,
+            destination=dest,
+            prepare_staged=_codesign_workspace_binary,
+            workspace_root=workspace_root,
+        )
+        write_source_hash(bin_dir, "gclient", file_sha256(src_bin))
+    return "promoted"
 
 
 def install_gclient_from_cargo_git(module: Any, bin_dir: Path) -> bool:

@@ -446,12 +446,17 @@ def test_tool_hooks_credit_only_edits_with_a_bound_start(
     )
 
     def resolve_path(
-        file_path: str, cwd: str | None, *, project_id: str | None = None
-    ) -> tuple[Path, str]:
+        file_path: str,
+        cwd: str | None,
+        *,
+        project_id: str | None,
+        db: HubDatabase | None,
+        variables: dict[str, Any],
+    ) -> tuple[str, str]:
         assert file_path == "src/bound.py"
-        return tmp_path, file_path
+        return str(tmp_path), file_path
 
-    monkeypatch.setattr(handlers, "_resolve_repo_edit_paths", resolve_path)
+    monkeypatch.setattr("gobby.workflows.task_claim_state.resolve_edit_pair", resolve_path)
     before = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         source=SessionSource.CODEX,
@@ -562,7 +567,8 @@ def test_codex_after_only_file_change_uses_unchanged_turn_selection(
         session_manager=cast(HookSessionManager, SessionManager(temp_db)), task_manager=tasks
     )
     monkeypatch.setattr(
-        handlers, "_resolve_repo_edit_paths", lambda *args, **kw: (tmp_path, "p.py")
+        "gobby.workflows.task_claim_state.resolve_edit_pair",
+        lambda *args, **kw: (str(tmp_path), "p.py"),
     )
     adapter = CodexAdapter()
     monkeypatch.setattr(adapter, "_get_machine_id", lambda: canonical_task_session.machine_id)

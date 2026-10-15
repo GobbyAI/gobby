@@ -254,6 +254,34 @@ def _positional_checkout_is_path(
     return bool(result.stdout) if result.returncode == 0 else None
 
 
+def _git_option_flags(
+    arguments: list[str], value_options: set[str], supported_long_options: set[str]
+) -> tuple[set[str], bool]:
+    """Read flags without interpreting option values or path operands as flags."""
+    flags: set[str] = set()
+    proven_options = True
+    skip_next = False
+    for argument in arguments:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument == "--":
+            break
+        if argument.startswith("--"):
+            option, separator, _ = argument.partition("=")
+            flags.add(option)
+            proven_options = proven_options and option in supported_long_options
+            skip_next = option in value_options and not separator
+        elif argument.startswith("-") and argument != "-":
+            for index, character in enumerate(argument[1:], start=1):
+                option = f"-{character}"
+                flags.add(option)
+                if option in value_options:
+                    skip_next = index == len(argument) - 1
+                    break
+    return flags, proven_options
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -281,14 +309,43 @@ def classify_git_mutation(
             for argument in arguments
         ):
             return _ShellSegmentMetadata("write", repo_mutation=True)
-        forced = any(
-            argument in {"--force", "--discard-changes", "--merge"}
-            or (
-                argument.startswith("-")
-                and not argument.startswith("--")
-                and any(flag in argument[1:] for flag in "fm")
-            )
-            for argument in arguments
+        supported_long_options = (
+            {
+                "--force",
+                "--detach",
+                "--orphan",
+                "--pathspec-from-file",
+                "--merge",
+                "--ours",
+                "--theirs",
+            }
+            if operation == "checkout"
+            else {
+                "--force",
+                "--discard-changes",
+                "--detach",
+                "--orphan",
+                "--create",
+                "--force-create",
+                "--merge",
+            }
+        )
+        flags, proven_options = _git_option_flags(
+            arguments,
+            {
+                "-b",
+                "-B",
+                "-c",
+                "-C",
+                "--orphan",
+                "--pathspec-from-file",
+                "--create",
+                "--force-create",
+            },
+            supported_long_options,
+        )
+        forced = not proven_options or bool(
+            flags & {"-f", "--force", "--discard-changes", "-m", "--merge"}
         )
         head_checkout = operation == "checkout" and arguments == ["HEAD"]
         root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
@@ -299,6 +356,11 @@ def classify_git_mutation(
         extra: dict[str, Any] = {"canonical_edit_file_paths": []}
         if forced:
             extra["canonical_git_force_checkout_roots"] = [str(root)]
+            extra["canonical_git_checkout_mutation"] = True
+            extra["canonical_dirty_edit_paths"] = [str(root)]
+            return _ShellSegmentMetadata(
+                "write", paths=(str(root),), repo_mutation=True, extra=extra
+            )
         # A positional checkout operand can be either a revision or a path,
         # even a tracked file deleted on disk. Retain checkout ownership checks
         # when only the containing worktree root can be proven.
@@ -348,6 +410,34 @@ def classify_git_mutation(
             ):
                 return _ShellSegmentMetadata("execute")
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})
+    restore_flags, proven_restore_options = (
+        _git_option_flags(
+            arguments,
+            {"-s", "--source", "--pathspec-from-file"},
+            {
+                "--source",
+                "--staged",
+                "--worktree",
+                "--pathspec-from-file",
+                "--pathspec-file-nul",
+                "--ours",
+                "--theirs",
+            },
+        )
+        if operation == "restore"
+        else (set(), True)
+    )
+    if operation == "restore" and not proven_restore_options:
+        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        return _ShellSegmentMetadata(
+            "write", paths=(str(root),) if root else (), repo_mutation=True
+        )
+    if (
+        operation == "restore"
+        and bool(restore_flags & {"-S", "--staged"})
+        and not restore_flags & {"-W", "--worktree"}
+    ):
+        return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
         if any(flag in arguments for flag in {"--check", "--stat", "--numstat"}):
             return _ShellSegmentMetadata("execute")
@@ -355,6 +445,11 @@ def classify_git_mutation(
     if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == "restore" and "--pathspec-from-file" in restore_flags:
+            root = checkout_root(Path(git_cwd).resolve()) if git_cwd else None
+            return _ShellSegmentMetadata(
+                "write", paths=(str(root),) if root else (), repo_mutation=True
+            )
         if operation == "add":
             candidates = _git_add_positional_args_after(parts, index + 1)
         elif operation in {"rm", "mv"}:
@@ -379,7 +474,9 @@ def classify_git_mutation(
         paths = [
             word
             for word in candidates
-            if _looks_path_target(word) or _contains_unexpanded_shell_reference(word)
+            if "--" in arguments
+            or _looks_path_target(word)
+            or _contains_unexpanded_shell_reference(word)
         ]
         return _ShellSegmentMetadata(
             "execute" if operation == "add" else "write",

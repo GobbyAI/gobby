@@ -25,6 +25,26 @@ UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
 # Process keys owned by the host that listed the terminal, replaced as a set.
 HOST_PROCESS_KEYS = ("host_terminal_id", "pgid", "start_time")
 
+
+def terminal_columns(table: str = "terminals") -> str:
+    """Select every column Terminal.from_row reads, with JSON columns as text.
+
+    Terminal.from_row decodes text itself, so the pool's jsonb loader would only
+    decode and re-dump those columns first (#23359).
+    """
+    return f"""{table}.id, {table}.backend, {table}.ownership, {table}.state,
+        {table}.spawn_key, {table}.machine_id, {table}.locator::text AS locator,
+        {table}.locator_key, {table}.session_name, {table}.window_id, {table}.title,
+        {table}.host_epoch, {table}.unresolved_writes::text AS unresolved_writes,
+        {table}.automatic_write_quarantined_at, {table}.automatic_write_quarantine_action_key,
+        {table}.attempt_generation, {table}.attempt_started_at,
+        {table}.process::text AS process, {table}.rows, {table}.cols, {table}.project_id,
+        {table}.session_id, {table}.agent_run_id, {table}.created_at, {table}.updated_at,
+        {table}.liveness_at"""
+
+
+TERMINAL_COLUMNS = terminal_columns()
+
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
 
@@ -184,11 +204,11 @@ class TerminalSettlementMixin:
         if _serialized_unresolved_size(writes) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
             raise UnresolvedWriteCapacityError()
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET unresolved_writes = %s, updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (Jsonb(writes), str(UUID(terminal_id))),
         )
@@ -205,11 +225,11 @@ class TerminalSettlementMixin:
         writes = dict(current.unresolved_writes)
         writes.pop(action_key, None)
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET unresolved_writes = %s, updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (Jsonb(writes), str(UUID(terminal_id))),
         )
@@ -221,11 +241,11 @@ class TerminalSettlementMixin:
     def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal:
         """Drop every action_key from the durable unresolved-write map."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
-            SET unresolved_writes = '{}'::jsonb, updated_at = now()
+            SET unresolved_writes = '{{}}'::jsonb, updated_at = now()
             WHERE id = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (str(UUID(terminal_id)),),
         )
@@ -326,18 +346,18 @@ class TerminalSettlementMixin:
         pgid cannot inherit a stale group as kill proof.
         """
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET locator = %s,
                 locator_key = %s,
                 host_epoch = %s,
-                process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s,
+                process = (COALESCE(process, '{{}}'::jsonb) - %s::text[]) || %s,
                 updated_at = now()
             WHERE id = %s
               AND state = 'orphaned'
               AND attempt_generation = %s
               AND attempt_started_at = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (
                 Jsonb(dict(locator)),
@@ -441,16 +461,16 @@ class TerminalSettlementMixin:
         if not isinstance(host_terminal_id, str) or not host_terminal_id:
             raise ValueError("process.host_terminal_id is required")
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
-            SET process = COALESCE(process, '{}'::jsonb) || %s,
+            SET process = COALESCE(process, '{{}}'::jsonb) || %s,
                 updated_at = now()
             WHERE id = %s
               AND state = 'pending'
               AND backend = 'native'
               AND attempt_generation = %s
               AND attempt_started_at = %s
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (
                 Jsonb(dict(process)),
@@ -470,12 +490,12 @@ class TerminalSettlementMixin:
     ) -> Terminal | None:
         """Merge host-observed reap identity without replacing attempt-owned keys."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
-            SET process = COALESCE(process, '{}'::jsonb) || %s,
+            SET process = COALESCE(process, '{{}}'::jsonb) || %s,
                 updated_at = now()
             WHERE id = %s AND state = 'pending' AND backend = 'native'
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (Jsonb({"pgid": pgid, "start_time": start_time}), str(UUID(terminal_id))),
         )
@@ -494,14 +514,14 @@ class TerminalSettlementMixin:
     def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
         """Start a new pending attempt and discard the prior host resource identity."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET attempt_generation = attempt_generation + 1,
                 attempt_started_at = now(),
                 process = process - 'host_terminal_id',
                 updated_at = now()
             WHERE id = %s AND state = 'pending'
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (str(UUID(terminal_id)),),
         )
@@ -514,7 +534,7 @@ class TerminalSettlementMixin:
     ) -> Terminal | None:
         """Start a retry only while the captured attempt owns no host resource."""
         row = self.db.fetchone(
-            """
+            f"""
             UPDATE terminals
             SET attempt_generation = attempt_generation + 1,
                 attempt_started_at = now(),
@@ -523,8 +543,8 @@ class TerminalSettlementMixin:
             WHERE id = %s
               AND state = 'pending'
               AND attempt_generation = %s
-              AND NOT (COALESCE(process, '{}'::jsonb) ? 'host_terminal_id')
-            RETURNING *
+              AND NOT (COALESCE(process, '{{}}'::jsonb) ? 'host_terminal_id')
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (str(UUID(terminal_id)), attempt_generation),
         )
@@ -560,7 +580,7 @@ class TerminalSettlementMixin:
                 {extra}
             WHERE id = %s AND {state_predicate}
                 {predicate_sql}
-            RETURNING *
+            RETURNING {TERMINAL_COLUMNS}
             """,
             (
                 new_state,

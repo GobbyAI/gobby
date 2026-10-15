@@ -7,14 +7,16 @@ Discover channels, then fetch the needed communications tool schema.
 
 When the operator asks a live agent session to "register with Telegram":
 
-1. Discover the active Telegram channel with `list_channels`, then call
+1. Discover an active Telegram channel whose `operator_project_id` or
+   `responder.project_id` matches your session's project with `list_channels`, then call
    `resolve_operator_conversation(channel)` to resolve the enrolled operator's
    linked DM. Never search `list_identities` or invent a chat ID. A missing DM
    needs the operator's `/start`; an ambiguous allowlist needs operator selection
    through channel configuration. Report the returned error and stop registration.
 2. Call `attach_conversation(channel, conversation_id)` using that result.
    An existing live holder requires it to detach before you can attach. Do not
-   displace it or rebind the identity.
+   displace it or rebind the identity. Foreign, missing or malformed project
+   ownership is rejected before attachment target writes.
 3. Type the confirmation normally. The daemon mirrors completed assistant text
    to the attached DM automatically; no explicit `send_message` is needed.
 
@@ -65,6 +67,12 @@ replies; explicit message `thread_id` takes precedence.
 Use `set_channel_project(channel, project)` for an authorized persistent
 responder project change. Resolve the exact project name or UUID first. It
 preserves other channel configuration and affects future responder turns.
+MCP channel creation, removal and project switching require
+`communications_admin: true` in the caller's installed definition; the bundled
+`comms-agent` grants it. The grant defaults to false and is independent of
+`operator_messaging`. Caller-supplied session variables do not grant access.
+The channel's `operator_project_id` is the stable seat operator-DM binding;
+`set_channel_project` changes only `responder.project_id` and preserves that binding.
 The result may have `project_path: null` when a local checkout cannot be
 resolved; successful project binding alone does not establish execution access.
 
@@ -74,4 +82,4 @@ discovery or service health, not inventing a path.
 See [destination resolution](../../../../../../../../docs/guides/comm-integrations.md#outbound-destination-resolution)
 and [responder projects](../../../../../../../../docs/guides/telegram.md#responder-projects-and-models).
 
-_Last verified: 2026-10-10_
+_Last verified: 2026-10-14_

@@ -105,13 +105,14 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
         max_size=BOOTSTRAP_POOL_SIZE,
     )
     migration_db = _initialize_postgres_with_startup_retry(
-        lambda: PostgresHubDatabase(database_url, pool_config=bootstrap_pool)
+        lambda: PostgresHubDatabase(database_url, pool_config=bootstrap_pool, lifecycle="runner")
     )
     migration_db.close()
     postgres_db = PostgresHubDatabase(
         database_url,
         pool_config=bootstrap_pool,
         runtime_role="gobby_daemon_runtime",
+        lifecycle="runner",
     )
     try:
         postgres_db.verify_runtime_identity()

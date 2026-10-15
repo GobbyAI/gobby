@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,11 +69,57 @@ async def test_explicit_refs_select_commit(repo: Path, tmp_path: Path, base: str
     git(repo, "switch", "-c", "caller")
     git(repo, "commit", "--allow-empty", "-m", "caller advances")
     child = tmp_path / "explicit-fork"
-    result = await fork(repo, child, base)
+    with patch.object(
+        WorktreeGitManager,
+        "run_git_command",
+        autospec=True,
+        side_effect=WorktreeGitManager.run_git_command,
+    ) as run_git:
+        result = await fork(repo, child, base)
+    fetches = [call.args[1] for call in run_git.call_args_list if call.args[1][0] == "fetch"]
+    assert fetches == (
+        [["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"]]
+        if base.startswith(("origin/", "refs/remotes/origin/"))
+        else []
+    )
     assert result.success, result.error
     assert git(child, "rev-parse", "HEAD") == selected
     assert result.worktree is not None
     assert result.worktree.base_branch == "main"
+
+
+@pytest.mark.parametrize("phase", ["branch", "check-ref-format", "fetch"])
+async def test_base_selection_timeout_returns_structured_error(
+    repo: Path, tmp_path: Path, phase: str
+) -> None:
+    manager = WorktreeGitManager(repo)
+    child = tmp_path / "timeout-fork"
+    storage = MagicMock()
+    command = ["git", phase]
+    failure = subprocess.TimeoutExpired(command, 5)
+    outcomes = (
+        [subprocess.CompletedProcess(["git", "check-ref-format"], 0, "", ""), failure]
+        if phase == "fetch"
+        else [failure]
+    )
+    base = None if phase == "branch" else "origin/main"
+    with patch.object(manager, "_run_git", side_effect=outcomes):
+        result = await create_worktree(
+            git_manager=manager,
+            worktree_storage=storage,
+            project_id="project",
+            branch_name=child.name,
+            worktree_path=str(child),
+            base_branch=base,
+        )
+    assert not result.success
+    assert result.error_code == "base_selection_timeout"
+    assert result.error is not None and "timed out" in result.error.lower()
+    assert result.worktree is None
+    assert not child.exists()
+    assert git(repo, "branch", "--list", child.name) == ""
+    storage.get_by_branch.assert_not_called()
+    storage.create.assert_not_called()
 
 
 async def test_existing_branch_mismatch_is_rejected(repo: Path, tmp_path: Path) -> None:
