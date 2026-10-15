@@ -679,6 +679,31 @@ async def test_ops_publish_events_and_raise_typed_errors(harness: _Harness) -> N
     assert {failure.code for failure in failures} == ERROR_CODES
 
 
+async def test_tab_reorder_publishes_one_move_and_keeps_pane_terminals(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR, "sorted")
+    created = [await h.ops.tab_create(OPERATOR, workspace.id, h.project_id) for _ in range(3)]
+    panes = {
+        (pane.tab_id, pane.id, pane.terminal_id) for change in created for pane in change.panes
+    }
+    order = [created[2].tabs[0].id, created[0].tabs[0].id, created[1].tabs[0].id]
+    h.events.clear()
+
+    change = await h.ops.tab_reorder(OPERATOR, workspace.id, order)
+
+    assert [row.id for row in change.tabs] == order
+    assert [(event["kind"], [row["id"] for row in event["tabs"]]) for event in h.events] == [
+        ("tab.moved", order)
+    ]
+    assert [row.id for row in h.workspaces.list_tabs(workspace.id)] == order
+    stored = h.workspaces.list_panes(workspace.id)
+    assert {(pane.tab_id, pane.id, pane.terminal_id) for pane in stored} == panes
+    h.events.clear()
+    await _raises("invalid_op", h.ops.tab_reorder(OPERATOR, workspace.id, [order[0], order[0]]))
+    await _raises("busy", h.ops.tab_reorder(OPERATOR, workspace.id, order[:2]))
+    assert h.events == []
+
+
 async def test_split_spawn_timeout_rolls_back_and_leaves_workspace_closable(
     harness: _Harness,
 ) -> None:
@@ -900,6 +925,7 @@ async def test_remote_workspace_refuses_mutations_and_is_never_swept(harness: _H
         partial(h.ops.tab_create, OPERATOR, workspace.id, h.project_id),
         partial(h.ops.tab_rename, OPERATOR, tab.id, "renamed"),
         partial(h.ops.tab_move, OPERATOR, tab.id, 0),
+        partial(h.ops.tab_reorder, OPERATOR, workspace.id, [tab.id]),
         partial(h.ops.tab_close, OPERATOR, tab.id),
         partial(h.ops.pane_split, OPERATOR, pane.id, "horizontal"),
         partial(h.ops.pane_swap, OPERATOR, pane.id, pane.id),
