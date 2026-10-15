@@ -182,8 +182,8 @@ hub before and after #24151, and the hub reads the node's checkout through
    The 8 MiB reply budget bounds the whole reply's `data`, or a git
    result's `stdout`. Entries fill in request order, and an entry cut by the
    budget has `truncated: true`. Every nullable field is required, which is
-   hub-mode 4.1's strictness rule. The budget is listed under "Limits
-   needing operator approval".
+   hub-mode 4.1's strictness rule. Josh decided the budget (see
+   "Operator-approved limits").
 
    The node answers each of these errors with `stage: "none"`:
    - `invalid_payload`: a malformed query, more than 1,000 paths, a refused git
@@ -251,8 +251,8 @@ hub before and after #24151, and the hub reads the node's checkout through
    raises it at once, without sending. The per-request node answers
    (`invalid_payload`, `no_project_root`, `outside`) and truncation do not
    latch.
-   - A files query sends `timeout_ms` 5,000, listed under "Limits needing
-     operator approval". hub-mode 1.3's client waits that plus 5 seconds
+   - A files query sends `timeout_ms` 5,000, which Josh decided (see
+     "Operator-approved limits"). hub-mode 1.3's client waits that plus 5 seconds
      when a reply is lost (its read timeout is `timeout_ms` plus five
      seconds), so an unreachable node costs one delivery at most one wait of
      10 seconds.
@@ -344,12 +344,14 @@ hub before and after #24151, and the hub reads the node's checkout through
   "Cross-plan edges set at expansion" lists every edge; the Orchestrator sets
   them at expansion.
 
-## Limits needing operator approval
+## Operator-approved limits
 `kind: framing`
 
-This plan sets two limits that no existing constant fixes. Orchestrator
-gobby#15977 presents them to Josh with the plan. Each stands as written
-unless Josh changes it.
+This plan sets two limits that no existing constant fixes. Josh decided
+both through the Assistant on 2026-10-15, each at the recommended value:
+decision `23277-d1:8mib` for the reply budget and `23277-d2:5000` for the
+files-query timeout. The alternatives were 4 MiB for the budget, and
+2,000 ms or 9,000 ms for the timeout.
 
 - **`checkout.read` reply budget: 8 MiB (8,388,608 bytes).** It bounds the
   file `data` in one reply, or a git result's `stdout`, and it is the
@@ -1509,6 +1511,13 @@ Verification planned:
   - Found work: hub-mode 2.2 (#24272) landed
     `tests/hooks/test_session_binding.py`, so 2.1 targets its exact symbol
     `test_project_context_skips_foreign_rows`.
+- 2026-10-15: Plan Adversary gobby#16983 bounced 898001afdb with F1
+  (decision completeness): the two new limits still waited on Josh. Josh
+  decided both through the Assistant: the 8 MiB `checkout.read` reply budget
+  (`23277-d1:8mib`) and the 5,000 ms files-query timeout (`23277-d2:5000`).
+  The section is renamed "Operator-approved limits" and records the
+  decisions, and Decisions 5 and 8 point to it. Values, scope, leaves and
+  Targets are unchanged.
 
 ## V2: Verification
 `kind: verification`
