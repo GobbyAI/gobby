@@ -37,12 +37,18 @@ host PID survive. Input is refused with `host_upgrading` during the window, and
 `gclient` reconnects straight to the host even while the daemon is down. Hosts
 run from pinned copies under `<socket_dir>/gterm-images/` (default
 `~/.gobby/gterm-images/`), so replacing the installed binary never touches a
-running image. The one-shot fallback covers only a new image that fails to
-restore after the exec: the host execs the pinned previous image once and logs
-`outcome=Fallback` in `~/.gobby/logs/gterm.log`, and a failed fallback ends
-the host. A candidate refused at its startup check, or an attempt aborted or
-rolled back before the exec, never leaves the current image and writes no
-`gterm host restored` line. Never follow a successful upgrade with `--terminals`. A host started
+running image. The one-shot fallback covers only a new image whose restore
+fails with an error or a panic after the exec: the host execs the pinned
+previous image once and logs `outcome=Fallback` in `~/.gobby/logs/gterm.log`,
+and a failed fallback ends the host. An unreadable handover state file, a
+pinned previous image that fails verification, or a failed fallback exec ends
+the host with exit 70 and no `gterm host restored` line. A candidate refused at its startup check,
+or an attempt aborted or rolled back before the exec, stays on the current
+image and writes no `gterm host restored` line, with three exceptions that end
+the host through `SIGALRM` and report no outcome. They are a rollback that
+cannot resume every pane, a pane capture that times out and then cannot finish, and
+the 15-second hard alarm. That alarm spans the exec, so a restore that hangs
+also ends the host without a fallback. Never follow a successful upgrade with `--terminals`. A host started
 by a gterm without upgrade support needs one `gobby restart --terminals`.
 
 Use service installation, status, enable, disable, and uninstall commands for
