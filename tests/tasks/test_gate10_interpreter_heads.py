@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
+from gobby.tasks.criterion_commands import (
+    criterion_command_authoring_payload,
+    criterion_command_records,
+)
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
 
 pytestmark = pytest.mark.unit
@@ -101,6 +105,11 @@ def _gate(command: str, repository: Path, *, workdir: Path | None = None) -> Clo
         "Rscript -e 'quit(status=0)'",
         "eval 'python -c print(0)'",
         "find . -exec sh -c 'exit 0' \\;",
+        "script -q /dev/null sh -c 'exit 0'",
+        "watch -n1 sh -c 'exit 0'",
+        "ssh host cmd",
+        "npx -c 'exit 0'",
+        "make -f scripts/check.py",
         "python -m unknown_check",
         "python scripts/untracked.py",
         "python scripts/link.py",
@@ -206,3 +215,25 @@ def test_bun_parent_package_script_does_not_borrow_tracked_file_credit(repositor
     gate = _gate("bun run check.ts", repository, workdir=repository / "scripts")
     assert gate.status == "failed", gate.details
     assert gate.details["criterion_command_gaps"]
+
+
+def test_bare_interpreter_prose_does_not_require_commands(repository: Path) -> None:
+    criteria = "The guard covers the `bash` tool and plain `python`."
+    records = criterion_command_records(
+        criteria, TranscriptEvidence(), project_path=str(repository)
+    )
+    assert records == []
+    assert criterion_command_authoring_payload(criteria) == {}
+
+
+def test_inline_interpreter_authoring_matches_close_requirement(repository: Path) -> None:
+    command = "php -r 'echo 1;'"
+    criteria = f"Reject `{command}` forms."
+    payload = criterion_command_authoring_payload(criteria)
+    assert payload["criterion_commands"] == [command]
+    records = criterion_command_records(
+        criteria, TranscriptEvidence(), project_path=str(repository)
+    )
+    assert len(records) == 1
+    assert records[0]["command"] == command
+    assert records[0]["satisfied"] is False

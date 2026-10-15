@@ -47,7 +47,7 @@ _SHELL_COMMAND_WRAPPERS = {
 _INTERPRETER_EXECUTABLE = re.compile(
     r"(php|bun|deno|osascript|lua|luajit|rscript|r)(?:\d+(?:\.\d+)*)?"
 )
-_OPAQUE_LAUNCHER_HEADS = {"su", "doas", "eval"}
+_OPAQUE_LAUNCHER_HEADS = {"su", "doas", "eval", "script", "watch", "ssh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
 _PYTHON_EXECUTABLE = re.compile(
     r"(?:python|cpython|pypy|graalpy|pyodide)(?:\d+(?:\.\d+)*)?t?(?:@[\s\S]+)?"
@@ -200,9 +200,14 @@ def unregistered_execution_reason(
         if resolved is None:
             return "ambiguous launcher"
         executable, arguments = resolved
-        opaque = executable in _OPAQUE_LAUNCHER_HEADS or (
-            executable == "find"
-            and any(arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in arguments)
+        opaque = (
+            executable in _OPAQUE_LAUNCHER_HEADS
+            or (
+                executable == "find"
+                and any(arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in arguments)
+            )
+            or (executable == "npx" and "-c" in arguments)
+            or (executable == "make" and "-f" in arguments)
         )
         interpreter = (
             executable in _SHELL_COMMAND_WRAPPERS | _NODE_WRAPPERS

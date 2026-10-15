@@ -156,10 +156,9 @@ def criterion_command_records(
         equivalence = classify_validation_command_equivalence(command)
         execution_reason = unregistered_execution_reason(command, project_path)
         core = equivalence.core_command
-        if (
-            not _looks_like_criterion_command(command, core, observed_cores)
-            and execution_reason != "unregistered interpreter or launcher"
-        ):
+        if not _looks_like_criterion_command(
+            command, core, observed_cores
+        ) and not _is_unregistered_execution_span(command):
             continue
         key = (canonical_command(core) or core) if core else command
         if key in seen:
@@ -423,6 +422,15 @@ def _command_shaped_spans(criteria: str) -> list[str]:
     return spans
 
 
+def _is_unregistered_execution_span(command: str) -> bool:
+    from gobby.tasks.transcript_outcomes import unregistered_execution_reason
+
+    return (
+        len(safe_split(command)) >= 2
+        and unregistered_execution_reason(command) == "unregistered interpreter or launcher"
+    )
+
+
 def _is_command_shaped_span(command: str) -> bool:
     tokens = safe_split(command)
     if len(tokens) < 2:
@@ -430,7 +438,9 @@ def _is_command_shaped_span(command: str) -> bool:
     if tokens[:2] == ["git", "add"] and command.endswith(" and commit"):
         return False
     equivalence = classify_validation_command_equivalence(command)
-    if _looks_like_criterion_command(command, equivalence.core_command, set()):
+    if _looks_like_criterion_command(
+        command, equivalence.core_command, set()
+    ) or _is_unregistered_execution_span(command):
         return True
     return tokens[0] in _CONDITIONAL_TOKENS
 
