@@ -415,6 +415,19 @@ DRIVERS: dict[str, Callable[[SeatRun], Awaitable[None]]] = {
 }
 
 
+async def test_developer_claim_binds_ref_without_a_task_read(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task_id = "44444444-4444-4444-8444-000000000103"
+    claimed = {"success": True, "task_id": task_id, "title": "t", "ref": "#103"}
+    await run.call("gobby-tasks", "claim_task", {"task_id": task_id}, {"result": claimed})
+    # An offloaded card can omit ref; reading it must not clear the claim's ref.
+    await run.call("gobby-tasks", "get_task", {"task_id": task_id}, {"result": {"id": task_id}})
+    await run.set_flag("additional_skills", [])
+    await run.set_flag("skills_routed", True)
+    assert (run.step, run.vars["assigned_task_ref"]) == ("implement", "#103")
+
+
 @pytest.mark.parametrize("name", sorted(DRIVERS))
 async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -> None:
     run = SeatRun(temp_db, name)
