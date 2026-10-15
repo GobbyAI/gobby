@@ -14,6 +14,7 @@ from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.terminal_reap_queries import TerminalReapQueryMixin
 from gobby.storage.terminal_settlement import (
     ALLOWED_EDGES as ALLOWED_EDGES,
 )
@@ -336,7 +337,7 @@ def mint_terminal_id() -> str:
     return str(uuid4())
 
 
-class TerminalManager(TerminalSettlementMixin):
+class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
     """Hub-transaction CRUD and CAS transitions for the terminals table."""
 
     def __init__(self, db: HubDatabase) -> None:
@@ -536,19 +537,6 @@ class TerminalManager(TerminalSettlementMixin):
         if raised is None:
             raise RuntimeError("upsert_external conflict without occupying row")
         return Terminal.from_row(raised)
-
-    def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
-        """Pending rows whose attempt_started_at is older than the in-doubt deadline."""
-        rows = self.db.fetchall(
-            f"""
-            SELECT {TERMINAL_COLUMNS} FROM terminals
-            WHERE state = 'pending'
-              AND attempt_started_at <= now() - (%s * INTERVAL '1 second')
-            ORDER BY attempt_started_at ASC
-            """,
-            (max_age_seconds,),
-        )
-        return [Terminal.from_row(row) for row in rows]
 
     def list_by_project(self, project_id: str) -> list[Terminal]:
         """List terminals owned by a project."""

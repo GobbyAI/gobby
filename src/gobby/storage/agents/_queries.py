@@ -400,8 +400,12 @@ class _AgentRunQueryMixin:
             limit=limit,
         )
 
-    def list_terminal_with_tmux(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
-        """List terminal agent runs whose terminal row is not yet settled as exited.
+    def list_terminal_with_tmux(
+        self: _AgentRunQueryHost,
+        machine_id: str,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """List this machine's terminal runs whose terminal row is not exited.
 
         Orphaned rows stay eligible so a failed or interrupted kill is retried;
         exited rows are settled and stay out so the sweep stays bounded.
@@ -410,13 +414,14 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.status IN ({status_placeholders})
+            AND ar.machine_id = %s
             AND EXISTS (
                 SELECT 1 FROM terminals t
                 WHERE t.id = ar.terminal_id
                   AND t.state IN ('pending', 'live', 'orphaned')
             )
             """,
-            TERMINAL_AGENT_RUN_STATUSES,
+            (*TERMINAL_AGENT_RUN_STATUSES, machine_id),
             order_by="ORDER BY ar.completed_at ASC, ar.updated_at ASC",
             limit=limit,
         )
