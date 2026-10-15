@@ -1678,10 +1678,10 @@ async def test_unverifiable_foreign_candidate_blocks(guard_harness: GuardHarness
 
 
 @pytest.mark.asyncio
-async def test_shell_git_status_after_external_commit_reconciles_attribution(
+async def test_shell_git_status_after_external_commit_reconciles_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
-    """A commit made outside the hooks is picked up by the next git command the session runs."""
+    """A commit made outside the hooks clears session dirt on the next git command."""
     (guard_harness.repo / "owned.txt").write_text("committed elsewhere\n", encoding="utf-8")
     _git(guard_harness.repo, "add", "--", "owned.txt")
     _git(guard_harness.repo, "commit", "-q", "-m", "external commit", "--", "owned.txt")
@@ -1696,8 +1696,8 @@ async def test_shell_git_status_after_external_commit_reconciles_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio
@@ -2146,7 +2146,7 @@ async def test_dirty_foreign_pathspec_commit_still_blocked_and_entry_retained(
 
 
 @pytest.mark.asyncio
-async def test_successful_owner_commit_releases_clean_checkout_attribution(
+async def test_successful_owner_commit_releases_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
     (guard_harness.repo / "owned.txt").write_text("committed by owner\n", encoding="utf-8")
@@ -2171,8 +2171,8 @@ async def test_successful_owner_commit_releases_clean_checkout_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio

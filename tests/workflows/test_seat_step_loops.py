@@ -428,6 +428,20 @@ async def test_developer_claim_binds_ref_without_a_task_read(temp_db: HubDatabas
     assert (run.step, run.vars["assigned_task_ref"]) == ("implement", "#103")
 
 
+async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task_id = "44444444-4444-4444-8444-000000000104"
+    claimed = {"success": True, "task_id": task_id, "title": "t", "ref": "#104"}
+    await run.call("gobby-tasks", "claim_task", {"task_id": task_id}, {"result": claimed})
+    await run.set_flag("additional_skills", [])
+    await run.set_flag("skills_routed", True)
+    await run.call("gobby-tasks", "link_commit", {"task_id": task_id, "commit_sha": "abc1234"})
+    await run.call("gobby-tasks", "link_commit", {"task_id": task_id, "commit_sha": "def5678"})
+    await run.call("gobby-tasks", "unlink_commit", {"task_id": task_id, "commit_sha": "abc1234"})
+    assert (run.step, run.vars["bounced"]) == ("submit", False)
+
+
 @pytest.mark.parametrize("name", sorted(DRIVERS))
 async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -> None:
     run = SeatRun(temp_db, name)
