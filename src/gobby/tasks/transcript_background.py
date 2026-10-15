@@ -27,7 +27,7 @@ def background_job_receipt(output: object) -> dict[str, str] | None:
 
 
 def pending_background_run(
-    run: TranscriptValidationRun, call_id: str | None
+    run: TranscriptValidationRun, call_id: str | None, description: object = None
 ) -> TranscriptValidationRun:
     """The successful tool delivery announces a job, not a command exit."""
     receipt = background_job_receipt(run.output) if run.source == "claude" else None
@@ -41,6 +41,7 @@ def pending_background_run(
         provider_call_id=call_id,
         background_job_id=receipt["job"],
         background_output_path=receipt["path"],
+        background_description=description if isinstance(description, str) else None,
     )
 
 
@@ -51,6 +52,8 @@ def recover_background_receipt(
     order: int,
 ) -> None:
     """Update only the original execution; separate reads never become test runs."""
+    if _recover_monitor_receipt(runs, message, pending):
+        return
     if message.content_type == "tool_result" and pending is not None:
         path = _read_path(pending)
         if path is None or extract_outcome(message.tool_result)[0] != "success":
@@ -84,8 +87,9 @@ def recover_background_receipt(
         return
     index = matches[0]
     run = runs[index]
+    names = "|".join(re.escape(name) for name in (run.command, run.background_description) if name)
     summary = re.fullmatch(
-        rf'Background command "{re.escape(run.command)}" '
+        rf'Background command "(?:{names})" '
         r"(?:failed|completed) with exit code (-?\d+)",
         notice["summary"],
     )
@@ -116,6 +120,10 @@ def recover_background_receipt(
 
 
 def _notification(message: ParsedMessage) -> dict[str, str] | None:
+    return _notice_fields(message, ("task-id", "tool-use-id", "output-file", "status", "summary"))
+
+
+def _notice_fields(message: ParsedMessage, fields: tuple[str, ...]) -> dict[str, str] | None:
     if message.role != "user" or message.content_type != "text":
         return None
     content = message.content
@@ -129,10 +137,63 @@ def _notification(message: ParsedMessage) -> dict[str, str] | None:
         return None
     if root.tag != "task-notification":
         return None
-    fields = ("task-id", "tool-use-id", "output-file", "status", "summary")
     if any(len(root.findall(field)) != 1 for field in fields):
         return None
     return {field: root.findtext(field, "").strip() for field in fields}
+
+
+def _recover_monitor_receipt(
+    runs: list[TranscriptValidationRun],
+    message: ParsedMessage,
+    pending: PendingTool | None,
+) -> bool:
+    """Bind a provider Monitor to exactly one original job's output file."""
+    if message.content_type == "tool_result" and pending and pending.name.lower() == "monitor":
+        if extract_outcome(message.tool_result)[0] != "success":
+            return True
+        command = pending.arguments.get("command")
+        try:
+            argv = shlex.split(command) if isinstance(command, str) else []
+        except ValueError:
+            return True
+        if (
+            len(argv) != 10
+            or argv[:4] != ["tail", "-n", "+1", "-f"]
+            or argv[5:9] != ["|", "grep", "-E", "--line-buffered"]
+        ):
+            return True
+        output, _ = extract_output(message.tool_result)
+        receipt = re.match(r"Monitor started \(task ([A-Za-z0-9_-]+),", output or "")
+        matches = [i for i, run in enumerate(runs) if run.background_output_path == argv[4]]
+        if receipt and len(matches) == 1:
+            index = matches[0]
+            run = runs[index]
+            if pending.timestamp >= run.completed_at and run.background_monitor_id is None:
+                runs[index] = replace(run, background_monitor_id=receipt[1])
+        return True
+    notice = _notice_fields(message, ("task-id", "summary", "event"))
+    if notice is None or not notice["summary"].startswith('Monitor event: "'):
+        return False
+    matches = [i for i, run in enumerate(runs) if run.background_monitor_id == notice["task-id"]]
+    if len(matches) != 1:
+        return True
+    index = matches[0]
+    run = runs[index]
+    if message.timestamp < run.completed_at:
+        return True
+    event = notice["event"]
+    # A Monitor's own exit cannot settle the command it watches. Only the
+    # original job/call/output-file terminal receipt above proves its exit.
+    if not event.startswith(("[Monitor expired", "[exited with code")):
+        output = (run.output or "") + "\n" + event
+        runs[index] = replace(
+            run,
+            output=output[:64_000],
+            output_truncated=run.output_truncated or len(output) > 64_000,
+            output_recovered_from=run.background_output_path,
+            output_recovered_at=message.timestamp,
+        )
+    return True
 
 
 def _read_path(pending: PendingTool) -> str | None:
