@@ -7,12 +7,15 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.hooks import adapter_execution
+from gobby.hooks import adapter_execution, shell_execution
+from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 from gobby.hooks.adapter_execution import (
     AdapterHookTimeout,
     abandon_wedged_admissions,
@@ -88,10 +91,12 @@ async def _run(
     finished: dict[str, threading.Event],
     session_id: str,
     envelope_id: str,
+    *,
+    timeout_seconds: float = _TIMEOUT,
 ) -> dict[str, Any]:
     finished[envelope_id] = threading.Event()
     return await run_adapter_hook(
-        adapter, _payload(session_id, envelope_id), MagicMock(), timeout_seconds=_TIMEOUT
+        adapter, _payload(session_id, envelope_id), MagicMock(), timeout_seconds=timeout_seconds
     )
 
 
@@ -116,6 +121,54 @@ async def _release(
 ) -> None:
     gates[envelope_id].set()
     assert await asyncio.to_thread(finished[envelope_id].wait, 5)
+
+
+@pytest.mark.asyncio
+async def test_blocked_script_body_read_in_normalization_leaves_session_admitting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    finished: dict[str, threading.Event],
+) -> None:
+    """The #24505 trigger: `bash -n <script>` whose open() waits on a privacy prompt."""
+    script = tmp_path / "reset-unowned-files.command"
+    script.write_text("#!/usr/bin/env bash\ngit status\n", encoding="utf-8")
+    prompt = threading.Event()
+    path_open = Path.open
+
+    def open_behind_prompt(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == script.resolve():
+            prompt.wait(timeout=30)
+        return path_open(self, *args, **kwargs)
+
+    read_executor = ThreadPoolExecutor(max_workers=shell_execution._SCRIPT_READ_WORKERS)
+    monkeypatch.setattr(Path, "open", open_behind_prompt)
+    monkeypatch.setattr(shell_execution, "SCRIPT_READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_execution, "_SCRIPT_READ_EXECUTOR", read_executor)
+    monkeypatch.setattr(shell_execution, "_parked_reads", set())
+    adapter = MagicMock()
+
+    def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, Any]:
+        command = f"chmod +x {script} && bash -n {script}"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+        }
+        _set_canonical_tool_metadata(data)
+        return {"continue": True, "envelope_id": payload["input_data"]["source_event_id"]}
+
+    adapter.handle_native.side_effect = handle_native
+    session_id = "script-read-session"
+    try:
+        for envelope_id in ("env-bash-n", "env-next"):
+            assert await _run(adapter, finished, session_id, envelope_id, timeout_seconds=2.0) == {
+                "continue": True,
+                "envelope_id": envelope_id,
+            }
+    finally:
+        prompt.set()
+        read_executor.shutdown(wait=True)
+    assert await asyncio.to_thread(finished["env-next"].wait, 5)
+    assert session_id not in adapter_execution._session_admissions
 
 
 @pytest.mark.asyncio

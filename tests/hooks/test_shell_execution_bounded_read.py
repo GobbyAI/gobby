@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -29,15 +30,14 @@ def blocked_reads(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
         gate.wait(timeout=30)
         return real_read_prefix(word, base, limit)
 
+    executor = ThreadPoolExecutor(max_workers=shell_execution._SCRIPT_READ_WORKERS)
     monkeypatch.setattr(shell_execution, "SCRIPT_READ_TIMEOUT_SECONDS", _TIMEOUT)
+    monkeypatch.setattr(shell_execution, "_SCRIPT_READ_EXECUTOR", executor)
+    monkeypatch.setattr(shell_execution, "_parked_reads", set())
     monkeypatch.setattr(shell_execution, "_read_prefix", blocked_read_prefix)
     yield started
     gate.set()
-    for _ in range(200):
-        if not shell_execution._parked_reads:
-            return
-        time.sleep(0.01)
-    raise AssertionError("parked script reads never finished")
+    executor.shutdown(wait=True)
 
 
 def _script(tmp_path: Path) -> Path:
