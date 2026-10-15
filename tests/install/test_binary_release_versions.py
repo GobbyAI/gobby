@@ -88,10 +88,10 @@ def test_cutover_refuses_sources_changed_after_build_snapshot(
     def change_source() -> None:
         (workspace / "crates/gcore/src/lib.rs").write_text("pub fn changed() {}\n")
 
-    def build(_root: Path) -> dict[str, Path]:
+    def build(_root: Path) -> cutover._Build:
         if phase == "build":
             change_source()
-        return sources
+        return cutover._Build(sources, "gclient is not built in this test")
 
     def stop() -> bool:
         calls.append("stop")
@@ -270,7 +270,11 @@ def test_cutover_refuses_unbumped_source_before_stop(
     bin_dir = tmp_path / "bin"
     promote_workspace_binary_set(sources, bin_dir=bin_dir)
     (workspace / "crates/gcore/src/lib.rs").write_text("pub fn changed() {}\n")
-    monkeypatch.setattr(cutover, "_build_artifacts", lambda root: sources)
+    monkeypatch.setattr(
+        cutover,
+        "_build_artifacts",
+        lambda root: cutover._Build(sources, "gclient is not built in this test"),
+    )
     monkeypatch.setattr(cutover, "_prove_catalog_freshness", lambda root, candidate: None)
     monkeypatch.setattr(cutover, "_verify_restart_target", lambda directory: None)
     stopped: list[bool] = []
