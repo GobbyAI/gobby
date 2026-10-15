@@ -19,6 +19,7 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.sessions import SessionManager
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.integration
@@ -52,6 +53,7 @@ def envelope(
         "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "input_data": {
             "session_id": "replay-order",
+            "machine_id": get_machine_id(),
             "prompt": "work",
             "timestamp": (timestamp + timedelta(days=1)).isoformat(),
         },
@@ -80,7 +82,7 @@ async def test_backlog_keeps_later_same_session_events(
     session = session_manager.register(
         external_id="replay-order",
         source=source,
-        machine_id=None,
+        machine_id=get_machine_id(),
         project_id=sample_project["id"],
     )
     session_manager.update_status(session.id, "paused")
@@ -123,7 +125,7 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     session = session_manager.register(
         external_id="replay-order",
         source="claude",
-        machine_id=None,
+        machine_id=get_machine_id(),
         project_id=sample_project["id"],
     )
     manager = LifecycleHooks(session_manager)

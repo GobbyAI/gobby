@@ -25,20 +25,20 @@ async def test_interactive_attention_waits_for_startup_reconciliation(
     )
     events: list[object] = []
 
-    async def list_runs(_arm: object) -> list[object]:
+    async def list_sessions(_arm: object) -> set[str]:
         events.append("listed")
-        return []
+        return set()
 
-    async def check_attention(*, active_runs: list[object]) -> None:
-        events.append(("checked", active_runs))
+    async def check_attention(*, active_agent_sessions: set[str]) -> None:
+        events.append(("checked", active_agent_sessions))
 
-    monkeypatch.setattr(monitor, "_list_active_runs", list_runs)
+    monkeypatch.setattr(monitor, "_list_active_agent_sessions", list_sessions)
     monkeypatch.setattr(monitor, "_check_attention_panes", check_attention)
     await monitor._check_attention()
     assert events == []
     ready = True
     await monitor._check_attention()
-    assert events == ["listed", ("checked", [])]
+    assert events == ["listed", ("checked", set())]
 
 
 async def test_session_liveness_waits_for_startup_reconciliation() -> None:

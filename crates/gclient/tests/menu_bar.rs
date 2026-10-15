@@ -199,6 +199,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
             "New project…",
             "Open project…",
             "Rename tab",
+            "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
             "Detach",
@@ -246,7 +247,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "  Monochrome",
             "  Show sidebar",
             "  Pin sidebar",
-            "✓ Show all machines",
+            "  Show all machines",
             "✓ Show all projects",
             "✓ Group agents by project",
         ]

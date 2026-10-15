@@ -21,6 +21,7 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.workflows._variables import set_variable
+from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -440,6 +441,49 @@ async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase
     await run.call("gobby-tasks", "link_commit", {"task_id": task_id, "commit_sha": "def5678"})
     await run.call("gobby-tasks", "unlink_commit", {"task_id": task_id, "commit_sha": "abc1234"})
     assert (run.step, run.vars["bounced"]) == ("submit", False)
+
+
+@pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
+async def test_developer_rejected_link_commit_stays_in_implement(
+    temp_db: HubDatabase, envelope: str
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task_id = "44444444-4444-4444-8444-000000000105"
+    claimed = {"success": True, "task_id": task_id, "title": "t", "ref": "#105"}
+    await run.call("gobby-tasks", "claim_task", {"task_id": task_id}, {"result": claimed})
+    await run.set_flag("additional_skills", [])
+    await run.set_flag("skills_routed", True)
+
+    def delivered(tool_result: dict[str, Any]) -> dict[str, Any]:
+        wire = _process_tool_proxy_result(tool_result, "gobby-tasks", "link_commit", 1.0)
+        if envelope == "content":
+            return {"isError": False, "content": [{"type": "text", "text": json.dumps(wire)}]}
+        if envelope == "structured":
+            return {"isError": False, "structuredContent": wire}
+        return wire
+
+    adapter = ClaudeCodeAdapter()
+    native_event: dict[str, Any] = {
+        "hook_type": "post-tool-use",
+        "input_data": {
+            "session_id": SESSION_ID,
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "link_commit",
+                "arguments": {"task_id": task_id, "commit_sha": "c46f57e"},
+            },
+            "tool_response": delivered({"error": "Invalid or unresolved commit SHA: c46f57e"}),
+        },
+    }
+    await run._evaluate(adapter.translate_to_hook_event(native_event))
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+    linked = {"task_id": task_id, "commits": ["c46f57e"], "error": None}
+    native_event["input_data"]["tool_response"] = delivered(linked)
+    await run._evaluate(adapter.translate_to_hook_event(native_event))
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
 
 
 @pytest.mark.parametrize("name", sorted(DRIVERS))

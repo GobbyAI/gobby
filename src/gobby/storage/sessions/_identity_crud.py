@@ -13,6 +13,7 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sql_dialect import table_column_names
 from gobby.utils.datetime import utc_now
 
+from ._query import _SESSION_COLUMNS
 from ._session_mapping_cache import invalidate_session_caches
 from ._web_chat_crud import _SessionWebChatCRUDMixin
 
@@ -111,7 +112,14 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
             ("session", session_id),
             _SESSION_ROW_TABLES,
             lambda: self.db.fetchone(
-                "SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id) WHERE id = %s",
+                f"""
+                SELECT {_SESSION_COLUMNS}, session_projects.project_name
+                FROM sessions LEFT JOIN
+                    (SELECT id AS project_id, name AS project_name FROM projects)
+                    AS session_projects
+                    USING (project_id)
+                WHERE id = %s
+                """,  # nosec B608
                 (session_id,),
             ),
         )

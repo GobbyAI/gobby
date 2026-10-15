@@ -19,7 +19,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 
 from gobby.integrations.rtk import platform_paths
-from gobby.tasks.transcript_background import background_job_receipt
+from gobby.tasks.transcript_background import background_job_receipt, output_as_of
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
 #: Claude writes the job file's ``[exited with code N]`` trailer just after it
@@ -34,19 +34,14 @@ _GENERATED_LINE_RE = re.compile(
 )
 
 
-def late_job_output(run: TranscriptValidationRun, production_at: datetime) -> bool:
-    """A Read, tail or Monitor of the job's own file at or after the production edit."""
-    return (
-        run.background_output_path is not None
-        and run.output_recovered_from == run.background_output_path
-        and run.output_recovered_at is not None
-        and run.output_recovered_at >= production_at
-    )
-
-
 def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -> str | None:
-    """The run's retained full output, or None when any provenance check fails."""
-    if run.outcome != "failure" or not run.output or late_job_output(run, production_at):
+    """The run's retained full output, or None when any provenance check fails.
+
+    Only output the transcript delivered before ``production_at`` is matched; a
+    later Read, tail or Monitor of the job's own file counts for nothing.
+    """
+    run = output_as_of(run, production_at)
+    if run.outcome != "failure" or not run.output:
         return None
     if run.background_output_path is not None:
         retained = _job_output(run, production_at)
@@ -168,4 +163,4 @@ def _contains_delivered(run: TranscriptValidationRun, delivered: str, retained: 
     return verified
 
 
-__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "late_job_output", "retained_red_output"]
+__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "retained_red_output"]

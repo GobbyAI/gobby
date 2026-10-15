@@ -107,15 +107,23 @@ mod serial_db {
         )
         .expect("insert indexed file state");
 
-        assert!(
-            db::mark_vector_sync_attempted(&mut conn, &project_id, rel)
-                .expect("mark vector attempt")
-        );
+        let attempt = db::mark_vector_sync_attempted(&mut conn, &project_id, rel)
+            .expect("mark vector attempt")
+            .expect("live row");
         assert_eq!(
             vector_sync_state(&mut conn, &project_id, rel),
             (false, true)
         );
-        assert!(db::mark_vectors_synced(&mut conn, &project_id, rel).expect("mark vectors synced"));
+        assert!(
+            db::mark_vectors_synced(
+                &mut conn,
+                &project_id,
+                rel,
+                &attempt.content_hash,
+                attempt.attempted_at,
+            )
+            .expect("mark vectors synced")
+        );
         assert_eq!(
             db::reset_vectors_sync_for_project(&mut conn, &project_id).expect("reset vectors"),
             1

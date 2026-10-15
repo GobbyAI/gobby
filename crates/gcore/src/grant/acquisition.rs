@@ -69,7 +69,7 @@ impl<'a> AcquireRequest<'a> {
         let mut request = Self::new(project_root);
         request.daemon_url = Some(
             crate::daemon_url::daemon_url()
-                .map_err(|error| GrantError::Malformed(error.to_string()))?,
+                .map_err(|error| GrantError::BootstrapConfig(error.to_string()))?,
         );
         request.session_id = std::env::var("GOBBY_SESSION_ID")
             .ok()
@@ -208,7 +208,7 @@ impl AcquireCtx {
                     Some(home) => crate::daemon_url::daemon_url_at(&home.join("bootstrap.yaml")),
                     None => crate::daemon_url::daemon_url(),
                 }
-                .map_err(|error| GrantError::Malformed(error.to_string()))?,
+                .map_err(|error| GrantError::BootstrapConfig(error.to_string()))?,
             },
             now: request.now.unwrap_or_else(unix_now),
             session_id: request.session_id.clone(),

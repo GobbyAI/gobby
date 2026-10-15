@@ -27,6 +27,7 @@ from gobby.config.runtime import ConfigRuntime
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.mcp.hook_hold_open import MAX_PENDING_PER_SESSION, _maybe_hold_open
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import authenticate_test_server
 
 pytestmark = pytest.mark.unit
@@ -37,7 +38,7 @@ _SESSION_MANAGER_PATCH = "gobby.storage.sessions.SessionManager"
 def _hook_envelope(**payload: Any) -> dict[str, Any]:
     from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -45,6 +46,7 @@ def _hook_envelope(**payload: Any) -> dict[str, Any]:
         "input_data": {},
     }
     envelope.update(payload)
+    envelope["input_data"] = {**envelope["input_data"], "machine_id": get_machine_id()}
     return envelope
 
 

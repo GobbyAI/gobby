@@ -16,7 +16,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_materialize import activate_deferred_session
 
-from ._event_handler_helpers import make_event
+from ._event_handler_helpers import TEST_MACHINE_ID, make_event
 
 pytestmark = pytest.mark.unit
 
@@ -66,6 +66,7 @@ class TestReturnValues:
             MagicMock(return_value=manager),
         )
         session_obj = MagicMock()
+        session_obj.machine_id = TEST_MACHINE_ID
         session_obj.parent_session_id = None
         session_obj.project_id = None
         session_obj.transcript_path = None

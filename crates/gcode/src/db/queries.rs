@@ -16,6 +16,12 @@ pub struct GraphSyncAttempt {
 }
 
 #[derive(Debug, Clone)]
+pub struct VectorSyncAttempt {
+    pub content_hash: String,
+    pub attempted_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
 pub struct GraphFileFacts {
     pub file_path: String,
     pub content_hash: String,
@@ -163,13 +169,14 @@ pub fn mark_graph_synced(
              ), dirty AS (
                 UPDATE code_indexed_files cif
                 SET graph_synced = false, graph_sync_attempted_at = NULL
-                FROM code_indexed_file_states cifs
                 WHERE NOT EXISTS (SELECT 1 FROM cas)
-                  AND cifs.machine_id = $1
-                  AND cifs.project_id = $2 AND cifs.file_path = $3
-                  AND cif.project_id = cifs.project_id
-                  AND cif.file_path = cifs.file_path
-                  AND cif.content_hash = cifs.content_hash
+                  AND cif.project_id = $2 AND cif.file_path = $3
+                  AND (cif.content_hash = $4 OR EXISTS (
+                      SELECT 1 FROM code_indexed_file_states cifs
+                      WHERE cifs.machine_id = $1
+                        AND cifs.project_id = cif.project_id
+                        AND cifs.file_path = cif.file_path
+                        AND cifs.content_hash = cif.content_hash))
                 RETURNING cif.file_path
              )
              SELECT EXISTS (SELECT 1 FROM cas) AS succeeded",
@@ -236,10 +243,10 @@ pub fn mark_vector_sync_attempted(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<VectorSyncAttempt>> {
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    let updated = conn.execute(
+    let row = conn.query_opt(
         "UPDATE code_indexed_files cif
          SET vectors_synced = false, vector_sync_attempted_at = NOW()
          FROM code_indexed_file_states cifs
@@ -247,31 +254,66 @@ pub fn mark_vector_sync_attempted(
            AND cifs.project_id = $2 AND cifs.file_path = $3
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
-           AND cif.content_hash = cifs.content_hash",
+           AND cif.content_hash = cifs.content_hash
+         RETURNING cif.content_hash, cif.vector_sync_attempted_at",
         &[&machine_id, &project_id, &file_path],
     )?;
-    Ok(updated > 0)
+    row.map(|row| {
+        Ok(VectorSyncAttempt {
+            content_hash: row.try_get("content_hash")?,
+            attempted_at: row.try_get("vector_sync_attempted_at")?,
+        })
+    })
+    .transpose()
 }
 
 pub fn mark_vectors_synced(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
+    attempted_at: SystemTime,
 ) -> anyhow::Result<bool> {
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    let updated = conn.execute(
-        "UPDATE code_indexed_files cif
-         SET vectors_synced = true, vector_sync_attempted_at = NOW()
-         FROM code_indexed_file_states cifs
-         WHERE cifs.machine_id = $1
-           AND cifs.project_id = $2 AND cifs.file_path = $3
-           AND cif.project_id = cifs.project_id
-           AND cif.file_path = cifs.file_path
-           AND cif.content_hash = cifs.content_hash",
-        &[&machine_id, &project_id, &file_path],
-    )?;
-    Ok(updated > 0)
+    let succeeded: bool = conn
+        .query_one(
+            "WITH cas AS (
+                UPDATE code_indexed_files cif
+                SET vectors_synced = true
+                FROM code_indexed_file_states cifs
+                WHERE cifs.machine_id = $1
+                  AND cifs.project_id = $2 AND cifs.file_path = $3
+                  AND cif.project_id = cifs.project_id
+                  AND cif.file_path = cifs.file_path
+                  AND cif.content_hash = cifs.content_hash
+                  AND cif.content_hash = $4
+                  AND cif.vector_sync_attempted_at IS NOT DISTINCT FROM $5
+                RETURNING cif.file_path
+             ), dirty AS (
+                UPDATE code_indexed_files cif
+                SET vectors_synced = false, vector_sync_attempted_at = NULL
+                WHERE NOT EXISTS (SELECT 1 FROM cas)
+                  AND cif.project_id = $2 AND cif.file_path = $3
+                  AND (cif.content_hash = $4 OR EXISTS (
+                      SELECT 1 FROM code_indexed_file_states cifs
+                      WHERE cifs.machine_id = $1
+                        AND cifs.project_id = cif.project_id
+                        AND cifs.file_path = cif.file_path
+                        AND cifs.content_hash = cif.content_hash))
+                RETURNING cif.file_path
+             )
+             SELECT EXISTS (SELECT 1 FROM cas) AS succeeded",
+            &[
+                &machine_id,
+                &project_id,
+                &file_path,
+                &content_hash,
+                &attempted_at,
+            ],
+        )?
+        .try_get("succeeded")?;
+    Ok(succeeded)
 }
 
 pub fn mark_project_vector_sync_attempted(

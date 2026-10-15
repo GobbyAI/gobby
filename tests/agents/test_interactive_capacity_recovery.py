@@ -80,7 +80,7 @@ async def test_external_capacity_failure_is_observable_in_one_poll(
         registry=runtime_registry(runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     current = session_manager.get(session.id)
     assert current is not None
@@ -92,7 +92,7 @@ async def test_external_capacity_failure_is_observable_in_one_poll(
     assert runtime.write_log == []
 
     runtime.snapshot_text = "────────────────────\n›\n────────────────────\n"
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     unchanged = attention.get(session_attention_entry_id(session.id))
     assert unchanged is not None
     assert unchanged.reason == "provider_error"
@@ -115,7 +115,7 @@ async def test_capacity_banner_with_control_bytes_is_detected(
         registry=runtime_registry(runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     state = attention.get(session_attention_entry_id(session.id))
     assert state is not None
@@ -140,18 +140,18 @@ async def test_external_capacity_retries_are_bounded_and_deduplicated(
         max_reprompt_attempts=2,
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     first_writes = list(runtime.write_log)
     assert any(kind == "text" for kind, _payload in first_writes)
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     assert runtime.write_log == first_writes
 
     _append_codex_capacity_turn(transcript)
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     delivered_writes = list(runtime.write_log)
     assert len(delivered_writes) == 2 * len(first_writes)
     _append_codex_capacity_turn(transcript)
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     current = session_manager.get(session.id)
     assert current is not None
@@ -178,12 +178,12 @@ async def test_model_output_resets_capacity_budget(
         write_coordinator=services.coordinator,
         max_reprompt_attempts=1,
     )
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     first_writes = list(runtime.write_log)
     assert any(kind == "text" for kind, _payload in first_writes)
 
     _append_codex_capacity_turn(transcript, model_output_payload_type="reasoning")
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert len(runtime.write_log) == 2 * len(first_writes)
     current = session_manager.get(session.id)
@@ -227,14 +227,14 @@ async def test_capacity_retry_preserves_composer_and_budget(
         max_reprompt_attempts=1,
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     assert runtime.write_log == []
     blocked = attention.get(session_attention_entry_id(session.id))
     assert blocked is not None
     assert blocked.reason == "stall"
     assert blocked.kind == "non_actionable"
     ledger.release(terminal_id)
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     assert any(kind == "text" for kind, _payload in runtime.write_log)
 
 
@@ -259,7 +259,7 @@ async def test_capacity_requires_pane_and_conclusive_transcript(
         registry=runtime_registry(runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     current = session_manager.get(session.id)
     assert current is not None
@@ -287,11 +287,11 @@ async def test_failed_delivery_is_bounded_separately_from_successful_retries(
         max_reprompt_attempts=2,
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     current = session_manager.get(session.id)
     assert current is not None
     assert current.status == "active"
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     current = session_manager.get(session.id)
     assert current is not None
@@ -325,7 +325,7 @@ async def test_capacity_recheck_reconciles_preserved_composer_attention(
     composer_ledger.observe_write(
         terminal_id, origin="operator", kind="text", payload="operator draft"
     )
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
     entry_id = session_attention_entry_id(session.id)
     blocked = attention.get(entry_id)
     assert blocked is not None
@@ -364,7 +364,7 @@ async def test_capacity_recheck_reconciles_preserved_composer_attention(
     monkeypatch.setattr(
         "gobby.agents.watchdog.interactive_capacity.read_composer", read_after_progress
     )
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert runtime.write_log == []
     current = attention.get(entry_id)

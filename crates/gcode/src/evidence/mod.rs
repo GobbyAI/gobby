@@ -405,6 +405,7 @@ impl EvidenceLibrary {
             end += 1;
         }
         let items = result.items[offset..end].to_vec();
+        result.warnings.extend(self.dirty_warnings(&items));
         let next = (end < total_items).then(|| continuation_token(&request_fingerprint, end));
         let source_complete = matches!(
             result.completeness,

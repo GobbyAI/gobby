@@ -877,7 +877,7 @@ fn grant_settings_supply_indexing_and_vector_dim() {
 
 #[test]
 #[serial_test::serial(serial_env)]
-fn explicit_project_id_without_bootstrap_ignores_agent_environment() {
+fn explicit_project_id_without_bootstrap_rejects_agent_environment() {
     use gobby_core::grant::{
         CachedSettings, DirectConnections, PrincipalKind, TrustedBinding, interactive_cache_path,
         managed_direct_grant, write_binding, write_coherent_pair,
@@ -959,18 +959,18 @@ fn explicit_project_id_without_bootstrap_ignores_agent_environment() {
             })
             .collect();
             std::env::set_current_dir(original_cwd).expect("restore working directory");
+            // The coherent interactive cache stays unused: managed identity
+            // without its launch grant never falls back to the operator's grant
+            // for the requested project or for the cwd checkout.
             for (key, result) in results {
-                let ctx = result.unwrap_or_else(|error| panic!("{key}: {error:#}"));
-                assert_eq!(ctx.project_id, requested_id, "{key}");
-                assert_eq!(
-                    ctx.grant_ai
-                        .expect("grant runtime")
-                        .bundle
-                        .principal
-                        .project_id,
-                    requested_id,
-                    "{key} must acquire the requested project's grant, not {cwd_id}"
-                );
+                let error = match result {
+                    Ok(ctx) => panic!("{key} resolved {} without a bootstrap", ctx.project_id),
+                    Err(error) => error,
+                };
+                let cli = error
+                    .downcast_ref::<crate::cli_error::CliError>()
+                    .unwrap_or_else(|| panic!("{key}: untyped error {error:#}"));
+                assert_eq!(cli.code, "managed_capability_missing", "{key}");
             }
         },
     );

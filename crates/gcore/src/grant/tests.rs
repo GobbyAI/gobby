@@ -288,9 +288,52 @@ fn acquire_with_explicit_project_id_needs_no_project_root() {
     assert!(process.project_root.as_os_str().is_empty());
 }
 
+#[test]
+fn bootstrap_daemon_url_configuration_error_from_process_and_request() {
+    let harness = Harness::new();
+    let _env = PoisonedEnv::apply(&harness.home.join("unused-bootstrap.json"));
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores these values on drop.
+    unsafe {
+        std::env::set_var("GOBBY_HOME", &harness.home);
+        for name in ["GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"] {
+            std::env::remove_var(name);
+        }
+    }
+    for value in ["123", "true", "[]", "{}"] {
+        fs::write(
+            harness.home.join("bootstrap.yaml"),
+            format!("daemon_url: {value}\n"),
+        )
+        .unwrap();
+        let mut request = harness.request(None);
+        request.daemon_url = None;
+        let errors = [
+            AcquireRequest::from_process(&harness.project_root)
+                .err()
+                .unwrap(),
+            acquisition::AcquireCtx::from_request(&request)
+                .err()
+                .unwrap(),
+        ];
+        for error in errors {
+            assert_eq!(
+                error,
+                GrantError::BootstrapConfig("daemon_url must be a string".into())
+            );
+            assert_eq!(error.cli_code(), "bootstrap_config");
+            assert_eq!(
+                error.to_string(),
+                "bootstrap configuration error: daemon_url must be a string"
+            );
+            assert_eq!(error.exit_status(), 2);
+            assert!(!error.is_retryable_presentation());
+        }
+    }
+}
+
 struct PoisonedEnv {
     _lock: MutexGuard<'static, ()>,
-    saved: [(&'static str, Option<OsString>); 7],
+    saved: [(&'static str, Option<OsString>); 10],
 }
 
 impl PoisonedEnv {
@@ -306,6 +349,9 @@ impl PoisonedEnv {
             "GOBBY_DAEMON_URL",
             "GOBBY_SESSION_ID",
             "GOBBY_PROJECT_ID",
+            "GOBBY_HOME",
+            "GOBBY_PORT",
+            "GOBBY_DAEMON_PORT",
         ]
         .map(|name| (name, std::env::var_os(name)));
         // SAFETY: TEST_ENV_LOCK serializes env mutation; Drop restores every

@@ -137,12 +137,14 @@ once when the new image takes over.
   fails with an error or a panic, the host execs its previous image once,
   which records `gterm host restored ... outcome=Fallback`. It cannot fall
   back when the handover state file cannot be read, the pinned previous image
-  fails verification, or that exec fails; those end the host with exit 70 and
-  no `gterm host restored` line (see
+  fails verification, or that exec fails, and the previous image gets no second
+  fallback when its own restore fails; each of these ends the host with exit 70
+  and no `gterm host restored` line (see
   [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
 - An attempt that ends before the exec writes no `gterm host restored` line,
   and the host reports its outcome only to the daemon: the new image refused
-  its startup check, the host was busy (deferred), or the
+  its startup check, the host was busy, draining, or already upgrading
+  (deferred: `host_busy`, `host_draining`, `upgrade_in_progress`), or the
   handover stopped or the exec failed (aborted, rolled back). The host keeps
   running its current image. The daemon tries a deferred attempt again on a
   later check. It does not offer a refused, aborted or rolled-back image again

@@ -57,7 +57,13 @@ impl Pane {
         if !self.fallback_in_flight {
             self.clear_pending_input();
         }
-        self.status_message = None;
+        self.status_message = Some(
+            match transport {
+                Transport::Direct => "attaching (direct)…",
+                Transport::Proxy => "attaching (proxy)…",
+            }
+            .to_string(),
+        );
     }
 
     pub(super) fn install_attachment(

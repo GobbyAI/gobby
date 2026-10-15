@@ -29,6 +29,7 @@ from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import get_session_context, reset_seeded_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.test_clear_successor_seat import _pane, _spawned_seat, _stage
@@ -232,7 +233,11 @@ def _hook(hook_type: str, conversation_id: str, **input_data: str) -> dict[str, 
         "critical": False,
         "hook_type": hook_type,
         "source": "claude",
-        "input_data": {"session_id": conversation_id, **input_data},
+        "input_data": {
+            "session_id": conversation_id,
+            "machine_id": get_machine_id(),
+            **input_data,
+        },
     }
 
 
