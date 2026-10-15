@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import psutil
 import pytest
@@ -123,6 +125,53 @@ def test_bound_native_session_is_on_the_roster(
     assert released.state == "live"
     assert released.session_id is None
     assert f"session:{session.id}" not in _roster_entries(temp_db, session_manager, terminals)
+
+
+def test_roster_rows_decode_json_columns_once_without_redumping(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped terminal_context and the
+    # terminal locator, and AttentionRosterRow.from_row decoded them again (#23359).
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    terminal_id = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+    )
+    host_epoch = str(uuid.uuid4())
+    locator = {"host_terminal_id": str(uuid.uuid4())}
+    terminals.promote_to_live(
+        terminal_id,
+        locator=locator,
+        locator_key=native_locator_key(host_epoch, locator["host_terminal_id"]),
+        host_epoch=host_epoch,
+    )
+    terminal_context = {"gobby_terminal_id": terminal_id, "parent_pid": os.getpid()}
+    session = session_manager.register(
+        external_id=f"native-roster-{uuid.uuid4()}",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
+    assert terminals.bind_session(terminal_id, session.id, project_id) is not None
+
+    with patch("json.dumps", wraps=json.dumps) as dumps:
+        rows = AttentionStateManager(temp_db).load_roster_rows(
+            live_session_statuses=(session.status,)
+        )
+
+    assert dumps.call_count == 0
+    row = next(row for row in rows if row.kind == "session" and row.session_id == session.id)
+    assert row.terminal_context == terminal_context
+    assert row.terminal is not None
+    assert row.terminal.locator == locator
 
 
 def test_context_named_unbound_native_terminal_is_on_the_roster(
