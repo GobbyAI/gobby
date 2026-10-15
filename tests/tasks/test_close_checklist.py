@@ -37,7 +37,7 @@ from gobby.tasks.command_equivalence import (
     scope_difference,
     vitest_related_targets,
 )
-from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,

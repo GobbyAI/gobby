@@ -23,10 +23,8 @@ from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
-from gobby.tasks.transcript_evidence import (
-    derive_transcript_evidence,
-    merge_transcript_evidence,
-)
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
