@@ -598,7 +598,7 @@ class TestCloseTask:
         assert "error" not in result
         assert result["closed"] is True
         mock_task_manager.link_commit.assert_called_once_with(task.id, "abc1234")
-        mock_norm.assert_any_await("abc1234", cwd=str(Path.cwd()))
+        mock_norm.assert_any_await("abc1234", cwd=TEST_REPO_PATH)
         # Link resolution and candidate identity each resolve once per close phase.
         assert mock_norm.await_count == 6
         assert mock_task_manager.close_task.call_args.kwargs["closed_commit_sha"] == "abc1234"

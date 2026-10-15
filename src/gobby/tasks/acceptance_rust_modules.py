@@ -211,7 +211,12 @@ def rust_test_needs_target(path: str, module: tuple[str, ...] | None) -> bool:
     )
 
 
-def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, name: str) -> bool:
+def _cargo_selects_test(
+    command: str,
+    target: tuple[str, str | None] | None,
+    name: str,
+    manifest_path: str | None = None,
+) -> bool:
     """Bind an executed libtest row to unambiguous Cargo and libtest selectors."""
     try:
         args = shlex.split(command)
@@ -230,6 +235,7 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
     separator = args.index("--") if "--" in args else len(args)
     cargo_args, libtest_args = args[2:separator], args[separator + 1 :]
     packages: list[str] = []
+    manifests: list[str] = []
     binaries: list[str] = []
     filters: list[str] = []
     skips: list[str] = []
@@ -293,6 +299,8 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
                     return False
                 if is_cargo and option in {"-p", "--package"}:
                     packages.append(value)
+                elif is_cargo and option == "--manifest-path":
+                    manifests.append(str(PurePosixPath(value)))
                 elif is_cargo and option == "--test":
                     binaries.append(value)
                 elif not is_cargo and option == "--skip":
@@ -310,7 +318,7 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
         return False
     if target is not None:
         package, binary = target
-        if packages != [package] or any(
+        if not (packages == [package] or (not packages and manifests == [manifest_path])) or any(
             flag in cargo_args for flag in ("--workspace", "--all-targets", "--tests")
         ):
             return False
@@ -324,7 +332,11 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
 
 
 def _root_evidence_names_test(
-    output: str, command: str | None, target: tuple[str, str | None] | None, name: str
+    output: str,
+    command: str | None,
+    target: tuple[str, str | None] | None,
+    name: str,
+    manifest_path: str,
 ) -> bool:
     """Require an exact executed row; command tokens only establish target context."""
     if target is None:
@@ -342,7 +354,7 @@ def _root_evidence_names_test(
     libtest = re.compile(rf"^\s*test {re.escape(name)} \.\.\. (?:ok|FAILED)\s*$")
     return bool(
         command is not None
-        and _cargo_selects_test(command, target, name)
+        and _cargo_selects_test(command, target, name, manifest_path)
         and any(libtest.fullmatch(line) for line in output.splitlines())
     )
 
@@ -360,7 +372,11 @@ def rust_evidence_names_test(
         return False
     if rust_test_needs_target(path, rust_module):
         name = "::".join((*(rust_module or ()), symbol))
-        return _root_evidence_names_test(evidence, core_command, rust_target, name)
+        parts = PurePosixPath(path).parts
+        root = PurePosixPath(*parts[:2]) if parts[:1] == ("crates",) else PurePosixPath(".")
+        return _root_evidence_names_test(
+            evidence, core_command, rust_target, name, str(root / "Cargo.toml")
+        )
 
     path_parts = rust_module if rust_module is not None else rust_source_module(path)
     source_parts = PurePosixPath(path).parts
