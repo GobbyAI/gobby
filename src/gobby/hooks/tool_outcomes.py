@@ -382,6 +382,37 @@ def normalize_tool_outcome(
     return outcome
 
 
+def _reports_error(payload: Mapping[str, Any]) -> bool:
+    """An error field is present; null, '' or {} is a plain field."""
+    return payload.get("error") not in (None, "", {})
+
+
+def _reports_failure(payload: object) -> bool:
+    """Success false, isError true or a present error, unless success is explicitly true."""
+    return (
+        isinstance(payload, Mapping)
+        and payload.get("success") is not True
+        and (
+            payload.get("success") is False
+            or payload.get("isError", payload.get("is_error")) is True
+            or _reports_error(payload)
+        )
+    )
+
+
+def _wrapped_body(output: Mapping[str, Any]) -> object:
+    """The structuredContent, or the single JSON text block, of an MCP wrapper."""
+    body = output.get("structuredContent", output.get("structured_content"))
+    if isinstance(body, Mapping):
+        return body
+    content = output.get("content")
+    is_wrapper = "isError" in output or "is_error" in output
+    if is_wrapper and isinstance(content, Sequence) and len(content) == 1:
+        block = content[0]
+        return _parse_json_container(block.get("text") if isinstance(block, Mapping) else None)
+    return None
+
+
 def classify_raw_tool_result(result: object) -> ToolOutcome:
     """Classify a proxy result through the canonical structured authority."""
     if result is None:
@@ -392,15 +423,28 @@ def classify_raw_tool_result(result: object) -> ToolOutcome:
 
     model_dump = getattr(result, "model_dump", None)
     output = model_dump(by_alias=True) if callable(model_dump) else result
-    if isinstance(output, Mapping) and "error" in output and "success" not in output:
-        return ToolOutcome(
-            ToolOutcomeStatus.FAILED,
-            provenance="raw_result.error",
-        )
+    # An explicit success flag is authoritative either way. Without one, any explicit
+    # failure, at the top level or in a wrapper's body, wins over success signals
+    # beside it (for example exit_code 0 or isError False).
+    explicit_success = isinstance(output, Mapping) and output.get("success") is True
+    if isinstance(output, Mapping) and not explicit_success:
+        if output.get("success") is False:
+            return ToolOutcome(ToolOutcomeStatus.FAILED, provenance="raw_result.success")
+        if _reports_error(output):
+            return ToolOutcome(ToolOutcomeStatus.FAILED, provenance="raw_result.error")
+        if _reports_failure(_wrapped_body(output)):
+            return ToolOutcome(
+                ToolOutcomeStatus.FAILED,
+                provenance="raw_result.wrapped_failure",
+            )
     data: dict[str, Any] = {"tool_output": output}
     outcome = normalize_tool_outcome(data)
     if outcome.status is not ToolOutcomeStatus.UNKNOWN:
         return outcome
+    # Conflicting signals carry an explicit failure, which wins over any success
+    # except an explicit success flag.
+    if not explicit_success and (outcome.provenance or "").startswith("conflicting_outcomes:"):
+        return ToolOutcome(ToolOutcomeStatus.FAILED, provenance=outcome.provenance)
 
     # Internal tools routinely return payload mappings without a success flag,
     # while external SDKs may return plain strings. Reaching a non-null result

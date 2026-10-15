@@ -155,7 +155,7 @@ def test_commit_paths_cannot_cross_another_active_claim(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "first_edit,release,accepted",
+    "first_edit,reconcile,accepted",
     [
         (100, False, False),
         (200.5, False, False),
@@ -170,7 +170,7 @@ async def test_commit_chronology_uses_first_live_edit(
     canonical_task_session: Session,
     tmp_path: Path,
     first_edit: float,
-    release: bool,
+    reconcile: bool,
     accepted: bool,
 ) -> None:
     tasks = LocalTaskManager(temp_db)
@@ -182,9 +182,9 @@ async def test_commit_chronology_uses_first_live_edit(
     variables.record_edited_files(
         canonical_task_session.id, ["shared.py"], checkout_root=str(tmp_path), edited_at=first_edit
     )
-    if release:
-        variables.release_task_edited_files(
-            canonical_task_session.id, second.id, ["shared.py"], checkout_root=str(tmp_path)
+    if reconcile:
+        variables.release_session_dirty_files(
+            canonical_task_session.id, ["shared.py"], checkout_root=str(tmp_path)
         )
         variables.record_edited_files(
             canonical_task_session.id, ["shared.py"], checkout_root=str(tmp_path), edited_at=300

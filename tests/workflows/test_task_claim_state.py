@@ -101,6 +101,7 @@ def test_directory_claims_conflict_with_child_edits(owned: str, requested: str) 
     variables: dict[str, Any] = {
         "claimed_tasks": {"other": "#2"},
         "task_edited_files": {"other": [owned]},
+        "task_live_edit_starts": {"other": {"": {owned: 100.0}}},
     }
     with pytest.raises(ValueError, match="live-attributed to #2"):
         task_claim_state.assert_task_edit_paths_available(variables, "current", [requested], None)
@@ -110,10 +111,22 @@ def test_directory_claim_does_not_conflict_with_prefix_sibling() -> None:
     variables: dict[str, Any] = {
         "claimed_tasks": {"other": "#2"},
         "task_edited_files": {"other": ["tests"]},
+        "task_live_edit_starts": {"other": {"": {"tests": 100.0}}},
     }
     task_claim_state.assert_task_edit_paths_available(
         variables, "current", ["tests-other/a.py"], None
     )
+
+
+def test_reconciled_edit_history_does_not_block_another_claim(tmp_path: Path) -> None:
+    root = str(tmp_path)
+    variables: dict[str, Any] = {
+        "claimed_tasks": {"other": "#2"},
+        "task_edited_files": {"other": ["shared.py"]},
+        "task_edited_file_checkouts": {"other": {root: ["shared.py"]}},
+        "task_live_edit_starts": {},
+    }
+    task_claim_state.assert_task_edit_paths_available(variables, "current", ["shared.py"], root)
 
 
 class TestAddClaimedTask:

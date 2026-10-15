@@ -363,6 +363,29 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+def test_blocking_pool_call_discards_broken_pool_and_runs_in_the_caller_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _BrokenExecutor()
+    executor = cast(ProcessPoolExecutor, fake)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_get_pool", lambda: executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_fallback_warning_logged", False)
+    caller = threading.get_ident()
+    ran_in: list[int] = []
+
+    def power(base: int, exponent: int) -> int:
+        ran_in.append(threading.get_ident())
+        return int(pow(base, exponent))
+
+    result = transcript_evidence_pool.run_blocking_in_transcript_evidence_pool(power, 2, 5)
+
+    assert result == 32
+    assert ran_in == [caller]
+    assert transcript_evidence_pool._pool is None
+    assert fake.shutdown_args == (False, True)
+
+
 @pytest.fixture
 def _no_pending_pool_exit() -> None:
     """Let an earlier test's pool-exit thread finish before tracker calls are recorded.

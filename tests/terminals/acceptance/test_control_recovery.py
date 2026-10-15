@@ -137,7 +137,7 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
             assert client.closed
             capture.reset_mock()
             sync.reset_mock()
-            await monitor._check_attention_panes(active_runs=[])
+            await monitor._check_attention_panes(active_agent_sessions=set())
             assert capture.await_count == 1
             assert sync.await_count == 0
             capture.reset_mock()
@@ -164,7 +164,7 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
                 await wait_for_text(pane, marker, description="the original pane after reconnect")
                 markers.append(marker)
             capture.reset_mock()
-            await monitor._check_attention_panes(active_runs=[])
+            await monitor._check_attention_panes(active_agent_sessions=set())
             assert capture.await_count == len(panes)
             assert sync.await_count == len(panes)
             for call, marker in zip(sync.await_args_list, markers, strict=True):

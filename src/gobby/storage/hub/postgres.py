@@ -22,7 +22,6 @@ from gobby.storage import schema_contract
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE, PostgresCapacity
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
-from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission as AgentCapAdmission,
 )
@@ -379,14 +378,9 @@ class PostgresHubDatabase:
     ) -> Cursor | None:
         """Run a lone read in autocommit, or return None when it needs a transaction.
 
-        Reads inside an ambient transaction must see its uncommitted writes, and
-        deadline bounds are SET LOCAL, which only a transaction block honors.
+        Reads inside an ambient transaction must see its uncommitted writes.
         """
-        if (
-            ambient_transaction(self) is not None
-            or current_database_operation_deadline() is not None
-            or not _postgres_pool.is_autocommit_read(sql)
-        ):
+        if ambient_transaction(self) is not None or not _postgres_pool.is_autocommit_read(sql):
             return None
         return _postgres_pool.autocommit_read(self.open, self._pool_connection, sql, params)
 

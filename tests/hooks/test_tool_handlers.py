@@ -1262,6 +1262,7 @@ class TestToolHandlerEdgeCases:
             "task-123",
             claimed_tasks={"task-123": "#123", "other-task": "#456"},
             task_edited_file_checkouts={"other-task": {str(tmp_path): ["nested"]}},
+            task_live_edit_starts={"other-task": {str(tmp_path): {"nested": 100.0}}},
         )
         event = make_event(
             HookEventType.BEFORE_TOOL,

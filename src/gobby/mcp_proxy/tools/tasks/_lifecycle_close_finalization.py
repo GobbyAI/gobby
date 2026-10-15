@@ -42,6 +42,7 @@ from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths_async,
 )
+from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.task_dirty_state import (
     committable_task_paths_async as _committable_task_paths,
 )
@@ -124,7 +125,7 @@ async def _linked_commit_clean_proof_paths(
     except DirtyEditOwnershipInspectionError:
         logger.warning(
             "Linked-commit ownership inspection failed during close_task; "
-            "retaining every fallback path",
+            "retaining every committed path",
             extra={"project_id": project_id, "session_id": owner_session_id},
             exc_info=True,
         )
@@ -145,7 +146,11 @@ async def capture_attribution(
     owner_session_id = get_claimed_session_id(task) or resolved_session_id
     session_vars = ctx.session_var_manager.get_variables(owner_session_id)
 
-    from gobby.workflows.task_claim_state import target_task_has_edits, task_edited_file_set
+    from gobby.workflows.task_claim_state import (
+        target_task_has_edits,
+        task_edit_path_covers,
+        task_edited_file_set,
+    )
 
     attributed = target_task_has_edits(session_vars, task_id)
     raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
@@ -163,11 +168,23 @@ async def capture_attribution(
         )
         attributed = attributed or bool(raw_paths)
         edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+    # Task attribution outlives the owner's commit, so a path the owner no longer
+    # holds dirty is committed work that another live owner may have re-dirtied.
+    # Paths the owner still holds dirty stay in the proof, fallback or not.
+    owner_dirty = session_dirty_file_set_for_checkout(session_vars, repo_path)
+    committed = frozenset(
+        path
+        for path in edited_paths
+        if not any(
+            task_edit_path_covers(path, dirty) or task_edit_path_covers(dirty, path)
+            for dirty in owner_dirty
+        )
+    )
     clean_proof_paths = edited_paths
-    if used_commit_fallback and edited_paths:
-        clean_proof_paths = await _linked_commit_clean_proof_paths(
+    if committed:
+        clean_proof_paths = (edited_paths - committed) | await _linked_commit_clean_proof_paths(
             ctx,
-            paths=edited_paths,
+            paths=committed,
             owner_session_id=owner_session_id,
             project_id=task.project_id,
             repo_path=repo_path,

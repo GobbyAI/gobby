@@ -31,7 +31,6 @@ _SUPPRESSED_UPDATE_TYPES = frozenset(
         "retry_state",
         "compaction_checkpoint",
         "task_backgrounded",
-        "task_completed",
         "current_mode_update",
         "hook_annotation",
     }
@@ -109,6 +108,35 @@ class GrokTranscriptParser(BaseTranscriptParser):
             parsed.context_epoch_reset = True
             return parsed
 
+        if update_type == "task_completed":
+            snapshot = update.get("task_snapshot")
+            if not isinstance(snapshot, dict) or snapshot.get("completed") is not True:
+                return None
+            call_id = snapshot.get("task_id")
+            exit_code = snapshot.get("exit_code")
+            if (
+                not isinstance(call_id, str)
+                or not call_id.strip()
+                or not isinstance(exit_code, int)
+                or isinstance(exit_code, bool)
+            ):
+                return None
+            # Grok backgrounds a terminal call without a final tool_call_update.
+            # The snapshot's task_id is the original toolCallId; consumers still
+            # require that pending call before accepting this result.
+            output = snapshot.get("output")
+            output_text = output if isinstance(output, str) else ""
+            return _message(
+                index,
+                "tool",
+                output_text,
+                "tool_result",
+                timestamp,
+                data,
+                tool_result={"output": output_text, "exit_code": exit_code},
+                tool_use_id=call_id,
+                usage=usage,
+            )
         if update_type in _SUPPRESSED_UPDATE_TYPES:
             return None
         if update_type == "user_message_chunk":

@@ -9,10 +9,13 @@ and OOM-crashed the host with no guard anywhere in the stack.
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import functools
 import logging
+import sys
 import time
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -35,14 +38,47 @@ logger = logging.getLogger(__name__)
 _BYTES_PER_GB = 1024**3
 _BREAKDOWN_TOP_N = 15
 _PRESSURE_WARN_INTERVAL_SECONDS = 300.0
+_CHILD_PID_BATCH = 64
+
+
+@functools.cache
+def _proc_listchildpids() -> Any:
+    listchildpids = ctypes.CDLL("/usr/lib/libproc.dylib").proc_listchildpids
+    listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+    listchildpids.restype = ctypes.c_int
+    return listchildpids
+
+
+def _libproc_child_pids(pid: int) -> list[int]:
+    # Returns a pid count and silently truncates to the buffer, so grow until
+    # the children fit; ctypes releases the GIL for the call.
+    size = _CHILD_PID_BATCH
+    while True:
+        buffer = (ctypes.c_int * size)()
+        count = _proc_listchildpids()(pid, buffer, ctypes.sizeof(buffer))
+        if count < size:
+            return buffer[: max(count, 0)]
+        size *= 4
+
+
+def _child_pid_lookup() -> Callable[[int], Sequence[int]]:
+    """Return one tick's children-of-pid lookup."""
+    # psutil's ppid map holds the GIL for a kinfo sysctl per process on the
+    # machine, ~90 ms for ~1,500 pids on macOS; libproc asks the kernel for
+    # one parent's children, so a tick pays only for the agent trees (#23359).
+    if sys.platform == "darwin":
+        return _libproc_child_pids
+    tree: dict[int, list[int]] = defaultdict(list)
+    for pid, ppid in psutil._ppid_map().items():
+        tree[ppid].append(pid)
+    return lambda pid: tree.get(pid, ())
 
 
 @dataclass
 class _ProcessSample:
     pid: int
-    name: str
-    cmdline: str
     rss: int
+    proc: Any
 
 
 @dataclass
@@ -58,9 +94,15 @@ def _format_breakdown(processes: list[_ProcessSample], total_rss: int, limit_byt
         f"tree total {total_rss / _BYTES_PER_GB:.2f}GB, limit {limit_bytes / _BYTES_PER_GB:.2f}GB"
     ]
     ranked = sorted(processes, key=lambda p: p.rss, reverse=True)[:_BREAKDOWN_TOP_N]
-    for proc in ranked:
+    for sample in ranked:
+        # A sysctl each, so only a kill reads them, not every tick (#23359).
+        try:
+            name = sample.proc.name()
+            cmdline = " ".join(sample.proc.cmdline())[:200]
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            name, cmdline = "?", ""
         lines.append(
-            f"  pid={proc.pid} rss={proc.rss / (1024**2):.0f}MB name={proc.name} cmd={proc.cmdline}"
+            f"  pid={sample.pid} rss={sample.rss / (1024**2):.0f}MB name={name} cmd={cmdline}"
         )
     return "\n".join(lines)
 
@@ -86,9 +128,7 @@ class MemoryWatchdogHandler:
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         process_factory: Callable[[int], Any] = psutil.Process,
-        # The {pid: ppid} map Process.children() builds; psutil exports no
-        # public equivalent of the same cost (6.1.1).
-        ppid_map_fn: Callable[[], dict[int, int]] = psutil._ppid_map,
+        child_lookup_fn: Callable[[], Callable[[int], Sequence[int]]] = _child_pid_lookup,
         virtual_memory_fn: Callable[[], Any] = psutil.virtual_memory,
         process_iter_fn: Callable[..., Any] = psutil.process_iter,
         monotonic: Callable[[], float] = time.monotonic,
@@ -101,7 +141,7 @@ class MemoryWatchdogHandler:
         self._config = tmux_config
         self._run_db_callback = run_db
         self._process_factory = process_factory
-        self._ppid_map = ppid_map_fn
+        self._child_lookup = child_lookup_fn
         self._virtual_memory = virtual_memory_fn
         self._process_iter = process_iter_fn
         self._monotonic = monotonic
@@ -127,17 +167,9 @@ class MemoryWatchdogHandler:
     def _measure_trees(
         self, roots: list[tuple[int, float]]
     ) -> list[tuple[int, list[_ProcessSample]]]:
-        # One scan of every process on the machine serves every run this tick;
-        # Process.children(recursive=True) repeated it per run, ~70 ms of GIL
-        # time for ~1300 pids each (#23359).
-        children_of: dict[int, list[int]] | None = None
-
-        def scan() -> dict[int, list[int]]:
-            tree: dict[int, list[int]] = defaultdict(list)
-            for pid, ppid in self._ppid_map().items():
-                tree[ppid].append(pid)
-            return tree
-
+        # One lookup serves every run this tick; Process.children(recursive=True)
+        # scanned every process on the machine per run (#23359).
+        children_of: Callable[[int], Sequence[int]] | None = None
         measured: list[tuple[int, list[_ProcessSample]]] = []
         for root_pid, start_time in roots:
             try:
@@ -147,7 +179,7 @@ class MemoryWatchdogHandler:
                     measured.append((0, []))
                     continue
                 if children_of is None:
-                    children_of = scan()
+                    children_of = self._child_lookup()
                 candidates = [root, *self._descendants(root_pid, created, children_of)]
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 measured.append((0, []))
@@ -156,7 +188,7 @@ class MemoryWatchdogHandler:
         return measured
 
     def _descendants(
-        self, root_pid: int, created: float, children_of: dict[int, list[int]]
+        self, root_pid: int, created: float, children_of: Callable[[int], Sequence[int]]
     ) -> list[Any]:
         # Process.children(recursive=True)'s walk: a child older than the root
         # holds a reused pid, and a pid reused mid-scan can close a cycle.
@@ -168,7 +200,7 @@ class MemoryWatchdogHandler:
             if pid in seen:
                 continue
             seen.add(pid)
-            for child_pid in children_of.get(pid, ()):
+            for child_pid in children_of(pid):
                 try:
                     child = self._process_factory(child_pid)
                     if created <= child.create_time():
@@ -184,12 +216,7 @@ class MemoryWatchdogHandler:
         for proc in candidates:
             try:
                 samples.append(
-                    _ProcessSample(
-                        pid=proc.pid,
-                        name=proc.name(),
-                        cmdline=" ".join(proc.cmdline())[:200],
-                        rss=int(proc.memory_info().rss),
-                    )
+                    _ProcessSample(pid=proc.pid, rss=int(proc.memory_info().rss), proc=proc)
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 continue
@@ -206,7 +233,8 @@ class MemoryWatchdogHandler:
 
     async def _kill_run(self, sample: _TreeSample, reason: str) -> bool:
         run = sample.run
-        breakdown = _format_breakdown(
+        breakdown = await asyncio.to_thread(
+            _format_breakdown,
             sample.processes,
             sample.total_rss,
             int(self._config.agent_memory_limit_gb * _BYTES_PER_GB),

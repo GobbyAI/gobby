@@ -1151,6 +1151,7 @@ class TestListRunningAgents:
         runner.run_storage.list_active_global.assert_called_once_with(
             limit=100,
             task_ids=["resolved-task-id"],
+            include_close_reviews=True,
         )
 
     @pytest.mark.asyncio

@@ -8,14 +8,16 @@ import os
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
-from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.commit_guard_conflicts import (
     ForeignPathOwner as ForeignPathOwner,
 )
@@ -236,7 +238,7 @@ async def foreign_staged_commit_conflict(
                 for path in owned_candidates
                 if not any(task_edit_path_covers(own, path) for own in current_owned)
             }
-            owned_candidates -= await _merge_set(checkout_root)
+            owned_candidates -= await _operation_paths(checkout_root)
             scoped_owners = scope_foreign_owners(owners, owned_candidates, current_owned)
             dirty_paths = await _dirty_owned_paths_releasing_clean(
                 db,
@@ -288,14 +290,17 @@ async def foreign_dirty_edit_conflict(
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
         for root, rels in roots.items():
+            rels = await asyncio.to_thread(_git_backed_targets, root, rels)
+            if not rels:
+                continue
             own = session_dirty_file_set_for_checkout(variables, root)
             candidates = {
                 rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
             }
             if not candidates:
                 continue
-            merge_paths = await _merge_set(root)
-            candidates -= merge_paths
+            operation_paths = await _operation_paths(root)
+            candidates -= operation_paths
             if not candidates:
                 continue
             dirty = await task_dirty_paths_async(candidates, root)
@@ -316,7 +321,7 @@ async def foreign_dirty_edit_conflict(
             }
             await asyncio.to_thread(_release_clean_ledger_entries, db, scoped, clean, root)
             for path in dirty:
-                if path in merge_paths or any(task_edit_path_covers(p, path) for p in own):
+                if path in operation_paths or any(task_edit_path_covers(p, path) for p in own):
                     continue
                 holders = tuple(
                     owner
@@ -342,6 +347,24 @@ async def foreign_dirty_edit_conflict(
         )
 
 
+def _git_backed_targets(root: str, rels: set[str]) -> set[str]:
+    """Keep targets inside, or holding, a Git checkout; the rest hold no uncommitted work."""
+    return {rel for rel in rels if _may_hold_git(Path(root, rel))}
+
+
+def _may_hold_git(target: Path) -> bool:
+    if checkout_root(target) is not None:
+        return True
+    if not target.is_dir():
+        return False
+    errors: list[OSError] = []
+    for _, dirs, files in os.walk(target, onerror=errors.append):
+        if ".git" in dirs or ".git" in files:
+            return True
+    # An unreadable subdirectory could hide a checkout.
+    return bool(errors)
+
+
 def _write_paths(event_data: dict[str, Any]) -> list[str]:
     if "canonical_write_file_paths" in event_data:
         raw = event_data["canonical_write_file_paths"]
@@ -352,17 +375,63 @@ def _write_paths(event_data: dict[str, Any]) -> list[str]:
     return [path for path in raw if isinstance(path, str)] if isinstance(raw, list) else []
 
 
-async def _merge_set(checkout_root: str) -> set[str]:
-    result = await daemon_git.run(
-        ["-c", "core.fsmonitor=false", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
-        cwd=checkout_root,
-        timeout=10.0,
+async def _operation_paths(checkout_root: str) -> set[str]:
+    """Paths an in-progress merge, cherry-pick, revert or rebase applied or left unmerged."""
+
+    async def git(*args: str) -> GitResult:
+        return await daemon_git.run(
+            ["-c", "core.fsmonitor=false", *args], cwd=checkout_root, timeout=10.0
+        )
+
+    async def git_ok(*args: str) -> GitOk | None:
+        result = await git(*args)
+        return result if isinstance(result, GitOk) else None
+
+    paths: set[str] = set()
+    in_progress = False
+    if await git_ok("rev-parse", "-q", "--verify", "MERGE_HEAD"):
+        in_progress = True
+        merge_base = await git("merge-base", "HEAD", "MERGE_HEAD")
+        if isinstance(merge_base, GitOk):
+            merge_args = ("diff", "--name-only", "--no-renames", "-z", "HEAD...MERGE_HEAD")
+        elif isinstance(merge_base, GitFailed) and merge_base.returncode == 1:
+            # Unrelated histories share no base, so the merge brings all of MERGE_HEAD.
+            merge_args = ("ls-tree", "-r", "--name-only", "-z", "MERGE_HEAD")
+        else:
+            detail = merge_base.stderr.strip() or merge_base.status
+            raise DirtyEditOwnershipInspectionError(f"git merge-base failed: {detail}")
+        paths |= await _git_paths_async(checkout_root, *merge_args)
+    picked = ["CHERRY_PICK_HEAD", "REVERT_HEAD"]
+    # REBASE_HEAD outlives a finished rebase, so only its state directory proves one.
+    state_dirs = await git_ok(
+        "rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"
     )
-    if not isinstance(result, GitOk):
-        return set()
-    return await _git_paths_async(
-        checkout_root, "diff", "--name-only", "--no-renames", "-z", "HEAD", "MERGE_HEAD"
-    )
+    if state_dirs and any(
+        os.path.exists(os.path.join(checkout_root, state_dir))
+        for state_dir in state_dirs.stdout.splitlines()
+    ):
+        picked.append("REBASE_HEAD")
+    for ref in picked:
+        if await git_ok("rev-parse", "-q", "--verify", ref):
+            in_progress = True
+            paths |= await _git_paths_async(
+                checkout_root,
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--no-renames",
+                "-z",
+                "--diff-merges=first-parent",
+                ref,
+            )
+    if in_progress:
+        # A rename-following conflict lands on a path the picked commit never named.
+        paths |= await _git_paths_async(
+            checkout_root, "diff", "--name-only", "-z", "--diff-filter=U"
+        )
+    return paths
 
 
 def _live_path_owners(

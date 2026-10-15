@@ -8,6 +8,7 @@ other.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -168,6 +169,20 @@ class TranscriptEvidence:
             ),
             "degraded_capabilities": list(self.degraded_capabilities),
         }
+
+
+_MISSING_LINKED_SESSION = re.compile(r"Linked session (\S+) was not found")
+
+
+def missing_linked_session_capability(session_id: str) -> str:
+    """The degraded capability a linked session that no longer exists contributes."""
+    return f"Linked session {session_id} was not found"
+
+
+def missing_linked_session(capability: str) -> str | None:
+    """The session a ``missing_linked_session_capability`` names, else None."""
+    match = _MISSING_LINKED_SESSION.fullmatch(capability)
+    return match[1] if match else None
 
 
 class TranscriptEvidenceUnavailable(RuntimeError):
