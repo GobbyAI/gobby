@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use common::TIMEOUT;
 use gobby_core::bootstrap::RouteBackend;
+use gobby_daemon::front_door::FrontDoorState;
 use gobby_daemon::front_door::health::{HealthFamily, SERVED_BY_HEADER};
 use gobby_daemon::front_door::routes::{FAMILIES, RouteFamily, unimplemented_families};
 use gobby_daemon::serve::{PublicListener, serve};
@@ -433,7 +434,7 @@ async fn replay_in_declared_backend_state(manifest: &Value, case: &Value) -> Hea
 fn parity_violations(
     manifest_families: &Map<String, Value>,
     case_families: &BTreeSet<String>,
-    families: &[&dyn RouteFamily],
+    families: &[&dyn RouteFamily<FrontDoorState>],
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for family in families {
@@ -534,7 +535,7 @@ fn every_native_family_has_corpus_cases() {
 
 #[test]
 fn precheck_rejects_missing_or_mismatched_parity() {
-    let registered: &[&dyn RouteFamily] = &[&HealthFamily];
+    let registered: &[&dyn RouteFamily<FrontDoorState>] = &[&HealthFamily];
     let families = |value: Value| value.as_object().expect("families").clone();
     let cases = |names: &[&str]| -> BTreeSet<String> {
         names.iter().map(|name| (*name).to_owned()).collect()

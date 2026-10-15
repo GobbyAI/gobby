@@ -4,7 +4,9 @@
 //! A [`RouteFamily`] claims path prefixes and supplies an `axum::Router` over the
 //! shared [`FrontDoorState`]. Families are composed statically in [`FAMILIES`]; the
 //! bootstrap `front_door.routes` map picks a [`RouteBackend`] per family, read once at
-//! start. Paths no family claims, and every upgrade, stay on the hyper proxy.
+//! start, and a family absent from it takes its `default_backend`. Paths no family
+//! claims, requests a family's `claims` declines, and every upgrade stay on the hyper
+//! proxy.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -22,24 +24,15 @@ use super::FrontDoorState;
 use super::health::{self, HealthFamily};
 use super::proxy;
 
-/// A group of routes that gdaemon can serve itself.
-pub trait RouteFamily: Send + Sync {
-    /// The family name used as the key in `front_door.routes`.
-    fn name(&self) -> &'static str;
-    /// Path prefixes the family owns; matched on whole path segments.
-    fn prefixes(&self) -> &'static [&'static str];
-    /// Native handlers. Requests under a claimed prefix that no handler matches are
-    /// proxied.
-    fn router(&self) -> Router<FrontDoorState>;
-}
+pub use gobby_core::route_family::RouteFamily;
 
 /// Every family gdaemon implements. Stage 2 leaves add their families here.
-pub static FAMILIES: &[&dyn RouteFamily] = &[&HealthFamily, &TerminalFamily];
+pub static FAMILIES: &[&dyn RouteFamily<FrontDoorState>] = &[&HealthFamily, &TerminalFamily];
 
 /// The lifecycle is native; terminal upgrades retain the existing proxy transport.
 struct TerminalFamily;
 
-impl RouteFamily for TerminalFamily {
+impl RouteFamily<FrontDoorState> for TerminalFamily {
     fn name(&self) -> &'static str {
         "terminal_ws"
     }
@@ -52,8 +45,7 @@ impl RouteFamily for TerminalFamily {
 }
 
 struct Entry {
-    name: &'static str,
-    prefixes: &'static [&'static str],
+    family: &'static dyn RouteFamily<FrontDoorState>,
     backend: RouteBackend,
     router: Router,
 }
@@ -65,19 +57,18 @@ pub struct RouteTable {
 
 impl RouteTable {
     pub fn new(
-        families: &[&dyn RouteFamily],
+        families: &[&'static dyn RouteFamily<FrontDoorState>],
         routes: &BTreeMap<String, RouteBackend>,
         state: &FrontDoorState,
     ) -> Self {
         let entries = families
             .iter()
-            .map(|family| Entry {
-                name: family.name(),
-                prefixes: family.prefixes(),
+            .map(|&family| Entry {
+                family,
                 backend: routes
                     .get(family.name())
                     .copied()
-                    .unwrap_or(RouteBackend::Proxy),
+                    .unwrap_or_else(|| family.default_backend()),
                 router: family
                     .router()
                     .fallback(proxy_fallback)
@@ -92,10 +83,17 @@ impl RouteTable {
         let Some(entry) = self.lookup(request.uri().path()) else {
             return proxy::forward(state, request).await;
         };
-        match entry.backend {
-            RouteBackend::Proxy => proxy::forward(state, request).await,
-            RouteBackend::Native => call(&entry.router, request).await,
-            RouteBackend::Compare => compare(entry, state, request).await,
+        if entry.backend == RouteBackend::Proxy {
+            return proxy::forward(state, request).await;
+        }
+        // A request the family does not claim reaches the proxy unchanged.
+        let (parts, body) = request.into_parts();
+        let claimed = entry.family.claims(&parts);
+        let request = Request::from_parts(parts, body);
+        match (entry.backend, claimed) {
+            (RouteBackend::Native, true) => call(&entry.router, request).await,
+            (RouteBackend::Compare, true) => compare(entry, state, request).await,
+            _ => proxy::forward(state, request).await,
         }
     }
 
@@ -105,7 +103,8 @@ impl RouteTable {
             .iter()
             .filter_map(|entry| {
                 entry
-                    .prefixes
+                    .family
+                    .prefixes()
                     .iter()
                     .filter(|prefix| claims(prefix, path))
                     .map(|prefix| prefix.len())
@@ -121,7 +120,7 @@ impl RouteTable {
 /// implement; those requests are proxied. The parser accepts unknown names because
 /// Stage 2 leaves introduce families.
 pub fn unimplemented_families(
-    families: &[&dyn RouteFamily],
+    families: &[&dyn RouteFamily<FrontDoorState>],
     routes: &BTreeMap<String, RouteBackend>,
 ) -> Vec<String> {
     routes
@@ -188,7 +187,7 @@ async fn compare(entry: &Entry, state: &FrontDoorState, request: Request) -> Res
     if native_parts.status != proxied_parts.status || !body_equal {
         eprintln!(
             "front_door compare diff: family={} path={path} native_status={} proxied_status={} body_equal={body_equal} native_body_error={:?}",
-            entry.name,
+            entry.family.name(),
             native_parts.status.as_u16(),
             proxied_parts.status.as_u16(),
             native_body.err().map(|error| error.to_string()),
@@ -348,5 +347,137 @@ mod tests {
             ("terminal_ws".to_owned(), RouteBackend::Proxy),
         ]);
         assert_eq!(unimplemented_families(FAMILIES, &routes), vec!["sessions"]);
+    }
+
+    fn state_for(addr: SocketAddr) -> FrontDoorState {
+        FrontDoorState::new(
+            addr,
+            BackendState::Down,
+            Arc::new(
+                super::super::auth::AuthState::new("test-secret".into(), None, Default::default())
+                    .expect("auth"),
+            ),
+        )
+    }
+
+    /// Serves `/api/claimed` natively, but claims only requests that carry `x-claim`.
+    struct HeaderClaimFamily;
+
+    static HEADER_CLAIM_NATIVE_HITS: AtomicUsize = AtomicUsize::new(0);
+
+    impl RouteFamily<FrontDoorState> for HeaderClaimFamily {
+        fn name(&self) -> &'static str {
+            "header_claim"
+        }
+        fn prefixes(&self) -> &'static [&'static str] {
+            &["/api/claimed"]
+        }
+        fn router(&self) -> Router<FrontDoorState> {
+            Router::new().route(
+                "/api/claimed",
+                axum::routing::get(|| async {
+                    HEADER_CLAIM_NATIVE_HITS.fetch_add(1, Ordering::SeqCst);
+                    ([(SERVED_BY_HEADER, "gdaemon")], "native")
+                }),
+            )
+        }
+        fn claims(&self, parts: &axum::http::request::Parts) -> bool {
+            parts.headers.contains_key("x-claim")
+        }
+    }
+
+    /// Native unless `front_door.routes` names it.
+    struct NativeByDefaultFamily;
+
+    impl RouteFamily<FrontDoorState> for NativeByDefaultFamily {
+        fn name(&self) -> &'static str {
+            "native_by_default"
+        }
+        fn prefixes(&self) -> &'static [&'static str] {
+            &["/api/defaulted"]
+        }
+        fn router(&self) -> Router<FrontDoorState> {
+            Router::new().route(
+                "/api/defaulted",
+                axum::routing::get(|| async { ([(SERVED_BY_HEADER, "gdaemon")], "native") }),
+            )
+        }
+        fn default_backend(&self) -> RouteBackend {
+            RouteBackend::Native
+        }
+    }
+
+    #[tokio::test]
+    async fn unclaimed_requests_are_proxied_under_every_backend() {
+        let (addr, hits) = python_stub().await;
+        let state = state_for(addr);
+        let families: &[&'static dyn RouteFamily<FrontDoorState>] = &[&HeaderClaimFamily];
+
+        for backend in [
+            RouteBackend::Proxy,
+            RouteBackend::Native,
+            RouteBackend::Compare,
+        ] {
+            let routes = BTreeMap::from([("header_claim".to_owned(), backend)]);
+            let table = RouteTable::new(families, &routes, &state);
+            let before = hits.load(Ordering::SeqCst);
+
+            let unclaimed = get(&table, &state, "/api/claimed").await;
+
+            assert_eq!(
+                unclaimed.headers().get(SERVED_BY_HEADER),
+                None,
+                "{backend:?}"
+            );
+            assert_eq!(body_text(unclaimed).await, PYTHON_HEALTH, "{backend:?}");
+            assert_eq!(hits.load(Ordering::SeqCst), before + 1, "{backend:?}");
+        }
+        assert_eq!(HEADER_CLAIM_NATIVE_HITS.load(Ordering::SeqCst), 0);
+
+        // The same family serves the requests it does claim.
+        let routes = BTreeMap::from([("header_claim".to_owned(), RouteBackend::Native)]);
+        let table = RouteTable::new(families, &routes, &state);
+        let request = Request::get("/api/claimed")
+            .header("x-claim", "1")
+            .body(Body::empty())
+            .expect("request");
+        let claimed = table.dispatch(&state, request).await;
+        assert_eq!(
+            claimed.headers().get(SERVED_BY_HEADER),
+            Some(&HeaderValue::from_static("gdaemon"))
+        );
+        assert_eq!(HEADER_CLAIM_NATIVE_HITS.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn absent_route_takes_the_family_default() {
+        let (addr, hits) = python_stub().await;
+        let state = state_for(addr);
+        let families: &[&'static dyn RouteFamily<FrontDoorState>] = &[&NativeByDefaultFamily];
+
+        let absent = RouteTable::new(families, &BTreeMap::new(), &state);
+        let defaulted = get(&absent, &state, "/api/defaulted").await;
+        assert_eq!(
+            defaulted.headers().get(SERVED_BY_HEADER),
+            Some(&HeaderValue::from_static("gdaemon"))
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let routes = BTreeMap::from([("native_by_default".to_owned(), RouteBackend::Proxy)]);
+        let overridden = RouteTable::new(families, &routes, &state);
+        let proxied = get(&overridden, &state, "/api/defaulted").await;
+        assert_eq!(proxied.headers().get(SERVED_BY_HEADER), None);
+        assert_eq!(body_text(proxied).await, PYTHON_HEALTH);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        // Every shipped family stays proxied until bootstrap opts it in.
+        for family in FAMILIES {
+            assert_eq!(
+                family.default_backend(),
+                RouteBackend::Proxy,
+                "{}",
+                family.name()
+            );
+        }
     }
 }

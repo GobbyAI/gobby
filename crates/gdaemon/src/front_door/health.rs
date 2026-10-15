@@ -8,11 +8,11 @@ use axum::extract::{Request, State};
 use axum::http::header::{CONTENT_TYPE, RETRY_AFTER};
 use axum::http::{HeaderValue, Response, StatusCode};
 use axum::routing::get;
+use gobby_core::route_family::RouteFamily;
 use serde_json::json;
 
 use super::FrontDoorState;
 use super::proxy;
-use super::routes::RouteFamily;
 
 /// Response header naming the gdaemon handler that answered a native route.
 pub const SERVED_BY_HEADER: &str = "x-gobby-served-by";
@@ -80,7 +80,7 @@ pub(crate) fn json_response(
 /// typed 503; once Python listens, Python's own health body passes through untouched.
 pub struct HealthFamily;
 
-impl RouteFamily for HealthFamily {
+impl RouteFamily<FrontDoorState> for HealthFamily {
     fn name(&self) -> &'static str {
         "health"
     }

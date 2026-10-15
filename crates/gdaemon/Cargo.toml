@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.26"
+version = "0.4.27"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -27,7 +27,7 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["h
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool"] }
+gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool", "route-family"] }
 deadpool-postgres = { version = "0.14.2", features = ["rt_tokio_1"] }
 gobby-terminals = { path = "../gterminals" }
 http-body-util = "0.1"
