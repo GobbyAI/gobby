@@ -66,5 +66,8 @@ pub mod search;
 #[cfg(feature = "graph-analytics")]
 pub mod graph_analytics;
 
+#[cfg(feature = "route-family")]
+pub mod route_family;
+
 #[cfg(test)]
 pub(crate) mod test_http;
