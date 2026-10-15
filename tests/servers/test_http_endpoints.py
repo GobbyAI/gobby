@@ -18,6 +18,7 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 
 pytestmark = [
     pytest.mark.unit,
@@ -450,7 +451,7 @@ class TestCodeEndpoints:
 def _hook_envelope(**payload: Any) -> dict[str, Any]:
     from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -458,6 +459,7 @@ def _hook_envelope(**payload: Any) -> dict[str, Any]:
         "input_data": {},
     }
     envelope.update(payload)
+    envelope["input_data"] = {**envelope["input_data"], "machine_id": get_machine_id()}
     return envelope
 
 
@@ -559,6 +561,7 @@ class TestHooksEndpoints:
                     "hookEventName": "session_start",
                     "sessionId": "claude-hook-session",
                     "cwd": "/tmp/project",
+                    "machine_id": get_machine_id(),
                 },
                 "source": "claude",
                 "_enqueued_at": "2026-04-16T12:00:00Z",
@@ -611,6 +614,7 @@ class TestHooksEndpoints:
                 "input_data": {
                     "session_id": "grok-hook-session",
                     "cwd": "/tmp/project",
+                    "machine_id": get_machine_id(),
                 },
                 "source": "grok",
                 "_enqueued_at": "2026-04-16T12:00:00Z",

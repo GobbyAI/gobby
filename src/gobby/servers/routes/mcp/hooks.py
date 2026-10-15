@@ -72,6 +72,7 @@ from gobby.servers.routes.mcp.hook_responses import (
 )
 from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
 if TYPE_CHECKING:
@@ -153,6 +154,19 @@ def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any
         "source": payload.get("source"),
     }
     return normalized_payload, metadata
+
+
+def _envelope_machine_mismatch(server: "HTTPServer", request: Request, input_data: Any) -> bool:
+    """A hook's envelope must name the key's machine, or the hub's without a key.
+
+    Session lookups trust the envelope machine, so no hook may claim another
+    machine's identity. A hook without front-door identity comes from the
+    hub's own ghook, which always stamps the hub's machine.
+    """
+    identity = server.auth_service.verified_front_door_identity(request)
+    expected = identity.machine_id if identity is not None else get_machine_id()
+    envelope_machine = input_data.get("machine_id") if isinstance(input_data, dict) else None
+    return not envelope_machine or envelope_machine != expected
 
 
 def _hook_log_extra(
@@ -401,6 +415,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     "hook-response capability below floor",
                     source=source,
                 )
+
+            if _envelope_machine_mismatch(server, request, payload["input_data"]):
+                return JSONResponse(status_code=403, content={"code": "hook_machine_mismatch"})
 
             if envelope_id:
                 owner_token = await asyncio.to_thread(claim_envelope_processing, envelope_id)

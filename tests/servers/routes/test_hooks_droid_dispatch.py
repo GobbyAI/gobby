@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -45,7 +46,11 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
                 "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
                 "hook_type": "PreToolUse",
                 "source": "droid",
-                "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+                "input_data": {
+                    "session_id": "droid-123",
+                    "cwd": "/tmp",
+                    "machine_id": get_machine_id(),
+                },
             },
         )
 
@@ -55,7 +60,7 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
     assert mock_adapter.handle_native.call_args.args[0] == {
         "hook_type": "PreToolUse",
         "source": "droid",
-        "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+        "input_data": {"session_id": "droid-123", "cwd": "/tmp", "machine_id": get_machine_id()},
         "_enqueued_at": "2026-04-16T12:00:00Z",
     }
 

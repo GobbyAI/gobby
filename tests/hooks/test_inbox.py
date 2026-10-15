@@ -590,15 +590,18 @@ async def test_replay_shared_key_passes_through_front_door_auth(
 
 
 @pytest.mark.asyncio
-async def test_replay_terminal_401_is_quarantined_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("status", "reason"), [(401, "replay_auth_rejected"), (403, "hook_machine_mismatch")]
+)
+async def test_replay_terminal_rejection_is_quarantined_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, status: int, reason: str
 ) -> None:
     inbox_dir = tmp_path / "inbox"
     inbox_dir.mkdir()
     envelope = _valid_envelope()
     envelope["headers"] = {"Authorization": "Bearer persisted-secret"}
     envelope_path = _write_inbox_envelope(inbox_dir, "terminal-auth", envelope)
-    post = AsyncMock(return_value=httpx.Response(401, text="response-secret"))
+    post = AsyncMock(return_value=httpx.Response(status, text="response-secret"))
     settled = MagicMock()
     app = FastAPI()
     _get_hook_settle_listeners(app).add(settled)
@@ -618,11 +621,11 @@ async def test_replay_terminal_401_is_quarantined_once(
     quarantine = get_hook_quarantine_dir(inbox_dir)
     assert (quarantine / envelope_path.name).read_bytes() == json.dumps(envelope).encode()
     metadata = json.loads((quarantine / f"{envelope_path.name}.meta.json").read_text())
-    assert metadata["reason"] == "replay_auth_rejected"
-    assert metadata["detail"] == "Hook replay returned HTTP 401"
+    assert metadata["reason"] == reason
+    assert metadata["detail"] == f"Hook replay returned HTTP {status}"
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
     assert len(warnings) == 1
-    assert "401" in warnings[0].getMessage()
+    assert str(status) in warnings[0].getMessage()
     assert "persisted-secret" not in caplog.text
     assert "response-secret" not in caplog.text
 
