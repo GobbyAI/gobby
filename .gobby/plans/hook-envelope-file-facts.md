@@ -1374,6 +1374,10 @@ Verification planned:
   `tests/workflows/test_session_variable_mutation_scope.py`, and 2.6's
   planned verification runs the latter, which calls `_live_path_owners`
   directly. Targets and acceptance are unchanged.
+- 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
+  gobby#16791 agree on this plan at `d973d0bbcc`, with no open findings.
+  The revised option (4) is a closed rejection, and bare validation exits 0
+  with no warnings.
 
 ## V2: Verification
 `kind: verification`
