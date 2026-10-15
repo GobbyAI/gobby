@@ -100,6 +100,9 @@ impl EvidenceLibrary {
             .iter()
             .filter_map(|item| match item {
                 EvidenceItem::Source(source) => Some((&*source.path, &*source.content_hash)),
+                EvidenceItem::Graph(graph) => {
+                    Some((&*graph.source.path, &*graph.source.content_hash))
+                }
                 _ => None,
             })
             .collect::<std::collections::BTreeMap<_, _>>();

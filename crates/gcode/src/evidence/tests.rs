@@ -1237,6 +1237,48 @@ fn working_tree_excerpts_that_differ_from_the_binding_are_marked_dirty() -> anyh
             }]
         );
     }
+
+    // Graph items embed working-tree source too: commit other bytes, restore SOURCE.
+    git(root, &["add", "src/lib.rs"])?;
+    let commit_oid = commit(root, "dirty")?;
+    std::fs::write(root.join("src/lib.rs"), SOURCE)?;
+    let moved = RepositoryBinding {
+        tree_oid: git(root, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+        ..binding
+    };
+    let response =
+        EvidenceLibrary::new(root, moved.clone(), Arc::new(FakeFacts::for_source(&moved)))?
+            .with_working_tree()
+            .query(request(
+                &moved,
+                EvidenceOperation::Graph {
+                    graph: graph_selector(
+                        GraphQuery::Callees,
+                        EntitySelector::SymbolId {
+                            id: "alpha".to_string(),
+                        },
+                    ),
+                },
+            ))?;
+    assert!(!response.items.is_empty());
+    assert!(
+        response
+            .items
+            .iter()
+            .all(|item| matches!(item, EvidenceItem::Graph(_)))
+    );
+    assert_eq!(
+        response.warnings,
+        vec![EvidenceWarning {
+            code: "binding_dirty".into(),
+            message: format!(
+                "src/lib.rs excerpt bytes come from the working tree and differ from binding commit {}",
+                moved.commit_oid
+            ),
+            path: Some("src/lib.rs".into()),
+        }]
+    );
     Ok(())
 }
 
