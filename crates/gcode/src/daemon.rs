@@ -206,7 +206,9 @@ fn fetch_projects() -> Result<Vec<ProjectListing>, CliError> {
 
 fn join_daemon_url(path: &str) -> Result<String, CliError> {
     let base = gobby_core::daemon_url::daemon_url().map_err(|error| {
-        CliError::grant(gobby_core::grant::GrantError::Malformed(error.to_string()))
+        CliError::grant(gobby_core::grant::GrantError::BootstrapConfig(
+            error.to_string(),
+        ))
     })?;
     reject_remote_endpoint(&base).map_err(CliError::grant)?;
     Ok(format!("{}{path}", base.trim_end_matches('/')))

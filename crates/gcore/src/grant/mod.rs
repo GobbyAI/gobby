@@ -70,6 +70,7 @@ pub enum GrantError {
     /// The daemon refused the credential; carries its typed rejection code.
     Unauthorized(String),
     Timeout,
+    /// The local bootstrap configuration cannot provide a daemon endpoint.
     BootstrapConfig(String),
     Malformed(String),
     Io(String),
