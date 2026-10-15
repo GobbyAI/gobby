@@ -251,7 +251,7 @@ async def test_root_target_comes_from_committed_manifest(
         ("cargo test --workspace", "test {name} ... ok", False),
         ("{base} --package --test {name}", "test {name} ... ok", False),
         ("{base} {name} sibling", "test {name} ... ok", False),
-        ("{base} -p example {name}", "test {name} ... ok", True),
+        ("{base} -p example {name}", "test {name} ... ok", False),
         ("{base} {name}", "test {name} ... ok", True),
         ("{base}", "test {name} ... FAILED", True),
         ("{base} root", "test {name} ... ok", True),
@@ -419,8 +419,9 @@ def test_junit_credit_requires_complete_suite(
 @pytest.mark.parametrize("names_only", [True, False])
 @pytest.mark.parametrize("module", [(), ("a", "tests")])
 @pytest.mark.parametrize("result", ["PASS", "FAIL"])
+@pytest.mark.parametrize("counter", ["(1/1)", "(  3/120)"])
 def test_nextest_progress_counter_keeps_executed_credit(
-    names_only: bool, module: tuple[str, ...], result: str
+    names_only: bool, module: tuple[str, ...], result: str, counter: str
 ) -> None:
     path = "crates/example/src/a.rs" if module else "crates/example/src/lib.rs"
     name = "::".join((*module, "test_x"))
@@ -433,11 +434,10 @@ def test_nextest_progress_counter_keeps_executed_credit(
         rust_target=("example", None),
     )
     validate = validation_run_names_test if names_only else validation_run_covers_test
-    assert validate("cargo nextest run", f"{result} [ 0.001s] (1/1) example {name}", test)
+    assert validate("cargo nextest run", f"{result} [ 0.001s] {counter} example {name}", test)
 
 
 @pytest.mark.parametrize("names_only", [True, False])
-@pytest.mark.parametrize("binary", [None, "root"])
 @pytest.mark.parametrize(
     "flags,expected",
     [
@@ -451,10 +451,39 @@ def test_nextest_progress_counter_keeps_executed_credit(
     ],
 )
 def test_broadening_flags_keep_per_test_credit(
-    names_only: bool, binary: str | None, flags: str, expected: bool
+    names_only: bool, flags: str, expected: bool
 ) -> None:
-    path = "crates/example/tests/root.rs" if binary else "crates/example/src/lib.rs"
-    selector = "--test root" if binary else "--lib"
+    path = "crates/example/src/a.rs"
+    test = AcceptanceTest(
+        reference=f"{path}::test_x",
+        path=path,
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=("a", "tests"),
+        rust_target=("example", None),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    command = f"cargo test -p example {flags}"
+    assert validate(command, "test a::tests::test_x ... ok", test) is expected
+    assert not validate(command, "test sibling ... ok", test)
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize("binary", [None, "foo"])
+@pytest.mark.parametrize(
+    "selectors",
+    [
+        "-p example -p other {selector} test_x",
+        "-p example {selector} --tests test_x",
+        "-p example {selector} --all-targets test_x",
+        "-p example {selector} --workspace test_x",
+        "-p example --lib --test foo",
+    ],
+)
+def test_root_binding_rejects_broadening_selectors(
+    names_only: bool, binary: str | None, selectors: str
+) -> None:
+    path = "crates/example/tests/foo.rs" if binary else "crates/example/src/lib.rs"
     test = AcceptanceTest(
         reference=f"{path}::test_x",
         path=path,
@@ -463,7 +492,21 @@ def test_broadening_flags_keep_per_test_credit(
         rust_module=(),
         rust_target=("example", binary),
     )
+    command = "cargo test " + selectors.format(selector="--test foo" if binary else "--lib")
     validate = validation_run_names_test if names_only else validation_run_covers_test
-    command = f"cargo test -p example {selector} {flags}"
-    assert validate(command, "test test_x ... ok", test) is expected
-    assert not validate(command, "test sibling ... ok", test)
+    assert not validate(command, "test test_x ... ok", test)
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize("outcome", ["skipped", "failure", "error"])
+def test_junit_non_success_outcome_is_not_credited(names_only: bool, outcome: str) -> None:
+    test = AcceptanceTest(
+        reference="crates/example/src/a.rs::test_x",
+        path="crates/example/src/a.rs",
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=("a", "tests"),
+    )
+    output = f'<testsuite><testcase name="a::tests::test_x"><{outcome}/></testcase></testsuite>'
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    assert not validate("cargo test", output, test)

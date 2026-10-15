@@ -310,7 +310,11 @@ def _cargo_selects_test(command: str, target: tuple[str, str | None] | None, nam
         return False
     if target is not None:
         package, binary = target
-        if package not in packages:
+        if packages != [package] or any(
+            flag in cargo_args for flag in ("--workspace", "--all-targets", "--tests")
+        ):
+            return False
+        if library and binaries:
             return False
         if (binary is None and not library) or (binary is not None and binaries != [binary]):
             return False
@@ -330,7 +334,7 @@ def _root_evidence_names_test(
     package, binary = target
     label = f"{package}::{binary}" if binary is not None else package
     nextest = re.compile(
-        rf"^\s*(?:PASS|FAIL)\s+\[[^]]+\]\s+(?:\(\d+/\d+\)\s+)?"
+        rf"^\s*(?:PASS|FAIL)\s+\[[^]]+\]\s+(?:\(\s*\d+/\d+\)\s+)?"
         rf"{re.escape(label)}\s+{re.escape(name)}(?:\s|$)"
     )
     if any(nextest.search(line) for line in output.splitlines()):
@@ -375,7 +379,7 @@ def rust_evidence_names_test(
     for line in evidence.splitlines():
         row = re.fullmatch(r"\s*test (\S+) \.\.\. (?:ok|FAILED)\s*", line)
         nextest = re.fullmatch(
-            r"\s*(?:PASS|FAIL)\s+(?:\[[^]]+\]\s+)?(?:\(\d+/\d+\)\s+)?(\S+)\s+(\S+)\s*",
+            r"\s*(?:PASS|FAIL)\s+(?:\[[^]]+\]\s+)?(?:\(\s*\d+/\d+\)\s+)?(\S+)\s+(\S+)\s*",
             line,
         )
         row_name = row[1] if row else nextest[2] if nextest else None
@@ -401,6 +405,8 @@ def rust_evidence_names_test(
         return False
     for suite in root.iter("testsuite"):
         for testcase in suite.findall("testcase"):
+            if any(child.tag in {"skipped", "failure", "error"} for child in testcase):
+                continue
             case_name = testcase.get("name")
             if not case_name:
                 continue
