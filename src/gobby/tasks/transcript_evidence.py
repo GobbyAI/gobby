@@ -835,8 +835,13 @@ def _record_validation_run(
         )
     )
     if state.session.source == "claude":
+        description = pending.arguments.get("description")
         state.runs[-1] = pending_background_run(
-            state.runs[-1], pending.call_id, pending.arguments.get("description")
+            state.runs[-1],
+            pending.call_id,
+            description=description
+            if isinstance(description, str) and description.strip()
+            else None,
         )
     _recover_rtk_output(state, result)
 
