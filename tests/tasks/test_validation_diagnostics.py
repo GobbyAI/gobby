@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from tests.tasks.test_close_checklist import _audit_run, _edit, _run
 
