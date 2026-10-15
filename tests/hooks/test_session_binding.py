@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +17,7 @@ from gobby.hooks.session_binding import session_binds_event
 from gobby.hooks.session_lookup import SessionLookupService
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd
 from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
@@ -118,7 +119,9 @@ def test_session_start_skips_foreign_rows(
     )
     if path == "web_chat":
         manager.find_by_external_id.return_value = foreign
-    compact = CompactIdentityResolution(session=foreign) if path == "compact" else None
+    compact = (
+        CompactIdentityResolution(session=cast(Session, foreign)) if path == "compact" else None
+    )
     event = make_event(
         HookEventType.SESSION_START, session_id="node-external", data=data, machine_id=NODE
     )
@@ -275,7 +278,7 @@ def test_non_start_compact_lookup_skips_foreign_row() -> None:
     with (
         patch(
             "gobby.hooks.session_lookup.resolve_compact_continuation",
-            return_value=CompactIdentityResolution(session=_row(OTHER)),
+            return_value=CompactIdentityResolution(session=cast(Session, _row(OTHER))),
         ),
         patch("gobby.hooks.session_lookup.reconcile_compact_session_activity") as reconcile,
         pytest.raises(MachineOwnershipMismatchError),

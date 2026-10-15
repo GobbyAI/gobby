@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,13 +23,6 @@ from ._event_handler_helpers import empty_database_mock
 pytestmark = pytest.mark.unit
 
 TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
-
-
-@pytest.fixture(autouse=True)
-def _hub_machine_identity() -> Iterator[None]:
-    """These hooks come from the hub's own machine, so they bind any session row."""
-    with patch("gobby.utils.machine_id._cached_machine_id", TEST_MACHINE_ID):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +435,7 @@ class TestSessionStartAndHelpers:
 
         mock_session = MagicMock()
         mock_session.id = "ext-1"
+        mock_session.machine_id = TEST_MACHINE_ID
         handler._session_manager.get.return_value = mock_session
 
         with patch.object(handler, "_handle_pre_created_session") as mock_pre_created:
@@ -728,7 +722,7 @@ class TestSessionMoreCoverage:
         )
 
         # Existing session check fails, but gobby_session_id check succeeds
-        handler._session_manager.get.side_effect = [None, MagicMock()]
+        handler._session_manager.get.side_effect = [None, MagicMock(machine_id=TEST_MACHINE_ID)]
 
         with patch.object(
             handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")
@@ -760,7 +754,7 @@ class TestSessionMoreCoverage:
         )
 
         # External-id lookup misses, gobby_session_id lookup hits the pre-created child.
-        handler._session_manager.get.side_effect = [None, MagicMock()]
+        handler._session_manager.get.side_effect = [None, MagicMock(machine_id=TEST_MACHINE_ID)]
 
         with patch.object(
             handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")

@@ -323,6 +323,8 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
 
     server = MagicMock()
     server.config = DaemonConfig()
+    # The hub's own inbox replays carry no front-door identity.
+    server.auth_service.verified_front_door_identity.return_value = None
     app = FastAPI()
     route_hook_replay_to_app(app)
     app.state.hook_manager = hook_manager
@@ -341,6 +343,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         "input_data": {
             "session_id": external_id,
             "reason": "other",
+            "machine_id": checkout.machine_id,
         },
         "source": "codex",
         "headers": {

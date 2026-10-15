@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -556,12 +555,6 @@ class TestSessionStartContextClaim:
 class TestSessionStartPreCreatedSession:
     """Test SESSION_START handling for pre-created sessions (terminal mode agents)."""
 
-    @pytest.fixture(autouse=True)
-    def _hub_machine_identity(self) -> Iterator[None]:
-        """These hooks come from the hub's own machine, so they bind any session row."""
-        with patch("gobby.utils.machine_id._cached_machine_id", TEST_MACHINE_ID):
-            yield
-
     def test_pre_created_session_requires_envelope_machine_id(
         self,
         event_handlers: EventHandlers,
@@ -587,6 +580,7 @@ class TestSessionStartPreCreatedSession:
         """Test pre-created session is found and updated."""
         # Create a mock session object
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-pre-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -615,6 +609,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Pre-created sessions should persist terminal metadata from runtime hooks."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-pre-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -675,6 +670,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Pre-created SessionStart should rename panes using cwd fallback."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-pre-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -744,6 +740,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Test pre-created session with parent session ID includes parent context."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-child-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = "sess-parent-456"
@@ -773,6 +770,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Test pre-created session with agent_run_id starts the agent run."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-agent-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -798,6 +796,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Test error starting agent run is handled gracefully."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-agent-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -831,13 +830,13 @@ class TestSessionStartPreCreatedSession:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.transcript_path = None
-        mock_session.machine_id = "unknown-machine"
 
         mock_dependencies["session_storage"].get.return_value = mock_session
 
@@ -867,6 +866,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Test error registering with message processor is handled gracefully."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -900,6 +900,7 @@ class TestSessionStartPreCreatedSession:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-web-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -909,7 +910,6 @@ class TestSessionStartPreCreatedSession:
         mock_session.session_type = "web_chat"
         mock_session.terminal_context = {}
         mock_session.transcript_path = None
-        mock_session.machine_id = "unknown-machine"
 
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].find_by_external_id.return_value = mock_session
@@ -943,6 +943,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Test error registering session with coordinator is handled."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -974,6 +975,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Resumed sessions with prior context get live context, not startup persona."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-pre-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -1038,6 +1040,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Pre-created sessions without prior context evidence reset first-prompt injection."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-first-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -1109,6 +1112,7 @@ class TestSessionStartPreCreatedSession:
     ) -> None:
         """Explicit context-loss starts reset first-prompt injection."""
         mock_session = MagicMock()
+        mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = f"sess-{source}-123"
         mock_session.project_id = "proj-123"
         mock_session.parent_session_id = None
@@ -1654,6 +1658,7 @@ class TestSessionStartNewSession:
         """A handoff-variable DB error must not abort session-start injection."""
         new_session = MagicMock()
         new_session.id = "new-sess-db-error"
+        new_session.machine_id = TEST_MACHINE_ID
         new_session.seq_num = 77
         new_session.project_id = "proj-123"
         new_session.parent_session_id = "parent-sess-123"
@@ -1705,6 +1710,7 @@ class TestSessionStartNewSession:
         """New SessionStart should persist cwd and rename captured panes immediately."""
         new_session = MagicMock()
         new_session.id = "new-sess-456"
+        new_session.machine_id = TEST_MACHINE_ID
         new_session.project_id = "proj-123"
         new_session.parent_session_id = None
         new_session.agent_depth = 0
