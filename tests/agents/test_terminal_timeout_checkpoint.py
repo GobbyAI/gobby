@@ -322,6 +322,22 @@ async def test_timeout_cleanup_keeps_the_child_task_edit_attribution(
 
 
 @pytest.mark.asyncio
+async def test_parent_checkpoints_timed_out_child_with_retained_task_attribution(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, sample_project, tmp_path)
+    await _time_out_and_clean_up(harness)
+
+    result = await harness.checkpoint()
+
+    assert result["success"] is True
+    assert result["included_paths"] == [TRACKED_PATH, UNTRACKED_PATH]
+    assert _git(harness.worktree_path, "status", "--porcelain") == ""
+
+
+@pytest.mark.asyncio
 async def test_session_ledger_without_recovered_task_release_remains_unattributed(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
