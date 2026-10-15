@@ -380,17 +380,20 @@ async def test_backdated_unattributed_dirt_after_timeout_leaves_checkout_unchang
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("foreign_claims_task", [True, False])
 async def test_foreign_attributed_dirt_after_timeout_cleanup_leaves_the_checkout_unchanged(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
+    foreign_claims_task: bool,
 ) -> None:
     foreign_path = "foreign.txt"
     harness = _harness(temp_db, sample_project, tmp_path, extra_child_paths=(foreign_path,))
     await _time_out_and_clean_up(harness)
     _simulate_pre_fix_attribution_cleanup(harness)
 
-    # An unrelated live session owns an open task that also claims the path.
+    # An unrelated live session holds the path, with or without an open task;
+    # only the recovery boundary's own untasked dirt is exempt from foreign.
     project_id = str(sample_project["id"])
     foreign_session = SessionManager(temp_db).register(
         external_id="timeout-checkpoint-foreign",
@@ -398,17 +401,18 @@ async def test_foreign_attributed_dirt_after_timeout_cleanup_leaves_the_checkout
         source="claude",
         project_id=project_id,
     )
-    foreign_task = harness.task_manager.create_task(
-        project_id,
-        "Unrelated in-flight work",
-        category="code",
-        validation_criteria="Unrelated work stays owned by its own session.",
-    )
-    harness.task_manager.claim_task(foreign_task.id, foreign_session.id)
-    harness.variables.merge_variables(
-        foreign_session.id,
-        add_claimed_task({}, foreign_task.id, f"#{foreign_task.seq_num}"),
-    )
+    if foreign_claims_task:
+        foreign_task = harness.task_manager.create_task(
+            project_id,
+            "Unrelated in-flight work",
+            category="code",
+            validation_criteria="Unrelated work stays owned by its own session.",
+        )
+        harness.task_manager.claim_task(foreign_task.id, foreign_session.id)
+        harness.variables.merge_variables(
+            foreign_session.id,
+            add_claimed_task({}, foreign_task.id, f"#{foreign_task.seq_num}"),
+        )
     assert harness.variables.record_edited_files(
         foreign_session.id,
         [foreign_path],
