@@ -15,6 +15,7 @@
       "schema_version": 1,
       "hook_type": "Notification",
       "input_data": {
+        "machine_id": "21000000-0000-4000-8000-000000000002",
         "message": "HTTP contract probe"
       },
       "source": "claude",
