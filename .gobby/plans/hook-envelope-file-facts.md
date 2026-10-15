@@ -61,6 +61,18 @@ envelope facts only with the git gates failing closed, was rejected because
 node commits could then never pass a git gate. The ruling's no-decision
 items are decisions 10, 11 and 12 below.
 
+Option (4), node-local rule evaluation against a cached ruleset, was
+rejected. A node runs only gdaemon and holds no datastore credential
+(#24075; ROADMAP decision 17), so it has no engine to run a cached ruleset.
+Rule conditions and effects read and write hub-held, cross-session state:
+session variables, task claims, workflow step state, definitions and live
+session path owners. Evaluating on the node would need the engine on the
+node plus a replicated, write-back copy of that state. The node's checkout
+is the only input the hub lacks, so the hub reads it from the node. After
+#24151 ports the engine to Rust, the engine still runs on the hub, so the
+port does not change this decision, and `checkout.read` serves the Rust
+engine unchanged.
+
 1. **The old draft is withdrawn.** It is the draft stamped at `74f5b4ec32`
    and never approved. Gone with it are the envelope `file_facts` field,
    foreign-origin fail-closed as the end state, deferred sections D1 to D3,
@@ -1329,6 +1341,11 @@ Verification planned:
 - 2026-10-15: Plan Writer gobby#16490 withdraws the M1 stamped at
   `0dfa754f8e` before a framing-only Decision Record addition that
   Orchestrator gobby#15977 directed.
+- 2026-10-15: the Decision Record adds rejected option (4), node-local rule
+  evaluation against a cached ruleset, in the wording Orchestrator
+  gobby#15977 accepted, plus one sentence that #24151's Rust port keeps the
+  engine on the hub. Josh accepted hub-side evaluation on 2026-10-15. Scope,
+  leaves, Targets and acceptance are unchanged.
 
 ## V2: Verification
 `kind: verification`
