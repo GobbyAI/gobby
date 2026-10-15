@@ -8,11 +8,13 @@ import os
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
@@ -288,6 +290,9 @@ async def foreign_dirty_edit_conflict(
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
         for root, rels in roots.items():
+            if await asyncio.to_thread(checkout_root, Path(root)) is None:
+                # A project marker with no enclosing Git checkout holds no uncommitted work.
+                continue
             own = session_dirty_file_set_for_checkout(variables, root)
             candidates = {
                 rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)

@@ -450,6 +450,27 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
 
 
 @pytest.mark.asyncio
+async def test_rule3_allows_writes_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    # A git-archive export in a scratchpad carries the project marker but no .git.
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    (export / "a.txt").write_text("exported\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(export / 'a.txt'))}"),
+        h.edit_event(str(export / "a.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation",
     [
