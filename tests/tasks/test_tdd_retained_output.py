@@ -138,12 +138,18 @@ def _queued(at: float, prompt: str) -> dict[str, Any]:
 
 
 def _job(
-    output_path: Path, *, monitor: bool = True, monitor_at: float = 3.2, events: str | None = None
+    output_path: Path,
+    *,
+    monitor: bool = True,
+    monitor_at: float = 3.2,
+    events: str | None = None,
+    command: str = NEXTEST,
+    exit_code: int = 100,
 ) -> list[dict[str, Any]]:
     records = _pair(
         2,
         "Bash",
-        {"command": NEXTEST, "run_in_background": True, "description": "RED tests"},
+        {"command": command, "run_in_background": True, "description": "RED tests"},
         "Command did not complete within its 600s timeout and was moved to the "
         f"background (ID: job). Output is being written to: {output_path}. "
         "You will be notified when it completes.",
@@ -169,7 +175,8 @@ def _job(
                 "content": "<task-notification><task-id>job</task-id>"
                 f"<tool-use-id>call-2</tool-use-id><output-file>{output_path}</output-file>"
                 "<status>failed</status>"
-                '<summary>Background command "RED tests" failed with exit code 100</summary>'
+                f'<summary>Background command "RED tests" failed with exit code {exit_code}'
+                "</summary>"
                 "</task-notification>",
             },
         }
@@ -528,3 +535,25 @@ def test_read_line_numbers_do_not_hide_delivered_output(tmp_path: Path) -> None:
     result = _rust_result(tmp_path, records)
     assert result.passed, result.findings
     assert result.red_runs == (NEXTEST,)
+
+
+@pytest.mark.parametrize(("recall_at", "credited"), [(5, True), (11, False)])
+def test_recall_after_a_job_file_tail_counts_only_before_production(
+    tmp_path: Path, recall_at: float, credited: bool
+) -> None:
+    # RTK compacts the job file too, so only the recall delivers the assertion body.
+    output_path = tmp_path / "tasks/job.output"
+    _retain(output_path, _compacted() + "\n[exited with code 1]\n", NOTICE)
+    records = _write(tmp_path, 1, PY_TEST)
+    records += _job(output_path, monitor=False, command=PYTEST, exit_code=1)
+    records += _pair(4, "Bash", {"command": f"tail -n 50 {output_path}"}, _compacted())
+    records += _pair(recall_at, "Bash", {"command": f"rtk recall {RECALL}"}, _pytest_raw())
+    records += _write(tmp_path, 10, PY_CODE)
+    records += _pair(12, "Bash", {"command": PYTEST}, "2 passed in 0.40s")
+    records.sort(key=lambda record: str(record["timestamp"]))
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_feature", PY_TEST, "test_feature", ""),),
+        _evidence(tmp_path, records, {PY_TEST, PY_CODE}),
+    )
+    assert result.passed is credited, result.findings
+    assert result.red_runs == ((PYTEST,) if credited else ())

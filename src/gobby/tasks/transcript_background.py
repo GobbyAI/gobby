@@ -49,7 +49,10 @@ def output_as_of(run: TranscriptValidationRun, before: datetime) -> TranscriptVa
     )
 
 
-def _deliver(run: TranscriptValidationRun, delivery: OutputDelivery) -> TranscriptValidationRun:
+def deliver_output(
+    run: TranscriptValidationRun, delivery: OutputDelivery
+) -> TranscriptValidationRun:
+    """Apply one recovery to the run and record it for gate 12's replay."""
     launch = OutputDelivery(run.started_at, None, run.output, run.output_truncated, appends=False)
     output, truncated = _applied(run.output, run.output_truncated, delivery)
     return replace(
@@ -121,7 +124,7 @@ def recover_background_receipt(
         if output and pending.name.lower() == "read":
             output = _READ_LINE_NUMBER.sub("", output)
         if output and message.timestamp >= run.started_at:
-            runs[index] = _deliver(
+            runs[index] = deliver_output(
                 run, OutputDelivery(message.timestamp, path, output, truncated, appends=False)
             )
         return
@@ -237,7 +240,7 @@ def _recover_monitor_receipt(
     # A Monitor's own exit cannot settle the command it watches. Only the
     # original job/call/output-file terminal receipt above proves its exit.
     if not event.startswith(("[Monitor expired", "[exited with code")):
-        runs[index] = _deliver(
+        runs[index] = deliver_output(
             run,
             OutputDelivery(
                 message.timestamp, run.background_output_path, event, False, appends=True
