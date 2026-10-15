@@ -12,6 +12,7 @@ from weakref import WeakKeyDictionary
 import psycopg
 
 from gobby.storage.hub.operation_deadline import (
+    DatabaseOperationDeadline,
     DatabaseOperationDeadlineExceeded,
     current_database_operation_deadline,
 )
@@ -33,6 +34,25 @@ def _milliseconds(value: str) -> int:
         raise ValueError(f"Unexpected PostgreSQL timeout setting: {value}")
     unit = {None: 1, "ms": 1, "s": 1000, "min": 60_000, "h": 3_600_000, "d": 86_400_000}
     return int(match[1]) * unit[match[2]]
+
+
+def lone_read_timeouts(
+    conn: psycopg.Connection[Any],
+    deadline: DatabaseOperationDeadline,
+    sql: str,
+) -> tuple[int, int] | None:
+    """Return the bounds for one autocommit read, or None to use a transaction.
+
+    The bounds never loosen the session's own timeouts. Only a deadline
+    transaction reads those, and only its observe() sees SQL that changes them,
+    so an unread connection or such SQL takes the transaction path (#23359).
+    """
+    cap = min(max(1, math.floor(deadline.remaining_seconds() * 1000)), 2**31 - 1)
+    baseline = _SESSION_TIMEOUTS.get(conn)
+    if baseline is None or _TIMEOUT_MENTION.search(sql) is not None:
+        return None
+    statement_ms, lock_ms = (min(cap, value) if value else cap for value in baseline)
+    return statement_ms, lock_ms
 
 
 class TransactionDeadline:
