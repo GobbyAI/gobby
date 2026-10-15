@@ -437,6 +437,7 @@ def create_communications_registry(
                         "type": ch.channel_type,
                         "enabled": ch.enabled,
                         "status": status,
+                        "operator_project_id": ch.config_json.get("operator_project_id"),
                         "project_id": (
                             ch.config_json.get("responder", {}).get("project_id")
                             if isinstance(ch.config_json.get("responder"), dict)

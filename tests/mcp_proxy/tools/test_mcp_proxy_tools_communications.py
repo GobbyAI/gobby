@@ -588,6 +588,35 @@ def test_list_channels(registry: Any, mock_store: MagicMock, mock_manager: Magic
     assert len(res["channels"]) == 1
     assert res["channels"][0]["name"] == "test-channel"
     assert res["channels"][0]["project_id"] is None
+    assert res["channels"][0]["operator_project_id"] is None
+
+
+def test_list_channels_exposes_decoupled_operator_project(
+    registry: Any, mock_store: MagicMock, mock_manager: MagicMock
+) -> None:
+    channel = ChannelConfig(
+        id="telegram-channel",
+        channel_type="telegram",
+        name="operator-channel",
+        enabled=True,
+        config_json={
+            "operator_project_id": "operator-project",
+            "responder": {"project_id": "chat-project"},
+        },
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    mock_store.list_channels.return_value = [channel]
+
+    result = registry.get_tool("list_channels")()
+
+    assert result["success"] is True
+    assert result["channels"][0]["operator_project_id"] == "operator-project"
+    assert result["channels"][0]["project_id"] == "chat-project"
+    assert channel.config_json == {
+        "operator_project_id": "operator-project",
+        "responder": {"project_id": "chat-project"},
+    }
 
 
 def test_get_messages(registry: Any, mock_store: MagicMock) -> None:
