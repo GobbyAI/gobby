@@ -406,7 +406,9 @@ def _evaluate_validation_commands(
         }
         for run_category, run in sorted(unresolved.items())
     ]
-    criterion_commands = criterion_command_records(validation_criteria, evidence)
+    criterion_commands = criterion_command_records(
+        validation_criteria, evidence, project_path=close_root
+    )
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     uncovered_web = uncovered_vitest_related_paths(
         passing_runs,
