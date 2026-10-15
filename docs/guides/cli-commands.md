@@ -135,7 +135,10 @@ once when the new image takes over.
 - When the new image takes over, `~/.gobby/logs/gterm.log` records
   `gterm host restored ... outcome=Succeeded`. If the new image's restore
   fails with an error or a panic, the host execs its previous image once,
-  which records `gterm host restored ... outcome=Fallback` (see
+  which records `gterm host restored ... outcome=Fallback`. It cannot fall
+  back when the handover state file cannot be read, the pinned previous image
+  fails verification, or that exec fails; those end the host with exit 70 and
+  no `gterm host restored` line (see
   [daemon lifecycle](../../src/gobby/install/shared/skills/gobby/references/admin/daemon.md)).
 - An attempt that ends before the exec writes no `gterm host restored` line,
   and the host reports its outcome only to the daemon: the new image refused

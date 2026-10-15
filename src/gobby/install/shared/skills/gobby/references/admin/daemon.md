@@ -40,7 +40,9 @@ run from pinned copies under `<socket_dir>/gterm-images/` (default
 running image. The one-shot fallback covers only a new image whose restore
 fails with an error or a panic after the exec: the host execs the pinned
 previous image once and logs `outcome=Fallback` in `~/.gobby/logs/gterm.log`,
-and a failed fallback ends the host. A candidate refused at its startup check,
+and a failed fallback ends the host. An unreadable handover state file, a
+pinned previous image that fails verification, or a failed fallback exec ends
+the host with exit 70 and no `gterm host restored` line. A candidate refused at its startup check,
 or an attempt aborted or rolled back before the exec, stays on the current
 image and writes no `gterm host restored` line, with three exceptions that end
 the host through `SIGALRM` and report no outcome. They are a rollback that
