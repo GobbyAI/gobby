@@ -1244,7 +1244,12 @@ async fn machines_api_unavailable_advertises_retry() -> Result<()> {
         for _ in 0..4 {
             held.push(hub.nodes.db.get().await?);
         }
-        check_retry(hub.addr).await?;
+        // Key resolution shares the pool, so exhaustion surfaces there first.
+        for path in &paths {
+            let (status, body) = send(hub.addr, get(path)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(body["code"], "key_resolver_unavailable", "{path}");
+        }
         drop(held);
         db.admin
             .batch_execute(&format!(
@@ -1288,13 +1293,14 @@ async fn machines_api_requires_a_key() -> Result<()> {
         for _ in 0..4 {
             held.push(hub.nodes.db.get().await?);
         }
+        // Key resolution shares the pool, so exhaustion surfaces there first.
         for path in [
             "/api/machines".to_string(),
             format!("/api/machines/{}", db.machine),
         ] {
             let (status, body) = send(hub.addr, get(&path)).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(body["code"], "machines_unavailable");
+            assert_eq!(body["code"], "key_resolver_unavailable");
         }
         drop(held);
         db.admin
