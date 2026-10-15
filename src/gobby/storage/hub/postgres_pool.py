@@ -26,7 +26,7 @@ from psycopg import sql as psycopg_sql
 from psycopg.abc import Buffer
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.postgres import types as pg_types
-from psycopg.pq import TransactionStatus
+from psycopg.pq import ExecStatus, TransactionStatus
 from psycopg.rows import dict_row
 from psycopg.types.string import TextLoader
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -79,6 +79,9 @@ POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 # psycopg parses json/jsonb into plain JSON values, which need no datetime walk.
 _JSON_TYPE_OIDS = frozenset(pg_types[name].oid for name in ("json", "jsonb"))
+_TUPLE_STATUSES = frozenset(
+    {ExecStatus.TUPLES_OK, ExecStatus.SINGLE_TUPLE, ExecStatus.TUPLES_CHUNK}
+)
 _PLAIN_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -505,17 +508,16 @@ class PostgresCursor:
         self._rowcount = rowcount
         self._rows: list[Row] | None = None
         self._position = 0
-        # psycopg builds a new Column list on every description read, so it is
-        # read once per cursor (#23359).
+        # Field types are read once per cursor (#23359).
         self._json_column_names: frozenset[str] | None = None
 
     def materialize(self) -> PostgresCursor:
         if self._cursor is None:
             return self
-        description = getattr(self._cursor, "description", None)
+        json_columns = _result_json_columns(self._cursor)
         rows: list[Row] = []
-        if description is not None:
-            self._json_column_names = _json_column_names(description)
+        if json_columns is not None:
+            self._json_column_names = json_columns
             rows = self.fetchall()
         self._rowcount = self.rowcount
         self._cursor = None
@@ -553,7 +555,7 @@ class PostgresCursor:
 
     def _json_columns(self) -> frozenset[str]:
         if self._json_column_names is None:
-            self._json_column_names = _json_column_names(getattr(self._cursor, "description", None))
+            self._json_column_names = _result_json_columns(self._cursor) or frozenset()
         return self._json_column_names
 
     @property
@@ -582,12 +584,19 @@ class _PostgresSavepoint:
         self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
-def _json_column_names(description: object) -> frozenset[str]:
-    if not isinstance(description, list):
-        return frozenset()
+def _result_json_columns(cursor: Any) -> frozenset[str] | None:
+    """Name the JSON-typed columns, or None when the result returned no tuples.
+
+    Reads the libpq result directly: psycopg's description builds a Column, with
+    type-registry lookups, for every field on every read (#23359).
+    """
+    result = getattr(cursor, "pgresult", None)
+    if result is None or not (result.nfields or result.status in _TUPLE_STATUSES):
+        return None
     # dict_row keeps the last column of a repeated name, so classify the same one.
-    is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
-    return frozenset(name for name, json_typed in is_json.items() if json_typed)
+    is_json = {result.fname(i): result.ftype(i) in _JSON_TYPE_OIDS for i in range(result.nfields)}
+    encoding = cursor.connection.info.encoding
+    return frozenset(name.decode(encoding) for name, json_typed in is_json.items() if json_typed)
 
 
 def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) -> Row | None:
