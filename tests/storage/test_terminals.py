@@ -122,6 +122,54 @@ def test_get_many_fetches_any_number_of_terminals_in_one_query(
     assert len(fetchall.call_args.args[1][0]) == 3
 
 
+def test_reads_decode_each_json_column_once_without_redumping(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped locator, process and unresolved
+    # writes, and Terminal.from_row decoded that text again, on every read (#23359).
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    process = {"host_terminal_id": "ht-decode", "pgid": 4242, "start_time": 1_700_000_000}
+    manager.record_process(
+        pending.id,
+        process,
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    epoch = str(uuid.uuid4())
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "ht-decode"},
+        locator_key=native_locator_key(epoch, "ht-decode"),
+        host_epoch=epoch,
+    )
+    assert live is not None
+    writes = {"ws:a": {"origin": "ws", "daemon_epoch": "e1"}}
+    temp_db.execute(
+        "UPDATE terminals SET unresolved_writes = %s::jsonb WHERE id = %s",
+        (json.dumps(writes), live.id),
+    )
+
+    with (
+        patch("json.loads", wraps=json.loads) as loads,
+        patch("json.dumps", wraps=json.dumps) as dumps,
+    ):
+        reads = [
+            manager.get(live.id),
+            manager.get_many([live.id])[live.id],
+            *manager.list_live_by_epoch(epoch),
+        ]
+
+    assert dumps.call_count == 0
+    assert loads.call_count == 3 * len(reads) == 9
+    for read in reads:
+        assert read is not None
+        assert read.locator == {"host_terminal_id": "ht-decode"}
+        assert read.process == process
+        assert read.unresolved_writes == writes
+
+
 def test_latest_for_session_includes_orphaned_terminal_evidence(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
