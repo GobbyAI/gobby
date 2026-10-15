@@ -17,6 +17,26 @@ from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
 from ._models import AgentRun, AgentRunListRow
 
 
+def _task_run_condition(
+    task_ids: Sequence[str], *, include_close_reviews: bool
+) -> tuple[str, list[object]]:
+    """Match runs bound to ``task_ids``, plus their close-review runs on request.
+
+    Close reviewers keep ``agent_runs.task_id`` NULL so task-scoped guards never
+    count them; ``task_close_reviews`` is their only link to the reviewed task.
+    """
+    placeholders = ", ".join("%s" for _ in task_ids)
+    condition = f"ar.task_id IN ({placeholders})"
+    params: list[object] = list(task_ids)
+    if include_close_reviews:
+        condition = (
+            f"({condition} OR ar.id IN (SELECT agent_run_id FROM task_close_reviews "
+            f"WHERE task_id IN ({placeholders}) AND agent_run_id IS NOT NULL))"
+        )
+        params.extend(task_ids)
+    return condition, params
+
+
 class _AgentRunQueryHost(Protocol):
     db: HubDatabase
 
@@ -52,6 +72,7 @@ class _AgentRunQueryHost(Protocol):
         *,
         machine_id: str | None,
         task_ids: Sequence[str] | None = None,
+        include_close_reviews: bool = False,
     ) -> list[AgentRun]: ...
 
 
@@ -333,6 +354,7 @@ class _AgentRunQueryMixin:
         offset: int = 0,
         *,
         task_ids: Sequence[str] | None = None,
+        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """
         List agent runs, optionally filtered by status and/or project.
@@ -342,6 +364,8 @@ class _AgentRunQueryMixin:
             limit: Maximum number of results.
             project_id: Optional project ID filter (joins through sessions).
             offset: Number of matching rows to skip.
+            task_ids: Optional task filter.
+            include_close_reviews: Also match close-review runs of ``task_ids``.
 
         Returns:
             List of AgentRun objects.
@@ -360,9 +384,11 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            placeholders = ", ".join("%s" for _ in task_ids)
-            conditions.append(f"ar.task_id IN ({placeholders})")
-            params.extend(task_ids)
+            condition, task_params = _task_run_condition(
+                task_ids, include_close_reviews=include_close_reviews
+            )
+            conditions.append(condition)
+            params.extend(task_params)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -428,6 +454,7 @@ class _AgentRunQueryMixin:
         *,
         machine_id: str | None,
         task_ids: Sequence[str] | None = None,
+        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active runs under the requested explicit scope."""
         params: list[object] = []
@@ -438,9 +465,11 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            placeholders = ", ".join("%s" for _ in task_ids)
-            where_clause += f" AND ar.task_id IN ({placeholders})"
-            params.extend(task_ids)
+            condition, task_params = _task_run_condition(
+                task_ids, include_close_reviews=include_close_reviews
+            )
+            where_clause += f" AND {condition}"
+            params.extend(task_params)
         return self._fetch_runs_with_live_stats(
             where_clause,
             params,
@@ -488,6 +517,7 @@ class _AgentRunQueryMixin:
         offset: int = 0,
         *,
         task_ids: Sequence[str] | None = None,
+        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active runs across all machines."""
         return self._list_active_runs(
@@ -495,6 +525,7 @@ class _AgentRunQueryMixin:
             offset,
             machine_id=None,
             task_ids=task_ids,
+            include_close_reviews=include_close_reviews,
         )
 
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:
@@ -514,6 +545,7 @@ class _AgentRunQueryMixin:
         status: AgentRunStatus | None = None,
         *,
         task_ids: Sequence[str] | None = None,
+        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
         conditions = ["ar.parent_session_id = %s"]
@@ -526,9 +558,11 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            placeholders = ", ".join("%s" for _ in task_ids)
-            conditions.append(f"ar.task_id IN ({placeholders})")
-            params.extend(task_ids)
+            condition, task_params = _task_run_condition(
+                task_ids, include_close_reviews=include_close_reviews
+            )
+            conditions.append(condition)
+            params.extend(task_params)
 
         return self._fetch_runs_with_live_stats(
             f"WHERE {' AND '.join(conditions)}",
