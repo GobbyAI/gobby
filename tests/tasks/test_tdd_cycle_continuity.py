@@ -36,9 +36,12 @@ SUPPORT = "gobby.mcp_proxy.tools.tasks._close_evaluation_support"
 @pytest.mark.parametrize(
     "copy", ["matching", "different-regression", "different-source", "different-test", "unrelated"]
 )
-def test_candidate_copy_run_keeps_matching_targets_with_unchanged_regression(
-    tmp_path: Path, copy: str
+@pytest.mark.parametrize("location", ["uv_directory", "effective_cwd"])
+def test_claimed_session_main_checkout_run_credited_when_bytes_match(
+    tmp_path: Path, copy: str, location: str
 ) -> None:
+    from gobby.tasks.close_checklist import evaluate_validation_commands
+
     repo, exported = tmp_path / "repo", tmp_path / "exported"
     source = "src/feature.py"
     regression = "tests/test_regression.py"
@@ -76,8 +79,12 @@ def test_candidate_copy_run_keeps_matching_targets_with_unchanged_regression(
     targets = regression if copy == "unrelated" else f"{TEST_PATH} {regression}"
     run = replace(
         _run(5, red=False),
-        command=f"uv run --directory {exported} --no-sync pytest {targets} -v -n0 --no-cov",
-        workdir=str(repo),
+        command=(
+            f"uv run --directory {exported} --no-sync pytest {targets} -v -n0 --no-cov"
+            if location == "uv_directory"
+            else f"uv run --no-sync pytest {targets} -v -n0 --no-cov"
+        ),
+        workdir=str(repo if location == "uv_directory" else exported),
     )
     scoped, foreign = drop_foreign_runs(
         TranscriptEvidence(validation_runs=(run,)),
@@ -87,8 +94,24 @@ def test_candidate_copy_run_keeps_matching_targets_with_unchanged_regression(
         candidate,
     )
     accepted = copy in {"matching", "different-regression"}
-    assert scoped.validation_runs == ((run,) if accepted else ())
-    assert foreign == ([] if accepted else [run.command])
+    retained = accepted or location == "effective_cwd"
+    assert scoped.validation_runs == ((run,) if retained else ())
+    assert foreign == ([] if retained else [run.command])
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(run,)),
+        has_attributed_edits=True,
+        changed_paths=(TEST_PATH, source),
+        close_root=str(repo),
+        candidate_commit_sha=sha,
+    )
+    assert any(item["command"] == run.command for item in gate.details["latest_runs"]) is retained
+    assert bool(gate.details["foreign_scope_runs"]) is not retained
+    # Cwd-based runs stay visible as diagnostics; candidate bytes decide credit.
+    assert (TEST_PATH not in gate.details["pytest_uncovered_paths"]) is accepted
+    assert (
+        TEST_PATH in candidate_pytest_paths(run, (TEST_PATH,), (TEST_PATH, source), candidate)
+    ) is accepted
     if accepted:
         assert candidate_pytest_paths(
             run, (TEST_PATH, regression), (TEST_PATH, source), candidate
@@ -244,7 +267,16 @@ async def test_cycle_credited_across_claim_continuity_chain(tmp_path: Path) -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exclusion", ["unrelated_session", "other_task", "before_claim"])
 async def test_cycle_not_credited_outside_continuity_chain(tmp_path: Path, exclusion: str) -> None:
+    from gobby.tasks.close_checklist import evaluate_validation_commands
+
     evidence = await _collect(tmp_path, exclusion)
+    assert evidence.validation_runs
+    assert all(run.outcome == "success" for run in evidence.validation_runs)
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+    assert gate.details["latest_runs"]
+    assert all(run["outcome"] == "success" for run in gate.details["latest_runs"])
     result = evaluate_tdd_evidence((_test(),), evidence)
     assert not result.passed
     assert result.red_runs == ()
@@ -253,28 +285,32 @@ async def test_cycle_not_credited_outside_continuity_chain(tmp_path: Path, exclu
     )
 
 
-@pytest.mark.parametrize("runner", ["pytest", "nextest"])
+@pytest.mark.parametrize("runner", ["pytest", "pytest_with_sibling_location", "nextest"])
 def test_compacted_red_credits_nodes_named_in_fail_summary(runner: str) -> None:
-    path = TEST_PATH if runner == "pytest" else "crates/feature/tests/golden.rs"
-    symbol = "test_feature" if runner == "pytest" else "replays_corpus"
+    is_pytest = runner.startswith("pytest")
+    path = TEST_PATH if is_pytest else "crates/feature/tests/golden.rs"
+    symbol = "test_feature" if is_pytest else "replays_corpus"
     command = (
-        f"uv run pytest {path} -q"
-        if runner == "pytest"
-        else "cargo nextest run -p feature --test golden"
+        f"uv run pytest {path} -q" if is_pytest else "cargo nextest run -p feature --test golden"
     )
-    output = "E   assert 1 == 2\n[first failure only; remaining details compacted]\n"
-    output += (
-        f"FAILED {path}::{symbol}\n2 failed\n"
-        if runner == "pytest"
-        else f"FAIL [ 0.001s] (2/2) feature::golden {symbol}\nSummary 2 tests run: 0 passed, 2 failed\n"
+    output = (
+        f"FAILED {path}::{symbol} - assert 1 == 2\n2 failed\n"
+        if is_pytest
+        else f"---- {symbol} stdout ----\n"
+        f"thread '{symbol}' panicked at 'assertion failed: left == right'\n"
+        f"FAIL [ 0.001s] (2/2) feature::golden {symbol}\nSummary 2 tests run: 0 passed, 2 failed\n"
     )
+    if runner == "pytest_with_sibling_location":
+        output = (
+            "______ test_sibling ______\nE   assert 1 == 2\n"
+            "tests/test_feature.py:10: in test_sibling\n"
+            "FAILED tests/test_feature.py::test_sibling - assert 1 == 2\n"
+        ) + output
     red = replace(_run(3, red=True, output=output), command=command)
     green = replace(
         _run(5, red=False),
         command=command,
-        output="1 passed"
-        if runner == "pytest"
-        else f"PASS [ 0.001s] (1/1) feature::golden {symbol}",
+        output="1 passed" if is_pytest else f"PASS [ 0.001s] (1/1) feature::golden {symbol}",
     )
     evidence = TranscriptEvidence(
         edits=(_edit(path, 2), _edit("src/feature.py", 4)), validation_runs=(red, green)
@@ -293,6 +329,15 @@ def test_compacted_red_credits_nodes_named_in_fail_summary(runner: str) -> None:
         "tests/test_feature.py::test_feature PASSED\n2 failed\n",
         "E   assert 1 == 2\n"
         "FAILED tests/test_feature.py::test_feature - Failed: Timeout (>30.0s) from pytest-timeout.\n",
+        "FAILED tests/test_feature.py::test_feature - ValueError: bad input\n1 failed\n",
+        "FAILED tests/test_feature.py::test_feature - [XPASS(strict)] not yet\n1 failed\n",
+        "FAILED tests/test_feature.py::test_feature\n1 failed\n",
+        "FAILED tests/test_feature.py::test_sibling - assert 1 == 2\n"
+        "FAILED tests/test_feature.py::test_feature\n2 failed\n",
+        "E   assert 1 == 2\n[first failure only; remaining details compacted]\n"
+        "FAILED tests/test_feature.py::test_feature\n2 failed\n",
+        "FAILED tests/test_feature.py::test_feature\nE   assert 1 == 2\n"
+        "tests/test_other.py:10: in test_sibling\n",
     ],
 )
 def test_compacted_red_without_matching_node_is_rejected(output: str) -> None:
@@ -304,6 +349,33 @@ def test_compacted_red_without_matching_node_is_rejected(output: str) -> None:
     assert not result.passed
     assert result.red_runs == ()
     assert any("no attributable failure section" in finding for finding in result.findings)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "FAIL [ 0.001s] (1/1) feature::golden replays_corpus\n",
+        "---- test_sibling stdout ----\nthread 'test_sibling' panicked at 'assertion failed'\n"
+        "FAIL [ 0.001s] (2/2) feature::golden replays_corpus\n",
+    ],
+)
+def test_nextest_summary_without_attributable_failure_is_rejected(output: str) -> None:
+    path = "crates/feature/tests/golden.rs"
+    command = "cargo nextest run -p feature --test golden"
+    evidence = TranscriptEvidence(
+        edits=(_edit(path, 2), _edit("crates/feature/src/lib.rs", 4)),
+        validation_runs=(
+            replace(_run(3, red=True, output=output), command=command),
+            replace(
+                _run(5, red=False),
+                command=command,
+                output="PASS [ 0.001s] (1/1) feature::golden replays_corpus",
+            ),
+        ),
+    )
+    result = evaluate_tdd_evidence((_test(path, "replays_corpus"),), evidence)
+    assert not result.passed
+    assert result.red_runs == ()
 
 
 def _provider_evidence(
@@ -410,7 +482,7 @@ def test_monitor_receipt_credits_original_background_cycle(tmp_path: Path, recei
         3,
         "Monitor",
         {
-            "command": f'tail -n +1 -f {monitor_path} | grep -E --line-buffered "Summary|PASS|FAIL|exited with code"'
+            "command": f'tail -n +1 -f {monitor_path} | grep -E --line-buffered "Summary|PASS|FAIL|panicked|exited with code"'
         },
         "Monitor started (task monitor, expires in 30m unless the source ends first; you get one notice at expiry).",
     )
@@ -430,6 +502,7 @@ def test_monitor_receipt_credits_original_background_cycle(tmp_path: Path, recei
     for step, text in [
         (
             4,
+            "thread 'replays_corpus' panicked at 'assertion failed: left == right'\n"
             "FAIL [ 0.001s] (1/1) feature::golden replays_corpus\nSummary 1 tests run: 0 passed, 1 failed",
         ),
         (5, "[exited with code 100]"),
