@@ -579,6 +579,10 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
                 return_value=(([], []), None),
             ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
             patch.object(
                 close_tool,
                 "launch_close_review",
