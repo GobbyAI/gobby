@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-import pytest
+import json
 
-from gobby.hooks.tool_outcomes import ToolOutcomeStatus, normalize_tool_outcome
+import pytest
+from mcp.types import CallToolResult, TextContent
+
+from gobby.hooks.tool_outcomes import (
+    ToolOutcomeStatus,
+    classify_raw_tool_result,
+    normalize_tool_outcome,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -170,3 +177,106 @@ def test_null_tool_output_does_not_mask_later_result_alias() -> None:
 
     assert outcome.status is ToolOutcomeStatus.SUCCEEDED
     assert outcome.provenance == "tool_result.success"
+
+
+@pytest.mark.parametrize("error", ["Invalid or unresolved commit SHA", {"code": "E1"}])
+def test_present_error_value_fails_a_raw_result(error: object) -> None:
+    outcome = classify_raw_tool_result({"task_id": "t-1", "error": error})
+
+    assert (outcome.status, outcome.provenance) == (ToolOutcomeStatus.FAILED, "raw_result.error")
+
+
+@pytest.mark.parametrize("error", [None, "", {}])
+def test_absent_error_value_keeps_a_raw_result_successful(error: object) -> None:
+    outcome = classify_raw_tool_result({"task_id": "t-1", "error": error})
+
+    assert outcome.status is ToolOutcomeStatus.SUCCEEDED
+
+
+_WIRE_FAILURE = {"success": False, "error": "Invalid or unresolved commit SHA"}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        _WIRE_FAILURE,
+        json.dumps(_WIRE_FAILURE),
+        {"content": [{"type": "text", "text": json.dumps(_WIRE_FAILURE)}]},
+        {"structuredContent": _WIRE_FAILURE},
+        {"isError": False, "content": [{"type": "text", "text": json.dumps(_WIRE_FAILURE)}]},
+        {"isError": False, "structuredContent": {"error": "Invalid or unresolved commit SHA"}},
+        CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(_WIRE_FAILURE))], isError=True
+        ),
+    ],
+)
+def test_mcp_wrapped_wire_failure_is_failed(output: object) -> None:
+    assert classify_raw_tool_result(output).status is ToolOutcomeStatus.FAILED
+
+
+@pytest.mark.parametrize("body_key", ["content", "structuredContent"])
+def test_mcp_success_wrapper_with_a_null_error_field_succeeds(body_key: str) -> None:
+    body = {"task_id": "t-1", "commits": ["abc1234"], "error": None}
+    wrapped = [{"type": "text", "text": json.dumps(body)}] if body_key == "content" else body
+
+    outcome = classify_raw_tool_result({"isError": False, body_key: wrapped})
+
+    assert outcome.status is ToolOutcomeStatus.SUCCEEDED
+
+
+_FAILED_CHILD_RUN = {
+    "success": True,
+    "status": "error",
+    "error": "provider exited 1",
+    "result": {"summary": "handoff"},
+    "run_id": "run-1",
+    "dirty_paths": [],
+}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        _FAILED_CHILD_RUN,
+        {"success": True, "status": "failed", "execution_id": "pe-1"},
+        {"isError": False, "structuredContent": _FAILED_CHILD_RUN},
+    ],
+)
+def test_explicit_success_true_wins_a_raw_result(output: dict[str, object]) -> None:
+    assert classify_raw_tool_result(output).status is ToolOutcomeStatus.SUCCEEDED
+
+
+def test_conflicting_signals_without_a_success_key_fail_a_raw_result() -> None:
+    outcome = classify_raw_tool_result({"exit_code": 1, "status": "ok"})
+
+    assert (outcome.status, outcome.provenance) == (
+        ToolOutcomeStatus.FAILED,
+        "conflicting_outcomes:tool_output.exit_code|tool_output.status",
+    )
+
+
+_FINAL_VERIFY_DIRTY = {
+    "success": False,
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "",
+    "error": "final verification failed: worktree is dirty",
+    "dirty_files": [" M src/app.py"],
+}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        _FINAL_VERIFY_DIRTY,
+        {"success": False, "status": "ok"},
+        {"success": False, "isError": False, "error": "boom"},
+    ],
+)
+def test_top_level_success_false_fails_a_raw_result(output: dict[str, object]) -> None:
+    outcome = classify_raw_tool_result(output)
+
+    assert (outcome.status, outcome.provenance) == (
+        ToolOutcomeStatus.FAILED,
+        "raw_result.success",
+    )
