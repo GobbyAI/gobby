@@ -334,6 +334,9 @@ def test_compacted_red_credits_nodes_named_in_fail_summary(runner: str) -> None:
         "FAILED tests/test_feature.py::test_feature\n1 failed\n",
         "FAILED tests/test_feature.py::test_sibling - assert 1 == 2\n"
         "FAILED tests/test_feature.py::test_feature\n2 failed\n",
+        "________________ test_sibling ________________\n"
+        "E   assert test_feature == 2\n"
+        "FAILED tests/test_feature.py::test_feature\n2 failed\n",
         "E   assert 1 == 2\n[first failure only; remaining details compacted]\n"
         "FAILED tests/test_feature.py::test_feature\n2 failed\n",
         "FAILED tests/test_feature.py::test_feature\nE   assert 1 == 2\n"
@@ -356,6 +359,9 @@ def test_compacted_red_without_matching_node_is_rejected(output: str) -> None:
     [
         "FAIL [ 0.001s] (1/1) feature::golden replays_corpus\n",
         "---- test_sibling stdout ----\nthread 'test_sibling' panicked at 'assertion failed'\n"
+        "FAIL [ 0.001s] (2/2) feature::golden replays_corpus\n",
+        "---- test_sibling stdout ----\n"
+        "thread 'test_sibling' panicked at 'assertion failed: replays_corpus'\n"
         "FAIL [ 0.001s] (2/2) feature::golden replays_corpus\n",
     ],
 )

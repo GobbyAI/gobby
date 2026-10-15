@@ -626,23 +626,24 @@ def _has_named_red_failure(
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
+    if test.path.endswith(".py"):
+        return False, reason
     symbols = (
         test.symbol,
         test.symbol.replace(".", "::"),
         test.symbol.replace("::", "."),
     )
-    symbol_patterns = tuple(
-        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
-    )
     lines = output.splitlines()
+    section_node: str | None = None
     for index, line in enumerate(lines):
-        # Summaries carry their own path/node identity. Never borrow an assertion
-        # from a sibling summary through the generic symbol/section fallback.
-        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
-            continue
-        if _PYTEST_LOCATION_RE.match(line):
-            continue
-        if not any(pattern.search(line) for pattern in symbol_patterns):
+        # Node identity comes from runner headers, never assertion text that
+        # happens to mention a target symbol inside a sibling's failure body.
+        header = re.fullmatch(r"\s*---- (\S+) std(?:out|err) ----\s*", line)
+        if _FAILURE_SECTION_BOUNDARY_RE.match(line):
+            section_node = header[1] if header else None
+        panic = re.match(r"\s*thread '([^']+)'(?: \(\d+\))? panicked at\b", line)
+        node = header[1] if header else panic[1] if panic else None
+        if node not in symbols or (section_node is not None and section_node not in symbols):
             continue
         if _PASS_STATUS_RE.search(line):
             continue
