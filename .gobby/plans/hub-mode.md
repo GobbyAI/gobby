@@ -1498,6 +1498,7 @@ Consumers unchanged:
 - `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it calls `_handle_connection` directly, so its connections run unbound and reach no guarded action.
 - `tests/servers/test_terminal_ws_resize.py` — no-edit-reason: a resize is not a guarded action; re-run as verification.
 - `tests/servers/websocket/test_server.py` — no-edit-reason: `handle_connection` now binds its fake socket's `user_id`, and its messages (ping, terminal attach, input and release, workspace ops) reach no guarded action; re-run as verification.
+- `tests/servers/test_ws_envelope_golden.py` — no-edit-reason: it calls `handle_connection(socket)` with no decision, so each connection binds its fake socket's `user-<name>` id, and subscribe, unsubscribe and broadcast reach no guarded action; re-run as verification.
 - `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: its `AuthDecision(allowed=True)` patch now binds a scope with no user, and the `gobby-workspaces` tools it calls are not guarded actions; re-run as verification.
 - `tests/servers/routes/test_statusline_endpoint.py` — no-edit-reason: it builds `AuthDecision` by keyword, and the status line is not a guarded action; re-run as verification.
 - `tests/runtime_grants/test_maintenance_launch.py` — no-edit-reason: it reads only `authenticate(request).allowed`; re-run as verification.
@@ -1513,7 +1514,7 @@ Consumers unchanged:
 - `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/servers/test_websocket_server_disconnects.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_terminal_ws_resize.py tests/servers/websocket/test_server.py tests/mcp_proxy/test_workspaces_registry.py tests/servers/routes/test_statusline_endpoint.py tests/runtime_grants/test_maintenance_launch.py tests/servers/routes/mcp_endpoints/test_http_caller_identity.py tests/servers/test_break_glass_admission.py tests/servers/test_managed_clear_identity.py tests/hooks/test_staged_effects_receipt_route.py tests/servers/test_http_cron.py tests/servers/routes/test_rules_routes.py tests/servers/routes/test_servers_routes_pipeline_definitions.py tests/servers/routes/test_session_variables.py tests/servers/routes/test_variable_definitions.py tests/servers/test_servers_sessions_routes.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/servers/test_websocket_server_disconnects.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_terminal_ws_resize.py tests/servers/websocket/test_server.py tests/servers/test_ws_envelope_golden.py tests/mcp_proxy/test_workspaces_registry.py tests/servers/routes/test_statusline_endpoint.py tests/runtime_grants/test_maintenance_launch.py tests/servers/routes/mcp_endpoints/test_http_caller_identity.py tests/servers/test_break_glass_admission.py tests/servers/test_managed_clear_identity.py tests/hooks/test_staged_effects_receipt_route.py tests/servers/test_http_cron.py tests/servers/routes/test_rules_routes.py tests/servers/routes/test_servers_routes_pipeline_definitions.py tests/servers/routes/test_session_variables.py tests/servers/routes/test_variable_definitions.py tests/servers/test_servers_sessions_routes.py -v`.
 
 **Acceptance:**
 
@@ -1535,7 +1536,7 @@ reports.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/terminals.py::TerminalManager.list_stale_pending`
+- `src/gobby/storage/terminals.py::*` — scope-reason: `list_stale_pending` leaves `TerminalManager`, which inherits `TerminalReapQueryMixin` in its place
 - `src/gobby/storage/terminal_reap_queries.py`
 - `src/gobby/storage/agents/_queries.py::_AgentRunQueryMixin.list_terminal_with_tmux`
 - `src/gobby/agents/terminal_cleanup.py::TerminalResourceCleaner.cleanup_terminal_tmux_sessions`
@@ -2493,6 +2494,8 @@ Consumers unchanged:
 - `tests/cli/test_daemon_remote_mode.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/cli/test_embeddings_doctor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/cli/test_memory_coverage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_restart_guard_release.py` — no-edit-reason: it builds `DaemonConfig(daemon_port=61987)` and never sets `max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_restart_readiness.py` — no-edit-reason: it builds `DaemonConfig(daemon_port=state.port)` and never sets `max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/cli/test_operational_config_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/cli/test_projects_refresh_verification.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/cli/test_status_health_agent_role.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2570,6 +2573,7 @@ Consumers unchanged:
 - `tests/servers/routes/test_config_values_api.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_config_yaml_replace.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_configuration_effective_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_configuration_prompts.py` — no-edit-reason: it builds a default `DaemonConfig()` and never sets `max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_configuration_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_embeddings_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_hub_files_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -3568,8 +3572,11 @@ Targets:
   row read. A refusal answers 403 `{error_code, stage: "none"}` and changes
   nothing.
 
+Consumers unchanged:
+- `tests/servers/test_source_control_worktrees.py` — no-edit-reason: it mounts the router to create a client worktree, a route this section leaves alone, and never lists, deletes or runs a clone operation; re-run as verification.
+
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_remote_workspace_routes.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_remote_workspace_routes.py tests/servers/test_source_control_worktrees.py -v`.
 
 **Acceptance:**
 
@@ -4169,6 +4176,16 @@ Verification planned:
   resolved. Security gobby#16011 cleared O3 at 30f4656c56. Standard
   validation is warning-free.
 - 2026-10-15: M1 withdrawn before the 2.2 size-growth repair, because the re-expansion compile refused 2.2's target `src/gobby/servers/routes/mcp/hooks.py` at 862 lines; the Plan Adversary re-derives M1 after review.
+- 2026-10-15: Repairs for drift since the stamp, under Orchestrator
+  gobby#15977's route A. 2.2 is unchanged: once #24272 (Hook ingress) closes
+  completed, 2.2 counts as executed and the size-growth check skips it.
+  2.1's `TerminalManager.list_stale_pending` target no longer resolves
+  because #24271 moved it as planned, so 2.1 targets
+  `src/gobby/storage/terminals.py::*` with a scope reason. Newer tests gain
+  Consumers unchanged rows: `tests/servers/test_ws_envelope_golden.py` in
+  1.5, three `DaemonConfig` tests in 2.5, and
+  `tests/servers/test_source_control_worktrees.py` in 4.4, each added to its
+  section's verification command where it is re-run.
 
 ## V2: Verification
 `kind: verification`
