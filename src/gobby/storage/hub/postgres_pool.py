@@ -425,9 +425,10 @@ class _PostgresTransaction:
         try:
             self._deadline.prepare()
             # Extended protocol rejects a batch before executing any statement.
-            # A pipeline forces it even with prepare_threshold=None and no params;
-            # exiting synchronizes the result/error before this operation returns.
-            with self._conn.pipeline() if self._deadline.active else nullcontext():
+            # Params already select it; without them a pipeline forces it even with
+            # prepare_threshold=None, and exiting synchronizes the result/error
+            # before this operation returns (#23359).
+            with self._conn.pipeline() if self._deadline.active and not params else nullcontext():
                 result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
             self._deadline.observe(sql)
             return PostgresCursor(result)

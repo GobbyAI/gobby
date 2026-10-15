@@ -103,6 +103,39 @@ def test_compound_query_is_rejected_before_any_statement_runs(
     assert database.fetchone("SELECT is_called FROM rejected_batch_probe") == {"is_called": False}
 
 
+def test_parameterized_statements_reject_batches_without_a_pipeline(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Parameters already select the extended protocol, so a per-statement
+    # pipeline only cost GIL time (#23359).
+    pipelines: list[str] = []
+    original = psycopg.Connection.pipeline
+
+    def recording(self: psycopg.Connection[Any], *args: Any, **kwargs: Any) -> Any:
+        pipelines.append("PIPELINE")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "pipeline", recording)
+    database.execute("CREATE TEMP SEQUENCE rejected_param_batch_probe")
+
+    with database_operation_deadline(timeout_seconds=5):
+        with database.transaction() as txn:
+            assert txn.execute("SELECT %s::int AS n", (7,)).fetchone() == {"n": 7}
+    with pytest.raises(psycopg.errors.SyntaxError, match="multiple commands"):
+        with database_operation_deadline(timeout_seconds=5):
+            with database.transaction() as txn:
+                txn.execute(
+                    "SELECT nextval('rejected_param_batch_probe'), %s::int; SELECT pg_sleep(.07)",
+                    (1,),
+                )
+
+    assert pipelines == []
+    assert database.fetchone("SELECT is_called FROM rejected_param_batch_probe") == {
+        "is_called": False
+    }
+
+
 def test_bounded_statements_allow_quoted_semicolons_and_do_bodies(
     database: PostgresHubDatabase,
 ) -> None:
