@@ -140,13 +140,10 @@ def test_root_scope_requires_matching_target(
     target = f"actual-package::{binary}" if binary else "actual-package"
     selector = f"--test {binary}" if binary else "--lib"
     name = "::".join((*module, "root_test"))
-    output = (
-        f"PASS [0.004s] {target} {name}"
-        if format == "nextest"
-        else f"cargo test -p actual-package {selector} {name}"
-    )
-
-    assert rust_validation_run_names_test(output, test)
+    output = f"PASS [0.004s] {target} {name}" if format == "nextest" else f"test {name} ... ok"
+    command = f"cargo test -p actual-package {selector} {name}"
+    assert validation_run_names_test(command, output, test)
+    assert validation_run_covers_test(command, output, test)
 
 
 @pytest.mark.parametrize("module", [(), ("helpers",)])
@@ -219,3 +216,136 @@ async def test_root_target_comes_from_committed_manifest(
     )
 
     assert actual == target
+
+
+@pytest.mark.parametrize("binary,module", [("root", ()), ("root", ("helpers",)), (None, ())])
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize(
+    "command_template,output_template,expected",
+    [
+        ("{base} other_test -- --skip {name}", "test other_test ... ok", False),
+        ("{base} -- --skip {name}", "test {name} ... ok", False),
+        ("{base} -- --skip={name}", "test {name} ... ok", False),
+        ("{base} -- --skip {name}", "PASS [0.004s] {label} {name}", False),
+        ("{base} -- --logfile {name}", "test other_test ... ok", False),
+        ("{base} -- --logfile {path}::{name}", "test other_test ... ok", False),
+        ("{base} {name}", "", False),
+        ("{base} {name}", "test sibling ... ok", False),
+        ("cargo test -- -p example {selector} {name}", "test {name} ... ok", False),
+        ("cargo check -p example {selector} {name}", "test {name} ... ok", False),
+        ("{base} --target {name}", "test other_test ... ok", False),
+        ("{base} --features {name}", "test other_test ... ok", False),
+        ("{base} --features={name}", "test other_test ... ok", False),
+        ("{base} {name}", "Running {path}", False),
+        ("{base} {name}", "Running tests/root.rs", False),
+        ("{base} {name}", "test {name}_long ... ok\nRunning unittests {path}", False),
+        ("{base} {name} -- --skip", "test {name} ... ok", False),
+        ("{base} root -- --exact", "test {name} ... ok", False),
+        ("{base} {name}", "test {name}::inner ... ok", False),
+        ("{base} {name}", "SKIP [0.004s] {label} {name}", False),
+        ("{base} {name}", "PASS [0.004s] {label} {name}::inner", False),
+        ("cargo test --workspace", "test {name} ... ok", False),
+        ("{base} --package --test {name}", "test {name} ... ok", False),
+        ("{base} {name} sibling", "test {name} ... ok", False),
+        ("{base} -p example {name}", "test {name} ... ok", False),
+        ("{base} {name}", "test {name} ... ok", True),
+        ("{base}", "test {name} ... FAILED", True),
+        ("{base} root", "test {name} ... ok", True),
+        ("{base} {name} -- --exact", "test {name} ... ok", True),
+        ("cargo test --package=example {selector_equals} {name}", "test {name} ... ok", True),
+        ("{base} {name}", "PASS [0.004s] {label} {name}", True),
+        ("{base} {name}", "FAIL [0.004s] {label} {name}", True),
+        ("cargo nextest run -p example", "PASS [0.004s] {label} {name}", True),
+    ],
+)
+def test_root_credit_requires_executed_row(
+    binary: str | None,
+    module: tuple[str, ...],
+    names_only: bool,
+    command_template: str,
+    output_template: str,
+    expected: bool,
+) -> None:
+    path = "crates/example/tests/root.rs" if binary else "crates/example/src/lib.rs"
+    name = "::".join((*module, "root_test"))
+    selector = f"--test {binary}" if binary else "--lib"
+    test = AcceptanceTest(
+        reference=f"{path}::root_test",
+        path=path,
+        symbol="root_test",
+        body="fn root_test() { assert!(true); }",
+        rust_module=module,
+        rust_target=("example", binary),
+    )
+    values = {
+        "base": f"cargo test -p example {selector}",
+        "name": name,
+        "selector": selector,
+        "selector_equals": f"--test={binary}" if binary else "--lib",
+        "label": f"example::{binary}" if binary else "example",
+        "path": path,
+    }
+    command = command_template.format(**values)
+    output = output_template.format(**values)
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+
+    assert validate(command, output, test) is expected
+
+
+@pytest.mark.parametrize("module", [("a", "tests"), None])
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize(
+    "command,output,expected",
+    [
+        ("cargo test -p example -- --skip a::tests::test_x", "test sibling ... ok", False),
+        ("cargo test -p example -- --skip=a::tests::test_x", "test a::tests::test_x ... ok", False),
+        ("JOBS=2 cargo test -- --skip a::tests::test_x", "test a::tests::test_x ... ok", False),
+        ("cargo test -p example --skip a::tests::test_x", "test a::tests::test_x ... ok", False),
+        ("cargo test -p example --features a::tests::test_x", "test sibling ... ok", False),
+        ("cargo test -p example a::tests::test_x", "", False),
+        ("cargo test -p example a::tests::test_x", "test sibling ... ok", False),
+        ("cargo test -p example a::tests::test_x", "Running crates/example/src/a.rs", False),
+        ("cargo check -p example a::tests::test_x", "test a::tests::test_x ... ok", False),
+        ("cargo test -- -p example", "test a::tests::test_x ... ok", False),
+        ("cargo test a::tests::test_x -- --skip", "test a::tests::test_x ... ok", False),
+        ("cargo test other", "test a::tests::test_x ... ok", False),
+        ("cargo test a::tests::test_x", "echo a::tests::test_x", False),
+        ("cargo test", "SKIP [0.004s] example a::tests::test_x", False),
+        ("cargo test", "test a::tests::test_x::inner ... ok", False),
+        ("cargo test a::tests::test_x", "test a::tests::test_x ... ok", True),
+        ("cargo test", "test a::tests::test_x ... FAILED", True),
+        ("cargo test", "PASS [0.004s] example a::tests::test_x", True),
+        ("cargo test", "FAIL [0.004s] example a::tests::test_x", True),
+        ("cargo test", "PASS example a::tests::test_x", True),
+        ("cargo nextest run", "FAIL example a::tests::test_x", True),
+        ("cargo test", '<testcase name="a::tests::test_x"/>', True),
+    ],
+)
+def test_non_root_credit_uses_executed_output(
+    module: tuple[str, ...] | None, names_only: bool, command: str, output: str, expected: bool
+) -> None:
+    test = AcceptanceTest(
+        reference="crates/example/src/a.rs::test_x",
+        path="crates/example/src/a.rs",
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=module,
+        rust_target=("example", None),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    assert validate(command, output, test) is expected
+
+
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize("diagnostic", ["tests/foo.rs", "crates/example/tests/foo.rs"])
+def test_rust_generic_fallback_cannot_credit_diagnostic(names_only: bool, diagnostic: str) -> None:
+    test = AcceptanceTest(
+        reference="crates/example/tests/foo.rs::test_x",
+        path="crates/example/tests/foo.rs",
+        symbol="test_x",
+        body="fn test_x() { assert!(true); }",
+        rust_module=(),
+        rust_target=("example", "foo"),
+    )
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+    assert not validate("cargo test -p other --test foo test_x", f"Running {diagnostic}", test)
