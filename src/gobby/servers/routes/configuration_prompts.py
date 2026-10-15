@@ -174,9 +174,6 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                     project_id=project_id,
                 )
 
-            loader = context.get_prompt_loader()
-            loader.clear_cache()
-
             return JSONResponse(content={"ok": True})
         except HTTPException:
             raise
@@ -192,9 +189,6 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
 
             if not manager.delete_override(path, project_id=context.server.services.project_id):
                 raise HTTPException(status_code=404, detail=f"No override for '{path}'")
-
-            loader = context.get_prompt_loader()
-            loader.clear_cache()
 
             return JSONResponse(content={"ok": True})
         except HTTPException:
