@@ -836,10 +836,10 @@ A reuse write runs in that same transaction, so the row lock is held until
 commit. A claim or close that commits first leaves the leaf untouched or
 preserved. A reuse that commits first is what a later claim or close observes.
 
-- **Preserve.** A closed completed prior leaf whose section remains is that
-  section's leaf. Apply does not reopen it, edit it, or create another leaf
-  for the section. Coverage QA counts the preserved leaf when its `covers:`
-  label still matches the section.
+- **Preserve.** Any closed prior leaf whose section remains is that
+  section's leaf, except one closed as obsolete. Apply does not reopen it,
+  edit it, or create another leaf for the section. Coverage QA counts the
+  preserved leaf when its `covers:` label still matches the section.
 - **Reuse.** An open prior leaf that is unclaimed and has not entered a stage
   is updated in place when the section text changes. No second task is created.
   Its labels are the same set a newly created leaf would receive, including
