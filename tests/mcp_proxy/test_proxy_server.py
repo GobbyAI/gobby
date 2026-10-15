@@ -356,6 +356,47 @@ async def test_call_tool_success_returns_raw_result(daemon_tools):
     assert result.get("count") == 1
 
 
+@pytest.mark.asyncio
+async def test_call_tool_keeps_a_null_error_field_successful(
+    daemon_tools: GobbyDaemonTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = {"task_id": "t-1", "commits": ["abc1234"], "error": None}
+    monkeypatch.setattr(daemon_tools.tool_proxy, "call_tool", AsyncMock(return_value=payload))
+
+    result = await daemon_tools.call_tool("gobby-tasks", "link_commit", {})
+
+    assert result == payload
+
+
+@pytest.mark.asyncio
+async def test_call_tool_serves_a_failed_child_run_report_whole(
+    daemon_tools: GobbyDaemonTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = {"success": True, "status": "error", "error": "provider exited 1", "run_id": "r-1"}
+    monkeypatch.setattr(daemon_tools.tool_proxy, "call_tool", AsyncMock(return_value=report))
+
+    result = await daemon_tools.call_tool("gobby-agents", "wait_for_agent", {})
+
+    assert result == {"status": "error", "error": "provider exited 1", "run_id": "r-1"}
+
+
+@pytest.mark.asyncio
+async def test_call_tool_error_text_falls_back_to_the_nested_result(
+    daemon_tools: GobbyDaemonTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp.types import CallToolResult, TextContent
+
+    rejected = {"success": False, "result": {"error": "Invalid or unresolved commit SHA"}}
+    monkeypatch.setattr(daemon_tools.tool_proxy, "call_tool", AsyncMock(return_value=rejected))
+
+    result = await daemon_tools.call_tool("gobby-tasks", "link_commit", {})
+
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert isinstance(result.content[0], TextContent)
+    assert result.content[0].text == "Error: Invalid or unresolved commit SHA"
+
+
 # --- Cross-project project_id parameter tests ---
 
 

@@ -539,7 +539,7 @@ step_workflow:
         - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-tasks:link_commit"
-        # The claim holder alone may unlink, so superseded SHAs leave from here.
+        # unlink_commit enforces claim authority itself; superseded SHAs leave here.
         - "gobby-tasks:unlink_commit"
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
