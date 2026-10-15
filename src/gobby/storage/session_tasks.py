@@ -16,14 +16,18 @@ class CurrentSessionClaim(TypedDict):
     worktree: str | None
 
 
-def record_claim(conn: Transaction, session_id: str, task_id: str) -> None:
-    """Record a claim in the claiming write's transaction; the history outlives the claim."""
+def record_claim(
+    conn: Transaction, session_id: str, task_id: str, *, new_claim: bool = False
+) -> None:
+    """Keep a claim's original start; reset it only after ownership was released or moved."""
     conn.execute(
         """
         INSERT INTO session_tasks (session_id, task_id, action) VALUES (%s, %s, 'claimed')
-        ON CONFLICT (session_id, task_id, action) DO NOTHING
+        ON CONFLICT (session_id, task_id, action) DO UPDATE
+        SET created_at = EXCLUDED.created_at
+        WHERE %s
         """,
-        (session_id, task_id),
+        (session_id, task_id, new_claim),
     )
 
 
