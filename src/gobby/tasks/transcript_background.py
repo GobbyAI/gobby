@@ -86,12 +86,12 @@ def recover_background_receipt(
     run = runs[index]
     summary = re.fullmatch(
         rf'Background command "{re.escape(run.command)}" '
-        r"(?:failed|completed) with exit code (-?\d+)",
+        r"(?:(?:failed|completed) with exit code (-?\d+)|completed \(exit code (-?\d+)\))",
         notice["summary"],
     )
     if summary is None or message.timestamp < run.completed_at:
         return
-    exit_code = int(summary[1])
+    exit_code = int(summary[1] or summary[2])
     if notice["status"] != ("completed" if exit_code == 0 else "failed"):
         return
     if run.exit_code is not None:
