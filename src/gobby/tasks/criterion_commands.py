@@ -126,7 +126,11 @@ def expand_successful_and_segments(
 def criterion_command_records(
     criteria: str,
     evidence: TranscriptEvidence,
+    *,
+    project_path: str | None = None,
 ) -> list[dict[str, object]]:
+    from gobby.tasks.transcript_outcomes import unregistered_execution_reason
+
     # Judge each top-level run before splitting it, so a chain's segments share its
     # freshness. Keep the chain itself as a candidate too: a criterion may name the
     # whole chain, command_covers matches a chain only by exact string, and the
@@ -139,6 +143,7 @@ def criterion_command_records(
         for candidate in (run, *expand_successful_and_segments((run,))):
             invalidating.setdefault(candidate, edit)
     runs = sorted(invalidating, key=lambda item: (item.order, item.completed_at))
+    execution_reasons: dict[TranscriptValidationRun, str | None] = {}
     observed_cores = {run.core_command for run in runs if run.core_command is not None}
     records: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -149,8 +154,12 @@ def criterion_command_records(
         if _daemon_lifecycle_command(command):
             continue
         equivalence = classify_validation_command_equivalence(command)
+        execution_reason = unregistered_execution_reason(command, project_path)
         core = equivalence.core_command
-        if not _looks_like_criterion_command(command, core, observed_cores):
+        if (
+            not _looks_like_criterion_command(command, core, observed_cores)
+            and execution_reason != "unregistered interpreter or launcher"
+        ):
             continue
         key = (canonical_command(core) or core) if core else command
         if key in seen:
@@ -167,10 +176,18 @@ def criterion_command_records(
             or (core is None and run.command.strip() == command)
         ]
         fresh = [run for run in matching if invalidating[run] is None]
+        for run in fresh:
+            if run not in execution_reasons:
+                execution_reasons[run] = unregistered_execution_reason(
+                    run.command, project_path, workdir=run.workdir
+                )
         definitive = [
             run
             for run in fresh
-            if not run.wrapped and run.core_command is not None and run.outcome != "unknown"
+            if not execution_reasons[run]
+            and not run.wrapped
+            and run.core_command is not None
+            and run.outcome != "unknown"
         ]
         latest = definitive[-1] if definitive else None
         if latest is not None:
@@ -178,7 +195,7 @@ def criterion_command_records(
             execution = execution_details(latest)
         elif fresh:
             latest = fresh[-1]
-            status = "wrapped" if latest.wrapped else "unknown"
+            status = "wrapped" if latest.wrapped or execution_reasons[latest] else "unknown"
             execution = execution_details(latest)
         elif matching:
             latest = matching[-1]
@@ -188,7 +205,7 @@ def criterion_command_records(
             if invalidating_edit is not None:
                 execution["invalidating_edit"] = edit_details(invalidating_edit)
         else:
-            status = "wrapped" if equivalence.wrapped else "missing"
+            status = "wrapped" if equivalence.wrapped or execution_reason else "missing"
             execution = None
         record: dict[str, object] = {
             "command": command,
@@ -200,6 +217,10 @@ def criterion_command_records(
             record["execution"] = execution
         if equivalence.wrapper_reason is not None:
             record["wrapper_reason"] = equivalence.wrapper_reason
+        elif execution_reason is not None and status != "satisfied":
+            record["wrapper_reason"] = execution_reason
+        elif latest is not None and execution_reasons.get(latest) is not None:
+            record["wrapper_reason"] = execution_reasons[latest]
         observed = []
         for run in runs:
             if run is latest:
