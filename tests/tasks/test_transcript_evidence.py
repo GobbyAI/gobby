@@ -42,9 +42,9 @@ from gobby.tasks.transcript_evidence import (
     _derive_transcript_evidence_sync,
     _resolve_transcript_path,
     derive_transcript_evidence,
-    merge_transcript_evidence,
     select_window_raw_lines,
 )
+from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -359,6 +359,29 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     result = await transcript_evidence_pool.run_in_transcript_evidence_pool(pow, 2, 4)
 
     assert result == 16
+    assert transcript_evidence_pool._pool is None
+    assert fake.shutdown_args == (False, True)
+
+
+def test_blocking_pool_call_discards_broken_pool_and_runs_in_the_caller_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _BrokenExecutor()
+    executor = cast(ProcessPoolExecutor, fake)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_get_pool", lambda: executor)
+    monkeypatch.setattr(transcript_evidence_pool, "_fallback_warning_logged", False)
+    caller = threading.get_ident()
+    ran_in: list[int] = []
+
+    def power(base: int, exponent: int) -> int:
+        ran_in.append(threading.get_ident())
+        return int(pow(base, exponent))
+
+    result = transcript_evidence_pool.run_blocking_in_transcript_evidence_pool(power, 2, 5)
+
+    assert result == 32
+    assert ran_in == [caller]
     assert transcript_evidence_pool._pool is None
     assert fake.shutdown_args == (False, True)
 

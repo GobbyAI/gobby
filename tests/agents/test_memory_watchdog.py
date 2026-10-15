@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import psutil
 import pytest
 
+from gobby.agents import memory_watchdog
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
@@ -35,7 +39,7 @@ class _StickyRuntime(FakeRuntime):
 
 
 GB = 1024**3
-OLD_TS = "2020-01-01T00:00:00+00:00"
+OLD_TS = datetime(2020, 1, 1, tzinfo=UTC)
 
 
 class FakeProc:
@@ -54,11 +58,14 @@ class FakeProc:
         self._cmdline = cmdline or ["uv", "run", "gobby", "mcp-server"]
         self.child_procs = children or []
         self._start_time = start_time
+        self.described = 0
 
     def name(self) -> str:
+        self.described += 1
         return self._name
 
     def cmdline(self) -> list[str]:
+        self.described += 1
         return self._cmdline
 
     def memory_info(self) -> Any:
@@ -72,7 +79,7 @@ def make_run(
     run_id: str = "run-1",
     *,
     terminal_id: str | None = "gobby-test",
-    started_at: str | None = OLD_TS,
+    started_at: datetime | None = OLD_TS,
 ) -> AgentRun:
     return AgentRun(
         id=run_id,
@@ -132,12 +139,12 @@ def make_handler(
             raise psutil.NoSuchProcess(pid)
         return entry[0]
 
-    ppid_scans: list[int] = []
+    child_lookups: list[int] = []
 
-    def ppid_map() -> dict[int, int]:
+    def child_lookup() -> Callable[[int], list[int]]:
         ppids = {pid: ppid for pid, (_, ppid) in live_processes().items()}
-        ppid_scans.append(len(ppids))
-        return ppids
+        child_lookups.append(len(ppids))
+        return lambda parent: [pid for pid, ppid in ppids.items() if ppid == parent]
 
     vm = virtual_memory or SimpleNamespace(total=128 * GB, available=100 * GB)
     ticks = iter(monotonic_values or [float(i) * 1000 for i in range(100)])
@@ -167,7 +174,7 @@ def make_handler(
         cleanup_handler=cleanup_handler,
         tmux_config=config,
         process_factory=process_factory,
-        ppid_map_fn=ppid_map,
+        child_lookup_fn=child_lookup,
         virtual_memory_fn=lambda: vm,
         process_iter_fn=process_iter or (lambda attrs: []),
         monotonic=lambda: next(ticks),
@@ -177,7 +184,7 @@ def make_handler(
         "agent_run_manager": agent_run_manager,
         "cleanup_handler": cleanup_handler,
         "runtime": runtime,
-        "ppid_scans": ppid_scans,
+        "child_lookups": child_lookups,
     }
     return handler, mocks
 
@@ -231,7 +238,7 @@ async def test_breach_counter_resets_when_back_under_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_grace_period_skips_young_runs() -> None:
-    recent = (datetime.now(UTC) - timedelta(seconds=10)).isoformat()
+    recent = datetime.now(UTC) - timedelta(seconds=10)
     handler, mocks = make_handler(
         runs=[make_run(started_at=recent)],
         trees={100: FakeProc(100, rss=20 * GB)},
@@ -420,7 +427,7 @@ async def test_one_process_scan_serves_every_run_in_a_tick() -> None:
         "run-1": (6 * GB, [100, 101, 102]),
         "run-2": (4 * GB, [200]),
     }
-    assert mocks["ppid_scans"] == [4]
+    assert mocks["child_lookups"] == [4]
 
 
 @pytest.mark.asyncio
@@ -442,4 +449,70 @@ async def test_a_tick_without_a_live_native_root_scans_no_processes() -> None:
     )
 
     assert await handler._collect_samples() == []
-    assert mocks["ppid_scans"] == []
+    assert mocks["child_lookups"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_tick_reads_process_names_only_for_a_kill_breakdown() -> None:
+    # name() and cmdline() cost a sysctl each per process, and only the kill
+    # breakdown prints them (#23359).
+    child = FakeProc(101, rss=20 * GB)
+    tree = FakeProc(100, rss=1 * GB, children=[child])
+    handler, mocks = make_handler(runs=[make_run()], trees={100: tree})
+
+    assert await handler.check_agent_memory() == 0
+    assert (tree.described, child.described) == (0, 0)
+
+    assert await handler.check_agent_memory() == 1
+    assert (tree.described, child.described) == (2, 2)
+    payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
+    assert "pid=101 rss=20480MB name=python3.14 cmd=uv run gobby mcp-server" in payload
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is the macOS child lookup")
+def test_a_darwin_tick_walks_the_tree_through_libproc_without_a_machine_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    me = psutil.Process()
+    kids = [subprocess.Popen(["/bin/sleep", "30"]) for _ in range(3)]
+    try:
+        expected = {me.pid, *(child.pid for child in me.children(recursive=True))}
+
+        def machine_scan(_self: object) -> int:
+            raise AssertionError("read the parent of every process on the machine")
+
+        # psutil's macOS ppid map reads each process's parent through this.
+        monkeypatch.setattr("psutil._psosx.Process.ppid", machine_scan)
+        # One slot per call makes every listing outgrow its buffer and regrow.
+        monkeypatch.setattr(memory_watchdog, "_CHILD_PID_BATCH", 1, raising=False)
+        handler = MemoryWatchdogHandler(
+            agent_run_manager=MagicMock(),
+            db=MagicMock(),
+            cleanup_handler=MagicMock(),
+            tmux_config=TmuxConfig(),
+        )
+        [(total_rss, processes)] = handler._measure_trees([(me.pid, me.create_time())])
+    finally:
+        for kid in kids:
+            kid.kill()
+            kid.wait()
+
+    assert {kid.pid for kid in kids} <= expected
+    assert {sample.pid for sample in processes} == expected
+    assert total_rss == sum(sample.rss for sample in processes) > 0
+
+
+def test_off_darwin_one_machine_scan_serves_the_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    scans: list[int] = []
+
+    def ppid_map() -> dict[int, int]:
+        scans.append(1)
+        return {10: 1, 11: 10, 12: 10, 13: 11}
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(psutil, "_ppid_map", ppid_map)
+
+    children_of = memory_watchdog._child_pid_lookup()
+
+    assert [list(children_of(pid)) for pid in (10, 11, 12)] == [[11, 12], [13], []]
+    assert scans == [1]

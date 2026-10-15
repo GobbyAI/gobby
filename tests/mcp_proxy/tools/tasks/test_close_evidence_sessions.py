@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,7 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    _while_on_task,
     derive_close_transcript_evidence,
 )
 from gobby.storage.session_models import Session
@@ -109,6 +111,7 @@ async def test_legacy_linked_edits_require_registered_task_checkout_proof(
         20,
         "red",
         command,
+        "________________ test_named ________________\n"
         f"E   AssertionError\n{test_path}:2: AssertionError\nFAILED {test_path}::test_named",
         1,
     )
@@ -860,6 +863,8 @@ async def test_owner_commit_fallback_credits_test_edits_despite_ignored_checkout
 def _claude_shell_records(
     start: datetime, offset: int, tool_id: str, command: str, output: str, exit_code: int
 ) -> list[dict[str, Any]]:
+    # Claude Bash returns text; failed calls carry their status in the first line.
+    content = f"Exit code {exit_code}\n{output}" if exit_code else output
     return [
         {
             "type": "assistant",
@@ -885,7 +890,8 @@ def _claude_shell_records(
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_id,
-                        "content": {"exit_code": exit_code, "stdout": output},
+                        "content": content,
+                        "is_error": bool(exit_code),
                     }
                 ],
             },
@@ -1034,6 +1040,13 @@ async def test_transferred_task_credits_released_test_history_without_foreign_ta
             owner_used_commit_fallback=True,
         )
 
+    red_run = evidence.validation_runs[0]
+    assert red_run.exit_code == 100
+    assert red_run.output is not None
+    assert (
+        f"FAIL [0.01s] gobby-client::host_upgrade_recovery {names[0]}"
+        in red_run.output.splitlines()
+    )
     result = evaluate_tdd_evidence(tests, evidence)
     validation = evaluate_validation_commands(
         task_category="code",
@@ -1302,6 +1315,33 @@ async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_cr
     )
 
     assert credited == (before,)
+
+
+@pytest.mark.asyncio
+async def test_on_task_filter_runs_off_the_event_loop() -> None:
+    """#24183: each off-task run rebuild re-classifies its command, so it stays off-loop."""
+    before = _run_at(IMPLEMENTER, "2026-09-28T14:30:00+00:00", "success")
+    away = _run_at(IMPLEMENTER, "2026-09-29T03:00:00+00:00", "failure")
+    loop_thread = get_ident()
+    filter_threads: list[int] = []
+
+    def record_thread(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        filter_threads.append(get_ident())
+        return _while_on_task(*args, **kwargs)
+
+    with patch(f"{_SUPPORT}._while_on_task", side_effect=record_thread):
+        credited = await _implementer_runs_after_claims(
+            [
+                _session_link("task", "2026-09-28T13:55:00+00:00"),
+                _session_link("other-task", "2026-09-28T12:00:00+00:00"),
+            ],
+            (_claim("other-task", "2026-09-29T02:14:00+00:00"),),
+            (before, away),
+        )
+
+    assert credited == (before,)
+    assert len(filter_threads) == 1
+    assert filter_threads[0] != loop_thread
 
 
 async def _owner_evidence(

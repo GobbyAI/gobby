@@ -30,6 +30,7 @@ from gobby.tasks.command_equivalence import (
 )
 from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_pool import run_blocking_in_transcript_evidence_pool
 from gobby.utils.git import run_git_command
 
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
@@ -335,6 +336,21 @@ def related_python_source_tests(
                 ranked.append((min(ranks), test))
         selected[source] = tuple(test for _, test in sorted(ranked)[:RELATED_TEST_MAX_FILES])
     return selected
+
+
+def related_python_source_tests_in_pool(
+    changed_paths: Iterable[str], base_dir: str | Path
+) -> dict[str, tuple[str, ...]]:
+    """``related_python_source_tests`` in a transcript evidence worker process.
+
+    A cold scan reads and parses thousands of test files. In the daemon, each file
+    read gave up and re-took the GIL against the event loop: the first close preview
+    after a restart took 183 s while holding the GIL for only ~10 s of it (#23801).
+    Each long-lived worker keeps its own parse caches warm across previews.
+    """
+    return run_blocking_in_transcript_evidence_pool(
+        related_python_source_tests, tuple(changed_paths), str(base_dir)
+    )
 
 
 def pytest_module_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:

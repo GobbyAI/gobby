@@ -61,6 +61,18 @@ envelope facts only with the git gates failing closed, was rejected because
 node commits could then never pass a git gate. The ruling's no-decision
 items are decisions 10, 11 and 12 below.
 
+Option (4), node-local rule evaluation against a cached ruleset, was
+rejected. A node runs only gdaemon and holds no datastore credential
+(#24075; ROADMAP decision 17), so it has no engine to run a cached ruleset.
+Rule conditions and effects read and write hub-held, cross-session state:
+session variables, task claims, workflow step state, definitions and live
+session path owners. Evaluating on the node would need the engine on the
+node plus a replicated, write-back copy of that state. The node's checkout
+is the only input the hub lacks, so the hub reads it from the node. After
+#24151 ports the engine to Rust, the engine still runs on the hub, so the
+port does not change this decision, and `checkout.read` serves the Rust
+engine unchanged.
+
 1. **The old draft is withdrawn.** It is the draft stamped at `74f5b4ec32`
    and never approved. Gone with it are the envelope `file_facts` field,
    foreign-origin fail-closed as the end state, deferred sections D1 to D3,
@@ -1326,6 +1338,17 @@ Verification planned:
   gobby#16791 agree on this plan at `331dd26498`, with no open findings.
   HE-1, HE-2 and HE-3 are closed, and bare validation exits 0 with no
   warnings.
+- 2026-10-15: Plan Writer gobby#16490 withdraws the M1 stamped at
+  `0dfa754f8e` before a framing-only Decision Record addition that
+  Orchestrator gobby#15977 directed.
+- 2026-10-15: the Decision Record adds rejected option (4), node-local rule
+  evaluation against a cached ruleset, in the wording Orchestrator
+  gobby#15977 accepted, plus one sentence that #24151's Rust port keeps the
+  engine on the hub. Josh accepted hub-side evaluation on 2026-10-15. Scope,
+  leaves, Targets and acceptance are unchanged.
+- 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
+  gobby#16791 agree on this plan at `62d13774c7`, with no open findings.
+  Option (4) is a closed rejection, and bare validation exits 0.
 
 ## V2: Verification
 `kind: verification`
@@ -1351,371 +1374,3 @@ each must hold before #23277 closes.
   local session's hook-path behavior must be unchanged. The local suites
   named in each leaf's verification must pass unchanged, except for the
   1.4.5 fix.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: 'Node-commands contract version 4: `checkout.read`'
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: `CONTRACT_VERSION` is 4 in the Rust models. Each corpus
-    `checkout.read` command and reply parses into its v4 Rust type, with `v` equal
-    to `CONTRACT_VERSION`, and re-encodes to the same bytes. test: `crates/gdaemon/tests/node_command_parity.rs::v4_checkout_read_round_trips`.
-
-    1.1.2: `CONTRACT_VERSION` is 4 in the Python models, and the same messages parse
-    into their v4 Python models and re-encode to the same bytes. test: `tests/hub/test_node_command_parity.py::test_v4_checkout_read_round_trips`.
-
-    1.1.3: Both sides refuse every new `invalid` entry. test: `crates/gdaemon/tests/node_command_parity.rs::invalid_messages_fail`.
-
-    1.1.4: The Python models refuse every new `invalid` entry. test: `tests/hub/test_node_command_parity.py::test_invalid_messages_fail`.
-
-    1.1.5: The contract specifies `checkout.read` with its payload, reply, limits,
-    node rules, error codes and stage rule. file: `docs/contracts/node-commands.md`,
-    section "v4 commands", subsection `checkout.read`, and "Node duties".'
-  labels:
-  - covers:hook-envelope-file-facts:1.1:1.1.1
-  - covers:hook-envelope-file-facts:1.1:1.1.2
-  - covers:hook-envelope-file-facts:1.1:1.1.3
-  - covers:hook-envelope-file-facts:1.1:1.1.4
-  - covers:hook-envelope-file-facts:1.1:1.1.5
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Node `checkout.read` handler
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: For every golden case, `checkout.read` answers the
-    expected `root`, `project_id`, `home`, `temp_dir` and entries (`resolved`, `kind`,
-    `checkout_root`, `git_common_dir`, `project_root`, `project_id`, `data`, `truncated`).
-    Every successful reply carries the node''s canonical `home` and `temp_dir`, and
-    every `outside` entry carries its non-null `resolved`. test: `crates/gdaemon/tests/node_checkout_read.rs::facts_match_golden`.
-
-    1.2.2: The Python oracle produces every golden entry outside the node home, so
-    the hub''s local helpers and the node agree. test: `tests/hub/test_checkout_read_facts_golden.py::test_golden_matches_local_helpers`.
-
-    1.2.3: Admission follows Decision 4''s predicate and home exclusion. These answer
-    `kind: "outside"` with null data: a path in an unrelated repository, a symlink
-    inside R0 that points into that repository, a `..` path that resolves outside
-    every repository, a linked worktree of R0''s repository under the temp scratchpad
-    `<fixture>/tmp/agent-scratchpad-1/`, and the isolated node home''s `bootstrap.yaml`.
-    These are admitted: a linked worktree of R0''s repository under `<home>/worktrees/`,
-    a symlink inside R0 that points into the linked worktree, and a `..` path that
-    resolves there. test: `crates/gdaemon/tests/node_checkout_read.rs::confinement_withholds_outside_paths`.
-
-    1.2.4: These answer `invalid_payload`, `stage: "none"`, and start no process:
-    a refused subcommand (`commit`, `checkout`, `config`), a `-c` other than `core.fsmonitor=false`,
-    and each refused option. A `-C`, `--git-dir` or `--work-tree` naming an outside
-    path answers `outside`. A cwd with no marker above it answers `no_project_root`.
-    test: `crates/gdaemon/tests/node_checkout_read.rs::refusals_run_nothing`.
-
-    1.2.5: git does not see an inherited `GIT_DIR` or `GIT_INDEX_FILE`, and runs with
-    `GIT_OPTIONAL_LOCKS=0`, leaving no `index.lock` behind. stdout over 8 MiB is cut
-    with `truncated: true`. git past `timeout_ms` is killed and answers `timed_out:
-    true`. test: `crates/gdaemon/tests/node_checkout_read.rs::git_runs_scrubbed_and_bounded`.
-
-    1.2.6: `read_limit` caps each file''s data, and a reply whose files exceed 8 MiB
-    cuts later entries with `truncated: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::reads_respect_limits`.'
-  labels:
-  - covers:hook-envelope-file-facts:1.2:1.2.1
-  - covers:hook-envelope-file-facts:1.2:1.2.2
-  - covers:hook-envelope-file-facts:1.2:1.2.3
-  - covers:hook-envelope-file-facts:1.2:1.2.4
-  - covers:hook-envelope-file-facts:1.2:1.2.5
-  - covers:hook-envelope-file-facts:1.2:1.2.6
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Hub checkout-read seam and delivery origin
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.3.1: A delivery whose `input_data.machine_id` names another
-    machine reports `node_origin()` true and that machine from `event_machine_id()`.
-    This holds in the adapter call, in a coroutine run on another loop, and in an
-    offloaded thread. A hub-machine or missing machine id reports false and the hub''s
-    machine. The scope resets after the delivery. test: `tests/hooks/test_checkout_reads.py::test_delivery_scope_marks_node_origin`.
-
-    1.3.2: `path_facts` sends one `checkout.read` files query to the event''s machine,
-    with the cwd, paths and read limit, and returns typed entries. A repeat for memoized
-    paths in the same delivery sends nothing. test: `tests/hooks/test_checkout_reads.py::test_path_facts_queries_node_once_per_delivery`.
-
-    1.3.3: Each transport code (`node_routing_unavailable`, `node_reply_lost`, `node_offline`,
-    `node_timeout`, `channel_closed`) and a synchronous call on the daemon loop''s
-    thread raises `CheckoutReadUnavailable` naming the code and machine. Every later
-    node read in that delivery raises at once without sending. `no_project_root` does
-    not latch. test: `tests/hooks/test_checkout_reads.py::test_unavailable_answers_latch_per_delivery`.
-
-    1.3.4: `run_git` spawns local git exactly as before for a local delivery. For
-    a node delivery it sends a git query and maps the exit code, stdout and stderr,
-    a timeout to `subprocess.TimeoutExpired`, and truncation to `CheckoutReadUnavailable`
-    with code `truncated`. test: `tests/hooks/test_checkout_reads.py::test_run_git_routes_by_origin`.
-
-    1.3.5: After a node delivery that read file data and git output, neither appears
-    in `HookEvent.data`, `HookEvent.metadata`, captured log records, session variables
-    or broadcaster payloads. test: `tests/hooks/test_checkout_reads.py::test_node_content_stays_in_delivery_memo`.'
-  labels:
-  - covers:hook-envelope-file-facts:1.3:1.3.1
-  - covers:hook-envelope-file-facts:1.3:1.3.2
-  - covers:hook-envelope-file-facts:1.3:1.3.3
-  - covers:hook-envelope-file-facts:1.3:1.3.4
-  - covers:hook-envelope-file-facts:1.3:1.3.5
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: Node-origin git runs on the node
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '1.4.1: In a node delivery, `daemon_git.run` and `daemon_git.status`
-    send git queries to the node and return `GitOk`, `GitFailed` or `GitTimeout` from
-    its exit code, output and timeout, and no local git process starts. test: `tests/hooks/test_node_origin_git.py::test_node_origin_git_runs_on_node`.
-
-    1.4.2: Identical `status` calls from deliveries of two machines never share one
-    in-flight result. Identical calls from the same machine still coalesce. test:
-    `tests/hooks/test_node_origin_git.py::test_status_coalescing_is_machine_scoped`.
-
-    1.4.3: An unavailable node, a truncated reply and an `env` override each yield
-    `GitFailed` whose detail carries the diagnostic, and the env case sends nothing.
-    test: `tests/hooks/test_node_origin_git.py::test_unanswered_node_git_fails_with_diagnostic`.
-
-    1.4.4: In a node delivery, `_git_out`, `_git_ignored` and `_positional_checkout_is_path`
-    send their git and existence checks to the node and start no local process. Local
-    deliveries spawn as before. test: `tests/hooks/test_node_origin_git.py::test_sync_git_sites_route_by_origin`.
-
-    1.4.5: For a local `git checkout <file>`, a relative operand that exists under
-    the command''s `cwd` but not under the daemon''s process cwd proves path mode.
-    test: `tests/hooks/test_node_origin_git.py::test_positional_checkout_joins_relative_operand_to_cwd`.'
-  labels:
-  - covers:hook-envelope-file-facts:1.4:1.4.1
-  - covers:hook-envelope-file-facts:1.4:1.4.2
-  - covers:hook-envelope-file-facts:1.4:1.4.3
-  - covers:hook-envelope-file-facts:1.4:1.4.4
-  - covers:hook-envelope-file-facts:1.4:1.4.5
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: Node events take their project from the node's checkout rows
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '2.1.1: A node event with no explicit or session project takes
-    the project of the node''s longest checkout row enclosing its cwd. A hub marker
-    at the same path is never read, and no checkout row is registered. test: `tests/hooks/test_node_origin_project.py::test_node_cwd_resolves_from_node_rows`.
-
-    2.1.2: A node event whose cwd matches no row of its machine raises the no-project
-    `ValueError` naming `checkout_read_unavailable: no_checkout_row` and the machine.
-    A node event with an unusable cwd is skipped without the daemon''s current-context
-    project. test: `tests/hooks/test_node_origin_project.py::test_node_cwd_without_row_fails_closed`.
-
-    2.1.3: For a node event, `_resolve_project_path` returns the node''s checkout
-    row root when the worktree root is absent or equals it, and the worktree root
-    otherwise. It never calls `require_local_machine_id` or resolves a path on the
-    hub. test: `tests/hooks/test_node_origin_project.py::test_node_project_path_uses_node_row`.
-
-    2.1.4: After the move, the no-repo project set and predicate are unchanged. test:
-    `tests/workflows/test_workflow_hooks.py::TestProjectPathResolution.test_no_repo_project_ids_include_constants_and_legacy_literals`.
-
-    2.1.5: A remote event whose session ids name another machine''s rows takes its
-    project from its own machine''s checkout row for its cwd, never from those rows.
-    test: `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.1:2.1.1
-  - covers:hook-envelope-file-facts:2.1:2.1.2
-  - covers:hook-envelope-file-facts:2.1:2.1.3
-  - covers:hook-envelope-file-facts:2.1:2.1.4
-  - covers:hook-envelope-file-facts:2.1:2.1.5
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: Path primitives and write scope use node facts
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '2.2.1: For a node event, tool paths, the project root, checkout
-    roots, git common dirs and the managed-path verdict come from the node''s facts.
-    A hub file, symlink or `.git` at the same paths changes none of them. test: `tests/hooks/test_node_origin_path_scope.py::test_node_path_primitives_use_node_facts`.
-
-    2.2.2: `classify_git_mutation` for a node `git` command takes its checkout root
-    from the node, and a local command still resolves on the hub. test: `tests/hooks/test_node_origin_path_scope.py::test_git_mutation_checkout_root_by_origin`.
-
-    2.2.3: `write_paths_within` admits a node write under an allowed project directory
-    by the node''s resolved path, refuses one whose node path escapes through a symlink,
-    and answers `False` when the node is unavailable. test: `tests/hooks/test_node_origin_path_scope.py::test_node_write_scope`.
-
-    2.2.4: In plan mode, a node write to the project''s `.gobby/plans/x.md` and to
-    the provider scratch directory under the node''s home is allowed. A node source
-    file is refused, and an unavailable node refuses every write. test: `tests/hooks/test_node_origin_path_scope.py::test_node_plan_mode_writes`.
-
-    2.2.5: An unavailable node during normalization of a node `Write` blocks the critical
-    hook with the diagnostic in its reason. test: `tests/hooks/test_node_origin_path_scope.py::test_unavailable_normalization_fails_closed`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.2:2.2.1
-  - covers:hook-envelope-file-facts:2.2:2.2.2
-  - covers:hook-envelope-file-facts:2.2:2.2.3
-  - covers:hook-envelope-file-facts:2.2:2.2.4
-  - covers:hook-envelope-file-facts:2.2:2.2.5
-  tdd: true
-  source_section: '2.2'
-  implementation_domain: backend
-- title: Monolith guard reads node files
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '2.3.1: A node `Write` that takes a node file from 990 to 1,000
-    lines is listed, and one that keeps it at 995 lines is not. A different file at
-    the same path on the hub does not change either answer. test: `tests/workflows/test_node_origin_monolith.py::test_node_projection_reads_node_file`.
-
-    2.3.2: The ledger recount for a node session counts the node''s files in one batched
-    read per 256 paths. test: `tests/workflows/test_node_origin_monolith.py::test_node_ledger_recount_batches`.
-
-    2.3.3: An unavailable node, or a truncated read under the limit, lists the guard
-    path with the diagnostic, so the rule blocks. test: `tests/workflows/test_node_origin_monolith.py::test_unanswered_node_lists_diagnostic`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.3:2.3.1
-  - covers:hook-envelope-file-facts:2.3:2.3.2
-  - covers:hook-envelope-file-facts:2.3:2.3.3
-  tdd: true
-  source_section: '2.3'
-  implementation_domain: backend
-- title: Rust TDD evidence reads node files
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '2.4.1: A node edit that adds only a `#[test]` function inside
-    the node file''s `cfg(test)` module is test-only, judged from the node''s text
-    while the hub has no file at that path. test: `tests/workflows/test_node_origin_rust_tdd.py::test_node_rust_test_edit_reads_node_text`.
-
-    2.4.2: An unavailable node, or a truncated prior text, makes the edit not test-only,
-    including a full-content `Write`. test: `tests/workflows/test_node_origin_rust_tdd.py::test_unanswered_node_is_not_test_only`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.4:2.4.1
-  - covers:hook-envelope-file-facts:2.4:2.4.2
-  tdd: true
-  source_section: '2.4'
-  implementation_domain: backend
-- title: Code navigation reads node files
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '2.5.1: A whole-file read of a 40-line node file counts as
-    narrow, and of a node file over the scan limit as broad, from the node''s bytes
-    while the hub has no file at that path. test: `tests/hooks/test_node_origin_code_navigation.py::test_node_line_count_reads_node_bytes`.
-
-    2.5.2: The ignore decision for a node path uses the node''s checkout root and
-    the node''s `.gobby/gcode.json` allowlist. test: `tests/hooks/test_node_origin_code_navigation.py::test_node_ignore_decision_uses_node_config`.
-
-    2.5.3: An unavailable node makes the read unverified (broad) and the allowlist
-    empty. test: `tests/hooks/test_node_origin_code_navigation.py::test_unanswered_node_keeps_enforcement`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.5:2.5.1
-  - covers:hook-envelope-file-facts:2.5:2.5.2
-  - covers:hook-envelope-file-facts:2.5:2.5.3
-  tdd: true
-  source_section: '2.5'
-  implementation_domain: backend
-- title: Node edits record the node's checkout, and ledger owners are machine-scoped
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '2.6.1: A node edit attributes `(project_root, relative path)`
-    from the node''s facts, and a hub marker at the same path is never read. A node
-    path outside the project, or in another project, is not attributed. test: `tests/hooks/test_node_origin_edits.py::test_node_edit_pair_uses_node_facts`.
-
-    2.6.2: With the node unavailable, a node edit under the node''s checkout row is
-    attributed by its lexical path, and one outside the row is not. test: `tests/hooks/test_node_origin_edits.py::test_unavailable_node_edit_pair_is_lexical`.
-
-    2.6.3: A node edit triggers no hub code-index update. test: `tests/hooks/test_node_origin_edits.py::test_node_edit_skips_hub_code_index`.
-
-    2.6.4: A hub session and a node session hold the same path in checkouts with the
-    same absolute root. Each machine''s ownership check counts only its own sessions.
-    test: `tests/hooks/test_node_origin_edits.py::test_live_path_owners_are_machine_scoped`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.6:2.6.1
-  - covers:hook-envelope-file-facts:2.6:2.6.2
-  - covers:hook-envelope-file-facts:2.6:2.6.3
-  - covers:hook-envelope-file-facts:2.6:2.6.4
-  tdd: true
-  source_section: '2.6'
-  implementation_domain: backend
-- title: Shell classification reads node executables
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.2'
-  validation_criteria: '2.7.1: A node `./run.sh` is classified from the node''s shebang
-    and script body, and a node Mach-O header is classified as native, while the hub
-    has no file at either path. test: `tests/hooks/test_node_origin_shell.py::test_node_executable_classified_from_node_bytes`.
-
-    2.7.2: A node `cp a.txt dest` treats `dest` as a directory only when the node
-    reports `dir`. test: `tests/hooks/test_node_origin_shell.py::test_node_transfer_destination_kind`.
-
-    2.7.3: An unavailable node while classifying a node shell command blocks the critical
-    hook with the diagnostic. test: `tests/hooks/test_node_origin_shell.py::test_unanswered_node_shell_fails_closed`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.7:2.7.1
-  - covers:hook-envelope-file-facts:2.7:2.7.2
-  - covers:hook-envelope-file-facts:2.7:2.7.3
-  tdd: true
-  source_section: '2.7'
-  implementation_domain: backend
-- title: Node events skip hub-only effects
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '2.8.1: A node `WorktreeCreate` or `WorktreeRemove` answers
-    allow, and creates or removes no hub worktree or directory. test: `tests/hooks/test_node_origin_dispositions.py::test_node_worktree_hooks_touch_nothing_on_hub`.
-
-    2.8.2: Node Claude and Grok spill notices keep their text, and a node Codex payload
-    recovers no transcript result, even with matching files on the hub. test: `tests/hooks/test_node_origin_dispositions.py::test_node_provider_files_are_not_read`.
-
-    2.8.3: A node shell command gets no rtk rewrite, and runs as written. test: `tests/hooks/test_node_origin_dispositions.py::test_node_shell_skips_rtk_rewrite`.
-
-    2.8.4: A node event matching `impeccable/design-detector` spawns no process. test:
-    `tests/hooks/test_node_origin_dispositions.py::test_node_run_command_spawns_nothing`.
-
-    2.8.5: A node-owned session''s turn end with no task disposition gets `()` from
-    `_terminal_failures`, and no node read is sent. test: `tests/hooks/test_node_origin_dispositions.py::test_node_found_work_terminal_evidence_is_empty`.'
-  labels:
-  - covers:hook-envelope-file-facts:2.8:2.8.1
-  - covers:hook-envelope-file-facts:2.8:2.8.2
-  - covers:hook-envelope-file-facts:2.8:2.8.3
-  - covers:hook-envelope-file-facts:2.8:2.8.4
-  - covers:hook-envelope-file-facts:2.8:2.8.5
-  tdd: true
-  source_section: '2.8'
-  implementation_domain: backend
-- title: Live node-origin checkout reads
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  - '2.1'
-  - '2.2'
-  - '2.3'
-  validation_criteria: '3.1.1: With the node connected, a node-origin `Write` that
-    takes `src/app.py` to 1,000 lines is blocked by `require-decompose-monolith-before-threshold-write`,
-    and one that keeps it at 995 lines is allowed. test: `tests/e2e/test_hub_node_checkout_read.py::test_node_file_drives_monolith_gate`.
-
-    3.1.2: After the node daemon stops, the 995-line `Write` is blocked with `checkout_read_unavailable`
-    and the node''s machine, although `src/app.py` is readable at that path on the
-    hub''s disk. test: `tests/e2e/test_hub_node_checkout_read.py::test_offline_node_fails_closed`.'
-  labels:
-  - covers:hook-envelope-file-facts:3.1:3.1.1
-  - covers:hook-envelope-file-facts:3.1:3.1.2
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-```

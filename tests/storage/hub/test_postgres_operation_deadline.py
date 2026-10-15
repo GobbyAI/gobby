@@ -45,7 +45,7 @@ def database() -> Iterator[PostgresHubDatabase]:
 pytestmark = pytest.mark.integration
 
 
-def _connection_state(txn: Transaction) -> tuple[int, str, str]:
+def _connection_state(txn: Transaction | PostgresHubDatabase) -> tuple[int, str, str]:
     row = txn.execute(
         "SELECT pg_backend_pid() AS pid, "
         "current_setting('statement_timeout') AS statement_timeout, "
@@ -101,6 +101,39 @@ def test_compound_query_is_rejected_before_any_statement_runs(
                 )
     # Sequence increments survive rollback, so this proves pre-execution rejection.
     assert database.fetchone("SELECT is_called FROM rejected_batch_probe") == {"is_called": False}
+
+
+def test_parameterized_statements_reject_batches_without_a_pipeline(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Parameters already select the extended protocol, so a per-statement
+    # pipeline only cost GIL time (#23359).
+    pipelines: list[str] = []
+    original = psycopg.Connection.pipeline
+
+    def recording(self: psycopg.Connection[Any], *args: Any, **kwargs: Any) -> Any:
+        pipelines.append("PIPELINE")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "pipeline", recording)
+    database.execute("CREATE TEMP SEQUENCE rejected_param_batch_probe")
+
+    with database_operation_deadline(timeout_seconds=5):
+        with database.transaction() as txn:
+            assert txn.execute("SELECT %s::int AS n", (7,)).fetchone() == {"n": 7}
+    with pytest.raises(psycopg.errors.SyntaxError, match="multiple commands"):
+        with database_operation_deadline(timeout_seconds=5):
+            with database.transaction() as txn:
+                txn.execute(
+                    "SELECT nextval('rejected_param_batch_probe'), %s::int; SELECT pg_sleep(.07)",
+                    (1,),
+                )
+
+    assert pipelines == []
+    assert database.fetchone("SELECT is_called FROM rejected_param_batch_probe") == {
+        "is_called": False
+    }
 
 
 def test_bounded_statements_allow_quoted_semicolons_and_do_bodies(
@@ -440,14 +473,16 @@ def test_failed_autocommit_read_returns_the_connection_transactional(
     assert database.fetchone("SELECT 3 AS n") == {"n": 3}
 
 
-def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
+def test_writes_and_ambient_reads_stay_transactional_while_deadline_reads_autocommit(
     database: PostgresHubDatabase,
     opened_transactions: list[str],
 ) -> None:
     database.execute("CREATE TEMP TABLE decision_seven (n int)")
-    inserted = database.fetchone(
-        "INSERT INTO decision_seven VALUES (1) RETURNING now() = statement_timestamp() AS fresh"
-    )
+    # The deadline transaction also reads this connection's session timeouts.
+    with database_operation_deadline(timeout_seconds=5):
+        inserted = database.fetchone(
+            "INSERT INTO decision_seven VALUES (1) RETURNING now() = statement_timestamp() AS fresh"
+        )
     assert inserted == {"fresh": False}
 
     with database.transaction() as txn:
@@ -457,11 +492,74 @@ def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
         assert database.fetchone("SELECT count(*) AS n FROM decision_seven") == {"n": 2}
         assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
 
-    # Deadline bounds are SET LOCAL, which only a transaction block honors.
+    # A deadline read is bounded by a local set_config in its own pipeline,
+    # without BEGIN, SET LOCAL or COMMIT (#23359).
     with database_operation_deadline(timeout_seconds=5):
-        assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
+        _, *bounds = _connection_state(database)
+    assert all(0 < int(value.removesuffix("ms")) <= 5000 for value in bounds)
 
-    assert len(opened_transactions) == 4
+    assert len(opened_transactions) == 3
+
+
+def _seed_session_timeouts(database: PostgresHubDatabase) -> None:
+    with database_operation_deadline(timeout_seconds=5):
+        with database.transaction() as txn:
+            txn.execute("SELECT 1")
+
+
+def test_deadline_lone_read_never_loosens_a_stricter_session_timeout(
+    database: PostgresHubDatabase,
+    opened_transactions: list[str],
+) -> None:
+    database.execute("SET statement_timeout = '1500ms'")
+    database.execute("SET lock_timeout = '1200ms'")
+    _seed_session_timeouts(database)
+    opened_transactions.clear()
+
+    with database_operation_deadline(timeout_seconds=5):
+        loose = _connection_state(database)
+    with database_operation_deadline(timeout_seconds=1):
+        tight = _connection_state(database)
+
+    assert loose[1:] == ("1500ms", "1200ms")
+    assert all(0 < int(value.removesuffix("ms")) <= 1000 for value in tight[1:])
+    assert opened_transactions == []
+    assert _connection_state(database)[1:] == ("1500ms", "1200ms")
+
+
+@pytest.mark.parametrize(
+    ("sql", "error"),
+    [
+        ("SELECT pg_sleep(1)", psycopg.errors.QueryCanceled),
+        (
+            "SELECT pg_advisory_xact_lock(hashtext('lone-deadline-read'))",
+            psycopg.errors.LockNotAvailable,
+        ),
+    ],
+)
+def test_deadline_lone_read_timeouts_leave_the_pooled_session_unchanged(
+    database: PostgresHubDatabase,
+    opened_transactions: list[str],
+    sql: str,
+    error: type[psycopg.Error],
+) -> None:
+    # The session lock bound is the stricter one, so the lock wait fails first.
+    database.execute("SET lock_timeout = '100ms'")
+    _seed_session_timeouts(database)
+    before = _connection_state(database)
+    opened_transactions.clear()
+
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as holder:
+        holder.execute("SELECT pg_advisory_lock(hashtext('lone-deadline-read'))")
+        with pytest.raises(error):
+            with database_operation_deadline(timeout_seconds=0.3):
+                database.fetchone(sql)
+
+    assert opened_transactions == []
+    assert _connection_state(database) == before
+    assert before[1:] == ("0", "100ms")
+    with database._pool.connection() as connection:
+        assert connection.autocommit is False
 
 
 _TYPED_ROW = (

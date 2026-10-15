@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import ParsedShellCommand
@@ -28,7 +31,23 @@ _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-_SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
+_SHELL_COMMAND_WRAPPERS = {
+    "bash",
+    "fish",
+    "sh",
+    "zsh",
+    "dash",
+    "ksh",
+    "mksh",
+    "ash",
+    "yash",
+    "csh",
+    "tcsh",
+}
+_INTERPRETER_EXECUTABLE = re.compile(
+    r"(php|bun|deno|osascript|lua|luajit|rscript|r)(?:\d+(?:\.\d+)*)?"
+)
+_OPAQUE_LAUNCHER_HEADS = {"su", "doas", "eval", "script", "watch", "ssh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
 _PYTHON_EXECUTABLE = re.compile(
     r"(?:python|cpython|pypy|graalpy|pyodide)(?:\d+(?:\.\d+)*)?t?(?:@[\s\S]+)?"
@@ -67,6 +86,11 @@ _UV_VALUE_OPTIONS = frozenset(
         "--index-strategy",
         "--find-links",
         "--keyring-provider",
+        "--link-mode",
+        "--prerelease",
+        "--exclude-newer",
+        "--no-binary-package",
+        "--resolution",
         "-C",
         "-p",
         "-w",
@@ -153,6 +177,159 @@ def classify_validation_command_equivalence(command: str) -> ValidationCommandEq
     if reason is not None:
         return ValidationCommandEquivalence(None, True, reason)
     return ValidationCommandEquivalence(core_command, False, None)
+
+
+def unregistered_execution_reason(
+    command: str, project_path: str | None = None, *, workdir: str | None = None
+) -> str | None:
+    """Require known validation semantics for interpreter and launcher criteria."""
+    parsed = parse_validation_shell(command)
+    initial_directory = workdir or project_path
+    directory = Path(initial_directory) if initial_directory is not None else None
+    for segment in parsed.segments:
+        if segment[:1] == ("cd",):
+            directory = directory / segment[1] if directory and len(segment) == 2 else None
+            continue
+        if segment[:1] == ("export",):
+            continue
+        directories: list[str | None] = []
+        resolved = _first_executable(
+            parse_validation_shell(_strip_exit_preserving_prefixes(shlex.join(segment))),
+            directories=directories,
+        )
+        if resolved is None:
+            return "ambiguous launcher"
+        executable, arguments = resolved
+        opaque = (
+            executable in _OPAQUE_LAUNCHER_HEADS
+            or (
+                executable == "find"
+                and any(arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in arguments)
+            )
+            or (executable == "npx" and "-c" in arguments)
+            or (executable == "make" and "-f" in arguments)
+        )
+        interpreter = (
+            executable in _SHELL_COMMAND_WRAPPERS | _NODE_WRAPPERS
+            or _INTERPRETER_EXECUTABLE.fullmatch(executable)
+            or _PYTHON_EXECUTABLE.fullmatch(executable)
+            or _SCRIPT_EXECUTABLE.fullmatch(executable)
+        )
+        if not opaque and not interpreter:
+            continue
+        config = resolve_validation_detection_config(project_path=project_path)
+        if is_validation_command(shlex.join((executable, *arguments)), config):
+            continue
+        script_directory = directory
+        for override in directories:
+            script_directory = (
+                script_directory / override if script_directory and override else None
+            )
+        script = _script_argument(executable, arguments, script_directory) if interpreter else None
+        if script and _tracked_script(script, project_path, script_directory):
+            continue
+        return "unregistered interpreter or launcher"
+    return None
+
+
+def _script_argument(
+    executable: str, arguments: tuple[str, ...], directory: Path | None
+) -> str | None:
+    head = _INTERPRETER_EXECUTABLE.fullmatch(executable)
+    family = head.group(1) if head is not None else executable
+    if family == "deno":
+        # Its first operand is a mode, including inline `eval`, never the script.
+        if arguments[:1] != ("run",):
+            return None
+        arguments = arguments[1:]
+    elif family == "bun":
+        return _bun_script_argument(arguments, directory)
+    options = iter(arguments)
+    for argument in options:
+        if argument == "--":
+            return next(options, None)
+        if not argument.startswith(("-", "+")):
+            return argument
+        if not _PYTHON_EXECUTABLE.fullmatch(executable):
+            return None
+        if argument == "--check-hash-based-pycs":
+            next(options, None)
+            continue
+        for index, option in enumerate(argument[1:]):
+            if option in "cm":
+                return None
+            if option in "WX":
+                if index == len(argument) - 2:
+                    next(options, None)
+                break
+    return None
+
+
+def _bun_script_argument(arguments: tuple[str, ...], directory: Path | None) -> str | None:
+    package_mode = arguments[:1] == ("run",)
+    if package_mode:
+        arguments = arguments[1:]
+    if not arguments or arguments[0].startswith(("-", "+")):
+        return None
+    script = arguments[0]
+    if Path(script).is_absolute() or script.startswith(("./", ".\\")):
+        return script  # Explicit paths always select files, even with a same-name package script.
+    if not package_mode:
+        # Naked Bun subcommands win over bare names; recognized source suffixes select files.
+        return (
+            script
+            if Path(script).suffix
+            in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".mts", ".cjs", ".cts", ".sh"}
+            else None
+        )
+    if directory is None:
+        return None
+    try:
+        current = directory.resolve()
+        for parent in (current, *current.parents):
+            try:
+                package = json.loads((parent / "package.json").read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if not isinstance(package, dict):
+                return None
+            scripts = package.get("scripts", {})
+            if not isinstance(scripts, dict) or script in scripts:
+                return None
+            break
+    except (OSError, ValueError):
+        return None
+    return script
+
+
+def _tracked_script(script: str, project_path: str | None, directory: Path | None) -> bool:
+    if not project_path or directory is None or script == "-":
+        return False
+    root = Path(project_path).resolve()
+    path = directory / script
+    try:
+        resolved = path.resolve(strict=True)
+        relative = resolved.relative_to(root)
+        if not resolved.is_file() or resolved != Path(os.path.abspath(path)):
+            return False
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "--literal-pathspecs",
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                str(relative),
+            ],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def wrapped_validation_command(command: object, project_path: str | None = None) -> str | None:
@@ -280,7 +457,9 @@ def _trailing_output_command(parsed: ParsedShellCommand) -> str | None:
     return executable if executable in {"echo", "printf"} else None
 
 
-def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]] | None:
+def _first_executable(
+    parsed: ParsedShellCommand, *, directories: list[str | None] | None = None
+) -> tuple[str, tuple[str, ...]] | None:
     if not parsed.segments or not parsed.segments[0]:
         return None
     tokens = parsed.segments[0]
@@ -290,12 +469,21 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
             continue
         executable = os.path.basename(tokens[0]).lower()
         arguments = tokens[1:]
+        if (
+            executable == "busybox"
+            and arguments
+            and arguments[0].lower() in _SHELL_COMMAND_WRAPPERS
+        ):
+            tokens = arguments
+            continue
         if executable in {"uv", "uvx"}:
             inner = _uv_run_arguments(arguments if executable == "uv" else ("run", *arguments))
             if inner is None:
                 return None
             if inner[0] == "uv" and len(inner) > 1 and inner[1] in _UV_DIRECT_COMMANDS:
                 return "uv", inner[1:]  # Proven direct uv subcommand.
+            if directories is not None:
+                _directory_options(arguments[: len(arguments) - len(inner)], directories)
             tokens = inner
         elif executable in {
             "timeout",
@@ -311,6 +499,8 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
             inner = _launcher_arguments(executable, arguments)
             if inner is None:
                 return None
+            if directories is not None and executable == "sudo":
+                _directory_options(arguments[: len(arguments) - len(inner)], directories)
             tokens = inner
         elif executable in {"env", "rtk"}:
             if arguments[:1] == ("--",):
@@ -323,6 +513,39 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
         else:
             return executable, arguments
     return None
+
+
+def _directory_options(arguments: tuple[str, ...], directories: list[str | None]) -> None:
+    options = iter(arguments)
+    for token in options:
+        option, equals, value = token.partition("=")
+        if option in {"--directory", "--chdir", "-D"}:
+            directories.append(value if equals else next(options, None))
+        elif token.startswith("-D"):
+            directories.append(token[2:] or None)
+        elif option in {"--chroot", "-R"} or token.startswith("-R"):
+            directories.append(None)  # A different filesystem cannot prove repository ownership.
+        elif (
+            option
+            in _UV_VALUE_OPTIONS
+            | {
+                "-u",
+                "-g",
+                "-h",
+                "-p",
+                "-C",
+                "-T",
+                "--user",
+                "--group",
+                "--host",
+                "--prompt",
+                "--close-from",
+                "--command-timeout",
+                "--preserve-env",
+            }
+            and not equals
+        ):
+            next(options, None)
 
 
 def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:

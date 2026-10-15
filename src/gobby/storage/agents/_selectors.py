@@ -42,13 +42,15 @@ class _AgentRunSelectorMixin:
         ``where_clause`` and ``order_by`` must be trusted static SQL fragments
         assembled by this module's query helpers. User values belong in params.
         """
+        # JSON columns are selected as text: the row decoders parse text themselves, so
+        # the pool's jsonb loader would only decode and re-dump them first (#23359).
         detail_columns = """ar.prompt,
                 ar.result,
                 ar.error,
                 ar.sdk_session_id,
                 ar.continuation_prompt,
-                ar.resume_metadata_json,"""
-        list_columns = "ar.resume_metadata_json -> 'sandbox' AS sandbox_metadata,"
+                ar.resume_metadata_json::text AS resume_metadata_json,"""
+        list_columns = "(ar.resume_metadata_json -> 'sandbox')::text AS sandbox_metadata,"
         lifecycle_columns = """'' AS prompt,
                 ar.result,
                 NULL AS error,
@@ -58,7 +60,7 @@ class _AgentRunSelectorMixin:
                     'daemon_stop_resume_phase', ar.resume_metadata_json -> 'daemon_stop_resume_phase',
                     'allow_closed_task', ar.resume_metadata_json -> 'allow_closed_task',
                     'sandbox', ar.resume_metadata_json -> 'sandbox'
-                ) AS resume_metadata_json,"""
+                )::text AS resume_metadata_json,"""
         if lifecycle_projection:
             projected_columns = lifecycle_columns
         elif list_projection:
@@ -85,7 +87,7 @@ class _AgentRunSelectorMixin:
                 ar.status,
                 child_s.status AS child_status,
                 child_s.last_activity AS child_last_activity,
-                child_attention.payload AS child_lifecycle_payload,
+                child_attention.payload::text AS child_lifecycle_payload,
                 COALESCE(coordination.active, FALSE) AS coordination_wait,
                 (COALESCE(coordination.parent_wait, FALSE)
                     OR COALESCE(agent_subscription.parent_wait, FALSE)) AS parent_wait,

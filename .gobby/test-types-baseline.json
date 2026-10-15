@@ -351,16 +351,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_memory_watchdog.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 83,
-      "message": "Argument \"created_at\" to \"AgentRun\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 3,
-      "path": "tests/agents/test_memory_watchdog.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_prompt_detector.py::::mypy:func-returns-value",
       "issue_code": "mypy:func-returns-value",
       "line": 385,

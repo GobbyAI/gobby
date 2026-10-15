@@ -334,21 +334,20 @@ def assert_task_edit_paths_available(
 ) -> None:
     """Refuse live path overlap between claims instead of guessing edit ownership."""
     requested = set(paths)
+    root = normalize_task_checkout_root(checkout_root) or ""
     for other_id, ref in _claimed_tasks(variables).items():
         if other_id == task_id:
             continue
+        # Live intervals, not edit history: a reconciled-clean path is free to claim.
+        live_by_checkout = variables.get("task_live_edit_starts", {}).get(other_id, {})
+        starts = live_by_checkout.get(root, {})
         owned = (
-            task_edited_file_set_for_checkout(variables, other_id, checkout_root)
+            set(starts)
             if checkout_root is not None
-            else task_edited_file_set(variables, other_id)
+            else {path for live in live_by_checkout.values() for path in live}
         )
         overlap = overlapping_task_edit_paths(owned, requested)
         if commit_path_times is not None:
-            starts = (
-                variables.get("task_live_edit_starts", {})
-                .get(other_id, {})
-                .get(normalize_task_checkout_root(checkout_root) or "", {})
-            )
             overlap = {
                 path
                 for path in overlap
