@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import posixpath
 import re
+import shlex
+import tomllib
 from pathlib import PurePosixPath
 
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
@@ -145,8 +147,90 @@ async def resolve_rust_module(
     return module_for(path, frozenset())
 
 
+async def resolve_rust_target(
+    path: str, commit_sha: str, repo_path: str, *, cache: dict[str, str]
+) -> tuple[str, str | None] | None:
+    """Resolve crate-root test identity from the committed Cargo manifest."""
+    parts = PurePosixPath(path).parts
+    root = PurePosixPath(*parts[:2]) if parts[:1] == ("crates",) else PurePosixPath(".")
+    relative = str(PurePosixPath(path).relative_to(root))
+    if relative != "src/lib.rs" and PurePosixPath(relative).parent != PurePosixPath("tests"):
+        return None
+    manifest_path = str(root / "Cargo.toml")
+    if manifest_path not in cache:
+        result = await daemon_git.run(
+            ("show", f"{commit_sha}:{manifest_path}"), cwd=repo_path, timeout=30
+        )
+        cache[manifest_path] = result.stdout if isinstance(result, GitOk) else ""
+    try:
+        manifest = tomllib.loads(cache[manifest_path])
+    except tomllib.TOMLDecodeError:
+        return None
+    package = manifest.get("package", {})
+    if not isinstance(package, dict) or not isinstance(name := package.get("name"), str):
+        return None
+    if relative == "src/lib.rs":
+        library = manifest.get("lib", {})
+        return (
+            (name, None)
+            if isinstance(library, dict) and library.get("path", relative) == relative
+            else None
+        )
+    targets = manifest.get("test", [])
+    if not isinstance(targets, list):
+        return None
+    explicit = [
+        target.get("name")
+        for target in targets
+        if isinstance(target, dict)
+        and target.get("path", f"tests/{target.get('name')}.rs") == relative
+    ]
+    if explicit:
+        return (name, explicit[0]) if len(explicit) == 1 and isinstance(explicit[0], str) else None
+    if any(
+        isinstance(target, dict) and target.get("name") == PurePosixPath(path).stem
+        for target in targets
+    ):
+        return None
+    if package.get("autotests") is False:
+        return None
+    return name, PurePosixPath(path).stem
+
+
+def _root_target_matches(line: str, target: tuple[str, str | None] | None) -> bool:
+    """Require an identified nextest binary or an explicitly selected Cargo target."""
+    if target is None:
+        return False
+    package, binary = target
+    label = f"{package}::{binary}" if binary is not None else package
+    if re.search(rf"^\s*(?:PASS|FAIL|SKIP)\s+\[[^]]+\]\s+{re.escape(label)}\s", line):
+        return True
+    try:
+        args = shlex.split(line)
+    except ValueError:
+        return False
+    if not args or PurePosixPath(args[0]).name != "cargo":
+        return False
+
+    def values(*options: str) -> list[str]:
+        return [
+            args[index + 1] if argument in options else argument.split("=", 1)[1]
+            for index, argument in enumerate(args)
+            if (argument in options and index + 1 < len(args))
+            or any(argument.startswith(f"{option}=") for option in options)
+        ]
+
+    return values("-p", "--package") == [package] and (
+        values("--test") == [binary] if binary is not None else "--lib" in args
+    )
+
+
 def rust_evidence_names_test(
-    evidence: str, path: str, symbol: str, rust_module: tuple[str, ...] | None
+    evidence: str,
+    path: str,
+    symbol: str,
+    rust_module: tuple[str, ...] | None,
+    rust_target: tuple[str, str | None] | None = None,
 ) -> bool:
     """Return whether one evidence line names a Rust test under its source module."""
     if PurePosixPath(path).suffix != ".rs":
@@ -163,14 +247,21 @@ def rust_evidence_names_test(
     symbol = re.escape(symbol)
     if rust_module is not None:
         test_name = f"{module_prefix}::{symbol}" if module_prefix else symbol
-        module_test = re.compile(rf"(?<![\w:]){test_name}\b")
+        module_test = re.compile(rf"(?<![\w:]){test_name}(?![\w:])")
     else:
         module_test = re.compile(rf"(?<![\w:]){module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b")
     integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(path).stem)}\b")
     symbol_word = re.compile(rf"\b{symbol}\b")
 
     return any(
-        module_test.search(line)
+        (
+            module_test.search(line)
+            and (
+                rust_module is None
+                or (path_parts and not (is_integration_test and len(source_parts) == 2))
+                or _root_target_matches(line, rust_target)
+            )
+        )
         or (
             is_integration_test
             and rust_module is None
