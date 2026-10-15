@@ -28,7 +28,8 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
-from gobby.tasks.tdd_retained_output import late_job_output, retained_red_output
+from gobby.tasks.tdd_retained_output import retained_red_output
+from gobby.tasks.transcript_background import output_as_of
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -338,11 +339,7 @@ def _find_red_run(
         if cached is None:
             # Output read back from the job's own file after the production edit
             # was delivered too late to prove a pre-production failure.
-            delivered = (
-                replace(run, output=None)
-                if production_at is not None and late_job_output(run, production_at)
-                else run
-            )
+            delivered = output_as_of(run, production_at) if production_at is not None else run
             cached = _red_run_proof(
                 test,
                 evidence,
