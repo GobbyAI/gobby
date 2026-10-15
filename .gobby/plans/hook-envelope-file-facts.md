@@ -1346,6 +1346,9 @@ Verification planned:
   gobby#15977 accepted, plus one sentence that #24151's Rust port keeps the
   engine on the hub. Josh accepted hub-side evaluation on 2026-10-15. Scope,
   leaves, Targets and acceptance are unchanged.
+- 2026-10-15: V1 consensus. Plan Writer gobby#16490 and Plan Adversary
+  gobby#16791 agree on this plan at `62d13774c7`, with no open findings.
+  Option (4) is a closed rejection, and bare validation exits 0.
 
 ## V2: Verification
 `kind: verification`
