@@ -260,7 +260,7 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
     from gobby.sessions.handoff import HANDOFF_DELIVERY_FAILURES_VARIABLE
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
-    from gobby.workflows.commit_guard import _active_path_owners
+    from gobby.workflows.commit_guard import _live_path_owners
     from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
 
     manager = SessionVariableManager(temp_db)
@@ -301,7 +301,12 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
         )
         manager.merge_variables(
             mutation_session,
-            {"task_edited_file_checkouts": {task.id: {str(tmp_path): ["owned.py"]}}},
+            {
+                "session_dirty_files": ["owned.py"],
+                "session_dirty_file_checkouts": {str(tmp_path): ["owned.py"]},
+                "claimed_tasks": {task.id: f"#{task.seq_num}"},
+                "task_edited_file_checkouts": {task.id: {str(tmp_path): ["owned.py"]}},
+            },
         )
     decode_sizes: list[int] = []
     decode = state_manager._decode_variables_payload
@@ -411,9 +416,7 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
             assert new_lessons == [{"memory_id": "new"}]
     elif operation == "path-owners":
         assert task is not None
-        owners = _active_path_owners(
-            temp_db, project_id=session.project_id, checkout_root=str(tmp_path)
-        )
+        owners = _live_path_owners(temp_db, checkout_root=str(tmp_path))
         assert set(owners) == {"owned.py"}
         assert owners["owned.py"][0].owner_task_id == task.id
         assert owners["owned.py"][0].owner_session_id == mutation_session

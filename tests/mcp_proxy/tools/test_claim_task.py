@@ -55,7 +55,7 @@ async def test_claim_task_ignores_foreign_dirty_declared_paths(
             return_value=[MagicMock(file_path="foreign.py", annotation_source="manual")],
         ),
         patch(
-            "gobby.workflows.commit_guard._active_path_owners",
+            "gobby.workflows.commit_guard._live_path_owners",
             return_value={"foreign.py": (owner,)},
         ),
         session_context_for_test(session_id="my-session-id"),
