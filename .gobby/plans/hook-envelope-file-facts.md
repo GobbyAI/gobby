@@ -1322,6 +1322,10 @@ Verification planned:
     forms.
   - 1.4 flags the 1.4.5 fix as a deliberate local behavior change, as
     #15977 asked.
+- 2026-10-14: V1 consensus. Plan Writer gobby#16764 and Plan Adversary
+  gobby#16791 agree on this plan at `331dd26498`, with no open findings.
+  HE-1, HE-2 and HE-3 are closed, and bare validation exits 0 with no
+  warnings.
 
 ## V2: Verification
 `kind: verification`
