@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +29,13 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 pytestmark = pytest.mark.unit
 
 _REAL_MACHINE_ID = "21000000-0000-4000-8000-000000000009"
+
+
+@pytest.fixture(autouse=True)
+def _hub_machine_identity() -> Iterator[None]:
+    """These hooks come from the hub's own machine, so they bind any session row."""
+    with patch("gobby.utils.machine_id._cached_machine_id", _REAL_MACHINE_ID):
+        yield
 
 
 def _event(

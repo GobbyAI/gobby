@@ -33,6 +33,9 @@ def session_binds_event(row_machine_id: str | None, event_machine_id: str | None
 
 def bound_session[S: _MachineOwned](session: S | None, event_machine_id: str | None) -> S | None:
     """Return a matched row, or ``None`` when the event may not bind it."""
-    if session is None or not session_binds_event(session.machine_id, event_machine_id):
+    if session is None:
         return None
-    return session
+    # A hub event binds any row, so it never needs to read the row's machine.
+    if is_hub_machine_event(event_machine_id):
+        return session
+    return session if session_binds_event(session.machine_id, event_machine_id) else None

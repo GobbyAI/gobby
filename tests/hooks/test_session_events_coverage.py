@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +23,13 @@ from ._event_handler_helpers import empty_database_mock
 pytestmark = pytest.mark.unit
 
 TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _hub_machine_identity() -> Iterator[None]:
+    """These hooks come from the hub's own machine, so they bind any session row."""
+    with patch("gobby.utils.machine_id._cached_machine_id", TEST_MACHINE_ID):
+        yield
 
 
 # ---------------------------------------------------------------------------

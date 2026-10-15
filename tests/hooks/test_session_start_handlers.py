@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -36,7 +37,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager, StartupContextClaim
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
-from ._event_handler_helpers import make_event
+from ._event_handler_helpers import TEST_MACHINE_ID, make_event
 
 pytestmark = pytest.mark.unit
 
@@ -554,6 +555,12 @@ class TestSessionStartContextClaim:
 
 class TestSessionStartPreCreatedSession:
     """Test SESSION_START handling for pre-created sessions (terminal mode agents)."""
+
+    @pytest.fixture(autouse=True)
+    def _hub_machine_identity(self) -> Iterator[None]:
+        """These hooks come from the hub's own machine, so they bind any session row."""
+        with patch("gobby.utils.machine_id._cached_machine_id", TEST_MACHINE_ID):
+            yield
 
     def test_pre_created_session_requires_envelope_machine_id(
         self,
@@ -1786,6 +1793,7 @@ class TestSessionStartNewSession:
         row = MagicMock()
         row.id = "sess-123"
         row.status = "awaiting_handoff"
+        row.machine_id = TEST_MACHINE_ID
         row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         mock_dependencies["session_storage"].get.return_value = None
