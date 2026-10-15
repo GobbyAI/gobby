@@ -10,6 +10,12 @@ pub struct RosterEntry {
     pub entry_id: String,
     pub run_id: Option<String>,
     pub session_id: Option<String>,
+    /// The machine hosting the subject, across the hub.
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// The subject's project, the parent's for a run without its own.
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub lifecycle_status: Option<String>,
     /// Applied seat title, independent of the session's current task title.
     pub definition_title: Option<String>,

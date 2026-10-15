@@ -22,7 +22,7 @@ fn view_menu_exposes_sidebar_controls_without_a_section_tree() {
         [
             "  Show sidebar",
             "  Pin sidebar",
-            "✓ Show all machines",
+            "  Show all machines",
             "✓ Show all projects",
             "✓ Group agents by project",
         ]
@@ -339,7 +339,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             "  Monochrome",
             "  Show sidebar",
             "  Pin sidebar",
-            "✓ Show all machines",
+            "  Show all machines",
             "✓ Show all projects",
             "✓ Group agents by project",
         ]
@@ -352,7 +352,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::ToggleMonochrome,
             MenuAction::Act(Action::ToggleSidebar),
             MenuAction::PinSidebar,
-            MenuAction::SetMachineScope(false),
+            MenuAction::SetMachineScope(true),
             MenuAction::Act(Action::ToggleProjectsFilter),
             MenuAction::Act(Action::ToggleSessionsScope),
         ]
@@ -520,7 +520,7 @@ fn view_grouping_control_marks_the_value_in_force() {
     assert_eq!(
         items(&chrome),
         [
-            ("✓ Show all machines", true),
+            ("  Show all machines", true),
             ("✓ Show all projects", true),
             ("✓ Group agents by project", true),
         ]
@@ -530,7 +530,7 @@ fn view_grouping_control_marks_the_value_in_force() {
     assert_eq!(
         items(&chrome),
         [
-            ("✓ Show all machines", true),
+            ("  Show all machines", true),
             ("✓ Show all projects", true),
             ("  Group agents by project", true),
         ]

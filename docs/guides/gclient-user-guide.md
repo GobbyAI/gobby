@@ -114,7 +114,7 @@ Monochrome** toggles monochrome (below). View also holds:
 | --- | --- |
 | Show sidebar | toggles the sidebar |
 | Pin sidebar | pins it beside the content, or unpins it to an overlay |
-| Show all machines | checked by default; unchecked limits rows to the local machine |
+| Show all machines | unchecked by default, so a new window lists this machine's rows; checked lists every machine on the hub |
 | Show all projects | checked by default; unchecked limits projects and agents to the current project |
 | Group agents by project | groups agents under project headings; disabled while Show all projects is unchecked |
 

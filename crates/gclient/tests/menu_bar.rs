@@ -246,7 +246,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "  Monochrome",
             "  Show sidebar",
             "  Pin sidebar",
-            "✓ Show all machines",
+            "  Show all machines",
             "✓ Show all projects",
             "✓ Group agents by project",
         ]

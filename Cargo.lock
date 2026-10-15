@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.43"
+version = "0.1.44"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
