@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.text import Text
+
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
@@ -15,7 +17,7 @@ from gobby.hooks.effect_deadline import (
     blocking_budget_overrun,
     elapsed_blocking_effect_seconds,
 )
-from gobby.hooks.events import HookEvent, SessionSource
+from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 from gobby.integrations.rtk import resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.utils import spawn
@@ -223,7 +225,7 @@ class ProxyHooksMixin:
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None,
-    ) -> bool:
+    ) -> bool | HookResponse:
         try:
             capabilities = get_provider_capabilities(event.source)
         except KeyError:
@@ -247,14 +249,14 @@ class ProxyHooksMixin:
                     handler,
                 )
                 continue
-            changed = (
-                await self._run_rtk_proxy(
-                    invocation,
-                    event,
-                    blocking_deadline=blocking_deadline,
-                )
-                or changed
+            outcome = await self._run_rtk_proxy(
+                invocation,
+                event,
+                blocking_deadline=blocking_deadline,
             )
+            if isinstance(outcome, HookResponse):
+                return outcome
+            changed = outcome or changed
         return changed
 
     async def _run_rtk_proxy(
@@ -263,7 +265,7 @@ class ProxyHooksMixin:
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None,
-    ) -> bool:
+    ) -> bool | HookResponse:
         tool_input = event.data.get("tool_input")
         if not isinstance(tool_input, dict):
             return False
@@ -336,6 +338,12 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
+        if code == 2 and stdout.strip():
+            # RTK pipeline denials carry a message; an empty exit 2 delegates
+            # the original command to the host's existing permission rules.
+            message = Text.from_ansi(stdout[:4096].decode("utf-8", errors="replace")).plain
+            reason = "".join(c for c in message if c.isprintable() or c in "\n\t").strip()
+            return HookResponse(decision="block", reason=reason or "RTK pipeline denied command.")
         if code not in {0, 3}:
             detail_bytes = stderr or stdout
             detail = detail_bytes[:512].decode("utf-8", errors="replace").strip()

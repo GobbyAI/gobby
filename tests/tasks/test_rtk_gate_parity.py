@@ -1,0 +1,287 @@
+"""RTK command/output forms must preserve close-gate credit and failure attribution."""
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gobby.config.validation_detection import default_validation_detection_config
+from gobby.storage.session_models import Session
+from gobby.tasks.acceptance_artifacts import AcceptanceTest
+from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.criteria_contract import operational_actions_from_command
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.transcript_evidence import _derive_transcript_path_evidence
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence
+from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence
+
+pytestmark = pytest.mark.unit
+START = datetime(2026, 10, 16, tzinfo=UTC)
+TEST = "tests/test_feature.py"
+SOURCE = "src/feature.py"
+RECALL = "d1965a04eb04"
+FORMS = ("bare", "hook", "explicit", "proxy", "bypass")
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "rtk"
+
+
+def _wrapped(command: str, form: str) -> str:
+    if form == "bare":
+        return command
+    if form == "hook":
+        if command.startswith("uv run "):
+            return command.replace("uv run ", "uv run rtk ", 1)
+        return f"rtk {command}"
+    if form == "explicit":
+        return f"rtk {command}"
+    return f"rtk {form} {command}"
+
+
+def _pair(
+    at: int, name: str, arguments: dict[str, Any], output: str, code: int = 0
+) -> list[dict[str, Any]]:
+    call_id = f"call-{at}"
+    return [
+        {
+            "type": "assistant",
+            "timestamp": (START + timedelta(seconds=at)).isoformat(),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": call_id, "name": name, "input": arguments}],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": (START + timedelta(seconds=at + 1)).isoformat(),
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": output,
+                        "is_error": code != 0,
+                    }
+                ],
+            },
+        },
+    ]
+
+
+def _derive(tmp_path: Path, records: list[dict[str, Any]]) -> TranscriptEvidence:
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    session = Session(
+        id="rtk-parity",
+        external_id="fixture",
+        machine_id="isolated",
+        source="claude",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=START,
+        updated_at=START,
+    )
+    evidence, _ = _derive_transcript_path_evidence(
+        session,
+        str(transcript),
+        START,
+        default_validation_detection_config(),
+        {TEST, SOURCE},
+        str(tmp_path),
+        frozenset((str(tmp_path), path) for path in (TEST, SOURCE)),
+        [str(transcript)],
+        resume=None,
+    )
+    return evidence
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("code", [0, 1])
+def test_gate10_pytest_audit_and_criteria_parity(tmp_path: Path, form: str, code: int) -> None:
+    pytest_command = f"uv run pytest {TEST} -q"
+    audit = (
+        f"uv run gobby test-types audit {TEST} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    records = _pair(
+        0,
+        "Bash",
+        {"command": _wrapped(pytest_command, form)},
+        "Pytest: 1 passed" if code == 0 else "Pytest: 0 passed, 1 failed",
+        code,
+    )
+    records += _pair(2, "Bash", {"command": _wrapped(audit, form)}, "0 new type findings")
+    evidence = _derive(tmp_path, records)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{pytest_command}`.",
+        changed_paths=(TEST,),
+        close_root=str(tmp_path),
+    )
+    assert gate.passed is (code == 0), gate.to_dict()
+    assert gate.details["test_types_audit_uncovered_paths"] == [], gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == ([] if code == 0 else [TEST])
+    assert gate.details["criterion_commands"][0]["satisfied"] is (code == 0)
+    assert evidence.validation_runs[0].outcome == ("success" if code == 0 else "failure")
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("code", [0, 1])
+def test_gate10_vitest_related_parity(tmp_path: Path, form: str, code: int) -> None:
+    command = "bunx vitest related src/feature.ts --run"
+    records = _pair(
+        0,
+        "Bash",
+        {"command": f"cd web && {_wrapped(command, form)}"},
+        "Tests  1 passed (1)" if code == 0 else "Tests  1 failed (1)",
+        code,
+    )
+    evidence = _derive(tmp_path, records)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=("web/src/feature.ts",),
+        close_root=str(tmp_path),
+    )
+    assert gate.passed is (code == 0), gate.to_dict()
+    assert gate.details["vitest_related_uncovered_paths"] == (
+        [] if code == 0 else ["web/src/feature.ts"]
+    )
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("recall", ["compact", "recall", "full"])
+@pytest.mark.parametrize("stub", [False, True], ids=["assertion", "stub"])
+def test_gate12_red_green_attribution_parity(
+    tmp_path: Path,
+    form: str,
+    recall: str,
+    stub: bool,
+) -> None:
+    command = f"uv run pytest {TEST}::test_feature -q"
+    exception = "NotImplementedError" if stub else "AssertionError: assert 0 == 1"
+    raw = (
+        "============================= FAILURES =============================\n"
+        "____________________________ test_feature ____________________________\n"
+        f"{TEST}:4: in test_feature\n    assert feature() == 1\n"
+        f"{SOURCE}:2: in feature\n    raise {exception.split(':')[0]}\n"
+        f"E   {exception}\n"
+        f"FAILED {TEST}::test_feature - {exception}\n1 failed in 0.01s"
+    )
+    compact = (
+        "Pytest: 0 passed, 1 failed\n\nFailures:\n1. [FAIL] test_feature\n"
+        f"     {TEST}:4: in test_feature\n     E   {exception}\n"
+    )
+    if not stub:
+        raw = (FIXTURES / "pytest-assertion-raw.txt").read_text()
+        compact = (FIXTURES / "pytest-assertion-0.51.0.txt").read_text()
+    if recall != "compact":
+        compact = f"Pytest: 0 passed, 1 failed\n[full output: rtk recall {RECALL}]"
+    records: list[dict[str, Any]] = []
+    test_body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
+    if stub:
+        path = str(tmp_path / SOURCE)
+        records += _pair(
+            0,
+            "Write",
+            {"file_path": path, "content": "def feature():\n    raise NotImplementedError\n"},
+            f"File created successfully at: {path}",
+        )
+    records += _pair(
+        2, "Write", {"file_path": str(tmp_path / TEST), "content": test_body}, "written"
+    )
+    records += _pair(4, "Bash", {"command": _wrapped(command, form)}, compact, 1)
+    recall_command = f"rtk recall {RECALL}" + (" --full" if recall == "full" else "")
+    if recall != "compact":
+        records += _pair(6, "Bash", {"command": recall_command}, raw)
+    records += _pair(8, "Write", {"file_path": str(tmp_path / SOURCE)}, "written")
+    records += _pair(10, "Bash", {"command": _wrapped(command, form)}, "Pytest: 1 passed")
+    evidence = _derive(tmp_path, records)
+    test = AcceptanceTest(
+        reference=f"{TEST}::test_feature",
+        path=TEST,
+        symbol="test_feature",
+        body=test_body,
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed, result
+    assert result.red_runs == (_wrapped(command, form),)
+    assert result.green_runs == (_wrapped(command, form),)
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    assert red.completed_at == START + timedelta(seconds=5)
+    if recall != "compact":
+        assert red.output_recovered_from == recall_command
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize(
+    "command,category",
+    [
+        ("uv run ruff check src/feature.py", "lint"),
+        ("uv run ruff format --check src/feature.py", "format"),
+        ("uv run mypy src/feature.py", "type_check"),
+        ("cargo test -p example", "test"),
+    ],
+)
+@pytest.mark.parametrize("code", [0, 1])
+def test_validation_categories_preserve_transport_outcome(
+    tmp_path: Path, form: str, command: str, category: str, code: int
+) -> None:
+    records = _pair(0, "Bash", {"command": _wrapped(command, form)}, "completed", code)
+    evidence = _derive(tmp_path, records)
+    run = evidence.validation_runs[0]
+    assert category in run.categories
+    assert run.outcome == ("success" if code == 0 else "failure")
+    assert run.core_command == command
+
+
+@pytest.mark.parametrize("form", ["proxy", "bypass"])
+@pytest.mark.parametrize("delimiter", ["", "-- "])
+def test_direct_argv_wrappers_preserve_uv_options(form: str, delimiter: str) -> None:
+    command = f"rtk {form} {delimiter}uv run --python 3.13 pytest {TEST} -q"
+    result = classify_validation_command_equivalence(command)
+    assert not result.wrapped
+    assert result.core_command == f"uv run --python 3.13 pytest {TEST} -q"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"rtk proxy --help uv run pytest {TEST}",
+        f"rtk bypass --unknown uv run pytest {TEST}",
+        f"rtk proxy echo uv run pytest {TEST}",
+        f"rtk proxy uv run pytest {TEST} | cat",
+        f"rtk bypass uv run pytest {TEST} || true",
+    ],
+)
+def test_rtk_does_not_hide_nonexecution_or_exit_obscuring_wrappers(
+    tmp_path: Path, command: str
+) -> None:
+    evidence = _derive(tmp_path, _pair(0, "Bash", {"command": command}, "1 passed"))
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=(SOURCE,),
+        validation_criteria=f"Run `uv run pytest {TEST}`.",
+        close_root=str(tmp_path),
+    )
+    assert not gate.passed, gate.to_dict()
+
+
+@pytest.mark.parametrize("form", FORMS)
+@pytest.mark.parametrize("command", ["uv run gobby install", "uv run gobby restart"])
+def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: str) -> None:
+    bare = operational_actions_from_command(command)
+    assert bare
+    assert operational_actions_from_command(_wrapped(command, form)) == bare

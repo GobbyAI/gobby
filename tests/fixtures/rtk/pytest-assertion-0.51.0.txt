@@ -1,0 +1,10 @@
+Pytest: 0 passed, 1 failed in 0.01s
+
+Failures:
+1. [FAIL] test_feature
+     >       assert feature() == 1
+     E       assert 0 == 1
+     tests/test_feature.py:4: AssertionError
+
+2. [FAIL] tests/test_feature.py::test_feature
+     assert 0 == 1
