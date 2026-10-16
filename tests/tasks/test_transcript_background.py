@@ -296,6 +296,10 @@ def test_one_line_follow_monitor_delivers_its_events() -> None:
         f"{_FOLLOW} PAT|H",
         f"{_FOLLOW} PAT>/tmp/copy",
         f"{_FOLLOW} PAT)",
+        # An operator in the pattern slot leaves grep without a pattern.
+        f"{_FOLLOW} ;",
+        f"{_FOLLOW} &",
+        f"{_FOLLOW} >",
         f"{_FOLLOW} x&echo",
         f"{_FOLLOW} x&echo${{IFS}}Pytest:${{IFS}}1${{IFS}}passed",
         # A quoted pipe is a file name: tail would follow grep's pattern file too.

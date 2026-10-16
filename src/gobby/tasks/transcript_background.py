@@ -221,6 +221,7 @@ def _recover_monitor_receipt(
             or len(argv) != 10
             or argv[:4] != ["tail", "-n", "+1", "-f"]
             or argv[5:9] != ["|", "grep", "-E", "--line-buffered"]
+            or set(argv[9]) <= _SHELL_OPERATOR_CHARS
         ):
             return True
         output, _ = extract_output(message.tool_result)
