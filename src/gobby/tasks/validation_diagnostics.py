@@ -360,8 +360,9 @@ def _bound_criterion_commands(
 def bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, Any]:
     """Bound presentation only; gate decisions retain all definitive category outcomes.
 
-    Complete referenced commands are selected first. Never shorten a credited
-    command: an omitted script cannot accidentally compare equal to a criterion.
+    Gap-covering commands precede referenced commands and recent diagnostics.
+    Never shorten a credited command: an omitted script cannot accidentally
+    compare equal to a criterion.
     """
     records: dict[str, list[dict[str, object]]] = {
         "latest_runs": details["latest_runs"],
