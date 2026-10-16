@@ -3,6 +3,7 @@
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,10 @@ def test_standalone_exit_stops_joining_executor_workers_at_shutdown_deadline(
             time.sleep(0.2)
             finished.write_text('finishing worker completed')
 
+        # Far above the injected 3 s budget, so a join capped by the constant
+        # instead of the remaining budget misses the exit deadline.
+        shutdown._OVERALL_SHUTDOWN_DEADLINE_SECONDS = 120.0
+
         async def daemon_with_wedged_worker(**kwargs):
             loop = asyncio.get_running_loop()
             # Shutdown leaves 3 s of its overall budget for the final executor join.
@@ -169,9 +174,13 @@ def test_standalone_exit_stops_joining_executor_workers_at_shutdown_deadline(
             description="isolated daemon returned with a wedged executor worker",
         )
         assert ready.exists(), process.communicate(timeout=5.0)
+        ready_at = time.monotonic()
         # asyncio.run would otherwise join the wedged worker for 300 s.
-        stdout, stderr = process.communicate(timeout=30.0)
+        stdout, stderr = process.communicate(timeout=45.0)
+        exit_seconds = time.monotonic() - ready_at
         assert process.returncode == 0, (stdout, stderr)
+        # 3 s injected budget plus 15 s slack for loop teardown on a loaded host.
+        assert exit_seconds < 3.0 + 15.0, (exit_seconds, stderr)
         assert finished.read_text() == "finishing worker completed"
     finally:
         if process.poll() is None:
