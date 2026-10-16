@@ -1391,6 +1391,165 @@ def test_assert_helper_instance_rebinding_is_flagged(tmp_path: Path, source: str
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+
+        TestFeature._assert_ok = lambda self, receipt: None
+        """,
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                type(self)._assert_ok = lambda self, receipt: None
+                self._assert_ok("bad")
+        """,
+        """
+        def _silence(function):
+            return lambda *args: None
+
+        @_silence
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("bad")
+        """,
+        """
+        def _silence(function):
+            return lambda *args: None
+
+        class TestFeature:
+            @_silence
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        def _silence_helpers(cls):
+            cls._assert_ok = lambda self, receipt: None
+            return cls
+
+        @_silence_helpers
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def setup_module():
+            global _assert_ok
+            _assert_ok = lambda receipt: None
+
+        def test_feature():
+            _assert_ok("bad")
+        """,
+    ],
+    ids=[
+        "class_attribute",
+        "type_self",
+        "module_decorator",
+        "method_decorator",
+        "class_decorator",
+        "setup_module_global",
+    ],
+)
+def test_assert_helper_module_rebinding_or_decoration_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        from unittest.mock import Mock
+
+        def test_feature():
+            sink = Mock()
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        import unittest
+
+        class TestFeature(unittest.TestCase):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+        """
+        from unittest import IsolatedAsyncioTestCase as AsyncCase
+
+        class TestFeature(AsyncCase):
+            async def test_feature(self):
+                self.assertIn("ok", await make_receipts())
+        """,
+    ],
+    ids=["mock_assertion", "testcase", "async_testcase_alias"],
+)
+def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def assert_called_once_with(self, *args):
+                pass
+
+            def test_feature(self):
+                self.assert_called_once_with("ok")
+        """,
+        """
+        from unittest.mock import Mock
+
+        def assert_called_once_with(*args):
+            pass
+
+        def test_feature():
+            sink = Mock()
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        class TestFeature:
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+    ],
+    ids=["noop_method", "noop_module_def", "not_a_testcase"],
+)
+def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
     ("source", "extra"),
     [
         (

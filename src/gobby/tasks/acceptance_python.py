@@ -3,7 +3,10 @@
 An ``assert*``-named call proves nothing by its name. It counts only when the
 call itself binds to one committed helper definition, in the caller's lexical
 scope or a module it imports, whose own body asserts directly or through
-another such call. Anything the resolver cannot bind exactly fails closed.
+another such call. Anything the resolver cannot bind exactly fails closed,
+including a helper something decorates or rebinds by name anywhere in the
+module. An attribute call with no committed definition of its name counts only
+as a Mock assertion method or a ``unittest.TestCase`` instance assertion.
 """
 
 from __future__ import annotations
@@ -23,6 +26,25 @@ ReadSource = Callable[[str], Awaitable[str]]
 _Def = ast.FunctionDef | ast.AsyncFunctionDef
 # Declarations whose bodies run only when something else calls them.
 _DECLARATIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+_MOCK_ASSERTIONS = frozenset(
+    {
+        "assert_called",
+        "assert_called_once",
+        "assert_called_with",
+        "assert_called_once_with",
+        "assert_any_call",
+        "assert_has_calls",
+        "assert_not_called",
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_awaited_with",
+        "assert_awaited_once_with",
+        "assert_any_await",
+        "assert_has_awaits",
+        "assert_not_awaited",
+    }
+)
+_TESTCASE_ORIGINS = frozenset({"unittest.TestCase", "unittest.IsolatedAsyncioTestCase"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +52,8 @@ class _Module:
     path: str
     source: str
     tree: ast.Module
+    #: Names the module writes as attributes, by literal setattr, or in global/nonlocal.
+    written: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +92,7 @@ async def resolve_assertion_helpers(
     if len(owners) != len(parents):
         # Enclosing function scopes are not modeled, so nothing binds.
         return (), False
-    module = _Module(path, source, tree)
+    module = _Module(path, source, tree, _written_names(tree))
     test = _Function(module, node, owners[-1] if owners else None)
     resolver = _HelperResolver(read, module)
     proven = False
@@ -114,6 +138,7 @@ def python_test_findings(reference: str, body: str, helper_asserts: bool) -> lis
 class _HelperResolver:
     def __init__(self, read: ReadSource, module: _Module) -> None:
         self._read = read
+        self._root = module
         self._modules: dict[str, _Module | None] = {module.path: module}
         self._proven: set[tuple[str, int, int]] = set()
         self._visiting: set[tuple[str, int, int]] = set()
@@ -123,8 +148,18 @@ class _HelperResolver:
     async def qualifies(self, caller: _Function, target: ast.expr, depth: int) -> bool:
         if depth >= MAX_HELPER_DEPTH:
             return False
+        name = called_name(target)
+        if name in self._root.written or name in caller.module.written:
+            return False
+        if isinstance(target, ast.Attribute) and not _defines(caller.module.tree, name):
+            return _library_assertion(caller, target)
         helper = await self._resolve(caller, target)
-        if helper is None:
+        if helper is None or _decorated(helper):
+            return False
+        if any(
+            helper.node.name in module.written
+            for module in (self._root, caller.module, helper.module)
+        ):
             return False
         key = (helper.module.path, helper.node.lineno, helper.node.col_offset)
         if key in self._proven:
@@ -205,7 +240,8 @@ class _HelperResolver:
     async def _load(self, path: str) -> _Module | None:
         try:
             source = await self._read(path)
-            return _Module(path, source, ast.parse(source))
+            tree = ast.parse(source)
+            return _Module(path, source, tree, _written_names(tree))
         except (OSError, RuntimeError, SyntaxError, ValueError):
             return None
 
@@ -216,44 +252,99 @@ def _method(module: _Module, owner: ast.ClassDef, name: str) -> _Function | None
     if len(binders) != 1 or not _defined_once(module.tree, name):
         return None
     binder = binders[0]
-    if (
-        isinstance(binder, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(binder is node for node in owner.body)
-        and not _receiver_writes(owner, name)
+    if isinstance(binder, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        binder is node for node in owner.body
     ):
         return _Function(module, binder, owner)
     return None
 
 
-def _receiver_writes(owner: ast.ClassDef, name: str) -> bool:
-    """Whether any method of ``owner`` rebinds or deletes ``name`` on its receiver."""
-    for method in owner.body:
-        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        positional = [*method.args.posonlyargs, *method.args.args]
-        if not positional:
-            continue
-        receiver = positional[0].arg
-        for node in ast.walk(method):
-            if (
-                isinstance(node, ast.Attribute)
-                and not isinstance(node.ctx, ast.Load)
-                and isinstance(node.value, ast.Name)
-                and node.value.id == receiver
-                and node.attr == name
-            ):
-                return True
-            if (
-                isinstance(node, ast.Call)
-                and called_name(node.func) in {"setattr", "delattr"}
-                and len(node.args) >= 2
-                and isinstance(node.args[0], ast.Name)
-                and node.args[0].id == receiver
-                and isinstance(node.args[1], ast.Constant)
-                and node.args[1].value == name
-            ):
-                return True
-    return False
+def _decorated(function: _Function) -> bool:
+    """Whether a decorator other than staticmethod or classmethod wraps it or its class."""
+    owner = function.owner.decorator_list if function.owner else []
+    return any(
+        not (isinstance(decorator, ast.Name) and decorator.id in {"staticmethod", "classmethod"})
+        for decorator in [*function.node.decorator_list, *owner]
+    )
+
+
+def _written_names(tree: ast.Module) -> frozenset[str]:
+    """Names anything in ``tree`` can rebind on an object or across scopes."""
+    written: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
+            written.add(node.attr)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            written.update(node.names)
+        elif isinstance(node, ast.Call) and called_name(node.func) in {
+            "setattr",
+            "delattr",
+            "__setattr__",
+        }:
+            written.update(
+                arg.value
+                for arg in node.args
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            )
+    return frozenset(written)
+
+
+def _defines(tree: ast.Module, name: str) -> bool:
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+        for node in ast.walk(tree)
+    )
+
+
+def _library_assertion(caller: _Function, target: ast.Attribute) -> bool:
+    """Whether an attribute call with no committed definition is a library assertion."""
+    if target.attr in _MOCK_ASSERTIONS:
+        return True
+    return (
+        target.attr.startswith(("assert", "fail"))
+        and isinstance(target.value, ast.Name)
+        and caller.owner is not None
+        and _receiver_is_instance(caller.node, target.value.id)
+        and any(_is_testcase(caller.module, base) for base in caller.owner.bases)
+    )
+
+
+def _is_testcase(module: _Module, base: ast.expr) -> bool:
+    """Whether a class base names unittest's TestCase through the module's own imports."""
+    if isinstance(base, ast.Name):
+        origins = _import_origins(module, base.id)
+        return len(origins) == 1 and origins <= _TESTCASE_ORIGINS
+    return (
+        isinstance(base, ast.Attribute)
+        and isinstance(base.value, ast.Name)
+        and f"unittest.{base.attr}" in _TESTCASE_ORIGINS
+        and _import_origins(module, base.value.id) == {"unittest"}
+    )
+
+
+def _import_origins(module: _Module, name: str) -> set[str]:
+    """Dotted origins of ``name`` when only top-level absolute imports bind it, else empty."""
+    if name in module.written:
+        return set()
+    origins: set[str] = set()
+    for binder in _binders(_scope_nodes(module.tree.body), name):
+        if not any(binder is node for node in module.tree.body):
+            return set()
+        if isinstance(binder, ast.Import):
+            for alias in binder.names:
+                if alias.asname == name:
+                    origins.add(alias.name)
+                elif alias.asname is None and alias.name.split(".")[0] == name:
+                    origins.add(name)
+        elif isinstance(binder, ast.ImportFrom) and binder.level == 0 and binder.module:
+            for alias in binder.names:
+                if alias.name == "*":
+                    return set()
+                if (alias.asname or alias.name) == name:
+                    origins.add(f"{binder.module}.{alias.name}")
+        else:
+            return set()
+    return origins
 
 
 def _receiver_is_instance(function: _Def, receiver: str) -> bool:
