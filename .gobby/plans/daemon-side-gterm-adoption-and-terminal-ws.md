@@ -67,10 +67,13 @@ Decision record:
   not an active terminal, until pending-to-live promotion succeeds. A failed enqueue fails the
   spawn; later failures use the existing attempt-scoped terminal settlement and spawn-key kill
   paths, without a mailbox/database transaction subsystem.
-- **Tmux runtime parity — restraint rung 6 (minimum new code):** gcode found no Rust tmux runtime
-  owner; Rust tmux references are gclient display/direct-attach consumers only. Add one focused
-  `gobby-terminals` adapter mirroring the existing Python `TmuxTerminalRuntime` contract. Do not
-  add a generic runtime framework or change gclient production code.
+- **Tmux writes — Orchestrator ruling (2026-10-15, option A), restraint rung 2:** tmux rows exist
+  only for hand-started panes (#22856), and #23214 (1.8, the complete Rust tmux adapter) closed
+  obsolete on 2026-10-14. 2.5 adds the write-only `crates/gterminals/src/tmux_write.rs` (Text,
+  Key, Paste, Input, resize, and release_size on the row's recorded socket, with a generation
+  check before each operation), and Python keeps the spawn-less `TmuxTerminalRuntime` for reads,
+  liveness, and termination. Do not add a generic runtime framework or change gclient production
+  code.
 - **Recovery — restraint rung 1 (no migration daemon):** backend selection is evaluated anew
   per spawn. A recovered host automatically serves new spawns; live tmux terminals are never
   mutated. Their next restart or handoff creates a new native terminal and then ends the old
@@ -123,7 +126,7 @@ layer as 1.5 scopes it; it must not port a pre-#22722 snapshot.
 `pane_io.py::submit_text` (512-526) still returns `SubmitResult(True)` when the composer is
 unreadable after write and Enter, and `3cdcd8874f` already carries that branch. The PD routed
 the fix as #23188, `pane_io.submit_text reports success when the composer is unreadable after
-write and Enter`. Its chosen contract is the oracle for 1.5 and 2.4.7.
+write and Enter`. Its chosen contract is the oracle for 1.5 and 2.7.1.
 
 **#21558 disposition — PD ruling (gobby#14972, 2026-10-01):** #21558 blocks the epic during
 planning. Its WS transport gates only the work D2 holds: 2.2, 2.3, and the WS half of 2.4. No
@@ -189,10 +192,11 @@ Observed source evidence used by executors:
 - Leaf 1.9 adds the durable `workspace_panes.role` column and `WorkspacePane.role` projection;
   the existing terminal creation producer is `WorkspaceOps._fill`, which calls
   `spawn_web_terminal`. That exact producer becomes the sole `persistent_role` source.
-- A repository-wide Rust tmux sweep found no runtime adapter. The complete current behavior oracle
-  is `src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime`: per-row socket routing, raw input
+- A repository-wide Rust tmux sweep found no runtime adapter. The current behavior oracle is
+  `src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime`: per-row socket routing, raw input
   and paste/write, resize, bounded snapshot/history, live attach locator, pane/session liveness,
-  and termination.
+  and termination. Under the Orchestrator's tmux ruling (2026-10-15), 2.5's `tmux_write.rs` ports
+  its writes, resize, and release_size; the rest stays in Python's spawn-less runtime.
 
 ## P1: Milestone M1 — gterm adoption by epoch
 
@@ -473,7 +477,7 @@ Research context:
   held-submit records are per-operation retry state; the coordinator keeps the only action-key
   store.
 - The Rust coordinator reports the per-step outcomes that ladder reads: accepted, uncertain with
-  the failing step, and typed refusals. 2.4 binds the Python callers to it in `Native` mode.
+  the failing step, and typed refusals. 2.7 binds the Python callers to it in `Native` mode.
 - Preserve the established runtime-per-row invariant: every write resolves native versus tmux
   from the terminal row, never from a global default. Preserve lease revalidation, idempotency,
   unresolved evidence, automatic-write quarantine, and operator-input release semantics.
@@ -513,11 +517,10 @@ retry a non-idempotent write merely because the daemon restarted.
 
 Targets:
 - `src/gobby/config/terminals.py::TerminalConfig`
-- `src/gobby/install/shared/config/config.yaml::default_backend`
+- `src/gobby/install/shared/config/config.yaml::*` — scope-reason: delete the default_backend key (landed in #23212)
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerate the TerminalConfig carrier after removing default_backend
 - `src/gobby/storage/definitions/agents.py::parent_body`
-- `src/gobby/agents/spawn_models.py::resolve_terminal_backend`
-- `src/gobby/agents/spawn_models.py::SpawnRequest`
+- `src/gobby/agents/spawn_models.py::*` — scope-reason: delete resolve_terminal_backend (landed in #23212) and carry the internal lifetime on SpawnRequest
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::create_spawn_agent_registry`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::_load_agent_body`
 - `tests/mcp_proxy/tools/spawn_agent/test_load_agent_body.py::*` — scope-reason: cover rejection of a legacy terminal_backend body on load
@@ -531,7 +534,6 @@ Targets:
 - `src/gobby/terminals/workspace_ops.py::WorkspaceOps._fill`
 - `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
 - `src/gobby/agents/spawn_executor.py::resolve_terminal_services`
-- `src/gobby/agents/spawn_executor.py::_default_backend`
 - `src/gobby/cli/agents.py::spawn_agent_cmd`
 - `src/gobby/dispatch/actions.py::SpawnAgentAction`
 - `src/gobby/dispatch/spawn.py::spawn_agent`
@@ -573,8 +575,9 @@ Research context:
   above. Storage writes all pass through `parent_body` on create, update, and both upsert paths;
   MCP resolution also loads legacy definition JSON through `_load_agent_body`.
 - `spawn_executor.py` (612 lines) remains the patchable facade. This section deletes the
-  `request.terminal_backend` and `default_backend` reads from `resolve_terminal_services` and the
-  uncalled `_default_backend`; 1.7 moves the resolver into a support module.
+  `request.terminal_backend` and `default_backend` reads from `resolve_terminal_services`;
+  #22856 (0048987b32) already deleted the uncalled `_default_backend`. 1.7 moves the resolver
+  into a support module.
 - `docs/guides/gterminal-development-guide.md` (§Backend status) documents `default_backend` and
   the tmux rollback command; this leaf rewrites that section to fixed native-first selection.
 - **Choice — restraint rung 1:** delete the config field, CLI option, MCP parameter, HTTP field,
@@ -660,7 +663,7 @@ Consumers unchanged:
 - `src/gobby/agents/spawn_executor_codex.py` — no-edit-reason: It consumes SpawnRequest without selecting a backend; omitted lifetime materializes as run.
 - `src/gobby/agents/spawn_placed.py` — no-edit-reason: It constructs SpawnRequest without a backend selector; omitted lifetime materializes as run.
 - `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py` — no-edit-reason: It builds the registry and passes no backend argument.
-- `tests/mcp_proxy/tools/spawn_agent/test_project_context.py` — no-edit-reason: It builds the registry and passes no backend argument.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_project_context.py` — no-edit-reason: It builds the registry and passes no backend argument.
 - `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: It builds the registry and passes no backend argument.
 - `tests/terminals/test_web_spawn.py` — no-edit-reason: Its calls omit the new lifetime keyword, which defaults to run.
 
@@ -807,7 +810,7 @@ Consumers unchanged:
 `kind: deliverable`
 
 Targets:
-- `crates/gterminals/src/family.rs`
+- `crates/gterminals/src/family.rs::*` — scope-reason: route every live tmux row operation through the adapter
 - `crates/gterminals/src/tmux_runtime.rs`
 - `crates/gterminals/tests/tmux_runtime.rs`
 
@@ -955,8 +958,9 @@ Consumers unchanged:
 
 `kind: framing`
 
-M2's deliverables run without #21558: the 2.1 codec and the 2.4 Native ownership cutover. D2
-holds the work that rides #21558's native gdaemon WS accept/auth/subscription/broadcast
+M2's deliverables run without #21558: the 2.1 codec, the 2.4 Native ownership cutover, and the
+2.5-2.10 Native write, settlement, and runtime seams, which 2.4.17's activation gate keeps to
+isolated `Native` tests until D2. D2 holds the work that rides #21558's native gdaemon WS accept/auth/subscription/broadcast
 transport (2.2, 2.3, and the WS half of 2.4) at leaf-spec fidelity. M2 and D2 own terminal
 messages and relaying on that transport and do not recreate transport authentication or the
 base event envelope.
@@ -1000,66 +1004,670 @@ reserve, paste bytes, and write sequence capacity before allocation or emission.
   backend-neutral WS contract; no gterm/gclient/protocol source or fixture byte changes. behavior:
   `terminal-ws-wire-scope-guard`.
 
-### 2.4 Native ownership cutover: write route, action hold, runtime seam, and settlement [category: code] (depends: 1.2, 1.3, 1.5)
+### 2.4 Native ownership cutover: one supervisor, per-start token, action hold, and activation gate [category: code] (depends: 1.2, 1.3, 1.5)
 
 `kind: deliverable`
 
 Targets:
-- `crates/gterminals/src/family.rs`
-- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: register the loopback write and runtime routes
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: construct Native terminal ownership once at startup, reject a runtime route-mode flip, and read the per-start write token in watch_parent_fd
-- `src/gobby/runner_front_door.py::FrontDoorChild._popen`
-- `tests/test_runner_front_door.py::*` — scope-reason: pin token delivery over the parent pipe and its absence from env and argv
-- `src/gobby/runner_init/terminal_wiring.py::init_terminal_wiring`
+- `crates/gterminals/src/family.rs::*` — scope-reason: TerminalFamily::new takes the startup route latch
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the hold and write_api modules
+- `crates/gterminals/src/hold.rs`
 - `crates/gterminals/src/write_api.rs`
-- `crates/gterminals/src/write.rs`
-- `crates/gterminals/src/runtime_api.rs`
-- `src/gobby/terminals/coordinator_client.py`
-- `src/gobby/terminals/runtime_client.py`
-- `src/gobby/terminals/pane_io.py::submit_coordinated_text`
-- `src/gobby/agents/spawn_executor.py::resolve_terminal_services`
-- `src/gobby/agents/spawn_executor_runtime.py::_runtime_spawn`
-- `src/gobby/agents/lifecycle_reconciliation.py::LifecycleReconciliation.reap_stale_pending`
-- `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
-- `tests/terminals/test_workspace_ops.py::*` — scope-reason: prove the Native workspace spawn writes no Python terminal rows and binds the pane only after Rust settles
-- `tests/terminals/test_coordinator_client.py`
-- `tests/terminals/test_runtime_client.py`
+- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: the terminal_route and terminal_route_latch helpers that carry the startup route latch
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: construct Native terminal ownership once at startup and reject a runtime route-mode flip
+- `crates/gdaemon/src/lifecycle/backend.rs::BackendChild::spawn`
+- `crates/gdaemon/src/lifecycle/backend.rs::BackendChild`
+- `crates/gdaemon/src/lifecycle/backend.rs::BackendConfig`
+- `crates/gdaemon/src/state_services.rs::*` — scope-reason: Native terminal construction lives in ActiveServices::start; refuse Native without the terminal WS family before HostOptions::from_pool, and latch the route once per process
+- `crates/gdaemon/src/state.rs::RuntimeState::run`
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `src/gobby/runner_backend.py::*` — scope-reason: read the write token from the supervisor pipe at startup and hold it in memory
+- `src/gobby/runner_init/terminal_wiring.py::init_terminal_wiring`
+- `tests/test_runner_backend.py::*` — scope-reason: pin token delivery over the supervisor pipe and its absence from env and argv
+- `crates/gdaemon/tests/lifecycle.rs::*` — scope-reason: its Python test children read GOBBY_SUPERVISOR_FD with os.read(fd, 1) and expect it to block until EOF, so with the token line first they now drain to EOF; the token-rotation test is supplementary, with no RED
+- `crates/gterminals/tests/host_lifecycle.rs::*` — scope-reason: add route_mode_has_exactly_one_supervisor and remove the five opt-in real-gdaemon tests that #23219 restores
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
 - `crates/gterminals/tests/family_cutover.rs`
 
 Research context:
 
-- In `Native`, Python constructs no `WriteCoordinator` (A1), yet about 30 Python modules call it
-  in-process: attention routes, the plan-approval and session-config WS handlers, session
+- Re-scoped (Orchestrator, 2026-10-15): this section closes on the five ownership gates 2.4.3,
+  2.4.8 (token half), 2.4.14, 2.4.15 and 2.4.17, as #23217 carries them. 2.4.7, 2.4.12, 2.4.13,
+  2.4.16, the route-side remainders of 2.4.8, 2.4.14 and 2.4.15, and the five #24210 folds move to
+  2.6-2.10. Nothing is dropped. The mapping is 16864's (message 1d257c19, 2026-10-15).
+- Target notes: `lib.rs` declares `pub mod hold` and `pub mod write_api`. `hold.rs` is a new
+  module: the per-terminal action hold (ActionGate) and bounded queue (write.rs and host.rs are
+  near the 1,000-line ceiling). `write_api.rs` holds the TokenSlot admission primitive only; 2.6
+  adds the write HTTP surface. `lifecycle/backend.rs` mints the per-start write token, delivers it
+  on the supervisor pipe, and passes gdaemon's latched route mode to the backend; BackendConfig
+  gains the write_token field (from_command_json default) and BackendChild the lease field.
+  `state.rs` carries the startup route latch from serve.rs into ActiveServices::start (one
+  parameter). `init_terminal_wiring` refuses a route mode that differs from gdaemon's latched one
+  as restart-required. `host_lifecycle.rs` gains `route_mode_has_exactly_one_supervisor`
+  (TerminalFamily::new takes the route latch). The five opt-in real-gdaemon tests that launch
+  with terminal_ws native (`daemon_restart_preserves_live_terminal`,
+  `explicit_parent_drain_restarts_with_fresh_epoch`,
+  `spawned_identity_survives_health_and_stop_disarms_retry`,
+  `explicit_drain_terminates_token_mismatch_host`, `explicit_drain_terminates_foreign_epoch_host`)
+  are removed in this section's commit, which names #23219. #23219 restores them from base
+  17ec46c7 when it registers the WS routes (D2). There is no `#[ignore]`, no test-quality baseline
+  entry and no bypass env var (Orchestrator ruling 2026-10-15). `crates/gdaemon/Cargo.toml`,
+  `Cargo.lock` and `version_pins.py` carry the gdaemon 0.0.1 patch bump.
+- Route authentication — Orchestrator ruling (2026-10-15). It replaces the mechanism of the PD
+  ruling (gobby#14972, 2026-10-01), whose parent-pipe pieces #23457 (fde8c6182d) deleted when it
+  made gdaemon the parent; the properties stay the same.
+  - gdaemon spawns the Python backend in `lifecycle/backend.rs::BackendChild::spawn`, with a
+    liveness pipe whose read end is `GOBBY_SUPERVISOR_FD`.
+  - On every backend start, including a respawn, `BackendChild::spawn` mints a random token and
+    writes it as the first line of that pipe before holding the write end for EOF.
+  - `runner_backend.py` reads that first line at startup, keeps it in memory only, and then keeps
+    its EOF watch.
+  - The TokenSlot admission primitive accepts only the current backend child's token and refuses
+    a missing, wrong or retired one. Registering the route behind it (2.6), and the client's
+    per-request read (2.7), belong to the gap amendment.
+  - The token never appears in env, argv, a file, or a log.
+  - `serve.rs` keeps its other role: startup Native construction and refusal of a runtime
+    route-mode flip.
+  - Flip vector: because the respawned backend re-reads bootstrap.yaml, gdaemon also passes its
+    latched route mode to the backend, and `init_terminal_wiring` refuses a mismatch as
+    restart-required, so an edited terminal_ws can never leave zero supervisors.
+- Action hold — PD ruling (gobby#14972, 2026-10-01, Adversary F2). This section builds the hold
+  primitive (ActionGate) in `hold.rs`. Binding the hold id to the child token, row and lease
+  generation with 1.5.2 revalidation (2.6), and D2's WS operator input, belong to the gap
+  amendment.
+  - Acquire: `acquire_action` takes the per-terminal action hold. A second acquire waits.
+  - Tokens: every hold carries a token. A reply carrying a superseded token never completes or
+    releases a newer hold.
+  - Queue: while a hold is active, operations without the hold id queue in arrival order and
+    flush in order on release.
+  - Uncertainty: TTL expiry, a timeout, client disconnect, cancellation after dispatch, and child
+    stop record uncertainty (1.5.3 unresolved evidence) and nothing more. The next queued effect
+    is admitted only after the admitted operation completes or is proven unable to produce
+    further effects: the pane or terminal was destroyed, the gterm host epoch changed, or the
+    host process exited. An operator close or kill of the terminal is the escape hatch because it
+    produces that proof. Release never interrupts an admitted step.
+  - Recovery: a lost acquire, step, or release reply never replays a non-idempotent uncertain
+    write.
+  - Constants: no gterm or terminal WS constant governs an action hold or its queue (the nearest
+    are `frame_client.py::DELTA_QUEUE_ENTRIES` = 64 and
+    `leases.py::LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE` = 256, which size other queues), so the PD
+    values apply: hold TTL 10 s; queue bound 128 items or 256 KiB, whichever comes first; queue
+    age 30 s, measured on the oldest queued item. At the bound or the age limit, new input is
+    refused with an explicit typed error to its sender. Queued items are never discarded, and
+    input is never dropped silently.
+- Activation gate — Adversary sequencing finding (2026-10-01): until D2 registers the terminal
+  family, the terminal WS routes stay Python, and `terminal_ws.py::TerminalWsMixin._leases`
+  (887-891) requires a Python `TerminalLeaseRegistry`. 2.4 therefore builds and verifies the
+  ownership seams in isolated `Native` tests only. Production stays `Proxy` or `Compare` with
+  Python owners, and a startup that selects `Native` while the terminal family is unregistered is
+  refused before any ownership change. D2 lifts the gate in the same change that registers the
+  family. No per-operation rollout knob or second supervisor is added.
+- **Granularity:** five acceptance items over the ownership boundary: one supervisor and a
+  latched route mode, the per-start token, the hold primitive, and the activation gate. They
+  close together because the hold and token primitives are only safe behind the startup latch
+  and the activation gate.
+
+`Native` constructs Rust ownership and omits Python ownership. Route mode is read once during
+startup; a runtime flip is rejected so existing sessions cannot be half-migrated.
+
+Consumers unchanged:
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature.
+
+**Acceptance:**
+
+- 2.4.3 - Startup has exactly one supervisor in every mode, and a runtime route-mode change is
+  rejected with restart-required before altering ownership, including a backend respawn that
+  re-reads an edited terminal_ws: the backend refuses a route mode that differs from gdaemon's
+  latched one. test:
+  `crates/gterminals/tests/family_cutover.rs::cutover_requires_restart_and_has_one_owner`. test:
+  `crates/gterminals/tests/host_lifecycle.rs::route_mode_has_exactly_one_supervisor`.
+- 2.4.8 - Each backend start mints a fresh token and delivers it only as the first line of the
+  supervisor pipe; it never appears in the child's environment or argv, and it rotates on every
+  start. The TokenSlot admission primitive refuses a missing, wrong or retired token, and the
+  Python holder keeps the token in memory only. test:
+  `crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_supervisor_pipe_token`.
+  test: `tests/test_runner_backend.py::test_write_token_travels_only_over_the_supervisor_pipe`.
+- 2.4.14 - While a hold is active, unheld operations queue in arrival order and flush in order on
+  release; at 128 items, 256 KiB, or a 30 s oldest-item age, new input is refused with an
+  explicit typed error and no queued item is discarded; a reply carrying a superseded hold token
+  neither completes nor releases the newer hold. test:
+  `crates/gterminals/tests/family_cutover.rs::route_hold_queue_is_bounded_and_token_scoped`.
+- 2.4.15 - TTL expiry, timeout, or disconnect during an admitted host write records uncertainty
+  only: the next queued effect is not admitted before completion or proof (pane or terminal
+  destroyed, host epoch changed, host process exited, or an operator close or kill), and a
+  delayed effect that lands after the uncertainty is persisted is not replayed and releases no
+  newer hold. test:
+  `crates/gterminals/tests/family_cutover.rs::uncertain_hold_admits_nothing_before_proof`.
+- 2.4.17 - A startup that selects `Native` while the terminal family is unregistered is refused
+  before any ownership change, and `Proxy` and `Compare` keep the Python host manager, lease
+  registry, and write coordinator. test:
+  `crates/gterminals/tests/family_cutover.rs::native_activation_refuses_without_the_terminal_family`.
+
+### 2.5 Rust write runtimes and the host connection opener [category: code] (depends: 2.4)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/control.rs::*` — scope-reason: add ControlClient::write_batch
+- `crates/gterminals/src/host.rs::*` — scope-reason: move the adoption and connection functions into the new connect submodule and declare it
+- `crates/gterminals/src/host/connect.rs`
+- `crates/gterminals/src/native_write.rs`
+- `crates/gterminals/src/tmux_write.rs`
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the native_write and tmux_write modules
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/write_runtimes.rs`
+
+Research context:
+
+- No production code implements `write.rs::Runtime` or `BatchRuntime`, and nothing outside tests
+  calls `Coordinator::new`. `Runtimes` (write.rs:249) holds `native` and `tmux` as
+  `Option<Arc<dyn Runtime>>`, and an absent runtime refuses with `Refusal::RuntimeUnavailable`.
+  This section builds the two runtimes; 2.6 constructs the coordinator over them.
+- Connections — Orchestrator ruling (2026-10-15): the gterm host accepts several authenticated
+  control connections. Its host state keeps a `control_owners` set, `claim_control_owner`
+  (`crates/gterminal/src/host/control.rs:209`) adds one, and a disconnect drops only that
+  connection and its unprepared reservations. Each Rust component therefore opens its own
+  connection, and there is no shared control handle.
+- Split: `crates/gterminals/src/host.rs` is 916 lines. This section moves `adopt_or_spawn`,
+  `connect`, `authenticate`, `handshake`, `read_pid`, `verify_pid`, and `process_is_host`
+  (host.rs:662-822) unchanged from `crates/gterminals/src/host.rs` into the new
+  `crates/gterminals/src/host/connect.rs`, declared with `mod connect;` beside `mod epochs;`.
+  The new module adds `pub(crate) fn open_control(options) -> ControlClient`: it connects to
+  `gterm-control.sock` under the configured socket dir, reads `gterm-control.token` without ever
+  creating or rotating it, sends hello at the control protocol version, and verifies the host pid
+  as the supervisor's handshake does. 2.8 and 2.9 open their own connections through it.
+- `ControlClient` (control.rs, 733 lines) has `write` (512-528) and no `write_batch`. The gterm
+  host serves `write_batch` (`crates/gterminal/src/host/control.rs:445`), and Python sends it at
+  `host_client.py:584`. `ControlClient::write_batch` emits the bytes of the read-only fixture
+  `crates/gterminal/tests/fixtures/wire_golden/control_write_batch.json`; no gterm byte changes.
+- `native_write.rs`: `NativeWrite` implements `Runtime` and `BatchRuntime` over its own
+  `open_control` connection, reopened after a transport failure. The oracle is
+  `native_runtime.py::NativeTerminalRuntime._write` (593-648):
+  - Text with submit writes the text without submit, sleeps `TMUX_TEXT_ENTER_DELAY_SECONDS` (1.0,
+    `agents/tmux/text_injection.py:16`), and then writes the Enter key.
+  - An unavailable host or an error on the first write refuses with `Stage::None`. An error on
+    the Enter step refuses with `Stage::Partial`.
+  - A connection error after send returns `Delivery::Uncertain`.
+  - A single-step host command error is the typed host refusal that the coordinator maps (1.5).
+  - A row whose `host_epoch` differs from the connection's hello epoch refuses with `Stage::None`
+    before any byte is sent.
+  - A batch returns one result per target and preserves an uncertain target.
+- `tmux_write.rs` — Orchestrator tmux ruling (2026-10-15, option A): `TmuxWrite` implements
+  `Runtime` for Text, Key, Paste, and Input, plus `resize` and `release_size`, on the row's
+  recorded tmux socket with the tmux argv `tmux_runtime.py` uses (writes and sizing 215-337,
+  resize 315-330, release_size 332-337). Before every operation it checks the generation:
+  `tmux display-message -p -t <target>` reads `server_pid` and `server_start_time`, which must
+  equal the row's locator (oracle `tmux_runtime.py::_same_generation`, 108-130;
+  `_require_generation` refuses with stage none or partial). Python keeps the spawn-less
+  `TmuxTerminalRuntime` for reads, liveness, and termination. #23214 (1.8, the complete Rust tmux
+  adapter) closed obsolete on 2026-10-14. Refusing tmux writes would break send_keys, wakes, and
+  post-compaction continuation for hand-started panes (#22856), so this write-only adapter is the
+  least complete mechanism (restraint rung 2).
+- Production does not register the runtimes here; 2.6 does. `lib.rs` declares
+  `pub mod native_write` and `pub mod tmux_write`. `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and
+  `version_pins.py` carry the gdaemon 0.0.1 patch bump.
+- **Granularity:** five acceptance items over two write runtimes and the connection opener they
+  share. They close together because neither runtime reaches the host without `open_control`,
+  and the split that makes room for the opener moves the adoption code it reuses.
+
+**Acceptance:**
+
+- 2.5.1 - A Native text write with submit sends the text, waits the Enter delay, and sends Enter.
+  An unavailable host or a first-write error refuses with stage none, an Enter-step error refuses
+  with stage partial, a connection loss after send is uncertain, and a row epoch that differs from
+  the hello epoch refuses before any byte. test:
+  `crates/gterminals/tests/write_runtimes.rs::native_write_matches_python_stage_semantics`.
+- 2.5.2 - A Native batch emits the `control_write_batch.json` fixture bytes, returns one result
+  per target, and preserves an uncertain target. test:
+  `crates/gterminals/tests/write_runtimes.rs::native_batch_matches_gterm_write_batch_fixture`.
+- 2.5.3 - tmux writes run only on the row's recorded socket and refuse before sending when
+  `server_pid` or `server_start_time` differs from the locator. test:
+  `crates/gterminals/tests/write_runtimes.rs::tmux_write_is_socket_and_generation_scoped`.
+- 2.5.4 - tmux `resize` and `release_size` run the same argv as Python under the same generation
+  check. test:
+  `crates/gterminals/tests/write_runtimes.rs::tmux_resize_and_release_size_match_python`.
+- 2.5.5 - `open_control` authenticates a connection beside the supervisor's without creating or
+  rotating the token file, and the moved adoption code keeps `host_lifecycle.rs` passing. test:
+  `crates/gterminals/tests/write_runtimes.rs::open_control_authenticates_an_independent_connection`.
+
+### 2.6 Loopback write route over the Rust coordinator [category: code] (depends: 2.5)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/write_api.rs`
+- `crates/gterminals/src/family.rs::*` — scope-reason: construct the lease registry and the coordinator over the Native and tmux write runtimes
+- `crates/gdaemon/src/front_door/terminal_api.rs`
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: declare terminal_api and dispatch its paths from FrontDoor::handle before backend proxying
+- `crates/gdaemon/src/state.rs::RuntimeState`
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `crates/gdaemon/src/state.rs::RuntimeState::run`
+- `crates/gdaemon/src/state_services.rs::*` — scope-reason: ActiveServices exposes the Native terminal route services it constructs
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/write_route.rs`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: pin the loopback and current-token gate on the terminal write route
+
+Research context:
+
+- Placement (restraint rung 2): `FrontDoor::handle` (front_door/mod.rs:95-193) already dispatches
+  native internal routes before proxying, inside `if let Some(runtime) = &state.runtime`:
+  `lease::admin_api::is_route` matches exact paths, and `handle(runtime, request)` serves them.
+  The write route follows that pattern at `POST /api/internal/terminals/write`, and 2.9 adds
+  `POST /api/internal/terminals/runtime`. gterminals has no HTTP dependency, so the HTTP glue
+  lives in the new gdaemon `front_door/terminal_api.rs`, and `write_api.rs` gains the typed serde
+  calls, replies, and dispatch beside 2.4's TokenSlot.
+- Gate, checked in order:
+  - The peer must be loopback (`peer.to_canonical().is_loopback()`, the predicate at
+    serve.rs:352-374), else 403. Loopback peers get plaintext on the daemon port.
+  - `X-Gobby-Write-Token` must pass `TokenSlot::authorize` for the current backend child, else
+    401. The token is never logged.
+  - With no backend child or no Native route services, the route answers 503.
+  - The body is capped at 256 KiB (2.4's queue byte bound), else 413.
+  - A serve without a supervised backend has no `RuntimeState`, so it exposes no route.
+- Construction: in `Native`, `TerminalFamily` builds `leases::Registry::new(256)` (the port of
+  `LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE`) and
+  `Coordinator::new(pool, Arc<leases::Registry>, Runtimes { native: NativeWrite, tmux: TmuxWrite })`
+  once. `Registry::new` also returns the lifecycle `mpsc::Receiver`, which the family keeps for
+  D2's relay (leaf 2.3). Before D2 nothing claims a Rust lease, because only WS attach does, so
+  nothing publishes to it.
+- State: `RuntimeState` keeps a clone of the backend's write `TokenSlot` from `prepare`, and
+  `run` publishes the Native route services after `ActiveServices::start` and clears them
+  before stop.
+- Calls: `write`, `run_sequence`, `run_native_wake_batch`, `quarantine`, `retain_unresolved`,
+  `observe_resolved`, `observe_operator_input`, and `clear_on_exit` (write.rs:341-686), plus
+  `acquire_action` and `release_action` on 2.4's hold. Replies carry 1.5's typed per-step
+  outcome, serde-tagged as `Delivered`, `Uncertain` with its detail, `Suppressed`,
+  `Quarantined`, or `Refusal` with its stage (`None` or `Partial`).
+- Held action, route half — PD ruling (gobby#14972, 2026-10-01, Adversary F2), moved here from
+  #23217:
+  - `acquire_action` returns a hold id bound to the current child token, terminal row, and lease
+    generation.
+  - An operation carrying the hold id is admitted after the coordinator re-reads the row and
+    lease (1.5.2). A stale generation, lost lease, or rotated token refuses it.
+  - Unheld operations queue under 2.4's bounds.
+  - Recovery: a lost acquire, step, or release reply never replays a non-idempotent uncertain
+    write. The action key and unresolved evidence (1.5.3) decide, and a child restart's new token
+    invalidates every old hold.
+  - An HTTP disconnect during an admitted write records uncertainty only.
+- `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch
+  bump.
+- **Granularity:** four acceptance items over one route: its gate, its typed replies, the
+  held-action binding, and lost-reply recovery. They close together because the binding and the
+  recovery rule are the route's admission rules, and the gate is what makes the route safe to
+  expose.
+
+**Acceptance:**
+
+- 2.6.1 - A non-loopback peer gets 403; a missing, wrong, or retired token gets 401; without a
+  backend child or Native route services the route answers 503; a body over 256 KiB gets 413; and
+  the token never appears in a log. test:
+  `crates/gdaemon/tests/front_door.rs::terminal_write_route_requires_loopback_and_the_current_token`.
+- 2.6.2 - Each route call returns 1.5's typed per-step outcome, and a refusal carries its stage.
+  test: `crates/gterminals/tests/write_route.rs::route_calls_return_typed_per_step_outcomes`.
+- 2.6.3 - A held operation is admitted only after the row and lease revalidate; a stale
+  generation, lost lease, or rotated token refuses it. test:
+  `crates/gterminals/tests/write_route.rs::held_action_binds_token_row_and_lease_generation`.
+- 2.6.4 - A token rotation invalidates every old hold, and a lost acquire, step, or release reply
+  or an HTTP disconnect never replays a non-idempotent uncertain write. test:
+  `crates/gterminals/tests/write_route.rs::token_rotation_and_lost_replies_never_replay_writes`.
+
+### 2.7 Python write client, Native composer ledger, and Native write wiring [category: code] (depends: 2.6)
+
+`kind: deliverable`
+
+Targets:
+- `src/gobby/terminals/coordinator_client.py`
+- `src/gobby/terminals/coordinated_submit.py`
+- `src/gobby/terminals/pane_io.py::*` — scope-reason: move the verified-submit block into coordinated_submit.py and drop submit_coordinated_text from __all__
+- `src/gobby/terminals/workspace_writes.py::*` — scope-reason: import submit_coordinated_text from coordinated_submit
+- `src/gobby/terminals/host_event_reader.py::*` — scope-reason: add the Native ledger event loop and the task that runs it beside ledger persistence
+- `src/gobby/runner_init/terminal_wiring.py::init_terminal_wiring`
+- `src/gobby/runner_init/terminal_host_startup.py`
+- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: move _start_terminal_host into terminal_host_startup.py and re-bind it by import
+- `tests/terminals/test_coordinator_client.py`
+- `tests/terminals/test_workspace_ops.py::*` — scope-reason: import _verified_submits from coordinated_submit and patch it there
+
+Research context:
+
+- Callers: in `Native`, Python constructs no `WriteCoordinator` (A1), yet about 30 modules call
+  it in-process: attention routes, the plan-approval and session-config WS handlers, session
   send-keys and compaction, compact continuation, `workspace_writes` and `pane_io`, spawn
   support, watchdog recovery, and terminal lifecycle monitoring. `init_terminal_wiring` binds
-  `coordinator_client.RustWriteCoordinatorClient` where it binds `WriteCoordinator` today, so
-  those callers keep one attribute and one call surface: `write`, `run_sequence`,
+  `coordinator_client.RustWriteCoordinatorClient` where it binds `WriteCoordinator` today:
+  `runner.write_coordinator`, `bind_wake_write_services`, `bind_composer_coordinator`, and the
+  `TerminalEffectBridge`.
+- Typing — Orchestrator ruling: the client subclasses `WriteCoordinator`. Sixteen modules name
+  it in annotations only, with no isinstance check. A Protocol retype of 14 modules was rejected
+  because it forces a split of the 899-line `WorkspaceOps` module, and a rename was rejected (87
+  constructor sites in 36 files). The client does not call `WriteCoordinator.__init__`, which
+  reads `lease_registry.daemon_epoch` while `Native` has no Python lease registry; nothing reads
+  `coordinator.lease_registry`. It sets `_registry`, `composer_ledger`, and `_attention_gate`,
+  inherits `runtime_for` and `set_attention_gate`, and overrides `write`, `run_sequence`,
   `run_native_wake_batch`, `quarantine`, `retain_unresolved`, `observe_resolved(_async)`,
-  `observe_operator_input(_async)`, `clear_on_exit`, `logical_action_lock`, `lock_held`,
-  `runtime_for`, and `set_attention_gate`.
-- Transport: the terminal family registers a loopback-only write route on gdaemon
-  (`write_api.rs`) that runs each coordinator operation under the Rust per-terminal lock and
-  returns 1.5's typed per-step outcome. `runtime_for` resolves the read runtime from the row's
-  backend through the registry, which in `Native` holds the runtime client below, and the
-  attention gate runs in the client before a write is forwarded.
+  `observe_operator_input(_async)`, `clear_on_exit`, `logical_action_lock`, and `lock_held`. A
+  reflection test fails when any other public `WriteCoordinator` method lacks an override.
+- Transport: the client posts to `http://127.0.0.1:{daemon_port}` from bootstrap and reads
+  `runner_backend.supervisor_write_token()` on every request. A missing token raises
+  `TerminalWriteError(stage="none")` before send, and the token is never logged. It uses
+  `httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(None, connect=2.5))`. A request
+  carrying `client_fd` is refused with stage none; nothing produces one (write_coordinator.py:83).
+  The attention gate runs locally before a write is forwarded.
+- Sync methods: the only production sync caller is `sync_bridge.py:81`, on the loop thread. Sync
+  methods enqueue on a per-terminal ordered send chain through `loop.call_soon_threadsafe` and
+  return immediately; the async variants await the same chain.
+- Action lock — PD ruling (gobby#14972, 2026-10-01, Adversary F2):
+  `logical_action_lock(terminal_id)` returns an `asyncio.Lock` subclass whose async enter takes
+  the local lock and then `acquire_action`, and whose exit releases the remote hold and then the
+  local lock, so Python-side exclusion is unchanged. Its callers use only `async with`
+  (`watchdog/interactive_capacity.py:91`, `watchdog/recovery.py:376`,
+  `terminals/composer_lock.py:71`). `lock_held` has no production caller. `run_sequence` and
+  `run_native_wake_batch` stay single route calls, and the hold is the only cross-call atomicity
+  mechanism.
+- Split: `pane_io.py` is 875 lines. This section moves `_HELD_VERIFIED_SUBMIT_LIMIT`,
+  `_VerifiedSubmitProgress`, `_verified_submits`, `_held_submit`, `_remember_held`,
+  `_forget_held`, and `submit_coordinated_text` (pane_io.py:772-875) from
+  `src/gobby/terminals/pane_io.py` into the new `src/gobby/terminals/coordinated_submit.py`, and
+  drops `submit_coordinated_text` from pane_io's `__all__` (line 75). There
+  `submit_coordinated_text` runs its unchanged ladder inside
+  `async with coordinator.logical_action_lock(terminal.id)`. Its only caller,
+  `workspace_writes.write_workspace_pane` (call at line 59, import at line 12), holds none, and
+  the recovery and wake paths already hold it. `tests/terminals/test_workspace_ops.py` imports
+  `_verified_submits` (line 59) and patches it by module string (line 1284).
+- Native composer ledger — Orchestrator ruling (2026-10-15): today `WriteCoordinator.write`
+  calls `composer_ledger.observe_write` before dispatch (write_coordinator.py:758),
+  `hooks/event_handlers/_base.py:246` reads `coordinator.composer_ledger`, and
+  `event_reader_loop` needs a `TerminalHostManager`. In `Native` the client keeps a local
+  `ComposerLedger`, loaded with `load_ledger(composer_ledger_path())` and bound with
+  `bind_composer_ledger` as `terminal_wiring.py:100` does today. It calls `observe_write` for
+  every step the route reply reports as dispatched, accepted or uncertain. A `Refusal` with stage
+  `Partial` means the text landed and Enter did not, so it records `observe_write(text,
+  submit=False)`. A reply lost after send marks the terminal blocked with
+  `block(terminal_id, "gap")`. The ledger stays in Python in this epic.
+- Native event reader: `host_event_reader.ledger_event_loop` opens
+  `HostClient.open_event_stream(control_socket_path(socket_dir), token, since=<ledger cursor seq>)`.
+  `socket_dir` is `expand_socket_dir(TerminalHostConfig.socket_dir)` (host_protocol.py:19), the
+  same `terminal_host.socket_dir` Rust reads (host.rs:134). It reads `control_token_path`
+  (host_protocol.py:36) and never creates or rotates the token. It calls
+  `resume_host(stream.epoch, stream.seq, since, gap)` and then feeds each event to
+  `observe_host_event`. On an error it closes the stream and retries after
+  `NATIVE_LEDGER_RETRY_SECONDS` = 1.0. The gterm host accepts this event-only connection beside
+  the Rust ones (2.5).
+- Startup and shutdown: today `runner_lifecycle_subsystems.py:291-297` persists
+  `host.composer_ledger`, and in `Native` `_start_terminal_host` returns early (293-295).
+  `runner_lifecycle_subsystems.py` is 883 lines, so this section moves `_start_terminal_host`
+  (289-313) from `src/gobby/runner_lifecycle_subsystems.py` into the new
+  `src/gobby/runner_init/terminal_host_startup.py` as `start_terminal_host`, imported back as
+  `_start_terminal_host`; its call site (line 814) and tests
+  (`tests/test_runner_lifecycle_subsystems.py`, `tests/test_runner_lifecycle.py:5591`,
+  `tests/test_runner_backlog.py:55`) are unchanged. Its `Native` branch sets
+  `runner._composer_ledger_task` to `native_ledger_task`, which runs `persist_ledger` and
+  `ledger_event_loop` in one task, so the existing cancel at `runner_lifecycle_shutdown.py:736`
+  stops both and `persist_ledger` flushes in its finally.
+- Comment fix: `terminal_wiring.py:67-68` says a second hello takes gterm control ownership. The
+  host accepts several control connections (2.5), so this section corrects the comment.
+- **Granularity:** five acceptance items over the Python side of one boundary: the write client,
+  the verified-submit move it wraps, and the Native ledger it feeds. They close together because a
+  Native write client without the ledger feed could type over an operator draft.
+
+Consumers unchanged:
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature, and its wake batch already runs under `logical_action_lock`.
+- `src/gobby/agents/watchdog/recovery.py` — no-edit-reason: `_attempt_idle_reprompt` already runs its steps under `logical_action_lock`, which the client backs with the route hold.
+- `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: It reads `coordinator.composer_ledger`, which the client sets.
+- `src/gobby/runner_lifecycle_shutdown.py` — no-edit-reason: It cancels `runner._composer_ledger_task`, which in `Native` runs ledger persistence and the event loop together.
+- `src/gobby/terminals/sync_bridge.py` — no-edit-reason: Its synchronous coordinator call runs on the loop thread, and the client queues it without blocking.
+- `tests/test_runner_lifecycle_subsystems.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
+- `tests/test_runner_backlog.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
+
+**Acceptance:**
+
+- 2.7.1 - In `Native`, every Python coordinator caller reaches the Rust coordinator through
+  `RustWriteCoordinatorClient`, and #22722's submit regressions pass against it: an unreadable
+  composer draft is never reported as confirmed success (#23188's contract), and a held verified
+  submit retries without a second write, and `submit_coordinated_text` runs its unchanged ladder
+  inside `logical_action_lock`. test:
+  `tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator`.
+- 2.7.2 - The client overrides every public `WriteCoordinator` method except the inherited
+  `runtime_for` and `set_attention_gate`; sync methods return without blocking the loop and keep
+  per-terminal order; and `logical_action_lock` holds the local lock and the remote hold
+  together. test:
+  `tests/terminals/test_coordinator_client.py::test_client_covers_the_coordinator_surface_without_blocking_the_loop`.
+- 2.7.3 - A missing token, or a request carrying `client_fd`, refuses with stage none before
+  send, and the token never appears in a log. test:
+  `tests/terminals/test_coordinator_client.py::test_client_fails_closed_without_the_supervisor_token`.
+- 2.7.4 - In `Native`, an automatic write never types over an operator draft: every dispatched
+  step reaches the ledger, a partial refusal records the text without submit, and a reply lost
+  after send blocks automatic writes to that terminal with reason gap. test:
+  `tests/terminals/test_coordinator_client.py::test_native_automatic_write_never_types_over_an_operator_draft`.
+- 2.7.5 - The Native ledger restores from `composer_ledger_path()`, persists until shutdown
+  cancels its task, and follows host events from its cursor across a stream error. test:
+  `tests/terminals/test_coordinator_client.py::test_native_ledger_restores_persists_and_follows_host_events`.
+
+### 2.8 Native reconcile settler and the host exit proof [category: code] (depends: 2.6)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/settler.rs`
+- `crates/gterminals/src/process.rs`
+- `crates/gterminals/src/host/connect.rs`
+- `crates/gterminals/src/host/epochs.rs::*` — scope-reason: add record_absent_exit beside record_confirmed_exit
+- `crates/gterminals/src/family.rs::*` — scope-reason: start the Native settler beside the supervisor
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the settler and process modules
+- `crates/gterminals/Cargo.toml`
+- `crates/gdaemon/src/nodes/hooks/ledger.rs::*` — scope-reason: process_start moves to gobby_terminals::process and its two callers import it from there
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/settler.rs`
+
+Research context:
+
+- No production code calls `reconcile::reconcile` or implements `Effects`; only
+  `tests/reconcile.rs:63` does. This section adds the Native settler that does.
+- First #24210 fold, verbatim from #23217: "When this task makes Rust reconcile the Native
+  settler, its production call site passes dead_host_epochs built from the host supervisor's
+  durable exited-epoch record on this machine (#24210 provides the record and its snapshot). It
+  takes that set as a snapshot and applies it only after verifying the observed epoch is still the
+  machine's current host epoch. If the epoch changed in between, the pass settles no dead-epoch
+  rows."
+- Pass: `settler.rs` runs one pass after each `HostStatus::Ready` (from
+  `HostSupervisor::subscribe`) and on each health interval:
+  1. Take `HostSupervisor::epoch_snapshot` (host.rs:392-396).
+  2. Over its own `open_control` connection (2.5), read the hello epoch, list the inventory, and
+     ping.
+  3. If the observed epoch differs from `snapshot.current_epoch`, `dead_host_epochs` is empty.
+     Otherwise it is `exited_epochs` minus the observed epoch (the `Options` contract at
+     reconcile.rs:57-63).
+  4. Call `reconcile::reconcile(pool, machine, Observation::Accepted(&inventory), &options,
+     &effects)` with `Options { now, spawn_in_doubt, settle_indeterminate, dead_host_epochs }`.
+  `spawn_in_doubt` comes from `terminals.spawn_in_doubt_seconds` through the config pool lookup
+  that `HostOptions::from_pool` uses. `settle_indeterminate` is true on the first pass after each
+  Ready, as `host_event_reader.py::recover_event_gap` (line 85) does, and false on interval
+  passes, the `TerminalHostManager.reconcile` default (line 543).
+- Exit proof — fold (a), verbatim (reviewer gobby#16183 on #24210 at 3fa292372e, 2026-10-13):
+  "epochs.rs:125-130 demotes a prior current epoch without exited_at. A host that dies while no
+  supervisor runs (reboot, daemon down) never enters exited_epochs, so #23217's restart caller
+  needs a startup exit proof (e.g. recorded pid+start_time or boot time) or those Live rows never
+  settle." On the current tree the demote UPDATE is at epochs.rs:125-129, unchanged since
+  3fa292372e.
+  - Decision — Orchestrator ruling (2026-10-15): confirmed absence is the proof.
+    `adopt_or_spawn` takes its spawn branch only when `connect()` returns none (the control
+    socket is missing or refuses, and `gterm.pid` is absent or names no live, non-zombie gterm)
+    and no child is held. Before spawning there, it calls the new
+    `epochs.rs::record_absent_exit` beside `record_confirmed_exit`, which reads `epoch_snapshot`
+    and, when a current epoch exists, calls `observe_exit(machine, current)`. A `PreAdoptionIo`
+    "live host is not listening" failure records nothing. In `Proxy` and `Compare` Python owns
+    old-epoch rows (`host_reconcile.py:371`).
+  - Rejected: migration 469 recording host pid and start time, plus a gcore process module. It
+    would bump gcode and ghook, and the gcode version floor would force a split of the 969-line
+    `gcode_gateway.py`.
+- Process status — fold (b), verbatim: "Python treats a non-int or <=0 pgid as dead. Rust
+  reconcile short-circuits only a missing/null pgid, so #23217's production
+  Effects::process_status must match."
+  - `Effects::process_status` ports `host_reap.py::recorded_process_group_is_alive` (52-62). A
+    missing, non-integer, or non-positive pgid is dead. With a numeric start time, a recycled
+    pgid (`_pid_recycled`: process start differs by more than 1.0 s) is dead, and a lookup error
+    counts as not recycled. `_group_alive` (88-99) treats `killpg(pgid, 0)` success as alive,
+    falls back to `kill(pgid, 0)` on ESRCH, and treats EPERM as alive. The port uses rustix's
+    `test_kill_process_group` and `test_kill_process` with `process::process_start`.
+  - `process_start` (ledger.rs:536-581: macOS `proc_pidinfo` `PROC_PIDTBSDINFO` with
+    `pbi_status != 5` and start `pbi_start_tvsec + pbi_start_tvusec / 1e6`; Linux `/proc` stat
+    with `btime` and `_SC_CLK_TCK`; none elsewhere) moves unchanged from
+    `crates/gdaemon/src/nodes/hooks/ledger.rs` into the new `crates/gterminals/src/process.rs`.
+    Its callers (ledger.rs lines 70 and 504) import `gobby_terminals::process::process_start`.
+    gdaemon already depends on gobby-terminals (Cargo.toml:32), and `crates/gterminals/Cargo.toml`
+    adds `libc = "0.2"`, already in the lockfile.
+- Run interruption: `Effects::settle_run` ports the cancel transition the Python host reconciler
+  runs, `_AgentRunLifecycleMixin.cancel(run_id, terminal_reason="daemon_stop")` through
+  `_execute_terminal_transition` (`_lifecycle.py` 36-110 and 672-699), on the bare
+  `LocalAgentRunManager(runner.database)` that `terminal_wiring` builds with no status notifier
+  and no credential manager. Inside the reconcile transaction it:
+  - takes `pg_advisory_xact_lock_shared(fence)`;
+  - updates `agent_runs` to `cancelled` with the terminal reason, clears `pending_terminal_*`,
+    `termination_requested_at`, and `pid`, and sets `completed_at` and `updated_at`, where the
+    status is queued, pending, or running;
+  - skips the terminal update for held ids (`Effects::holds`);
+  - normalizes the sandbox count;
+  - sets sessions in `LIVE_SESSION_STATUS_ORDER` with that `agent_run_id` to paused.
+  Promotion and pending keep 1.3's contract (tests/reconcile.rs:88-118). Running inside the
+  reconcile transaction keeps 1.3.5's atomicity, deliberately without Python's nesting guard.
+- Fence key: the settler ports `deployment.py::deployment_advisory_key("agent-terminal-transition")`,
+  the first 8 bytes of `sha256("gobby:{sha256(resolved home)[:16]}:agent-terminal-transition")`
+  read as a signed big-endian integer, and a test pins the vector.
+- `Effects::kill` uses `ControlClient::kill` on the settler's connection. `Effects::holds`
+  reports no holds here; 2.9 fills it. `lib.rs` declares `pub mod settler` and `pub mod process`,
+  and `family.rs` starts the settler beside the supervisor in `Native`. `crates/gdaemon/Cargo.toml`,
+  `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch bump.
+- **Granularity:** five acceptance items over one owner, the Native settler: its pass, the exit
+  proof that feeds it, its process status, and its run interruption. They close together because
+  a settler without the exit proof never settles rows from a host that died while gdaemon was
+  down, and one without run interruption leaves their runs live.
+
+**Acceptance:**
+
+- 2.8.1 - An integration test shows a host restart (old epoch exited, new epoch observed) settles
+  the old epoch's absent live rows as orphaned and interrupts their runs. A row on the new epoch
+  and rows on another machine stay untouched. test:
+  `crates/gterminals/tests/settler.rs::host_restart_settles_only_the_dead_epoch`.
+- 2.8.2 - A stale snapshot (observed epoch superseded before apply) settles no dead-epoch rows.
+  test: `crates/gterminals/tests/settler.rs::stale_snapshot_settles_no_dead_epoch_rows`.
+- 2.8.3 - When adoption confirms that no host is running, the prior current epoch is recorded as
+  exited before the spawn, so its live rows settle on the next pass; a live host that is not
+  listening records no exit. test:
+  `crates/gterminals/tests/settler.rs::confirmed_absence_records_the_prior_epoch_exit`.
+- 2.8.4 - Process status matches `recorded_process_group_is_alive` for a missing, non-integer, or
+  non-positive pgid, a recycled pgid, ESRCH, and EPERM. test:
+  `crates/gterminals/tests/settler.rs::process_status_matches_the_python_reap_oracle`.
+- 2.8.5 - Run interruption leaves the same `agent_runs`, sandbox count, and session rows as the
+  Python cancel transition with terminal reason daemon_stop, under the same fence key. test:
+  `crates/gterminals/tests/settler.rs::run_interruption_matches_the_python_cancel_transition`.
+
+### 2.9 Rust runtime route [category: code] (depends: 2.8)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/runtime_api.rs`
+- `crates/gterminals/src/settler.rs`
+- `crates/gterminals/src/family.rs::*` — scope-reason: construct the runtime route services in Native
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the runtime_api module
+- `crates/gdaemon/src/front_door/terminal_api.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/runtime_route.rs`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: pin that the runtime route shares the write route's loopback and token gate
+
+Research context:
+
+- Runtime seam — PD ruling (gobby#14972, 2026-10-01, Adversary F5): in `Native` Python
+  constructs no `TerminalHostManager` (1.2), so spawn, web-workspace, read, and termination
+  callers need a non-supervising runtime. `runtime_api.rs` serves
+  `POST /api/internal/terminals/runtime` behind 2.6's gate, for native rows only. tmux rows keep
+  Python's spawn-less `TmuxTerminalRuntime`. The oracle is `native_runtime.py::NativeTerminalRuntime`.
+- Operations:
+  - `prepare_spawn` inserts the pending row and sends spawn prepare.
+  - `commit` sends spawn commit and settles in 1.3.5's transaction through `repository::settle`
+    (pub(crate), repository.rs:142). Its reply carries the terminal id, locator, and host epoch
+    that 2.10 records.
+  - `fail` sends spawn abort and fails the pending row.
+  - `reserve_observer` and `release_observer`.
+  - `snapshot`, `snapshot_full`, `history`, `is_live`, and `session_present`.
+  - `spawn_refusal` (oracle `native_runtime.py:165-172`, `refuse_unavailable_host`).
+  - `terminate` (kill), `resize`, and `attach_locator`.
+- Single settler — PD ruling: 2.8's settler stays the only settler. The route reports held
+  prepared spawns through `Effects::holds`, the analogue of Python's `in_doubt_spawns.held_ids`,
+  so a settler pass never settles a spawn the route still holds.
+- Connection: the route opens its own connection with `open_control` (2.5) and reopens it after a
+  transport failure. A transport failure between prepare and commit settles the attempt through
+  1.3.5's failure path.
+- `terminal_api.rs` adds the runtime path beside the write path. `lib.rs` declares
+  `pub mod runtime_api`, and `family.rs` constructs it in `Native`. `crates/gdaemon/Cargo.toml`,
+  `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch bump.
+- **Granularity:** four acceptance items over one route. Its Target files are the route module,
+  the settler's hold report, the family and lib wiring, the gdaemon HTTP glue, and the version
+  bump; they close together because the route without the hold report would let the settler
+  settle a spawn the route holds.
+
+**Acceptance:**
+
+- 2.9.1 - A Native spawn prepares, commits, and settles once with the Rust repository as the only
+  settler; a settler pass never settles a held prepared spawn; and a transport failure between
+  prepare and commit settles the attempt as failed. test:
+  `crates/gterminals/tests/runtime_route.rs::spawn_settles_once_with_one_rust_owner`.
+- 2.9.2 - Snapshot, full snapshot, history, liveness, session presence, spawn refusal, and attach
+  locator replies match the Python `NativeTerminalRuntime` contract for native rows, and a tmux
+  row is refused. test:
+  `crates/gterminals/tests/runtime_route.rs::native_reads_match_the_python_runtime_contract`.
+- 2.9.3 - Terminate and resize act only on the row's current host epoch and refuse a stale one.
+  test: `crates/gterminals/tests/runtime_route.rs::terminate_and_resize_are_epoch_scoped`.
+- 2.9.4 - The runtime route applies the write route's loopback, token, availability, and body
+  gate. test:
+  `crates/gdaemon/tests/front_door.rs::terminal_runtime_route_shares_the_write_route_gate`.
+
+### 2.10 Python runtime client, Native settlement branches, pane binding, and terminal services [category: code] (depends: 2.7, 2.9)
+
+`kind: deliverable`
+
+Targets:
+- `src/gobby/terminals/runtime_client.py`
+- `src/gobby/runner_init/terminal_wiring.py::init_terminal_wiring`
+- `src/gobby/agents/spawn_executor.py::resolve_terminal_services`
+- `src/gobby/agents/spawn_executor_runtime.py::_runtime_spawn`
+- `src/gobby/agents/lifecycle_reconciliation.py::LifecycleReconciliation.reap_stale_pending`
+- `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
+- `tests/terminals/test_runtime_client.py`
+- `tests/terminals/test_workspace_ops.py::*` — scope-reason: prove the Native workspace spawn writes no Python terminal rows and binds the pane only after Rust settles
+
+Research context:
+
 - Runtime seam — PD ruling (gobby#14972, 2026-10-01, Adversary F5): today
-  `init_terminal_wiring` (33-114) registers `NativeTerminalRuntime(HostManagerControl(...))`,
-  and spawn, web-workspace, read, and termination callers reach the host through it. In
-  `Native`, Python constructs no `TerminalHostManager` (1.2), so `init_terminal_wiring` registers
-  `runtime_client.RustNativeRuntimeClient` for the native and tmux backends instead. It is
-  non-supervising and implements the `TerminalRuntime` surface the callers use (`prepare_spawn`,
-  `commit`, `reserve`, snapshot and history reads, liveness, host readiness, `terminate`) as
-  operations on the token-authenticated route (`runtime_api.rs`). It has no write methods;
-  every write goes through `RustWriteCoordinatorClient`. `native_runtime.py` (902 lines) is
-  unchanged because the client is a separate implementation. The settled host decision 1.7
-  reads comes through this seam in `Native`.
-- Settlement ownership — PD ruling: the 1.3 Rust repository is the single settler of pending
-  and prepared rows. In `Native`, `_runtime_spawn` drives the client, and the Rust side creates,
+  `init_terminal_wiring` registers `NativeTerminalRuntime(HostManagerControl(...))`, and spawn,
+  web-workspace, read, and termination callers reach the host through it. In `Native` it
+  registers `runtime_client.RustNativeRuntimeClient` for the native backend and
+  `TmuxTerminalRuntime(host_control=None)` for tmux; `host_control` is used only in
+  `attach_locator` (tmux_runtime.py:352-359), and D2's Rust attach computes the tmux locator
+  itself. The client is non-supervising. It implements the `TerminalRuntime` Protocol
+  (runtime.py:222-256) and the duck-typed `spawn_refusal` (native_runtime.py:165-172) as
+  operations on 2.9's route, and its `write_*` methods raise `TerminalWriteError(stage="none")`
+  because every write goes through `RustWriteCoordinatorClient` (2.7). After a commit it calls
+  `composer_ledger.record_spawn(terminal_id, epoch)` as `native_runtime.py:392` does.
+  `native_runtime.py` (902 lines) is unchanged because the client is a separate implementation.
+  The settled host decision 1.7 reads comes through this seam in `Native`.
+- Settlement ownership — PD ruling: the 1.3 Rust repository is the single settler of pending and
+  prepared rows. In `Native`, `_runtime_spawn` drives the client, and the Rust side creates,
   promotes, or fails the row in the 1.3.5 settlement transaction; `_unplaced_runtime_spawn` and
   `_promote_prepared` (the #23010 path) run only outside `Native`.
   `LifecycleReconciliation.reap_stale_pending` returns without a write in `Native` because Rust
-  reconcile (1.3.3) settles stale pending attempts. `Proxy` and `Compare` keep the Python path
-  unchanged.
+  reconcile (1.3.3, run by 2.8's settler) settles stale pending attempts. `Proxy` and `Compare`
+  keep the Python path unchanged.
 - Web settler — PD ruling (Adversary F5): `spawn_web_terminal` (web_spawn.py:69-278) is a
   second Python settler: it calls `create_pending`, `record_process`, `fail_pending`,
   `fail_pending_attempt`, `settle_promotion`, and `set_dims` around its runtime calls. In
@@ -1071,79 +1679,26 @@ Research context:
   already binds with `set_pane_terminal` only after `spawn_web_terminal` returns a terminal id
   and rolls the pane back on failure (`workspace_ops.py:669-739`). In `Native` that id is the
   one Rust settled, and a Rust settlement failure binds no pane.
-- Route authentication — PD ruling (gobby#14972, 2026-10-01): no Python-to-gdaemon credential
-  exists, and the runner spawns gdaemon (`runner_front_door.py::FrontDoorChild._popen`, which
-  passes `GOBBY_PARENT_FD`; the child watches it in `serve.rs::watch_parent_fd`). On every child
-  start, `_popen` mints a random token and writes it as the first line of that pipe;
-  `watch_parent_fd` reads the line and then keeps its EOF watch. gdaemon holds the token in
-  memory only, and the write route rejects any request without it. The token never appears in
-  env, argv, a file, or a log, and it rotates on every start, including a respawn;
-  `init_terminal_wiring` hands `RustWriteCoordinatorClient` the runner, and the client reads
-  `runner.front_door_child` and its token on every request because the child is attached after
-  wiring (`runner.py:481`); a missing child or token fails closed. A serve without `GOBBY_PARENT_FD` registers no write route.
-- Multi-step atomicity — PD ruling (gobby#14972, 2026-10-01, Adversary F2). This replaces the
-  earlier single-`run_sequence` ruling, which cannot cover the composer ladder:
-  `submit_coordinated_text` and `CoordinatorPaneIO._dispatch` write, wait, send Enter, poll the
-  composer, and retry Enter across separate calls, and
-  `watchdog/recovery.py::_attempt_idle_reprompt` clears, observes, and reprompts under
-  `logical_action_lock`. The write route carries a held logical action:
-  - Acquire: `acquire_action` takes the Rust per-terminal action hold and returns a hold id bound
-    to the current child token, terminal row, and lease generation. A second acquire waits.
-  - Admit and revalidate: an operation carrying the hold id runs under the hold after the
-    coordinator re-reads the row and lease (1.5.2). A stale generation, lost lease, or rotated
-    token refuses it.
-  - Tokens: every hold carries a token. A reply carrying a superseded token never completes or
-    releases a newer hold.
-  - Queue: while a hold is active, route operations without the hold id queue in arrival order
-    and flush in order on release. D2 adds Rust WS operator input to the same queue.
-  - Uncertainty: TTL expiry, a timeout, client disconnect, cancellation after dispatch, and
-    child stop record uncertainty (1.5.3 unresolved evidence) and nothing more. The next queued
-    effect is admitted only after the admitted operation completes or is proven unable to
-    produce further effects: the pane or terminal was destroyed, the gterm host epoch changed,
-    or the host process exited. An operator close or kill of the terminal is the escape hatch
-    because it produces that proof. Release never interrupts an admitted step.
-  - Recovery: a lost acquire, step, or release reply never replays a non-idempotent uncertain
-    write. The action key and unresolved evidence (1.5.3) decide, and a child restart's new
-    token invalidates every old hold.
-  - Constants: no gterm or terminal WS constant governs an action hold or its queue (the
-    nearest are `frame_client.py::DELTA_QUEUE_ENTRIES` = 64 and
-    `leases.py::LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE` = 256, which size other queues), so the PD
-    values apply: hold TTL 10 s; queue bound 128 items or 256 KiB, whichever comes first; queue
-    age 30 s, measured on the oldest queued item. At the bound or the age limit, new input is
-    refused with an explicit typed error to its sender. Queued items are never discarded, and
-    input is never dropped silently.
-  - Python: `RustWriteCoordinatorClient.logical_action_lock(terminal_id)` returns an async
-    context that holds a local `asyncio.Lock` and the remote hold together, so Python-side
-    exclusion is unchanged. `submit_coordinated_text` runs its ladder inside
-    `logical_action_lock`; its only caller, `workspace_writes.write_workspace_pane`, holds none,
-    and the recovery and wake paths already hold it. `run_sequence` and `run_native_wake_batch`
-    stay as they are, and the hold is the only cross-call atomicity mechanism. The composer
-    ladder changes only by that lock wrapping.
-- Activation gate — Adversary sequencing finding (2026-10-01): until D2 registers the terminal
-  family, the terminal WS routes stay Python, and `terminal_ws.py::TerminalWsMixin._leases`
-  (887-891) requires a Python `TerminalLeaseRegistry`, which neither Rust client replaces. 2.4
-  therefore builds and verifies the owner, runtime, and write seams in isolated `Native` tests
-  only. Production stays `Proxy` or `Compare` with Python owners, and a startup that selects
-  `Native` while the terminal family is unregistered is refused before any ownership change.
-  D2 lifts the gate in the same change that registers the family. No per-operation rollout knob
-  or second supervisor is added.
-- **Granularity:** nine acceptance items over one atomic Native ownership cutover. Supervisor
-  exclusion, the write route with its action hold, the runtime seam, and single Rust settlement
-  close together: exclusion without the write client strands the Python write callers,
-  exclusion without the runtime seam strands spawn, read, and termination, and the seam without
-  Rust settlement leaves two settlers. The action hold is the write route's admission rule, so
-  it is not independently closeable from the route. Exclusion without WS routing would strand
-  terminal WS clients, so the activation gate keeps production on Python owners until D2.
-
-`Native` constructs Rust ownership and omits Python ownership. Route mode is read once during
-startup; a runtime flip is rejected so existing sessions cannot be half-migrated.
+- Terminal services (found gap): in `Native`, `init_terminal_wiring` sets
+  `runner.terminal_services` to None, so `AgentLifecycleMonitor.__init__`
+  (lifecycle_monitor.py:110-117) builds the `build_terminal_services` fallback
+  (lifecycle_monitor_terminals.py:13-28): a Python `WriteCoordinator` and
+  `TerminalLeaseRegistry` over an empty runtime registry. This section sets
+  `runner.terminal_services = TerminalServices(TerminalManager(db), <Native runtime registry>,
+  coordinator=<write client>)` in `Native` and sets the agent runner's terminal fields from the
+  same objects, so the monitor builds no fallback.
+- **Granularity:** four acceptance items over two lifecycle owners, spawn settlement and pane
+  binding, plus the terminal services they share. They close together because pane binding reads
+  the terminal id Rust settlement returns, and both resolve the runtime through the services this
+  section wires.
 
 Consumers unchanged:
-- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature, and its wake batch already runs under `logical_action_lock`.
-- `src/gobby/agents/watchdog/recovery.py` — no-edit-reason: `_attempt_idle_reprompt` already runs its steps under `logical_action_lock`, which the client backs with the route hold.
-- `src/gobby/terminals/workspace_writes.py` — no-edit-reason: It calls `submit_coordinated_text` with the unchanged signature and holds no action lock.
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature.
+- `tests/agents/test_spawn_native_only.py` — no-edit-reason: It runs outside `Native` route mode, where `resolve_terminal_services` is unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: It runs outside `Native` route mode, where `_runtime_spawn` is unchanged.
+- `tests/servers/test_terminal_ws_attach_honesty.py` — no-edit-reason: It runs outside `Native` route mode, where `_runtime_spawn` is unchanged.
 - `src/gobby/terminals/native_runtime.py` — no-edit-reason: `Proxy` and `Compare` keep `NativeTerminalRuntime`; `Native` registers the separate runtime client.
-- `src/gobby/agents/lifecycle_monitor.py` — no-edit-reason: `reap_stale_pending` delegates to the reconciliation method with an unchanged signature and return type.
+- `src/gobby/agents/lifecycle_monitor.py` — no-edit-reason: `reap_stale_pending` delegates to the reconciliation method with an unchanged signature and return type, and with `runner.terminal_services` set its fallback is not built.
 - `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: It runs outside `Native`, where the reap path is unchanged.
 - `tests/agents/test_lifecycle_reconciliation.py` — no-edit-reason: It runs outside `Native`, where the reap path is unchanged.
 - `tests/agents/test_spawn_executor_placement_bind.py` — no-edit-reason: It runs outside `Native`, where the reap path is unchanged.
@@ -1153,47 +1708,22 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 2.4.3 - Startup has exactly one supervisor in every mode, and a runtime route-mode change is
-  rejected with restart-required before altering ownership. test:
-  `crates/gterminals/tests/family_cutover.rs::cutover_requires_restart_and_has_one_owner`.
-- 2.4.7 - In `Native`, every Python coordinator caller reaches the Rust coordinator through
-  `RustWriteCoordinatorClient`, and #22722's submit regressions pass against it: an unreadable
-  composer draft is never reported as confirmed success (#23188's contract), and a held verified
-  submit retries without a second write, and `submit_coordinated_text` runs its unchanged ladder
-  inside `logical_action_lock`. test:
-  `tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator`.
-- 2.4.8 - The write route refuses a missing or wrong token; the token never appears in the
-  child's environment or argv and rotates on every start; a serve without `GOBBY_PARENT_FD`
-  exposes no write route; a write issued before the child is attached, or after it stops, is
-  refused. test:
-  `crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_parent_pipe_token`.
-  test: `tests/test_runner_front_door.py::test_write_token_travels_only_over_the_parent_pipe`.
-- 2.4.12 - In `Native`, constructing `TerminalHostManager` is refused, and agent spawn,
-  web-workspace spawn, snapshot reads, and termination run through `RustNativeRuntimeClient`.
-  test: `tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client`.
-- 2.4.13 - In `Native`, agent, retry, placed, and web/workspace spawns and a stale-pending reap
+- 2.10.1 - In `Native`, constructing `TerminalHostManager` is refused, and agent spawn,
+  web-workspace spawn, snapshot reads, and termination run through `RustNativeRuntimeClient`;
+  tmux rows keep the spawn-less `TmuxTerminalRuntime`. test:
+  `tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client`.
+- 2.10.2 - In `Native`, agent, retry, placed, and web/workspace spawns and a stale-pending reap
   make zero Python terminal-row writes and the Rust repository settles each row; `Proxy` keeps
   the Python settlement path unchanged. test:
   `tests/terminals/test_runtime_client.py::test_native_settlement_has_one_rust_owner`.
-- 2.4.14 - While a hold is active, unheld route operations queue in arrival order and flush in
-  order on release; at 128 items, 256 KiB, or a 30 s oldest-item age, new input is refused with
-  an explicit typed error and no queued item is discarded; a reply carrying a superseded hold
-  token neither completes nor releases the newer hold. test:
-  `crates/gterminals/tests/family_cutover.rs::route_hold_queue_is_bounded_and_token_scoped`.
-- 2.4.15 - TTL expiry, timeout, or disconnect during an admitted host write records uncertainty
-  only: the next queued effect is not admitted before completion or proof (pane or terminal
-  destroyed, host epoch changed, host process exited, or an operator close or kill), and a
-  delayed effect that lands after the uncertainty is persisted is not replayed and releases no
-  newer hold. test:
-  `crates/gterminals/tests/family_cutover.rs::uncertain_hold_admits_nothing_before_proof`.
-- 2.4.16 - In `Native`, a workspace pane binds only after Rust returns the settled terminal id,
+- 2.10.3 - In `Native`, a workspace pane binds only after Rust returns the settled terminal id,
   with no Python terminal-row write; a Rust settlement failure binds no pane. test:
   `tests/terminals/test_workspace_ops.py::test_native_pane_binds_after_rust_settlement`. test:
   `tests/terminals/test_workspace_ops.py::test_native_settlement_failure_binds_no_pane`.
-- 2.4.17 - A startup that selects `Native` while the terminal family is unregistered is refused
-  before any ownership change, and `Proxy` and `Compare` keep the Python host manager, lease
-  registry, and write coordinator. test:
-  `crates/gterminals/tests/family_cutover.rs::native_activation_refuses_without_the_terminal_family`.
+- 2.10.4 - In `Native`, `runner.terminal_services` carries the Rust runtime client and the write
+  client, `AgentLifecycleMonitor` builds no fallback coordinator, and a committed spawn records an
+  empty composer for its terminal. test:
+  `tests/terminals/test_runtime_client.py::test_native_terminal_services_use_the_rust_clients`.
 
 ## D1 #23076 input-grant finalization and durable handoff (depends: 1.4)
 
@@ -1261,7 +1791,7 @@ deferral:
     - 1.4.9
 ```
 
-## D2 #21558 terminal WS operations, relay, and family cutover (depends: 2.1, 2.4, 1.8)
+## D2 #21558 terminal WS operations, relay, and family cutover (depends: 2.1, 2.10)
 
 `kind: deferred`
 
@@ -1272,11 +1802,11 @@ policy would break 1.2.5's restart I/O invariant. The parser cannot name a defer
 `(depends: ...)`, so at expansion the PD wires the D2 task's blocked-by edges to #21558 and to
 the D1 task named in `deferral_task_map`, and hand expansion lands D1 before the 2.4-WS leaf.
 
-**Leaf 2.2 — Native terminal WS connection and operation state machine (depends: 2.1, 1.8)**
+**Leaf 2.2 — Native terminal WS connection and operation state machine (depends: 2.1, 2.5)**
 
 Leaf targets:
 - `crates/gterminals/src/ws.rs`
-- `crates/gterminals/src/family.rs`
+- `crates/gterminals/src/family.rs::*` — scope-reason: own the WS connection state in the terminal family
 - `crates/gterminals/tests/ws_operations.rs`
 
 Research context:
@@ -1286,8 +1816,10 @@ Research context:
   #21558 supplies connection
   auth/subscription/broadcast and the outer envelope.
 - Runtime resolution remains per terminal row. A terminal id is backend-neutral; native rows use
-  the native host runtime and live tmux rows use 1.8's complete Rust adapter for input/write,
-  resize, snapshot/history, attach locator, liveness, and termination.
+  the native host runtime. tmux rows exist only for hand-started panes (#22856): their input,
+  write, and resize go through 2.5's `tmux_write.rs`; attach computes the locator from the row and
+  the host socket as `TmuxTerminalRuntime.attach_locator` does; and history and frames come from
+  the gterm host's frames socket, keyed by the pane id.
 - `terminal_set_theme` — PD ruling (Adversary F4): the oracle is
   `terminal_ws.py::_handle_terminal_set_theme` and `_declare_holder_theme`. gclient
   `app/theme_sync.rs` already sends it for proxied panes.
@@ -1361,12 +1893,13 @@ Deferred acceptance:
 **Leaf 2.4-WS — Terminal family registration, WS action-hold queueing, and end-to-end parity (depends: 2.3)**
 
 Leaf targets:
-- `crates/gterminals/src/family.rs`
-- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: route terminal HTTP and WS as one family beside 2.4's write and runtime routes
+- `crates/gterminals/src/family.rs::*` — scope-reason: register terminal HTTP and WS dispatch as one family
+- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: route terminal HTTP and WS as one family beside 2.6's write and 2.9's runtime routes
 - `crates/gterminals/src/write_api.rs`
 - `crates/gterminals/tests/family_cutover.rs`
 - `tests/terminals/test_coordinator_client.py`
 - `tests/terminals/acceptance/test_native_lifecycle.py::*` — scope-reason: add gdaemon native-family restart, fallback, and explicit-drain acceptance
+- `crates/gterminals/tests/host_lifecycle.rs::*` — scope-reason: restore the five real-gdaemon tests from base 17ec46c7
 
 Research context:
 
@@ -1379,6 +1912,19 @@ Research context:
   start, so a route change requires the existing announced restart/cutover procedure.
 - Rust WS operator input joins 2.4's route-hold queue under 2.4's tokens, uncertainty, proof,
   and constants.
+- Carried obligations (#23219, Orchestrator 2026-10-15):
+  - Restore the five real-gdaemon tests that 2.4 removes from
+    `crates/gterminals/tests/host_lifecycle.rs` (`daemon_restart_preserves_live_terminal`,
+    `explicit_parent_drain_restarts_with_fresh_epoch`,
+    `spawned_identity_survives_health_and_stop_disarms_retry`,
+    `explicit_drain_terminates_token_mismatch_host`, and
+    `explicit_drain_terminates_foreign_epoch_host`) from base 17ec46c7, and fix the
+    `GOBBY_TERMINALS_TEST_GDAEMON` `?` at host_lifecycle.rs:730 so each restored test either
+    passes or is an honest opt-in.
+  - LOW-1: the production `InputRevoke` effect maps a not-found reply to Ok, as
+    `input_grants.py:145-150` does (reconcile.rs:455-460 calls it).
+  - LOW-2: an ordinary grant or revoke calls `repository::clear_input_handoff(.., None)`
+    afterward.
 
 Register `/api/terminals` and terminal WS messages as one terminal family. `Proxy` keeps Python
 ownership. `Compare` proxies effects and compares only normalized non-mutating output.
@@ -1455,7 +2001,7 @@ deferral:
 Executors run focused verification after each leaf and the complete matrix before native cutover:
 
 1. `cargo fmt --all -- --check` and the repository Rust lint/type gate for every changed crate.
-2. `cargo nextest run -p gobby-terminals`, including the live-tmux adapter contract; focused
+2. `cargo nextest run -p gobby-terminals`, including the `tmux_write.rs` contract (2.5); focused
    `-p gobby-daemon` integration tests for family composition and shutdown.
 3. With isolated `DATABASE_URL` and `GOBBY_TEST_PROTECT=1`, run the changed Python test files only:
    backend ingress/selection, spawn executor, agent definitions, terminal routes/WS, host shutdown,
@@ -1526,3 +2072,20 @@ Executors run focused verification after each leaf and the complete matrix befor
 - 2026-10-15: Plan Writer gobby#16490 withdraws the M1 stamped from the 2026-10-01 consensus
   before the gap amendment that Orchestrator gobby#15977 assigned for the items moved out of
   #23217.
+- 2026-10-15: Gap amendment (Plan Writer gobby#16490, assigned by Orchestrator gobby#15977). 2.4
+  now mirrors #23217 and closes on 2.4.3, 2.4.8 (token half), 2.4.14, 2.4.15, and 2.4.17, with
+  route authentication on the supervisor pipe now that #23457 made gdaemon the backend's parent.
+  The items moved out of #23217 land in six new deliverables: 2.5 Rust write runtimes and the
+  host connection opener, 2.6 the loopback write route, 2.7 the Python write client with the
+  Native composer ledger, 2.8 the Native settler and the host exit proof, 2.9 the runtime route,
+  and 2.10 the Python runtime client, settlement branches, pane binding, and terminal services.
+  ID map: 2.4.7 moves to 2.7.1; 2.4.12 to 2.10.1; 2.4.13 to 2.10.2, with its Rust half in 2.8.5
+  and 2.9.1; 2.4.16 to 2.10.3; the route halves of 2.4.8, 2.4.14, and 2.4.15 to 2.6.1, 2.6.3,
+  and 2.6.4; and the #24210 folds to 2.8.1-2.8.4, with the first fold's text in 2.8's research.
+  New items: 2.7.4 (in `Native` an automatic write never types over an operator draft) and
+  2.10.4 (`Native` terminal services use the Rust clients). Orchestrator rulings applied: the
+  composer ledger stays in the Python write client; each Rust component opens its own control
+  connection; confirmed absence is the host exit proof, with no migration 469; and tmux option A
+  replaces 1.8, which #23214 closed as obsolete, so D2 and leaf 2.2 drop the 1.8 edge. 1.6's
+  consumer row follows the f2ec9007f7 rename (#23779), and its Targets drop the symbols that
+  #23212 and #22856 already deleted. D2 carries #23219's restored tests and two LOW findings.
