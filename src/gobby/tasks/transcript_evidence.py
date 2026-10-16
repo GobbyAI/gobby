@@ -36,9 +36,14 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
-from gobby.tasks.transcript_background import pending_background_run, recover_background_receipt
+from gobby.tasks.transcript_background import (
+    deliver_output,
+    pending_background_run,
+    recover_background_receipt,
+)
 from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
+    OutputDelivery,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -802,15 +807,26 @@ def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
         and (
             reference.search(run.output or "")
             or re.fullmatch(
-                rf"(?:uv run )?rtk recall {match.group(1)}", run.output_recovered_from or ""
+                rf"(?:uv run )?rtk recall {match.group(1)}(?: --full)?",
+                run.output_recovered_from or "",
             )
         )
     ]
     if len(originals) != 1:
         return
     index = originals[0]
+    original = state.runs[index]
+    if original.output_deliveries:
+        # Gate 12 replays a recovered job's deliveries, so the recall must be one.
+        state.runs[index] = deliver_output(
+            original,
+            OutputDelivery(
+                receipt.completed_at, receipt.command, receipt.output, False, appends=False
+            ),
+        )
+        return
     state.runs[index] = replace(
-        state.runs[index],
+        original,
         output=receipt.output,
         output_truncated=False,
         output_recovered_from=receipt.command,

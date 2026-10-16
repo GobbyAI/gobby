@@ -2248,7 +2248,7 @@ class TestLedgerDirtyState:
         assert status_calls == []
 
     @pytest.mark.asyncio
-    async def test_git_commit_reconciles_both_ledgers_against_its_own_paths(
+    async def test_git_commit_reconciles_live_paths_and_keeps_task_history(
         self,
         handler: WorkflowHookHandler,
         session_var_manager: SessionVariableManager,
@@ -2276,8 +2276,10 @@ class TestLedgerDirtyState:
         assert calls == [("/tmp", {"a.py", "b.py"})]
         variables = session_var_manager.get_variables(SESSION_ID)
         assert variables["session_dirty_files"] == ["b.py"]
-        assert variables["task_edited_files"] == {"task-1": ["b.py"]}
+        assert variables["task_edited_files"] == {"task-1": ["a.py", "b.py"]}
         assert variables["session_edited_files"] == ["a.py", "b.py"]
+        live = variables["task_live_edit_starts"]["task-1"]
+        assert {path for paths in live.values() for path in paths} == {"b.py"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("ledger_path", ["tests", "."])
@@ -2342,7 +2344,7 @@ class TestLedgerDirtyState:
             variables, SESSION_ID, variable_manager=session_var_manager, project_path=str(tmp_path)
         ) == ([] if ledger_path == "." else ["tests"])
         remaining = [ledger_path, "tests-other"] if ledger_path == "." else ["tests-other"]
-        assert variables["task_edited_files"] == {"task-1": remaining}
+        assert variables["task_edited_files"] == {"task-1": [ledger_path, "tests-other"]}
         assert variables["session_dirty_files"] == remaining
 
         git("add", "tests-other/b.py")
@@ -2350,7 +2352,7 @@ class TestLedgerDirtyState:
         assert await reconcile_edit_ledgers(
             variables, SESSION_ID, variable_manager=session_var_manager, project_path=str(tmp_path)
         ) == sorted(remaining)
-        assert not variables["task_edited_files"].get("task-1")
+        assert variables["task_edited_files"] == {"task-1": [ledger_path, "tests-other"]}
         assert variables["session_dirty_files"] == []
 
     @pytest.mark.asyncio

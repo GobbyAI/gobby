@@ -294,8 +294,8 @@ async def test_close_allows_commit_before_other_claim_live_edit(
     variables.record_edited_files(
         canonical_task_session.id, ["src/shared.py"], checkout_root=str(tmp_path), edited_at=100
     )
-    variables.release_task_edited_files(
-        canonical_task_session.id, first.id, ["src/shared.py"], checkout_root=str(tmp_path)
+    variables.release_session_dirty_files(
+        canonical_task_session.id, ["src/shared.py"], checkout_root=str(tmp_path)
     )
     tasks.claim_task_for_agent(second.id, canonical_task_session.id)
     for stamp in (300, 400):
@@ -324,7 +324,8 @@ async def test_close_allows_commit_before_other_claim_live_edit(
         gate.to_dict() for gate in evaluation.gates if gate.item == 7
     ]
     assert variables.get_variables(canonical_task_session.id)["task_edited_files"] == {
-        second.id: ["src/shared.py"]
+        first.id: ["src/shared.py"],
+        second.id: ["src/shared.py"],
     }
 
 

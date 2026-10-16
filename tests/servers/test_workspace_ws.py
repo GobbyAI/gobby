@@ -65,6 +65,7 @@ OPS = {
     "tab.rename",
     "tab.rebalance",
     "tab.move",
+    "tab.reorder",
     "tab.close",
     "pane.split",
     "pane.swap",
@@ -413,6 +414,8 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     other_tab, other_pane = other["tabs"][0], other["panes"][0]
     moved = await op("tab.move", tab=other_tab["id"], position=0)
     assert [row["position"] for row in moved["tabs"] if row["id"] == other_tab["id"]] == [0]
+    reordered = await op("tab.reorder", workspace=home, order=[tab["id"], other_tab["id"]])
+    assert [row["id"] for row in reordered["tabs"]] == [tab["id"], other_tab["id"]]
     await op("pane.move", pane=second["id"], tab=other_tab["id"], beside=other_pane["id"])
     assert (await op("workspace.rename", workspace=home, name="renamed"))["name"] == "renamed"
     listed = {row["id"]: row for row in await op("workspace.list")}
@@ -510,6 +513,8 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
         _op_request("pane.resize", pane=pane["id"], ratio="wide"),
         _op_request("pane.read", pane=pane["id"], lines=0),
         _op_request("tab.move", tab=pane["tab_id"], position=True),
+        _op_request("tab.reorder", workspace=live["id"], order=pane["tab_id"]),
+        _op_request("tab.reorder", workspace=live["id"], order=[7]),
         _op_request("pane.rename", pane=pane["id"], label=7),
         _op_request("pane.close", pane=pane["id"], actor="session:intruder"),
         _op_request("pane.close", pane=pane["id"], extra=1),
@@ -655,7 +660,7 @@ async def test_shell_ops_carry_the_client_theme_to_the_spawn(stack: _Stack) -> N
 
 
 def test_op_fields_refuse_types_a_message_cannot_be_checked_against() -> None:
-    async def send_many(self: object, actor: str, keys: list[str]) -> None: ...
+    async def send_many(self: object, actor: str, keys: list[int]) -> None: ...
 
     async def pick_axis(self: object, actor: str, axis: Literal["horizontal"]) -> None: ...
 

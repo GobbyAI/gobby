@@ -1,6 +1,8 @@
 use anyhow::{Result, ensure};
 use futures_util::FutureExt;
+use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_daemon::lease::{ActiveDaemonLease, LeaseMode, LeaseState};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_postgres::{Client, NoTls};
@@ -8,8 +10,19 @@ use uuid::Uuid;
 
 struct TestDb {
     admin: Client,
-    url: String,
+    pool: Arc<Pool>,
     schema: String,
+}
+
+fn pool(url: &str) -> Result<Arc<Pool>> {
+    Ok(Arc::new(Pool::build(
+        url,
+        PoolSettings {
+            max_size: 8,
+            application_name: "gobby-gdaemon-lease-test".into(),
+            acquire_timeout: Duration::from_secs(5),
+        },
+    )?))
 }
 
 #[cfg(unix)]
@@ -177,7 +190,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
 impl TestDb {
     fn lease(&self, token: &str) -> Result<ActiveDaemonLease> {
         ActiveDaemonLease::new(
-            &self.url,
+            self.pool.clone(),
             &Uuid::new_v4().to_string(),
             token,
             LeaseMode::Hub,
@@ -236,7 +249,7 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     let separator = if url.contains('?') { '&' } else { '?' };
     let db = TestDb {
         admin,
-        url: format!("{url}{separator}options=-csearch_path%3D{schema}"),
+        pool: pool(&format!("{url}{separator}options=-csearch_path%3D{schema}"))?,
         schema,
     };
     let outcome = std::panic::AssertUnwindSafe(case(&db)).catch_unwind().await;
@@ -430,7 +443,9 @@ async fn failed_transaction_and_drop_release_the_dedicated_session() -> Result<(
 
 #[test]
 fn node_mode_is_refused_before_connecting() {
-    let node = ActiveDaemonLease::new("invalid url", "machine", "token", LeaseMode::Node);
+    // Pool::build does not connect, so an unreachable URL proves no connection.
+    let unreachable = pool("postgresql://test@127.0.0.1:1/test").expect("lazy pool");
+    let node = ActiveDaemonLease::new(unreachable, "machine", "token", LeaseMode::Node);
     assert!(
         node.err()
             .expect("node refused")

@@ -59,7 +59,8 @@ pub fn sync_file(
     let file_path = locks.acquired_files[0].to_string_lossy().into_owned();
 
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    if !db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, &file_path)? {
+    let Some(attempt) = db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, &file_path)?
+    else {
         if allow_missing_indexed_file {
             return print_skipped_missing_indexed_file(ctx, &file_path, format, &locks);
         }
@@ -67,21 +68,33 @@ pub fn sync_file(
             "indexed file `{file_path}` was not found for project {}",
             ctx.project_id
         );
-    }
+    };
     let mut lifecycle = lifecycle_from_context(ctx)?;
     let symbols = code_symbols::fetch_symbols_for_file(&mut conn, &ctx.project_id, &file_path)?;
     let output = lifecycle.sync_file_symbols(&file_path, &symbols)?;
-    if !db::mark_vectors_synced(&mut conn, &ctx.project_id, &file_path)? {
-        if allow_missing_indexed_file {
-            return print_skipped_missing_indexed_file(ctx, &file_path, format, &locks);
-        }
-        anyhow::bail!(
-            "indexed file `{file_path}` was not found for project {}",
-            ctx.project_id
+    if !db::mark_vectors_synced(
+        &mut conn,
+        &ctx.project_id,
+        &file_path,
+        &attempt.content_hash,
+        attempt.attempted_at,
+    )? {
+        return print_skipped_sync_file(
+            ctx,
+            &file_path,
+            format,
+            &locks,
+            SyncFileSkip::Superseded,
+            None,
         );
     }
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_file_lifecycle_output(&output, report, format, &locks)
+}
+
+enum SyncFileSkip {
+    MissingIndexedFile,
+    Superseded,
 }
 
 fn print_skipped_missing_indexed_file(
@@ -91,7 +104,6 @@ fn print_skipped_missing_indexed_file(
     locks: &ProjectFileLockSet,
 ) -> anyhow::Result<()> {
     let failures = projection::reconcile_deleted_file(ctx, file_path);
-    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
     let error = if failures.is_empty() {
         None
     } else {
@@ -109,6 +121,37 @@ fn print_skipped_missing_indexed_file(
                 .join("; "),
         })
     };
+    print_skipped_sync_file(
+        ctx,
+        file_path,
+        format,
+        locks,
+        SyncFileSkip::MissingIndexedFile,
+        error,
+    )
+}
+
+fn print_skipped_sync_file(
+    ctx: &Context,
+    file_path: &str,
+    format: Format,
+    locks: &ProjectFileLockSet,
+    skip: SyncFileSkip,
+    error: Option<ProjectionSyncError>,
+) -> anyhow::Result<()> {
+    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
+    let (reason, summary, text) = match skip {
+        SyncFileSkip::MissingIndexedFile => (
+            "indexed_file_not_found",
+            "indexed file not found",
+            format!("indexed file `{file_path}` was not found"),
+        ),
+        SyncFileSkip::Superseded => (
+            "sync_superseded",
+            "superseded by a newer index",
+            format!("`{file_path}` was superseded by a newer index"),
+        ),
+    };
     let degraded = error.is_some();
     let payload = file_lock_payload(
         serde_json::json!({
@@ -119,14 +162,14 @@ fn print_skipped_missing_indexed_file(
             "file_path": file_path,
             "collection": collection,
             "status": "skipped",
-            "reason": "indexed_file_not_found",
+            "reason": reason,
             "synced_files": 0,
             "synced_symbols": 0,
             "skipped_files": 1,
             "failed_files": 0,
             "degraded": degraded,
             "error": error,
-            "summary": format!("skipped vector sync for {file_path}: indexed file not found"),
+            "summary": format!("skipped vector sync for {file_path}: {summary}"),
         }),
         locks,
     );
@@ -134,7 +177,7 @@ fn print_skipped_missing_indexed_file(
         Format::Json => output::print_json(&payload),
         Format::Text => {
             output::print_text(&format!(
-                "Skipped code-symbol vector sync for project {}: indexed file `{file_path}` was not found",
+                "Skipped code-symbol vector sync for project {}: {text}",
                 ctx.project_id
             ))?;
             output::print_json(&payload)

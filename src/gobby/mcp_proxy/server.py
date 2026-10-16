@@ -352,7 +352,9 @@ class GobbyDaemonTools:
             if isinstance(result, CallToolResult):
                 return result
             if isinstance(result, dict):
-                error_msg = result.get("error", "Unknown error")
+                nested = result.get("result")
+                nested_error = nested.get("error") if isinstance(nested, dict) else None
+                error_msg = result.get("error") or nested_error or "Unknown error"
                 hint = result.get("hint", "")
                 schema = result.get("schema")
             else:

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.utils.daemon_git import GitResult, GitTimeout, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     active_owned_dirty_paths,
@@ -78,6 +79,50 @@ async def test_rule3_refuses_dirty_first_touch_naming_owner(guard_harness: Guard
     result = await h.handler._evaluate_rules(h.edit_event("unowned.txt"))
     assert result.reason is not None
     assert "no claimed task" in result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", [0, 1, None])
+async def test_rule3_names_the_task_holding_the_live_interval(
+    guard_harness: GuardHarness, live: int | None
+) -> None:
+    h = guard_harness
+    second = LocalTaskManager(h.db).create_task(
+        project_id=h.project.id,
+        title="Second foreign task",
+        task_type="bug",
+        category="code",
+        implementation_domain="backend",
+        validation_criteria="Second foreign task paths remain isolated.",
+        claimed_by_session_id=h.foreign_session.id,
+    )
+    root = str(h.repo.resolve())
+    variables = SessionVariableManager(h.db)
+    tasks = (h.foreign_task, second)
+    variables.merge_variables(
+        h.foreign_session.id,
+        {
+            "claimed_tasks": {task.id: f"#{task.seq_num}" for task in tasks},
+            # Both claims edited foreign.txt; the history alone cannot tell which holds it now.
+            "task_edited_file_checkouts": {task.id: {root: ["foreign.txt"]} for task in tasks},
+        },
+    )
+    stored = list(variables.get_variables(h.foreign_session.id)["claimed_tasks"])
+    by_order = [next(task for task in tasks if task.id == task_id) for task_id in stored]
+    if live is not None:
+        variables.merge_variables(
+            h.foreign_session.id,
+            {"task_live_edit_starts": {by_order[live].id: {root: {"foreign.txt": 1.0}}}},
+        )
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    reason = result.reason or ""
+    assert h.foreign_session.ref in reason
+    # Without a live interval the first claim in the history scan keeps today's label.
+    named, other = (by_order[0], by_order[1]) if live in (0, None) else (by_order[1], by_order[0])
+    assert f"task #{named.seq_num}" in reason
+    assert f"task #{other.seq_num}" not in reason
 
 
 @pytest.mark.asyncio
@@ -244,6 +289,224 @@ async def test_rule2_landing_merge_passes_for_merge_set_paths(guard_harness: Gua
     assert "renamed.txt" not in result.reason
 
 
+def _commit_files(repo: Path, message: str, files: Mapping[str, str]) -> None:
+    for name, text in files.items():
+        (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", "--", *files)
+    _git(repo, "commit", "-q", "-m", message)
+
+
+def _git_conflict(repo: Path, *args: str) -> None:
+    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 1, result.stderr
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U")
+
+
+def _stop_at_conflict(repo: Path, operation: str) -> None:
+    """Stop `operation` conflicted in conflict.txt after it applied applied.txt."""
+    base = _git(repo, "branch", "--show-current")
+    _git(repo, "checkout", "-q", "-b", "topic")
+    _commit_files(repo, "topic", {"conflict.txt": "topic\n", "applied.txt": "applied\n"})
+    if operation == "revert":
+        _commit_files(repo, "follow-up", {"conflict.txt": "follow-up\n"})
+        _git_conflict(repo, "revert", "--no-edit", "HEAD~1")
+        return
+    _git(repo, "checkout", "-q", base)
+    _commit_files(repo, "upstream", {"conflict.txt": "upstream\n"})
+    if operation == "rebase":
+        _git(repo, "checkout", "-q", "topic")
+        _git_conflict(repo, "rebase", base)
+    else:
+        _git_conflict(repo, "cherry-pick", "topic")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["rebase", "cherry-pick", "revert"])
+async def test_rule3_exempts_operation_paths_at_conflict_stop(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, operation)
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    for path in ("conflict.txt", "applied.txt"):
+        result = await h.handler._evaluate_rules(h.edit_event(path))
+        assert result.decision == "allow", path
+    for command in (
+        "git checkout --ours conflict.txt",
+        "git checkout --theirs conflict.txt",
+        "git restore --theirs conflict.txt",
+    ):
+        result = await h.handler._evaluate_rules(h.event(command))
+        assert result.decision == "allow", command
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    for event in (h.edit_event("foreign.txt"), h.event("git checkout --ours foreign.txt")):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert result.reason is not None
+        assert h.foreign_session.ref in result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["rebase", "cherry-pick", "revert"])
+async def test_rule3_operation_exemption_ends_on_abort(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, operation)
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "allow"
+    _git(h.repo, operation, "--abort")
+    (h.repo / "conflict.txt").write_text("after abort dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "no live session owns it" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rule3_rebase_exemption_ends_on_continue_despite_stale_rebase_head(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, "rebase")
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    _git(h.repo, "-c", "core.editor=true", "rebase", "--continue")
+    assert _git(h.repo, "rev-parse", "-q", "--verify", "REBASE_HEAD")
+    (h.repo / "conflict.txt").write_text("after rebase dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "no live session owns it" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rule3_exempts_rename_followed_cherry_pick_conflict(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    lines = [f"line {number}\n" for number in range(20)]
+    _commit_files(h.repo, "story", {"story.txt": "".join(lines)})
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "checkout", "-q", "-b", "topic")
+    _commit_files(h.repo, "edit", {"story.txt": "".join([*lines[:5], "topic\n", *lines[6:]])})
+    _git(h.repo, "checkout", "-q", base)
+    _git(h.repo, "mv", "story.txt", "moved.txt")
+    _commit_files(h.repo, "move", {"moved.txt": "".join([*lines[:5], "upstream\n", *lines[6:]])})
+    _git_conflict(h.repo, "cherry-pick", "topic")
+    assert _git(h.repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "topic") == "story.txt"
+    assert _git(h.repo, "diff", "--name-only", "--diff-filter=U") == "moved.txt"
+    result = await h.handler._evaluate_rules(h.edit_event("moved.txt"))
+    assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_rule3_merge_exemption_excludes_paths_only_head_changed(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "checkout", "-q", "-b", "incoming")
+    _commit_files(h.repo, "incoming", {"incoming.txt": "incoming\n"})
+    _git(h.repo, "checkout", "-q", base)
+    _commit_files(h.repo, "head only", {"foreign.txt": "head foreign\n"})
+    _git(h.repo, "merge", "-q", "--no-ff", "--no-commit", "incoming")
+    assert "foreign.txt" in _git(h.repo, "diff", "--name-only", "HEAD", "MERGE_HEAD")
+    result = await h.handler._evaluate_rules(h.edit_event("incoming.txt"))
+    assert result.decision == "allow"
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+
+
+@pytest.mark.asyncio
+async def test_unrelated_history_merge_exempts_everything_it_brings(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "switch", "-q", "--orphan", "unrelated")
+    _commit_files(h.repo, "unrelated", {"conflict.txt": "theirs\n", "brought.txt": "brought\n"})
+    _git(h.repo, "switch", "-q", base)
+    _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
+    _git_conflict(h.repo, "merge", "--allow-unrelated-histories", "--no-edit", "unrelated")
+    for path in ("conflict.txt", "brought.txt"):
+        result = await h.handler._evaluate_rules(h.edit_event(path))
+        assert result.decision == "allow", path
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+    ledger = ["conflict.txt", "brought.txt"]
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
+    )
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
+    assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exit-128", "timeout"])
+async def test_merge_base_failure_fails_closed(guard_harness: GuardHarness, failure: str) -> None:
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "switch", "-q", "-c", "incoming")
+    _commit_files(h.repo, "theirs", {"conflict.txt": "theirs\n"})
+    _git(h.repo, "switch", "-q", base)
+    _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
+    _git_conflict(h.repo, "merge", "--no-edit", "incoming")
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    real_run = daemon_git.run
+    faked: list[tuple[str, ...]] = []
+
+    async def git_run(args: Sequence[str], **kwargs: Any) -> GitResult:
+        argv = ("git", *args)
+        if list(args[-3:]) != ["merge-base", "HEAD", "MERGE_HEAD"]:
+            return await real_run(args, **kwargs)
+        faked.append(argv)
+        if failure == "timeout":
+            return GitTimeout("timeout", argv, 10.0)
+        return GitFailed("failed", argv, 128, "", "fatal: injected merge-base failure")
+
+    with patch.object(daemon_git, "run", side_effect=git_run):
+        result = await h.handler._evaluate_rules(h.edit_event("outside.txt"))
+
+    assert faked
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "git merge-base failed" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_rule2_concluding_cherry_pick_passes_for_its_paths(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _stop_at_conflict(h.repo, "cherry-pick")
+    ledger = ["conflict.txt", "applied.txt", "outside.txt"]
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
+    )
+    (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    _git(h.repo, "add", "conflict.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m pick"))
+    assert result.decision == "allow"
+    (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
+    _git(h.repo, "add", "outside.txt")
+    result = await h.handler._evaluate_rules(h.event("git commit -m pick"))
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert "outside.txt" in result.reason
+    assert "conflict.txt" not in result.reason
+
+
 @pytest.mark.asyncio
 async def test_rule3_resolves_relative_paths_at_tool_workdir(
     guard_harness: GuardHarness, tmp_path: Path
@@ -261,6 +524,97 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
     (h.repo / "p.py").write_text("main dirt\n", encoding="utf-8")
     result = await h.handler._evaluate_rules(h.edit_event("p.py", cwd=h.repo, workdir=other))
     assert result.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_rule3_allows_writes_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    # A git-archive export in a scratchpad carries the project marker but no .git.
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    (export / "a.txt").write_text("exported\n", encoding="utf-8")
+    for event in (
+        h.event(f"mkdir -p {shlex.quote(str(export))}"),
+        h.event(f"touch {shlex.quote(str(export / 'a.txt'))}"),
+        h.edit_event(str(export / "a.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkout", ["clone", "worktree"])
+async def test_rule3_judges_nested_checkout_under_project_marker_without_git(
+    guard_harness: GuardHarness, tmp_path: Path, checkout: str
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    export.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # The nested checkout carries no marker; its writes are judged by its own Git status.
+    nested = export / "nested"
+    if checkout == "clone":
+        _git(tmp_path, "clone", "-q", str(h.repo), str(nested))
+    else:
+        _git(h.repo, "worktree", "add", "-q", "--detach", str(nested))
+    (nested / "foreign.txt").write_text("nested dirt\n", encoding="utf-8")
+    root = str(nested.resolve())
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "session_dirty_files": ["foreign.txt"],
+            "session_dirty_file_checkouts": {root: ["foreign.txt"]},
+            "task_edited_file_checkouts": {h.foreign_task.id: {root: ["foreign.txt"]}},
+        },
+    )
+    for event in (
+        h.event(f"touch {shlex.quote(str(nested / 'fresh.txt'))}"),
+        h.edit_event(str(nested / "fresh.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "allow", result.reason
+    for event in (
+        h.event(f"touch {shlex.quote(str(nested / 'foreign.txt'))}"),
+        h.edit_event(str(nested / "foreign.txt")),
+    ):
+        result = await h.handler._evaluate_rules(event)
+        assert result.decision == "block"
+        assert h.foreign_session.ref in (result.reason or "")
+        assert f"task #{h.foreign_task.seq_num}" in (result.reason or "")
+    # A directory write spanning the nested checkout has no Git status at the export root.
+    result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_rule3_refuses_directory_write_over_unreadable_subdirectory(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    from tests.fixtures.isolated_checkout import write_project_marker
+
+    h = guard_harness
+    export = tmp_path / "scratchpad" / "export"
+    hidden = export / "hidden"
+    hidden.mkdir(parents=True)
+    write_project_marker(export, project_id=h.project.id, name=h.project.name)
+    # An unreadable subdirectory could hide a nested checkout.
+    hidden.chmod(0)
+    try:
+        if os.access(hidden, os.R_OK):
+            pytest.skip("this user reads directories regardless of their mode")
+        result = await h.handler._evaluate_rules(h.event(f"mkdir -p {shlex.quote(str(export))}"))
+    finally:
+        hidden.chmod(0o755)
+    assert result.decision == "block"
+    assert "Retry once the repository is responsive" in (result.reason or "")
 
 
 @pytest.mark.asyncio
@@ -1422,10 +1776,10 @@ async def test_unverifiable_foreign_candidate_blocks(guard_harness: GuardHarness
 
 
 @pytest.mark.asyncio
-async def test_shell_git_status_after_external_commit_reconciles_attribution(
+async def test_shell_git_status_after_external_commit_reconciles_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
-    """A commit made outside the hooks is picked up by the next git command the session runs."""
+    """A commit made outside the hooks clears session dirt on the next git command."""
     (guard_harness.repo / "owned.txt").write_text("committed elsewhere\n", encoding="utf-8")
     _git(guard_harness.repo, "add", "--", "owned.txt")
     _git(guard_harness.repo, "commit", "-q", "-m", "external commit", "--", "owned.txt")
@@ -1440,8 +1794,8 @@ async def test_shell_git_status_after_external_commit_reconciles_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio
@@ -1890,7 +2244,7 @@ async def test_dirty_foreign_pathspec_commit_still_blocked_and_entry_retained(
 
 
 @pytest.mark.asyncio
-async def test_successful_owner_commit_releases_clean_checkout_attribution(
+async def test_successful_owner_commit_releases_dirt_and_keeps_attribution(
     guard_harness: GuardHarness,
 ) -> None:
     (guard_harness.repo / "owned.txt").write_text("committed by owner\n", encoding="utf-8")
@@ -1915,8 +2269,8 @@ async def test_successful_owner_commit_releases_clean_checkout_attribution(
     variables = SessionVariableManager(guard_harness.db).get_variables(
         guard_harness.current_session.id
     )
-    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
-    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+    assert "owned.txt" not in variables["session_dirty_files"]
+    assert variables["task_edited_files"][guard_harness.current_task.id] == ["owned.txt"]
 
 
 @pytest.mark.asyncio

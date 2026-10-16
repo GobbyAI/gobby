@@ -548,6 +548,23 @@ async def _drain_hook_inbox_once_locked(
                 hook_settled()
             continue
 
+        if response.status_code == 403:
+            # hook_machine_mismatch is refused before any envelope claim, and
+            # the envelope's machine can never match on a later pass.
+            quarantined = await asyncio.to_thread(
+                inbox_envelopes.quarantine_file,
+                path,
+                reason="hook_machine_mismatch",
+                detail="Hook replay returned HTTP 403",
+            )
+            if quarantined:
+                logger.warning(
+                    "Hook inbox replay returned 403 for %s; quarantined",
+                    path.name,
+                )
+                hook_settled()
+            continue
+
         logger.warning(
             "Hook inbox replay returned %s for %s",
             response.status_code,

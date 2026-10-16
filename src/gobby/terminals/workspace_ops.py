@@ -432,6 +432,15 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             await self._emit("tab.moved", source, tabs=moved)
         return change
 
+    async def tab_reorder(
+        self, actor: str, workspace: str, order: list[str], *, node: str | None = None
+    ) -> LayoutChange:
+        """Put a workspace's tabs in ``order``, which names each of its tabs once."""
+        target = _workspace_of(await self._enter(workspace, node), workspace)
+        change = await self._db_guarded(self._workspaces.reorder_tabs, target.id, order)
+        await self._emit("tab.moved", target.id, tabs=change.tabs)
+        return change
+
     async def tab_close(self, actor: str, tab: str, *, node: str | None = None) -> LayoutChange:
         """Close a tab with its panes, then kill the owned live terminals."""
         target = await self._enter(tab, node)

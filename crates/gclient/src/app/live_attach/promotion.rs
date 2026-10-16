@@ -45,6 +45,7 @@ impl Workspace<LiveDaemon> {
             let request_id = uuid::Uuid::new_v4().to_string();
             let daemon = self.daemon.clone();
             let gobby_home = self.gobby_home.clone();
+            let attempt = Instant::now();
             started.push(Box::pin(async move {
                 let outcome = request_direct_source(
                     &daemon,
@@ -56,6 +57,7 @@ impl Workspace<LiveDaemon> {
                 Recovery {
                     pane_id,
                     generation,
+                    started: attempt,
                     step: RecoveryStep::Promoted {
                         terminal_id,
                         proxy_attachment,
@@ -135,7 +137,7 @@ impl Workspace<LiveDaemon> {
     }
 
     /// Detaches `attachment` beside the loop.
-    fn release_attachment(&self, terminal_id: &str, attachment: &str) {
+    pub(super) fn release_attachment(&self, terminal_id: &str, attachment: &str) {
         let daemon = self.daemon.clone();
         let message = json!({
             "type": "terminal_detach",

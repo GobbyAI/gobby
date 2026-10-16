@@ -18,7 +18,7 @@ The body is an envelope v1 JSON object:
 {
   "schema_version": 1,
   "hook_type": "Notification",
-  "input_data": {"message": "contract probe"},
+  "input_data": {"machine_id": "<machine UUID>", "message": "contract probe"},
   "source": "claude",
   "critical": false,
   "enqueued_at": "2026-01-01T00:00:00Z",
@@ -82,6 +82,25 @@ no session row can return 200 without one. If writing a receipted response fails
 
 Authority: [`_graceful_error_response`](../../src/gobby/servers/routes/mcp/hook_responses.py)
 and [`attach_delivery_receipt`](../../src/gobby/hooks/receipt_redelivery.py).
+
+## Machine binding
+
+`input_data` must carry `"machine_id"`. A request with verified front-door
+identity must name that identity's machine. Any other request comes from the
+hub's own ghook and must name the hub's machine. After the capability floor
+check and before any envelope claim, a missing or different machine gets
+HTTP 403:
+
+```json
+{"code":"hook_machine_mismatch"}
+```
+
+Replaying the same envelope cannot change its machine, so the hub's inbox drain
+quarantines a spooled envelope that gets this response and does not replay it.
+Session lookups then bind only rows owned by that machine.
+
+Authority: [`_envelope_machine_mismatch`](../../src/gobby/servers/routes/mcp/hooks.py)
+and [`session_binds_event`](../../src/gobby/hooks/session_binding.py).
 
 ## Duplicate envelopes and replay
 
@@ -161,4 +180,4 @@ plan; these hub corpus cases make no node parity claim.
 The recorded `hooks` family is `parity: "proxy"`, `origin: "python"`; see the
 [HTTP corpus](../../tests/contracts/http/README.md).
 
-_Last verified: 2026-10-14_
+_Last verified: 2026-10-15_

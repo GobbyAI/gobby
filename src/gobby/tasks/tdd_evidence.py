@@ -28,6 +28,8 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
+from gobby.tasks.tdd_retained_output import retained_red_output
+from gobby.tasks.transcript_background import output_as_of
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -61,10 +63,17 @@ _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECAS
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
-    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
+    r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
+    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
+    # Each Rust node's block ends where the next nextest status line or libtest
+    # per-test header starts, so a sibling's panic never lands in this section.
+    r"\s*(?:[A-Z][A-Z-]*|TRY \d+ [A-Z-]+)\s+\[\s*[\d.]+s\]|"
+    r"-{3,4} (?:\S+ std(?:out|err) -{4}|STD(?:OUT|ERR):\s))",
     re.IGNORECASE,
 )
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
+# (path, symbol, session, run order, require_not_implemented, window edit order)
+_RedCacheKey = tuple[str, str, str, int, bool, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +155,7 @@ def evaluate_tdd_evidence(
 
     parse_cache: PythonModuleCache = {}
     binding_cache: PythonBindingCache = {}
-    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] = {}
+    red_cache: dict[_RedCacheKey, tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
@@ -297,9 +306,16 @@ def _find_red_run(
     require_not_implemented: bool = False,
     parse_cache: PythonModuleCache | None = None,
     binding_cache: PythonBindingCache | None = None,
-    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] | None = None,
+    red_cache: dict[_RedCacheKey, tuple[bool, str | None]] | None = None,
 ) -> tuple[TranscriptValidationRun | None, str | None]:
+    """Find the first RED before ``first_non_test_edit``.
+
+    An original job's retained output may supply its failure bodies only when it
+    settled before ``first_non_test_edit``, the edit that closes this window.
+    """
     rejection = None
+    production_at = first_non_test_edit.timestamp if first_non_test_edit is not None else None
+    window = first_non_test_edit.order if first_non_test_edit is not None else -1
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "failure"
@@ -312,18 +328,44 @@ def _find_red_run(
         core_command = run.core_command
         if core_command is None:
             continue
-        key = (test.path, test.symbol, run.session_id, run.order, require_not_implemented)
+        key = (
+            test.path,
+            test.symbol,
+            run.session_id,
+            run.order,
+            require_not_implemented,
+            window,
+        )
         cached = red_cache.get(key) if red_cache is not None else None
         if cached is None:
+            # Output read back from the job's own file after the production edit
+            # was delivered too late to prove a pre-production failure.
+            delivered = output_as_of(run, production_at) if production_at is not None else run
             cached = _red_run_proof(
                 test,
                 evidence,
-                run,
+                delivered,
                 core_command,
                 require_not_implemented,
                 parse_cache,
                 binding_cache,
             )
+            retained = (
+                retained_red_output(run, production_at)
+                if production_at is not None and not cached[0]
+                else None
+            )
+            if retained is not None:
+                proof = _red_run_proof(
+                    test,
+                    evidence,
+                    replace(run, output=retained),
+                    core_command,
+                    require_not_implemented,
+                    parse_cache,
+                    binding_cache,
+                )
+                cached = proof if proof[0] else cached
             if red_cache is not None:
                 red_cache[key] = cached
         matched, reason = cached
@@ -582,27 +624,27 @@ def _has_named_red_failure(
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
-    symbols = (
-        test.symbol,
-        test.symbol.replace(".", "::"),
-        test.symbol.replace("::", "."),
-    )
-    symbol_patterns = tuple(
-        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
-    )
+    if test.path.endswith(".py"):
+        return False, reason
+    symbols = (test.symbol, test.symbol.replace(".", "::"), test.symbol.replace("::", "."))
     lines = output.splitlines()
+    section_node: str | None = None
     for index, line in enumerate(lines):
-        # Summaries carry their own path/node identity. Never borrow an assertion
-        # from a sibling summary through the generic symbol/section fallback.
-        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
-            continue
-        if _PYTEST_LOCATION_RE.match(line):
-            continue
-        if not any(pattern.search(line) for pattern in symbol_patterns):
-            continue
-        if _PASS_STATUS_RE.search(line):
+        # Node identity comes from runner headers, never assertion text that
+        # happens to mention a target symbol inside a sibling's failure body.
+        header = re.fullmatch(r"\s*---- (\S+) std(?:out|err) ----\s*", line) or re.fullmatch(
+            r"\s*FAIL \S+::\S+ (\S+)\s*", line
+        )
+        if _FAILURE_SECTION_BOUNDARY_RE.match(line):
+            section_node = header[1] if header else None
+        panic = re.match(r"\s*thread '([^']+)'(?: \(\d+\))? panicked at\b", line)
+        node = header[1] if header else panic[1] if panic else None
+        if node not in symbols or (section_node is not None and section_node not in symbols):
             continue
         section = _failure_section(lines, index)
+        panic_nodes = re.findall(r"(?m)^\s*thread '([^']+)'(?: \(\d+\))? panicked at\b", section)
+        if any(name not in symbols for name in panic_nodes):
+            continue
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True, ""
     return False, reason
@@ -615,7 +657,9 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
     expected = test.symbol.replace("::", ".")
     lines = output.splitlines()
     for index, line in enumerate(lines):
-        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line)
+        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line) or re.fullmatch(
+            r"\s*(\S+\.py)::(\S+)\s+FAILED(?:\s+-\s+(.+))?", line
+        )
         if match is None or not _path_matches_artifact(match[1], test):
             continue
         reported = match[2].replace("::", ".")
@@ -661,7 +705,12 @@ def _has_pytest_body_failure(
         ):
             continue
         section = _failure_section(lines, index)
-        if _section_has_artifact_location(section, test):
+        if _section_has_artifact_location(section, test) or (
+            artifact_nodes
+            and not any(_PYTEST_LOCATION_RE.match(row) for row in section.splitlines())
+            and _ASSERTION_DETAIL_RE.search(section)
+            and is_assertion_failure(section)
+        ):
             has_attributable_section = True
             if _section_has_failure_detail(section) and (
                 not require_not_implemented or "NotImplementedError" in section

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -42,9 +43,40 @@ _BRIEF_SESSION_COLUMNS = """
     spawned_by_agent_id, workflow_name, agent_run_id, context_injected,
     NULL AS original_prompt, usage_input_tokens, usage_output_tokens,
     usage_cache_creation_tokens, usage_cache_read_tokens, model, is_local,
-    terminal_context, seq_num, had_edits, message_count, turn_count, tool_call_count,
-    session_type, sandbox_enabled, sandbox_policy_hash, workspace_path, workspace_generation
+    terminal_context::text AS terminal_context, seq_num, had_edits, message_count, turn_count,
+    tool_call_count, session_type, sandbox_enabled, sandbox_policy_hash, workspace_path,
+    workspace_generation
 """
+
+# Every sessions column, for full-row reads. terminal_context is read as text: the
+# pool's jsonb loader would decode and re-dump it, and Session.from_row decodes it
+# again (#23359). approved_tools_json keeps the loader's canonical text, which
+# Session.to_dict hands out unchanged.
+_SESSION_COLUMN_NAMES = tuple(
+    """
+    id external_id machine_id source project_id title title_source reasoning_effort status
+    transcript_path summary_path summary_markdown handoff_markdown
+    summary_source_context_hash summary_generation_mode summary_generated_at git_branch
+    parent_session_id transcript_processed transcript_processing_failure_count
+    transcript_processing_last_error_code transcript_processing_last_error
+    transcript_processing_last_failed_at agent_depth spawned_by_agent_id workflow_name
+    agent_run_id context_injected original_prompt usage_input_tokens usage_output_tokens
+    usage_cache_creation_tokens usage_cache_read_tokens context_window context_used_tokens
+    context_usage_ratio context_usage_source context_usage_confidence context_usage_updated_at
+    last_prompt_input_tokens last_prompt_uncached_input_tokens last_prompt_cache_read_tokens
+    last_prompt_cache_creation_tokens last_completion_output_tokens terminal_context seq_num
+    model is_local had_edits chat_mode message_count turn_count tool_call_count
+    last_assistant_content approved_tools_json session_type sandbox_enabled
+    sandbox_policy_hash created_at updated_at last_activity workspace_path
+    workspace_generation startup_claim_generation startup_claim_owner startup_claim_state
+    """.split()
+)
+_SESSION_COLUMNS = ", ".join(
+    "sessions.terminal_context::text AS terminal_context"
+    if name == "terminal_context"
+    else f"sessions.{name}"
+    for name in _SESSION_COLUMN_NAMES
+)
 
 
 def _read_session_page(
@@ -52,7 +84,7 @@ def _read_session_page(
     conditions: list[str],
     params: list[Any],
     limit: int,
-    columns: str = "sessions.*",
+    columns: str = _SESSION_COLUMNS,
 ) -> _Sessions:
     where_clause = " AND ".join(conditions)
     rows = db.fetchall(
@@ -411,32 +443,28 @@ class _QueryMixin:
             return result
 
         placeholders = ",".join(["%s"] * len(session_ids))
+        # One row per (session, role) holding a JSON array, so Python builds and
+        # normalizes a row per role rather than per task (#23359).
         sql = f"""
-            SELECT
-                seq_num,
-                claimed_by_session_id,
-                created_in_session_id,
-                closed_in_session_id
-            FROM tasks
-            WHERE seq_num IS NOT NULL
-              AND (
-                  claimed_by_session_id IN ({placeholders})
-                  OR created_in_session_id IN ({placeholders})
-                  OR closed_in_session_id IN ({placeholders})
-              )
-            ORDER BY seq_num
+            SELECT session_id, role, json_agg(seq_num ORDER BY seq_num)::text AS seq_nums
+            FROM (
+                SELECT claimed_by_session_id AS session_id, 'claimed' AS role, seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND claimed_by_session_id IN ({placeholders})
+                UNION ALL
+                SELECT created_in_session_id, 'created', seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND created_in_session_id IN ({placeholders})
+                UNION ALL
+                SELECT closed_in_session_id, 'closed', seq_num
+                FROM tasks
+                WHERE seq_num IS NOT NULL AND closed_in_session_id IN ({placeholders})
+            ) AS refs
+            GROUP BY session_id, role
         """  # nosec B608
-        rows = self.db.fetchall(sql, tuple(session_ids) * 3)
-
-        for row in rows:
-            seq_num = row["seq_num"]
-            for role, col in (
-                ("claimed", "claimed_by_session_id"),
-                ("created", "created_in_session_id"),
-                ("closed", "closed_in_session_id"),
-            ):
-                sid = row[col]
-                if sid in result:
-                    result[sid][role].append(seq_num)
+        for row in self.db.fetchall(sql, tuple(session_ids) * 3):
+            refs = result.get(row["session_id"])
+            if refs is not None:
+                refs[row["role"]] = json.loads(row["seq_nums"])
 
         return result

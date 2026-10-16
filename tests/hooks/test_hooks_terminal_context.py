@@ -17,6 +17,7 @@ from gobby.hooks.terminal_context import (
     hook_sandbox_enabled,
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.utils.machine_id import get_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -351,6 +352,7 @@ def test_seat_inside_tmux_carries_its_pane_identity() -> None:
 # A fresh seat's thread id is a UUIDv7 minted a second or two after the TUI starts.
 FRESH_MINTED_AT = 1_790_000_000.5
 FRESH_THREAD = "01a0db67-65f3-7961-a61c-c959158deffb"
+NODE_MACHINE_ID = "21000000-0000-4000-8000-0000000000a2"
 
 
 def _uuid7(minted_at: float) -> str:
@@ -373,6 +375,44 @@ def test_fresh_seat_adopts_the_tui_created_just_before_its_thread() -> None:
 
     with _process_table([_managed_host(), seat]):
         result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+
+def test_node_origin_fresh_seat_check_skips_hub_processes() -> None:
+    """A node's pids name no process here, so its hook never reads the hub's table."""
+    node_context = {**HOST_CONTEXT, "parent_create_time": 50.0, "parent_name": "codex"}
+
+    with (
+        patch("gobby.hooks.terminal_context.psutil.Process") as process,
+        patch("gobby.hooks.terminal_context.psutil.process_iter") as process_iter,
+    ):
+        result = enrich_terminal_context_with_cwd(
+            node_context,
+            "/repo",
+            external_id=_uuid7(FRESH_MINTED_AT),
+            machine_id=NODE_MACHINE_ID,
+        )
+
+    process.assert_not_called()
+    process_iter.assert_not_called()
+    assert result == {**HOST_CONTEXT, "cwd": "/repo"}
+
+
+def test_local_fresh_seat_check_unchanged() -> None:
+    seat = _fresh_seat(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
+    )
+
+    with _process_table([_managed_host(), seat]):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=_uuid7(FRESH_MINTED_AT),
+            machine_id=get_machine_id(),
+        )
 
     assert result == _seat_context(
         71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5

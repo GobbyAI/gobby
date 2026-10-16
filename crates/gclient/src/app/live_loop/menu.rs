@@ -30,7 +30,7 @@ use items::{
 };
 pub(super) use items::{
     appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
-    sidebar_items, theme_row_label, toggle,
+    sidebar_items, sort_tabs_item, theme_row_label, toggle,
 };
 
 /// A menu that opens beside the row of its parent menu that names it.

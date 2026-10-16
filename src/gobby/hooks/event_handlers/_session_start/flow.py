@@ -12,6 +12,7 @@ from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
+from gobby.hooks.session_binding import bound_session
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
     hook_cwd,
@@ -137,7 +138,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     raw_terminal_context = input_data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
     terminal_context = enrich_terminal_context_with_cwd(
-        terminal_context, cwd, external_id=external_id
+        terminal_context, cwd, external_id=external_id, machine_id=machine_id
     )
 
     if is_gobby_acp_child(terminal_context):
@@ -184,7 +185,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
     if handler._session_manager and session_source != "clear":
         try:
-            existing_session = handler._session_manager.get(external_id)
+            existing_session = bound_session(handler._session_manager.get(external_id), machine_id)
             if existing_session:
                 inactive = getattr(existing_session, "status", None) in {"expired", "deleted"}
                 if inactive and session_source not in {"resume", "compact"}:
@@ -207,7 +208,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
         if gobby_session_id_from_env and not existing_session:
             try:
-                existing_session = handler._session_manager.get(gobby_session_id_from_env)
+                existing_session = bound_session(
+                    handler._session_manager.get(gobby_session_id_from_env), machine_id
+                )
                 if existing_session:
                     inactive = getattr(existing_session, "status", None) in {"expired", "deleted"}
                     if inactive and session_source not in {"resume", "compact"}:
@@ -267,11 +270,14 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
     if handler._session_manager and session_source != "clear":
         try:
-            existing_web_chat = handler._session_manager.find_by_external_id(
-                external_id,
-                project_id,
-                cli_source,
-                session_type="web_chat",
+            existing_web_chat = bound_session(
+                handler._session_manager.find_by_external_id(
+                    external_id,
+                    project_id,
+                    cli_source,
+                    session_type="web_chat",
+                ),
+                machine_id,
             )
             if (
                 existing_web_chat is not None

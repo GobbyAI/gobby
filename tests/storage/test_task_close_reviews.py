@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import threading
+from collections.abc import Collection
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,6 +19,7 @@ import gobby.storage.task_close_reviews as review_storage
 import gobby.tasks.agentic_close_review as review_payloads
 from gobby.agents.terminal_delivery import deliver_and_cleanup_terminal_run
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -29,7 +35,10 @@ from gobby.storage.task_close_reviews import (
 )
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_review_delivery import terminal_review_delivery
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.ledger_reconcile import reconcile_edit_ledgers
+from gobby.workflows.state_manager import SessionVariableManager
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +82,131 @@ def test_malformed_review_lookup_preserves_active_review(
 
     assert store.get(review_id) is None
     assert store.get(review.id) == review
+
+
+@pytest.mark.parametrize("running", [False, True], ids=["queued", "running"])
+def test_review_run_is_listed_for_reviewed_task_only_on_request(
+    temp_db: HubDatabase, running: bool
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+    assert review.agent_run_id is not None
+    runs = LocalAgentRunManager(temp_db)
+    if running:
+        _activate_run(runs, review.agent_run_id)
+    run = runs.get(review.agent_run_id)
+    assert run is not None
+    # The reviewer stays taskless, so task-scoped guards never see it.
+    assert run.task_id is None
+    assert runs.list_active_global(task_ids=[_TASK_ID]) == []
+    assert runs.list_by_status(status=run.status, task_ids=[_TASK_ID]) == []
+
+    listed = [
+        runs.list_active_global(task_ids=[_TASK_ID], include_close_reviews=True),
+        runs.list_by_status(status=run.status, task_ids=[_TASK_ID], include_close_reviews=True),
+        runs.list_by_parent(
+            system_session_id(),
+            status=run.status,
+            task_ids=[_TASK_ID],
+            include_close_reviews=True,
+        ),
+    ]
+    assert [[item.id for item in found] for found in listed] == [[run.id]] * 3
+    assert runs.list_active_global(task_ids=[str(uuid4())], include_close_reviews=True) == []
+
+
+@pytest.mark.asyncio
+async def test_list_running_agents_finds_live_close_review_by_task(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    review, _ = TaskCloseReviewStore(temp_db).create_or_get_active(**_intent())
+    assert review.agent_run_id is not None
+    run_storage = LocalAgentRunManager(temp_db)
+    _activate_run(run_storage, review.agent_run_id)
+    runner = MagicMock()
+    runner.run_storage = run_storage
+    registry = create_agents_registry(runner, task_manager=LocalTaskManager(temp_db))
+    list_running = registry._tools["list_running_agents"].func
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": sample_project["id"]},
+    ):
+        result = await list_running(task_id=_TASK_ID)
+        running = await list_running(task_id=_TASK_ID, status="running")
+
+    assert result["success"] is True
+    assert result["task_id"] == _TASK_ID
+    assert [agent["run_id"] for agent in result["agents"]] == [review.agent_run_id]
+    assert [agent["run_id"] for agent in running["agents"]] == [review.agent_run_id]
+
+
+@pytest.mark.asyncio
+async def test_other_task_commit_preserves_close_review_attribution(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def git(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    async def local_status(
+        cwd: str,
+        paths: Collection[str] = (),
+        *,
+        timeout: float = 10.0,
+        env: dict[str, str] | None = None,
+    ) -> GitOk:
+        del timeout, env
+        assert cwd == str(tmp_path)
+        result = await asyncio.to_thread(
+            git, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *paths
+        )
+        return GitOk(
+            status="ok", argv=("git", "status"), stdout=result.stdout, stderr=result.stderr
+        )
+
+    monkeypatch.setattr(daemon_git, "status", local_status)
+    git("init")
+    path = tmp_path / "shared.py"
+    path.write_text("value = 1\n")
+    git("add", "shared.py")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
+    candidate = git("rev-parse", "HEAD").stdout.strip()
+    variables = SessionVariableManager(temp_db)
+    session_id = system_session_id()
+    variables.select_task_claim(session_id, _TASK_ID, "#42")
+    variables.record_edited_files(session_id, ["shared.py"], checkout_root=str(tmp_path))
+    before = variables.get_variables(session_id)
+    keys = ("task_edited_files", "task_edited_file_checkouts", "task_edited_file_times")
+    attribution = {key: deepcopy(before[key][_TASK_ID]) for key in keys}
+    store = TaskCloseReviewStore(temp_db)
+    intent = _intent()
+    intent["commit_shas"] = (candidate,)
+    intent["close_arguments"] = {**_ARGUMENTS, "commit_sha": candidate}
+    review, _ = store.create_or_get_active(**intent)
+
+    # Task B commits task A's attributed path while A's review is active.
+    variables.select_task_claim(session_id, str(uuid4()), "#43")
+    path.write_text("value = 2\n")
+    git("add", "shared.py")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "other")
+    current = variables.get_variables(session_id)
+    assert await reconcile_edit_ledgers(
+        current, session_id, variable_manager=variables, project_path=str(tmp_path)
+    ) == ["shared.py"]
+
+    refreshed = variables.get_variables(session_id)
+    assert {key: refreshed[key].get(_TASK_ID) for key in keys} == attribution
+    assert refreshed["session_dirty_files"] == []
+    active = store.get_active_for_task(_TASK_ID)
+    assert active is not None
+    assert active.id == review.id
+    assert active.review_fingerprint == review.review_fingerprint
+    assert active.close_arguments["commit_sha"] == candidate
 
 
 def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) -> None:
