@@ -45,6 +45,8 @@ from gobby.utils.daemon_url import daemon_url, normalize_dial_host, validate_dae
 from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
+# Per-tool HTTP budget for an MCP tool call, shared by the stdio proxy and CLI.
+MCP_TOOL_CALL_TIMEOUT_SECONDS = 30.0
 DAEMON_AUTH_REMEDIATION = (
     "API key missing or stale; run 'gobby auth login' to provision this machine's bootstrap key"
 )
@@ -474,7 +476,7 @@ class DaemonClient:
         server_name: str,
         tool_name: str,
         arguments: dict[str, Any],
-        timeout: float | None = None,
+        timeout: float = MCP_TOOL_CALL_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         """
         Call an MCP tool via the daemon's HTTP API.
@@ -483,7 +485,8 @@ class DaemonClient:
             server_name: Name of the MCP server
             tool_name: Name of the tool to call
             arguments: Tool arguments
-            timeout: Request timeout
+            timeout: Request timeout; defaults to the stdio proxy's per-tool
+                budget, not the client's short default for status calls
 
         Returns:
             Tool execution result

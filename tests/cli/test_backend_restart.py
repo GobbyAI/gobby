@@ -1,6 +1,7 @@
 """CLI restart keeps native ownership while replacing only the backend."""
 
 from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import click
@@ -9,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import daemon_lifecycle as lifecycle
+from gobby.cli.daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
@@ -76,8 +78,52 @@ def test_backend_restart_waits_for_old_process_before_readiness(
         headers={"Authorization": "Bearer test"},
         timeout=5.0,
     )
-    restart_boundaries["ready"].assert_called_once_with(61987)
+    restart_boundaries["ready"].assert_called_once()
+    assert restart_boundaries["ready"].call_args.args == (61987,)
+    max_wait = restart_boundaries["ready"].call_args.kwargs["max_wait"]
+    assert 0 < max_wait <= STARTUP_READINESS_TIMEOUT_SECONDS
     assert restart_boundaries["guards"].call_args.kwargs["wait"] is True
+
+
+def test_backend_restart_exit_wait_and_readiness_share_one_deadline(
+    monkeypatch: pytest.MonkeyPatch, restart_boundaries: dict[str, MagicMock]
+) -> None:
+    # The old backend outlives a 30 s exit wait on a loaded host, then exits.
+    clock = iter([0.0, 45.0, 60.0])
+    monkeypatch.setattr(
+        lifecycle, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=MagicMock())
+    )
+
+    result = lifecycle._restart_backend(
+        click.Context(click.Command("restart")), force=False, wait=True, drain_terminals=True
+    )
+
+    assert result is True
+    restart_boundaries["ready"].assert_called_once_with(
+        61987, max_wait=STARTUP_READINESS_TIMEOUT_SECONDS - 60.0
+    )
+
+
+def test_backend_restart_fails_when_old_process_outlives_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restart_boundaries: dict[str, MagicMock],
+) -> None:
+    restart_boundaries["alive"].side_effect = None
+    restart_boundaries["alive"].return_value = True
+    clock = iter([0.0, STARTUP_READINESS_TIMEOUT_SECONDS])
+    monkeypatch.setattr(
+        lifecycle, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=MagicMock())
+    )
+
+    result = lifecycle._restart_backend(
+        click.Context(click.Command("restart")), force=False, wait=True, drain_terminals=True
+    )
+
+    assert result is False
+    restart_boundaries["ready"].assert_not_called()
+    captured = capsys.readouterr()
+    assert "Previous backend did not exit after restart request" in captured.out + captured.err
 
 
 @pytest.mark.parametrize("status, expected", [(503, None), (409, False), (401, False)])

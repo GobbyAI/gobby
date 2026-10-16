@@ -93,8 +93,10 @@ async def test_spawn_never_grants_desktop_digests(
     ):
         path = str(home / "Desktop" / filename)
         assert not any(fnmatchcase(path, pattern) for pattern in writes)
-    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verify_installation:
+    with patch(
+        "gobby.agents.sandbox_gate.verify_srt_installation_for_launch"
+    ) as verify_installation:
         persisted = resolve_resume_sandbox(metadata)
-    verify_installation.assert_called_once_with()
+    verify_installation.assert_called_once_with(run_id=None, provider=None, policy_hash=None)
     assert persisted.extra_write_paths == resolved.extra_write_paths
     assert config.extra_write_paths == []
