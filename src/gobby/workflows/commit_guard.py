@@ -28,6 +28,11 @@ from gobby.workflows.commit_guard_conflicts import (
     format_unverified_dirty_edit_reason,
     scope_foreign_owners,
 )
+from gobby.workflows.dirty_edit_grants import (
+    approved_dirty_paths,
+    claimed_task_carriers,
+    dirty_path_approval_command,
+)
 from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
     parse_git_commit_invocations,
@@ -291,6 +296,7 @@ async def foreign_dirty_edit_conflict(
                 roots.setdefault(root, set()).add(rel)
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
+        approval_commands: list[str] = []
         for root, rels in roots.items():
             rels = await asyncio.to_thread(_git_backed_targets, root, rels)
             if not rels:
@@ -322,19 +328,39 @@ async def foreign_dirty_edit_conflict(
                 if not any(task_edit_path_covers(path, child) for child in dirty)
             }
             await asyncio.to_thread(_release_clean_ledger_entries, db, scoped, clean, root)
+            if not dirty:
+                continue
+            own_tasks, carriers = await asyncio.to_thread(
+                claimed_task_carriers, db, session_id=session_id, checkout_root=root
+            )
+            approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
+            root_unowned: set[str] = set()
             for path in dirty:
                 if path in operation_paths or any(task_edit_path_covers(p, path) for p in own):
                     continue
-                holders = tuple(
+                overlapping = [
                     owner
                     for ledger in overlapping_task_edit_paths(scoped, [path])
                     for owner in scoped[ledger]
-                )
+                ]
+                # A holder working a task this session now claims is this session's past self.
+                holders = [owner for owner in overlapping if owner.owner_task_id not in own_tasks]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
-                else:
-                    unowned.add(path)
-        return format_dirty_edit_reason(conflicts, unowned) if conflicts or unowned else ""
+                elif not (
+                    overlapping
+                    or path in approved
+                    or any(task_edit_path_covers(carrier, path) for carrier in carriers)
+                ):
+                    root_unowned.add(path)
+            if root_unowned:
+                unowned |= root_unowned
+                approval_commands.append(
+                    dirty_path_approval_command(session_id, root, root_unowned)
+                )
+        if not (conflicts or unowned):
+            return ""
+        return format_dirty_edit_reason(conflicts, unowned, approval_commands)
     except (psycopg.OperationalError, PoolTimeout) as exc:
         return (
             f"Edit blocked: Gobby could not verify dirty-path ownership "

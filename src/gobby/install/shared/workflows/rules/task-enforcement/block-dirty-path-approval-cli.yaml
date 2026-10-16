@@ -1,0 +1,19 @@
+tags: [task-enforcement, enforcement, shared-worktree, gobby, default]
+
+rules:
+  block-dirty-path-approval-cli:
+    description: "Block agent use of `gobby sessions approve-dirty-paths`; approving unowned dirt is the operator's decision."
+    event: before_tool
+    enabled: true
+    priority: 30
+    effects:
+      - type: block
+        tools: [Bash]
+        # Quoted data is not an invocation, so a refusal relaying the command
+        # to the user stays sendable; command substitution still blocks.
+        mask_quoted: true
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?sessions\\s+approve-dirty-paths\\b"
+        reason: |
+          Approving unowned dirty paths is operator-only. Relay the exact
+          `gobby sessions approve-dirty-paths ...` command from the refusal to
+          the user, who runs it in their own shell, then retry.
