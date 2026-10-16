@@ -299,7 +299,7 @@ def _run(order: int, *, red: bool, output: str | None = None) -> TranscriptValid
             "tests/test_feature.py:4: AssertionError\n"
             "FAILED tests/test_feature.py::test_feature - assert 1 == 2\n"
             if red
-            else "1 passed"
+            else "1 passed in 0.01s"
         ),
     )
 
@@ -436,7 +436,12 @@ async def test_legacy_owner_history_requires_current_claim_transcript_edit(
         *_pair(
             4, "Write", {"file_path": str(edit_root / "src/feature.py"), "content": "code"}, "ok"
         ),
-        *_pair(5, "Bash", {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root}, "1 passed"),
+        *_pair(
+            5,
+            "Bash",
+            {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root},
+            "1 passed in 0.01s\n",
+        ),
     ]
     if proof == "later_edit":
         records.extend(

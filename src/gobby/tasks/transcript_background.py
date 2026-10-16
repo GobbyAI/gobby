@@ -15,8 +15,9 @@ from gobby.tasks.transcript_evidence_snapshots import PendingTool
 from gobby.tasks.transcript_outcomes import extract_outcome, extract_output
 
 _BACKGROUND = re.compile(
-    r"\ACommand did not complete within its [0-9]+s timeout and was moved to the "
-    r"background \(ID: (?P<job>[A-Za-z0-9_-]+)\)\. Output is being written to: "
+    r"\ACommand (?:did not complete within its [0-9]+s timeout and was moved to the "
+    r"background \(ID: |running in background with ID: )(?P<job>[A-Za-z0-9_-]+)"
+    r"\)?\. Output is being written to: "
     r"(?P<path>/[^\r\n]+?\.output)\. "
 )
 _MAX_RECOVERED_CHARS = 64_000
@@ -267,5 +268,9 @@ def _read_path(pending: PendingTool) -> str | None:
     if len(argv) == 2 and argv[0] == "cat":
         return argv[1]
     if len(argv) == 4 and argv[:2] == ["tail", "-n"] and argv[2].isdigit():
+        return argv[3]
+    if len(argv) == 3 and argv[0] == "grep" and not argv[1].startswith("-"):
+        return argv[2]
+    if len(argv) == 4 and argv[:2] in (["grep", "-E"], ["grep", "-F"]):
         return argv[3]
     return None
