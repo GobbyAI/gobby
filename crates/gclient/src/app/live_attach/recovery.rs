@@ -151,6 +151,13 @@ impl Workspace<LiveDaemon> {
         }
     }
 
+    pub(in crate::app) fn host_recovery_stale(&self, pane_id: PaneId, started: Instant) {
+        if let Some(mut record) = self.pane_record(pane_id, Some("host_reconnect")) {
+            record.started = started;
+            record.warn("frame_recovery_gave_up", "stale");
+        }
+    }
+
     /// Applies one recovery step, returning the next when there is one.
     pub(in crate::app) fn apply_frame_recovery(
         &mut self,

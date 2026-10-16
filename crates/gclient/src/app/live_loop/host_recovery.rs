@@ -311,6 +311,7 @@ impl Workspace<LiveDaemon> {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.fallback_in_flight = false;
                 }
+                self.host_recovery_stale(pane_id, started);
                 None
             }
             HostRecoveryOutcome::Cancelled => {
@@ -353,3 +354,7 @@ async fn connect_host(
         None => UnixSocketFrameSource::from_env(locator, cols, rows).await,
     }
 }
+
+#[cfg(test)]
+#[path = "host_recovery/tests.rs"]
+mod tests;
