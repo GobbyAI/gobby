@@ -171,7 +171,8 @@ In scope:
 - The current agent-spawn ingress cleanup and the fail-closed host-unavailable spawn policy,
   before the agent family is absorbed by #21564. The fixed policy is a required contract of that
   later `TerminalRuntime` seam.
-- The Rust terminal inventory reads and `/api/terminals` handlers (2.14).
+- The Rust terminal inventory reads and `/api/terminals` handlers (2.14), and the `Native` lane
+  viewport read from the Rust lease registry (2.15).
 - After #21558, the native terminal WS handler, proxy relay, family routing, and cutover proof
   (2.2, 2.3, 2.12, and 2.13).
 
@@ -1021,8 +1022,8 @@ Research context:
 `kind: framing`
 
 The 2.1 codec, the 2.4 Native ownership cutover, the 2.5-2.11 Native and tmux write,
-settlement, and runtime seams, and 2.14's terminal inventory reads and HTTP handlers run without
-#21558. 2.4.17's activation gate keeps them to isolated
+settlement, and runtime seams, 2.14's terminal inventory reads and HTTP handlers, and 2.15's
+Native lane viewports run without #21558. 2.4.17's activation gate keeps them to isolated
 `Native` tests until 2.13 registers the terminal family. 2.2, 2.3, 2.12, and 2.13 ride #21558's
 native gdaemon WS accept, auth, subscription, and broadcast transport: 2.2 carries the cross-plan
 "blocked by" edge to #21558, and the other three follow 2.2 through heading dependencies. M2 owns
@@ -2214,7 +2215,122 @@ Consumers unchanged:
   default 100. test:
   `crates/gdaemon/tests/front_door.rs::terminal_inventory_handlers_match_python_statuses`.
 
-### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1, 2.10, 1.10, 2.14)
+### 2.15 Native lane viewports from the Rust lease registry [category: code] (depends: 2.9, 2.10, 2.14)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/leases.rs::*` — scope-reason: declare the viewports child module that holds Registry::viewports
+- `crates/gterminals/src/leases/viewports.rs`
+- `crates/gterminals/src/runtime_api.rs`
+- `crates/gterminals/src/family.rs::*` — scope-reason: hand the Native lease registry to the runtime route
+- `src/gobby/terminals/runtime_client.py`
+- `src/gobby/runner_init/terminal_wiring.py::init_terminal_wiring`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/runtime_route.rs`
+- `tests/terminals/test_runtime_client.py`
+
+Research context:
+
+- Need (found gap, 2026-10-16): team-lane launches size the lane from the gclient window showing
+  its workspace. `check_runbook_seats_tool` reads the registry from `ctx.lease_registry_resolver`
+  and passes `leases.viewports` to `resolve_team_launch_inputs`
+  (`runbook_seat_tools.py:77-89`). The resolver returns `services.websocket_server.lease_registry`
+  (`http.py:368-370`), which in `Native` is 2.10's workspace event registry. That registry claims
+  no attachment, because Rust owns every lease (A1) and 2.2 attaches gclient windows in Rust, so
+  its `viewports` is always empty. `team_launch_inputs._lane_viewport` (162-186) needs exactly one
+  size per shown pane and raises `_viewport_refusal` otherwise (156-160), so once 2.13 activates
+  `Native` every lane launch without explicit `lane_rows` and `lane_columns` refuses.
+- Oracle: `src/gobby/terminals/leases.py::TerminalLeaseRegistry.viewports` (595-607) returns the
+  distinct `(rows, cols)` of records for the terminal that are not finalized, whose viewer is
+  `"gclient"`, and whose viewport is set. Its docstring records that sync tools call it from a
+  worker thread.
+- Rust state: `leases.rs` `Record` carries `viewer` (`Viewer::Gclient`), `finalized`, and
+  `view.viewport`, which `Registry::set_viewport` (747-759) stores as `(rows, cols)`.
+  `Registry::viewports(terminal) -> BTreeSet<(u16, u16)>` reads them under the state lock with no
+  health check, as `Registry::snapshot` (710-718) does.
+- Split: `crates/gterminals/src/leases.rs` is 861 lines. `Registry::viewports` lives in the new
+  `crates/gterminals/src/leases/viewports.rs`, declared with `mod viewports;` as a child module
+  beside 2.14's `leases/shutdown.rs`, so it keeps access to the registry's private state and
+  `leases.rs` grows by one line.
+- Route: `runtime_api.rs` (2.9) gains a `viewports` operation that takes `terminal_id` and replies
+  with the distinct `[rows, cols]` pairs; an invalid id is refused like 2.9's other operations.
+  The route reaches the lease registry because `family.rs` hands it the same
+  `Arc<leases::Registry>` that 2.6 builds for the coordinator. No new HTTP path is added, so
+  `terminal_api.rs` is unchanged.
+- Python: `runtime_client.py` (2.10) gains async `RustNativeRuntimeClient.viewports(terminal_id)`
+  and `NativeWorkspaceEventRegistry(TerminalLeaseRegistry)`, which overrides only
+  `viewports(terminal_id)` with
+  `asyncio.run_coroutine_threadsafe(client.viewports(terminal_id), loop).result(timeout=5.0)`.
+  `init_terminal_wiring` builds it in `Native` as `runner.workspace_event_registry`, with the loop
+  it already captures for `TerminalEffectBridge` (terminal_wiring.py:147-150), so 2.10's
+  workspace event sequencing is unchanged.
+- Failure (fail closed): a route refusal, transport failure, or the 5 s timeout cancels the future
+  and raises `ValueError` from the cause; so does a call with no captured loop or on the loop's own
+  thread, which would otherwise stall the daemon loop. `check_runbook_seats_tool` already maps
+  `ValueError` to an unsuccessful result (`runbook_seat_tools.py:107-108`), so a failed read
+  resolves no launch inputs and never invents a size.
+- Decision (restraint rung 2): the subclass mirrors 2.7's Orchestrator ruling that the write
+  client subclasses `WriteCoordinator`, keeping the Python surface its consumers already call, so
+  `http.py`, the MCP registries, the seat tool, and `_lane_viewport` stay unchanged. Rejected: a new HTTP viewport route, which would duplicate the
+  runtime route's gate; and having Python track gclient viewports itself, which would make a
+  second lease owner beside Rust.
+- `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch
+  bump.
+- **Granularity:** three acceptance items over one read path, the `Native` lane viewport. Its
+  Target files are the Rust read, the route operation, the family wiring that reaches the
+  registry, the Python client and registry subclass, the wiring that installs it, and the version
+  bump; they close together because each half is unobservable without the other.
+
+Consumers unchanged:
+- `src/gobby/servers/http.py` — no-edit-reason: Its `lease_registry_resolver` returns the websocket server's registry, which is `NativeWorkspaceEventRegistry` in `Native`.
+- `src/gobby/mcp_proxy/registries.py` — no-edit-reason: It forwards `lease_registry_resolver` unchanged.
+- `src/gobby/mcp_proxy/tools/agents_context.py` — no-edit-reason: It types the resolver as returning `TerminalLeaseRegistry`, which the subclass satisfies.
+- `src/gobby/mcp_proxy/tools/agents_registry.py` — no-edit-reason: Same reason as `registries.py`.
+- `src/gobby/mcp_proxy/tools/runbook_seat_tools.py` — no-edit-reason: It passes `leases.viewports` and already maps `ValueError` to an unsuccessful result.
+- `src/gobby/agents/team_launch_inputs.py` — no-edit-reason: `_lane_viewport` calls the `Viewports` callable per shown pane and refuses zero or ambiguous sizes unchanged.
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature.
+- `tests/workflows/test_pipeline_input_types.py` — no-edit-reason: It patches the resolver and asserts the tool passes the registry's bound `viewports`, which the subclass keeps.
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
+**Acceptance:**
+
+- 2.15.1 - `Registry::viewports` and the runtime route's `viewports` operation return the distinct
+  `(rows, cols)` of the terminal's unfinalized gclient records with a viewport, and exclude web
+  viewers, finalized records, records without a viewport, and other terminals' records, matching
+  `TerminalLeaseRegistry.viewports`. test:
+  `crates/gterminals/tests/runtime_route.rs::viewports_match_the_python_lease_predicate`.
+- 2.15.2 - In `Native`, `check_runbook_seats_tool` sizes a lane from the Rust-held gclient
+  viewport of each shown pane through `NativeWorkspaceEventRegistry`, and zero or two distinct
+  viewports refuse with `_viewport_refusal`. test:
+  `tests/terminals/test_runtime_client.py::test_native_lane_viewport_reads_rust_gclient_viewports`.
+- 2.15.3 - In `Native`, a route refusal, transport failure, timeout, missing loop, or call on the
+  loop's own thread raises `ValueError` from `viewports`, and the seat tool returns an unsuccessful
+  result with no resolved launch inputs. test:
+  `tests/terminals/test_runtime_client.py::test_native_lane_viewport_read_fails_closed`.
+
+### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1, 2.10, 1.10, 2.14, 2.15)
 
 `kind: deliverable`
 
@@ -2238,6 +2354,9 @@ Research context:
   settlement, and runtime seams the operations call, and on 2.14 for `repository::list_page`,
   `Registry::lifecycle_snapshot`, and `inventory::attach_locator`, which `terminal.list` and
   attach reuse (oracle `terminal_ws.py::_handle_terminal_list`, first-page watermark at 344-348).
+  It follows 2.15 because both edit `family.rs` and bump gdaemon in the same `Cargo.toml`,
+  `Cargo.lock`, and `version_pins.py`; 2.2's `terminal_set_viewport` writes the viewports 2.15
+  reads.
 - `TerminalWsMixin` is the operation oracle for list, attach, detach, sizing, scroll, input,
   paste, operator write, control, lease-lost fanout, proxy attach, and `terminal_set_theme`.
   #21558 supplies connection
@@ -2614,7 +2733,8 @@ Executors run focused verification after each leaf and the complete matrix befor
    2.14).
 3. With isolated `DATABASE_URL` and `GOBBY_TEST_PROTECT=1`, run the changed Python test files only:
    backend ingress/selection, spawn executor, agent definitions, terminal routes/WS, host shutdown,
-   workspace storage and ops, the coordinator client, and native lifecycle acceptance. Never run the full pytest suite.
+   workspace storage and ops, the coordinator and runtime clients (including the `Native` lane
+   viewport read, 2.15), and native lifecycle acceptance. Never run the full pytest suite.
 4. Run `tests/servers/test_terminal_ws_golden.py`,
    `crates/gclient/tests/ws_golden.rs`, and `crates/gterminals/tests/ws_golden.rs` against the same
    unchanged `tests/fixtures/terminal_ws_golden/manifest.json`.
@@ -2704,3 +2824,44 @@ Executors run focused verification after each leaf and the complete matrix befor
   2.7 now records it as a ruling. The ruling also accepted the three validator-forced edits to 1.6,
   1.8, and the 2.4 and D2 leaf targets; the adversary decides the remaining consumer-coverage
   warnings.
+- 2026-10-16: Repair of Adversary gobby#16983's F1-F6 and two LOW findings raised at `121294e`
+  (Plan Writer gobby#16490), under Orchestrator gobby#15977's no-deferral ruling.
+  - F1 (no deferral): D1 and D2 are removed. D1 becomes the landed P1 section 1.10, which #23218
+    executed (`6322c1874f`). D2's leaves become the P2 deliverables 2.2, 2.3, 2.12, and 2.13, with
+    every acceptance obligation kept. A2 records #23219 as superseded and retired at expansion. The
+    new "Cross-plan edges set at expansion" section lists 2.2 blocked by #21558, 2.4 blocking
+    node-halves 2.2 (#24371) on `serve.rs::run`, and 2.6 between #23880 and node-halves 1.5
+    (#24368) on `FrontDoor::handle`; the Orchestrator sets or flips those directions.
+  - F2 (consumer inventory): consumer rows were added to 1.2, 1.6, and 1.7, and the 20
+    `MANAGED_BIN_VERSION_PINS` rows to every section that bumps gdaemon: 2.4, 2.5, 2.11, 2.6, 2.8,
+    2.9, 2.14, 2.15, 2.2, 2.3, 2.12, and 2.13.
+  - F3 (write-route payload parity): 2.6's body cap is `MAX_CONTROL_LINE` plus 64 KiB, payloads
+    travel base64, and the route and 2.7's client apply the runtimes' per-step limits (2.6.5,
+    2.7.6); 2.9's runtime route shares the gate and cap. The planned one-payload-step rule was
+    dropped because plan approval sends `C-r` and a literal as two input steps.
+  - F4 (settler epoch fence): 2.8 applies a dead-epoch effect only after
+    `reconcile::lock_host_epochs`, shared with `epochs::observe`, confirms the observed epoch is
+    still current; 2.8.2 now tests a superseded epoch in `tests/reconcile.rs`.
+  - F5: tmux writes leave 2.5 for the new 2.11, with a dedicated `tmux_write.rs` contract.
+  - F6: 1.8 becomes framing that records #23214's obsolete disposition and the owners of each
+    former tmux duty.
+  - LOW-1 becomes 2.8.6, settler handoff expiry over `ControlClient::revoke_input`. LOW-2 becomes
+    2.2.7, clearing the handoff record after an ordinary grant or revoke.
+  - ID map: 1.4.6-1.4.9 to 1.10.1-1.10.4; 2.5.3 and 2.5.4 to 2.11.1 and 2.11.2, with 2.5 keeping
+    2.5.1, 2.5.2, and 2.5.5; 2.4.9-2.4.11 to 2.12.1-2.12.3; 2.4.1, 2.4.2, 2.4.4, 2.4.5, 2.4.6, and
+    2.4.18 to 2.13.1-2.13.6, with 2.13.4 rewritten to the fail-closed policy; 2.4 keeps 2.4.3,
+    2.4.8, 2.4.14, 2.4.15, and 2.4.17. New items: 2.2.7, 2.6.5, 2.7.6, 2.8.6, 2.10.5,
+    2.13.7 (the five restored real-gdaemon tests), 2.14.1-2.14.6, and 2.15.1-2.15.3.
+  - Self-found and repaired in the same pass:
+    - A1, 1.7, and E1 still described the bounded tmux fallback that the Orchestrator's 2026-10-14
+      option-B ruling replaced; 1.7 now carries #23213's landed fail-closed contract (1.7.1-1.7.6).
+    - In `Native`, `/api/terminals` would read an empty Python registry; the new 2.14 builds the
+      Rust inventory reads and handlers, and 2.13.1 and 2.13.2's tests move to
+      `crates/gdaemon/tests/front_door.rs`.
+    - 2.13 now targets `websocket/transport.rs` to claim the terminal WS message types; 2.3 gains
+      its `ws.rs` and family wiring; and each new module's `lib.rs` declaration is targeted.
+    - In `Native`, the Python websocket server had no lease registry and could not start; 2.10
+      gives it a workspace event registry (2.10.5).
+    - In `Native`, every team-lane launch would refuse for lack of gclient viewports; the new 2.15
+      reads them from the Rust lease registry.
+    - `FrontDoor::handle` line references follow #23880.
