@@ -477,11 +477,11 @@ def _live_path_owners(
         live = variables.get("task_live_edit_starts")
         live_starts = live if isinstance(live, dict) else {}
         root_key = normalize_task_checkout_root(checkout_root) or ""
-        # A claim selects its task, so each task's first selection is its claim time.
+        # Only a claim selects a task, so a task's latest selection is its current claim.
         claimed_at: dict[str, float] = {}
         for at, selected in task_selection_events(variables.get("task_selection_history")) or []:
             if selected is not None:
-                claimed_at.setdefault(selected, at)
+                claimed_at[selected] = max(at, claimed_at.get(selected, at))
         session_ref = format_session_ref(
             row["session_seq_num"],
             owner_session_id,

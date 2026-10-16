@@ -125,8 +125,12 @@ async def test_rule3_names_the_task_holding_the_live_interval(
     assert f"task #{other.seq_num}" not in reason
 
 
-def _claim_two_foreign_tasks(h: GuardHarness) -> tuple[Task, Task]:
-    """Claim two tasks for the foreign session against stored key order; return (earlier, later)."""
+def _claim_two_foreign_tasks(h: GuardHarness, *, reclaim: bool) -> tuple[Task, Task]:
+    """Claim two tasks for the foreign session; return (earlier, later) by current claim.
+
+    Without reclaim, claim order runs against stored key order. With reclaim, the first
+    claimed task is claimed again last, so its current claim is the later one.
+    """
     manager = LocalTaskManager(h.db)
     tasks = [
         manager.create_task(
@@ -146,19 +150,21 @@ def _claim_two_foreign_tasks(h: GuardHarness) -> tuple[Task, Task]:
     stored = list(variables.get_variables(h.foreign_session.id)["claimed_tasks"])
     # Each selection records a claim; selecting the last stored claim first makes
     # claim order run against key order.
-    for task_id in reversed(stored):
+    selections = [stored[1], stored[0], stored[1]] if reclaim else [stored[1], stored[0]]
+    for task_id in selections:
         variables.merge_variables(h.foreign_session.id, {"active_task_id": task_id})
     by_id = {task.id: task for task in tasks}
-    return by_id[stored[1]], by_id[stored[0]]
+    return by_id[selections[-2]], by_id[selections[-1]]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reclaim", [False, True])
 @pytest.mark.parametrize("starts", [(1.0, 1.0), (2.0, 1.0), (1.0, 2.0)])
 async def test_rule3_names_the_latest_live_start_then_the_later_claim(
-    guard_harness: GuardHarness, starts: tuple[float, float]
+    guard_harness: GuardHarness, starts: tuple[float, float], reclaim: bool
 ) -> None:
     h = guard_harness
-    earlier, later = _claim_two_foreign_tasks(h)
+    earlier, later = _claim_two_foreign_tasks(h, reclaim=reclaim)
     root = str(h.repo.resolve())
     SessionVariableManager(h.db).merge_variables(
         h.foreign_session.id,
