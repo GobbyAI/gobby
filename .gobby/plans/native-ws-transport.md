@@ -553,3 +553,298 @@ Re-anchor 2026-10-16 (gobby#16915) at 0.5.0 `7ba471a18c4d547c18114fda21adb30acb0
 `kind: verification`
 
 Observed: task/parent read, source inspection, consumer literal sweeps and a successful project-aware base validation on the materialized narrative. Command: `uv run gobby plans validate .gobby/tmp/task-21558/native-ws-transport.md -p /Users/josh/.gobby/worktrees/gobby/lane-3-runbooks`; exit 0, one phase. The final frozen bytes are revalidated before sending. No implementation checks, daemon runs, pytest, cargo tests or activation proof have run. Expansion validation is intentionally unrun until Adv4 applies the server-derived M1 and W4 validates it. Josh's approval still precedes expansion. No deterministic result substitutes for Adv2's qualitative pre-audit.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Shared subscribe/unsubscribe/broadcast corpus
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: 'A1.1: Every declared corpus case replays through the existing
+    Python implementation with the documented single acknowledgement-set normalization.
+    test: `tests/servers/test_ws_envelope_golden.py::test_python_replays_envelope_case`.
+
+    A1.2: Both entry modes and absent/explicit-null/initialized transitions, including
+    unsubscribe-before-subscribe, replay without modifying production behavior. file:
+    `tests/fixtures/ws_envelope_golden/cases.json`.
+
+    A1.3: Broadcast and fragment strings compare byte-identically, and direct responses
+    are distinguished from broadcasts. test: `tests/servers/test_ws_envelope_golden.py::test_frame_bytes_and_direct_delivery`.
+
+    A1.4: Version and case inventory drift fails rather than silently skipping data.
+    test: `tests/servers/test_ws_envelope_golden.py::test_manifest_is_complete`.'
+  labels:
+  - covers:native-ws-transport:A1:A1.1
+  - covers:native-ws-transport:A1:A1.2
+  - covers:native-ws-transport:A1:A1.3
+  - covers:native-ws-transport:A1:A1.4
+  tdd: false
+  source_section: A1
+  assigned_agent: backend-developer
+- title: Native subscription codec and corpus replay
+  category: code
+  task_type: feature
+  depends_on:
+  - A1
+  validation_criteria: 'A2.1: Rust replays every A1 case with identical transition,
+    recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envelope_corpus`.
+
+    A2.2: Both public entry modes, absent/explicit-null/initialized transitions and
+    unsubscribe-before-subscribe retain their distinct outcomes. symbol: `SubscriptionState`
+    in `crates/gdaemon/src/websocket/subscriptions.rs`.
+
+    A2.3: Every non-string member/type class, mixed-member list and invalid JSON/object
+    produces the specified bounded error without partial mutation; native-only negative
+    cases are distinguished from supported-domain parity. test: `crates/gdaemon/tests/ws_envelope_golden.rs::malformed_control_does_not_mutate_state`.
+
+    A2.4: Application frames are not reserialized or interpreted as subscription controls.
+    test: `crates/gdaemon/tests/ws_envelope_golden.rs::application_frames_are_opaque`.'
+  labels:
+  - covers:native-ws-transport:A2:A2.1
+  - covers:native-ws-transport:A2:A2.2
+  - covers:native-ws-transport:A2:A2.3
+  - covers:native-ws-transport:A2:A2.4
+  tdd: true
+  source_section: A2
+  implementation_domain: backend
+- title: Bounded native broadcast fanout
+  category: code
+  task_type: feature
+  depends_on:
+  - A2
+  validation_criteria: 'A3.1: Only matching registered clients receive a batch; fragment
+    bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_preserves_selection_and_frame_order`.
+
+    A3.2: A subscription acknowledgement precedes publications selected by its new
+    state. test: `crates/gdaemon/tests/ws_broker.rs::acknowledgement_precedes_newly_selected_events`.
+
+    A3.3: A stalled/overflowing client cannot block healthy recipients or grow queues
+    beyond both limits. test: `crates/gdaemon/tests/ws_broker.rs::slow_client_isolated_and_bounded`.
+
+    A3.4: Simultaneous disconnect and failure invokes cleanup once, and each entry
+    mode reconnects with its own original initial state. test: `crates/gdaemon/tests/ws_broker.rs::retirement_is_once_and_reconnect_is_fresh`.
+
+    A3.5: Direct replies use the same ordered writer without subscription filtering.
+    test: `crates/gdaemon/tests/ws_broker.rs::direct_reply_bypasses_event_filter`.'
+  labels:
+  - covers:native-ws-transport:A3:A3.1
+  - covers:native-ws-transport:A3:A3.2
+  - covers:native-ws-transport:A3:A3.3
+  - covers:native-ws-transport:A3:A3.4
+  - covers:native-ws-transport:A3:A3.5
+  tdd: true
+  source_section: A3
+  implementation_domain: backend
+- title: Python private bridge and native publisher
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: 'B1.1: The bridge refuses a non-loopback transport peer (checked
+    before any header is read or the client scope is rebuilt), a missing or wrong
+    pair secret, an absent, failed or stale generation, and Python-only mode before
+    any application handler runs or any `bridge_ready` frame is sent. test: `tests/servers/test_native_ws_bridge.py::test_bridge_requires_pair_proof_and_current_generation`.
+
+    B1.2: Admission matches each entry''s existing credential owner on the reconstructed
+    context: - Direct: missing Authorization gives 401, non-Bearer 401, a managed
+    bearer 403, cookie-only 401, and operator identity is admitted. - Browser: operator
+    identity is admitted, a managed bearer with a valid cookie gets 4401, a valid
+    cookie is admitted, an invalid cookie gets 4401, break-glass with a valid cookie
+    is admitted through the cookie only, and break-glass alone gets 4401. - Identity
+    headers without the secret are ignored. test: `tests/servers/test_native_ws_bridge.py::test_bridge_admission_matrix_matches_entry_owners`.
+
+    B1.3: Exactly one `bridge_ready` precedes the unchanged `connection_established`
+    welcome. Pending interactions, text and binary bytes pass through exactly. A client
+    text frame typed `bridge_ready` reaches the handler as an application message,
+    and connection cleanup runs once. test: `tests/servers/test_native_ws_bridge.py::test_bridge_preserves_application_connection_lifecycle`.
+
+    B1.4: The publisher binds with proof and settings within two seconds and turns
+    each broadcast into one publish operation, sent in enqueue order with queued operations
+    coalesced into one request and one request in flight, with frames byte-identical
+    to Python''s encoding, including when no client is connected. The 128 MiB bound
+    is checked before sending. test: `tests/servers/test_native_ws_publish.py::test_publisher_binds_and_publishes_encoded_frames`.
+
+    B1.5: A timed-out, failed or blackholed publish fails only its generation, closes
+    that generation''s legs within one second and never retries the batch. It then
+    rebinds immediately and every five seconds, and leaves newer-generation legs untouched.
+    test: `tests/servers/test_native_ws_publish.py::test_ambiguous_publish_retires_generation_without_retry`.
+
+    B1.6: Server-side subscription additions on a native leg are enqueued before the
+    handler yields and travel ahead of any later-enqueued publish: - `attach_to_session`
+    and `workspace_attach` send their reply only after the request carrying that leg''s
+    subscribe operation is acknowledged. - The `_read_attach_snapshot` waiter additions
+    precede a publish queued on the snapshot fence. - Python-only sockets get the
+    same subscription set as today and no request. test: `tests/servers/test_native_ws_publish.py::test_server_subscriptions_precede_later_publishes_and_replies`.
+
+    B1.7: Native mode follows the environment alone. With `GOBBY_SUPERVISOR_FD` and
+    `GOBBY_FRONT_DOOR_SECRET` set and the token arriving after `init_servers`, the
+    publisher exists and `bind` succeeds once the token appears within two seconds;
+    a token that never appears fails the bind into the rebind loop. Without both variables
+    there is no publisher. test: `tests/servers/test_native_ws_publish.py::test_native_mode_from_environment_and_bind_waits_for_token`.
+
+    B1.8: The publisher queue is bounded by decision 14, shown with a stalled sender
+    and concurrent producers: - Retained bytes and operations count queued plus in-flight
+    work. The shipped constants are 128 MiB, 65,536 operations and 65,536 waiting
+    futures; the test lowers them through the module constants to exercise overflow.
+    - The first operation that would exceed the byte budget, and separately the operation
+    count, is not enqueued and fails its generation. The queued and in-flight futures
+    of that generation resolve without raising, and its legs close 1011 within one
+    second. - The rebind gets a new generation, none of the failed generation''s operations
+    are sent in it, and newer-generation legs are untouched. - Both counters return
+    to zero after a successful drain, after the failure and after `stop`, and admission
+    still succeeds after more than one budget''s worth of cumulative healthy traffic.
+    test: `tests/servers/test_native_ws_publish.py::test_publisher_admission_budgets_fail_generation_on_overflow`.'
+  labels:
+  - covers:native-ws-transport:B1:B1.1
+  - covers:native-ws-transport:B1:B1.2
+  - covers:native-ws-transport:B1:B1.3
+  - covers:native-ws-transport:B1:B1.4
+  - covers:native-ws-transport:B1:B1.5
+  - covers:native-ws-transport:B1:B1.6
+  - covers:native-ws-transport:B1:B1.7
+  - covers:native-ws-transport:B1:B1.8
+  tdd: true
+  source_section: B1
+  implementation_domain: backend
+- title: gdaemon native transport and private endpoints
+  category: code
+  task_type: feature
+  depends_on:
+  - A3
+  validation_criteria: 'B2.1: The public 101 carries the correct accept key with no
+    extension or subprotocol, and the private upgrade carries only the allowlisted
+    headers, each synthesized header exactly once even when the public request repeats
+    it or varies its letter case. Text and binary bytes relay exactly in both directions,
+    binary replies included. Subscribe and unsubscribe are consumed by the broker,
+    with acknowledgements ahead of newly selected events, and never forwarded; direct
+    replies are unfiltered. test: `crates/gdaemon/tests/native_ws_transport.rs::native_leg_relays_frames_and_consumes_controls`.
+
+    B2.2: Readiness is exactly the first private frame: - Direct refusal returns the
+    bridge''s HTTP status and body without 101. - Browser refusal is 101 and then
+    4401. - A missing, malformed or wrong-generation first frame, or none within two
+    seconds, fails closed. - Every later private frame, including one identical to
+    `bridge_ready` or one naming another generation or admission result, reaches the
+    public client unchanged and changes neither admission nor generation. test: `crates/gdaemon/tests/native_ws_transport.rs::bridge_readiness_is_one_time_and_entry_specific`.
+
+    B2.3: Bind and publish admit only a loopback peer presenting both the secret and
+    the current token: - Each bind mints a fresh generation and retires the previous
+    generation''s connections with 1012. - A publish request applies its operations
+    in order: each publish operation enqueues once, and each subscribe operation changes
+    only its named leg. - A stale generation gets 409 and applies nothing, oversize
+    input gets 413, a malformed body gets 400 with nothing applied, and failed proof
+    gets 403, including a token that rotated after the request was first proven. test:
+    `crates/gdaemon/tests/native_ws_transport.rs::bind_and_publish_admit_only_the_current_pair`.
+
+    B2.4: The A1 envelope corpus and the terminal golden corpus replay byte-identically
+    through the native transport against a stub bridge. test: `crates/gdaemon/tests/native_ws_transport.rs::terminal_and_envelope_corpora_replay_native`.
+
+    B2.5: Failures are bounded: - Unbound entry and backend connect failures or timeouts
+    end within two seconds. - An oversize public message closes 1009, and ping timeout
+    closes 1011. - Private EOF closes the public side within one second, and public
+    close closes the private side. - Shutdown closes 1001 within one second. - The
+    broker entry count returns to zero. test: `crates/gdaemon/tests/native_ws_transport.rs::failures_are_bounded_and_leave_no_residue`.
+
+    B2.6: A subscribe operation for a live leg makes a later publish operation of
+    that gated parametric event reach that leg only, on direct entry from `Absent`
+    and on browser entry from the empty set. Nothing is sent to the client for the
+    subscribe itself, a publish operation applied before the subscribe is not delivered
+    to it, and a subscribe for an unregistered leg is a no-op. test: `crates/gdaemon/tests/native_ws_transport.rs::server_subscriptions_reach_only_the_named_leg`.
+
+    B2.7: The native handshake is validated before any bridge. A non-GET method, HTTP/1.0,
+    a missing `Upgrade: websocket` or `Connection: upgrade`, a missing or wrong version
+    (426 with `Sec-WebSocket-Version: 13`), a missing, malformed or duplicate key,
+    and duplicate `Upgrade`, `Connection` or version headers are refused without 101;
+    no private leg opens and nothing registers. test: `crates/gdaemon/tests/native_ws_transport.rs::invalid_handshakes_are_refused_before_the_bridge`.
+
+    B2.8: Generation changes commit under the binding lock, shown with deterministic
+    barriers: - A rebind between readiness and registration closes that connection
+    1012 and leaves it unregistered. - A publish request for the old generation racing
+    a rebind never reaches a new-generation connection. - A backend status change
+    delivered after a replacement bind leaves the replacement bound, and an idle replacement
+    keeps admitting new connections without a publication or a manual bind. - A status
+    change whose proving token is no longer current retires that generation. - Stale
+    bind after replacement: a bind proven with token A is held at a barrier after
+    proof and before its commit; the backend token rotates to B, the status change
+    retires A''s generation, and a bind proven with B commits. Releasing the held
+    bind returns 403, and B''s binding, generation and registered connections are
+    unchanged. A publish held the same way returns 403 and enqueues nothing. test:
+    `crates/gdaemon/tests/native_ws_transport.rs::generation_changes_commit_under_the_binding_lock`.
+
+    B2.9: One connection''s FIFO carries non-UTF-8 binary replies interleaved with
+    text replies, broadcasts and subscription acknowledgements in enqueue order, with
+    opcodes and bytes intact. Byte accounting and overflow retirement count binary
+    frames. test: `crates/gdaemon/tests/ws_broker.rs::typed_batches_keep_order_and_opcode`.'
+  labels:
+  - covers:native-ws-transport:B2:B2.1
+  - covers:native-ws-transport:B2:B2.2
+  - covers:native-ws-transport:B2:B2.3
+  - covers:native-ws-transport:B2:B2.4
+  - covers:native-ws-transport:B2:B2.5
+  - covers:native-ws-transport:B2:B2.6
+  - covers:native-ws-transport:B2:B2.7
+  - covers:native-ws-transport:B2:B2.8
+  - covers:native-ws-transport:B2:B2.9
+  tdd: true
+  source_section: B2
+  implementation_domain: backend
+- title: Native WS activation
+  category: code
+  task_type: feature
+  depends_on:
+  - B1
+  - B2
+  validation_criteria: 'B3.1: Listener dispatch: - HTTP `/ws` and `/ws/x` are native
+    browser entry, and every direct-listener path is native direct entry, sharing
+    one `NativeWs`. - `/__vite_hmr` keeps the splice, and `/api/nodes/channel` is
+    unchanged. - Other `/_gobby/` paths return 404 without forwarding, and non-upgrade
+    requests on the direct listener return 426. test: `crates/gdaemon/tests/native_ws_transport.rs::application_paths_are_native_and_hmr_is_proxy`.
+
+    B3.2: Through the isolated supervised daemon: - Operator keys are admitted on
+    both entries. - An invalid or revoked key with a valid cookie is refused at the
+    front door, and a managed bearer with a valid cookie is denied on both entries.
+    - Break-glass with a valid cookie is admitted on browser entry only, through the
+    cookie. - A valid cookie alone is admitted on browser entry and refused on direct
+    entry. - Forged identity, entry, path, generation, forwarded or bridge headers
+    are ignored, including duplicated and letter-case-variant copies. - A public `/_gobby/ws/bridge`
+    request gets 404, and bind or publish without proof is refused. test: `tests/e2e/test_native_ws_transport.py::test_credential_ownership_and_private_channel_refusal`.
+
+    B3.3: Native-mode Python binds from `start()` before ready with no client, serves
+    no `websockets` listener, and has exactly one fanout owner; Python-only mode is
+    unchanged. Killing the idle Python backend retires its generation, and the respawned
+    backend binds a new generation and restores admission without a manual bind. A
+    stale-token bind is refused. test: `tests/e2e/test_native_ws_transport.py::test_backend_respawn_rebinds_and_single_fanout`.
+
+    B3.8: Server-side subscriptions survive native mode through the isolated supervised
+    daemon. A direct-entry client that sends only gclient''s `subscribe` set and then
+    `workspace_attach` receives a later `workspace_event` for that workspace and none
+    for another workspace. A browser-entry client that sends `attach_to_session` receives
+    later `session_message` and `hook_event` frames for that session. test: `tests/e2e/test_native_ws_transport.py::test_server_side_subscriptions_survive_native_mode`.
+
+    B3.4: Reconnect after a backend restart starts from the entry mode''s initial
+    subscription state. Message limits, backend failure and daemon stop are bounded
+    (public close 1001 within one second), and no client, handler or lease residue
+    remains. test: `tests/e2e/test_native_ws_transport.py::test_failure_reconnect_and_shutdown_are_bounded`.
+
+    B3.5: Native gterm direct access and a running terminal survive daemon loss and
+    restart, independently of the native WS listener. test: `tests/e2e/test_native_ws_transport.py::test_gterm_remains_available_without_daemon`.
+
+    B3.6: The contract documents entry modes, the public and private frame boundary,
+    credential owners, proofs, limits, failure semantics and the cutover proof, and
+    states that no retired verifier or application proxy fallback remains. file: `docs/contracts/native-ws-transport.md`.
+
+    B3.7: The four transport and control rows are `delegated`, and the committed ledger
+    equals its regeneration. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.'
+  labels:
+  - covers:native-ws-transport:B3:B3.1
+  - covers:native-ws-transport:B3:B3.2
+  - covers:native-ws-transport:B3:B3.3
+  - covers:native-ws-transport:B3:B3.8
+  - covers:native-ws-transport:B3:B3.4
+  - covers:native-ws-transport:B3:B3.5
+  - covers:native-ws-transport:B3:B3.6
+  - covers:native-ws-transport:B3:B3.7
+  tdd: true
+  source_section: B3
+  implementation_domain: fullstack
+```
