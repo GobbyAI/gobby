@@ -361,8 +361,9 @@ before spawning. A conformance test verifies a token minted by Python's
 
 Checks before admission: `cwd` must resolve, with symlinks resolved, inside a
 registered project checkout or one of its git worktrees for the token's
-`project_id`; `repo_root` and the gitdir come from the snapshot lookup below, and
-`cwd` must lie under `repo_root`.
+`project_id`; `repo_root` and the gitdir come from the snapshot lookup below, `cwd`
+must lie under `repo_root`, and `repo_root` must equal a registered checkout or
+worktree root exactly, so a planted nested `.git` gitfile cannot become the root.
 
 Admission: classify the core executable after stripping `env`, `rtk`, `uv run` and
 `nice` prefixes. `ruff`, `mypy`, `gobby test-types audit`, `mkdir`, `tar`, `git` and
@@ -441,7 +442,7 @@ Focused checks: `cargo test -p gobby-daemon --test bounded_run`,
 - 2.2.2 - A request without a valid managed capability, with a forged signature, or for a provider-native run is refused before any spawn. test: `crates/gdaemon/tests/bounded_run.rs::refuses_unmanaged_forged_and_provider_native_callers`.
 - 2.2.3 - A token minted by Python's `issue_agent_api_token` verifies in gdaemon. test: `crates/gdaemon/tests/bounded_run.rs::verifies_python_minted_capability`.
 - 2.2.4 - An SRT-enforced run's child argv starts with the persisted wrap prefix, and a sandbox-disabled run's argv is unwrapped. test: `crates/gdaemon/tests/bounded_run.rs::wraps_child_in_caller_srt_policy`.
-- 2.2.5 - A cwd outside the token project's checkouts and worktrees is refused. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
+- 2.2.5 - A cwd outside the token project's checkouts and worktrees is refused, and so is a discovered `repo_root` that is not exactly a registered checkout or worktree root. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
 - 2.2.6 - A fourth slot-taking run waits until a slot frees, a trivial command runs without a slot, and a run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_three_slots_and_bounds_queue_wait`.
 - 2.2.7 - At the bound a TERM-ignoring group is TERMed, then KILLed after the grace window and reaped; nothing outside the group is signalled; the outcome is `timed_out`. test: `crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group`.
 - 2.2.8 - The snapshot captures uncommitted and untracked-unignored changes, leaves the real index and HEAD unchanged, runs its git argv behind the run's wrap prefix with an absolute daemon-resolved git, explicit `--git-dir` and `--work-tree`, and `core.fsmonitor=false`. A request env carrying `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG_*`, a `PATH`-shadowed `git`, and a repository `core.worktree` pointing elsewhere change neither tree id; the last refuses the run. A mid-run edit makes `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
@@ -886,3 +887,24 @@ that rewritten launcher must exit non-zero and write a `failed` record.
 
 - 2026-10-15: First narrative draft by the Plan Writer (gobby#16992) after the
   Orchestrator's scope ruling.
+- 2026-10-15: Consensus between the Plan Writer (gobby#16992) and the Plan
+  Adversary (gobby#16993) after three review rounds. Round 1 changes:
+  - The unbounded-input classifier became its own deliverable (3.1). It scans
+    only executed units, and root-conftest exemptions go through a pinned
+    disposition table.
+  - The key became a candidate path set compared on content and existence with
+    `--no-renames`.
+  - The record gained an environment denylist, interpreter resolution and the
+    gdaemon identity.
+  - Snapshot git now runs inside the caller's sandbox.
+  - Later failures cancel reuse, both from non-reusable records and from the
+    transcript.
+  - Criterion pytest commands in reusable form accept reuse (Decision Record
+    item 13, ratified at approval; the Orchestrator recommends acceptance).
+
+  Round 2 changes: the snapshot git became immune to request environment,
+  `PATH` and `core.worktree`; indirect parametrization counts as a fixture
+  request; leading criterion environment assignments are stripped;
+  `importlib.resources` became a site; and the criterion helper moved into
+  `validation_reuse.py`. Round 3 added the exact registered-root check for the
+  discovered `repo_root`. No disagreement went to the Orchestrator.
