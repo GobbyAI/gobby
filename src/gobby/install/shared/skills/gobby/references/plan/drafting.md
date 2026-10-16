@@ -5,7 +5,7 @@ Load before writing or revising a plan narrative.
 Read the [Plan-Coverage Contract](../../../../../../../../docs/contracts/plan-coverage.md) and [coverage](coverage.md). Load standalone `restraint` and `elicit`. Resolve repository facts with gcode before asking about material choices; use the grill-me protocol and confirm the Decision Record.
 
 ## Author
-1. Map outcomes and dependencies. One deliverable section becomes exactly one manifest entry and one implementation leaf.
+1. Map outcomes and dependencies. One deliverable section becomes exactly one manifest entry and one implementation leaf. Work gated on another plan's task stays in scope: write it as a deliverable whose heading carries `(depends: #N)`, and expansion gives the leaf a `blocked-by` edge on task `#N`. Never defer a section because it waits on another plan. To create a phase's sub-epic under an existing task, end the phase heading with `(#N)`, as in `## P1: Node hook ingress (#24150)`.
 2. Use `.gobby/plans/<slug>.md` as the sole authority when writable. Every user-facing canonical plan body starts with `Plan artifact: \`.gobby/plans/<slug>.md\``. Provider display mirrors must stay synchronized or point at that file; never overwrite it with a stale mirror.
 3. Include a real `**Plan ID:** <id>` outside code fences before review/approval; never leave it blank or unknown. Give each section concrete Targets, its own Research context, implementation detail, acceptance items, and focused verification. Capture observed entry points, exact file-qualified symbols, call paths, reusable helpers, fixtures, constraints, rejected alternatives with reasons, and observed versus planned checks. Copy shared findings into every executor's section.
 4. Enumerate behaviors and lifecycle owners. Split independently implementable/testable/committable outcomes even when they share a feature name or file. Keep one behavior's implementation, consumers, failure cases, and tests together.
@@ -34,4 +34,4 @@ In generic interactive planning, after drafting, enhancement, each finalized rev
 
 See [Specification writing](../../../../../../../../docs/guides/spec-writing.md#plan-shape).
 
-_Last verified: 2026-10-13_
+_Last verified: 2026-10-16_

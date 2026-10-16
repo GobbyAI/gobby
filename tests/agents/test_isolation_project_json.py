@@ -16,6 +16,7 @@ from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.code_index.trigger import CodeIndexTrigger
 from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout
+from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.unit
 
@@ -37,8 +38,18 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _source_git_manager() -> MagicMock:
+    """Source repository git manager whose main branch resolves to abc123."""
+    git_manager = MagicMock(spec=WorktreeGitManager)
+    git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
+    git_manager.get_local_commit.return_value = "abc123"
+    return git_manager
+
+
 @pytest.mark.asyncio
-async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
+async def test_clone_isolation_writes_parent_project_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Clone isolation writes parent_project_id beside parent_project_path."""
     parent = tmp_path / "parent"
     (parent / ".gobby").mkdir(parents=True)
@@ -62,8 +73,12 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
         branch_name="feature",
     )
 
-    handler = CloneIsolationHandler(clone_manager=clone_manager, clone_storage=clone_storage)
-    handler._generate_clone_path = MagicMock(return_value=str(clone_path))
+    handler = CloneIsolationHandler(
+        clone_manager=clone_manager,
+        clone_storage=clone_storage,
+        git_manager=_source_git_manager(),
+    )
+    monkeypatch.setattr(handler, "_generate_clone_path", MagicMock(return_value=str(clone_path)))
     config = SpawnConfig(
         prompt="Test",
         task_id=None,
@@ -93,7 +108,9 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
+async def test_clone_creation_does_not_block_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     parent = tmp_path / "parent"
     (parent / ".gobby").mkdir(parents=True)
     (parent / ".gobby" / "project.json").write_text(
@@ -118,8 +135,12 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
         branch_name="feature",
     )
 
-    handler = CloneIsolationHandler(clone_manager=clone_manager, clone_storage=clone_storage)
-    handler._generate_clone_path = MagicMock(return_value=str(clone_path))
+    handler = CloneIsolationHandler(
+        clone_manager=clone_manager,
+        clone_storage=clone_storage,
+        git_manager=_source_git_manager(),
+    )
+    monkeypatch.setattr(handler, "_generate_clone_path", MagicMock(return_value=str(clone_path)))
     config = SpawnConfig(
         prompt="Test",
         task_id=None,
@@ -157,8 +178,7 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
         clone_path=str(clone_path),
         branch_name="feature",
         base_branch="main",
-        shallow=True,
-        use_local=False,
+        base_commit_sha="abc123",
     )
 
 

@@ -139,10 +139,15 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert "installed agent definition" in args["prompt"]
         assert args["prompt"].startswith(f"You are the {step.id.replace('-', ' ')} seat.")
         assert 'target="session", target_id="gobby#14972"' in args["prompt"]
-        assert 'owner_session="gobby#14972"' in args["prompt"]
         assert "every SRT denial" in args["prompt"]
         assert "current session ref" in args["prompt"]
-        assert "wait_for_coordination" in args["prompt"]
+        if step.id == "consolidator":
+            # An idle-step seat goes idle instead of re-arming an expiring wait (#24405).
+            assert "go idle as your consolidate step directs" in args["prompt"]
+            assert "wait_for_coordination" not in args["prompt"]
+        else:
+            assert 'owner_session="gobby#14972"' in args["prompt"]
+            assert "wait_for_coordination" in args["prompt"]
         if step.id == "metrics-monitor":
             assert "Log Monitor ref: gobby#14973" in args["prompt"]
         if anchor is None:

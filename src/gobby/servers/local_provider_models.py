@@ -729,16 +729,17 @@ async def probe_generation_endpoint(
     *,
     timeout: float = 1.5,
 ) -> dict[str, Any]:
-    """Probe one configured generation endpoint's ``/v1/models`` for live health."""
+    """Probe one configured generation endpoint's ``/v1/models`` for live health.
+
+    The httpx timeout bounds the request from when the worker starts it, so
+    time queued behind a busy default executor never reads as endpoint failure.
+    """
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(
-                _probe_generation_endpoint_sync,
-                endpoint_name,
-                endpoint,
-                timeout,
-            ),
-            timeout=timeout,
+        return await asyncio.to_thread(
+            _probe_generation_endpoint_sync,
+            endpoint_name,
+            endpoint,
+            timeout,
         )
     except Exception as exc:
         result = generation_endpoint_probe_result(endpoint_name, endpoint)

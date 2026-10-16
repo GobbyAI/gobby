@@ -76,22 +76,26 @@ def _wait_for_daemon_health(
     timeout: float = DAEMON_HEALTH_TIMEOUT_SECONDS,
     interval: float = 0.5,
 ) -> float | None:
-    """Wait for the daemon health endpoint to respond successfully."""
+    """Wait for the daemon health endpoint to respond successfully.
+
+    Each probe may use the rest of the wait, so a loaded daemon that answers
+    slower than a decision probe allows still counts as healthy.
+    """
     start = time.monotonic()
     deadline = start + timeout
 
-    while time.monotonic() < deadline:
-        if _is_daemon_healthy(http_port):
+    while (remaining := deadline - time.monotonic()) > 0:
+        if _is_daemon_healthy(http_port, timeout=remaining):
             return time.monotonic() - start
         time.sleep(interval)
 
     return None
 
 
-def _is_daemon_healthy(http_port: int) -> bool:
+def _is_daemon_healthy(http_port: int, *, timeout: float = 1.0) -> bool:
     """Check whether the daemon health endpoint is currently healthy."""
     try:
-        response = httpx.get(f"http://localhost:{http_port}/api/health", timeout=1.0)
+        response = httpx.get(f"http://localhost:{http_port}/api/health", timeout=timeout)
         return response.status_code == 200
     except httpx.TimeoutException:
         return False
@@ -521,7 +525,7 @@ def _restart_backend(
     """Restart a serving backend; None requires a full lifecycle replacement."""
     from gobby.cli.runtime import get_cli_runtime
 
-    from .daemon_start import _poll_startup_progress
+    from .daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS, _poll_startup_progress
 
     runtime = get_cli_runtime(ctx)
     port = runtime.read_only_operational_config().daemon_port
@@ -570,7 +574,9 @@ def _restart_backend(
                 _step("Backend restart response did not identify the retiring process", error=True)
                 return False
             _step("Backend restart requested; native supervisor retains its listeners and lease")
-            deadline = time.monotonic() + 30.0
+            # One readiness budget covers the old backend's exit and its
+            # replacement's startup; a loaded host can slow either half.
+            deadline = time.monotonic() + STARTUP_READINESS_TIMEOUT_SECONDS
             while _is_process_alive(previous_pid):
                 if time.monotonic() >= deadline:
                     _step("Previous backend did not exit after restart request", error=True)
@@ -581,7 +587,7 @@ def _restart_backend(
         return False
     # The old backend is gone: release shutdown admission before waiting for
     # its replacement. Startup readiness owns the restart outcome from here.
-    if not _poll_startup_progress(port):
+    if not _poll_startup_progress(port, max_wait=deadline - time.monotonic()):
         _step("Backend did not finish startup readiness", error=True)
         return False
     return True

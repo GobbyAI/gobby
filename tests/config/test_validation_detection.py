@@ -657,9 +657,14 @@ def test_wrapped_validation_commands_record_normalized_metadata(
         "env A=1 B=2 uv run pytest tests/a.py",
         "env A=1 B=2 -- uv run pytest tests/a.py",
         "/usr/bin/env A=1 B=2 uv run pytest tests/a.py",
+        "env -i A=1 uv run pytest tests/a.py",
+        "env -i A=1 -- uv run pytest tests/a.py",
+        "env -u A uv run pytest tests/a.py",
+        "env -u A -- uv run pytest tests/a.py",
+        "env -C /tmp uv run pytest tests/a.py",
     ],
 )
-def test_env_with_only_assignments_matches_like_the_bare_prefix(env_command: str) -> None:
+def test_env_with_safe_options_matches_like_the_bare_prefix(env_command: str) -> None:
     bare = classify_validation_command("A=1 B=2 uv run pytest tests/a.py")
     match = classify_validation_command(env_command)
 
@@ -674,16 +679,11 @@ def test_env_with_only_assignments_matches_like_the_bare_prefix(env_command: str
 @pytest.mark.parametrize(
     "command",
     [
-        "env -i A=1 uv run pytest tests/a.py",
-        "env -i A=1 -- uv run pytest tests/a.py",
-        "env -u A uv run pytest tests/a.py",
-        "env -u A -- uv run pytest tests/a.py",
-        "env -C /tmp uv run pytest tests/a.py",
         "env -S 'uv run pytest tests/a.py'",
         "env A=1",
     ],
 )
-def test_env_with_options_or_no_command_is_not_credited(command: str) -> None:
+def test_env_with_unsafe_options_or_no_command_is_not_credited(command: str) -> None:
     assert classify_validation_command(command) is None
 
 
@@ -696,8 +696,8 @@ def test_env_with_options_or_no_command_is_not_credited(command: str) -> None:
         ("env A=1 --\tuv run pytest tests/a.py", "uv run pytest tests/a.py"),
         ("env A=1 --x uv run pytest tests/a.py", "env A=1 --x uv run pytest tests/a.py"),
         ("cd /repo && env A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
-        ("env -u A uv run pytest tests/a.py", "env -u A uv run pytest tests/a.py"),
-        ("env -i A=1 uv run pytest tests/a.py", "env -i A=1 uv run pytest tests/a.py"),
+        ("env -u A uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env -i A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
     ],
 )
 def test_evidence_normalizer_strips_env_assignment_prefix_only(command: str, expected: str) -> None:
@@ -726,9 +726,9 @@ def test_nice_and_env_in_any_order_match_like_the_bare_prefix(command: str) -> N
     assert normalize_validation_evidence_command(command) == "uv run pytest tests/a.py"
 
 
-def test_evidence_normalizer_keeps_env_options_after_nice() -> None:
+def test_evidence_normalizer_strips_safe_env_options_after_nice() -> None:
     command = "nice -n 10 env -i A=1 uv run pytest tests/a.py"
-    assert normalize_validation_evidence_command(command) == "env -i A=1 uv run pytest tests/a.py"
+    assert normalize_validation_evidence_command(command) == "uv run pytest tests/a.py"
 
 
 def test_nice_without_delimiter_is_detected() -> None:

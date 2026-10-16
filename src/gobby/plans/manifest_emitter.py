@@ -49,6 +49,8 @@ _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
 _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
 _PHASE_REF_RE = re.compile(r"^P\d+$")
+# A ``#N`` dependency names a task outside the plan: a cross-plan blocked-by edge.
+_EXTERNAL_TASK_REF_RE = re.compile(r"^#\d+$")
 _FRONTEND_SIGNAL_RE = re.compile(
     r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
     r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
@@ -60,13 +62,17 @@ _BACKEND_SIGNAL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _FRONTEND_TARGET_PREFIXES = ("web/", "crates/gclient/")
-_BACKEND_TARGET_PREFIXES = ("src/gobby/",)
+# Every Rust crate except the gclient UI is backend work. The root Cargo.toml and
+# Cargo.lock carry no signal: every shipped crate change lists them for its version bump.
+_BACKEND_TARGET_PREFIXES = ("src/gobby/", "crates/")
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "developer",
     "config": "developer",
     "docs": "tech-writer",
     "refactor": "developer",
+    # Test leaves route to the developer and carry no implementation_domain,
+    # whatever their Targets (Rust or Python).
     "test": "developer",
 }
 _DEFAULT_AGENT_FALLBACK = "developer"
@@ -445,11 +451,35 @@ def section_dependency_refs(
     section: PlanSection,
     section_by_id: Mapping[str, PlanSection],
 ) -> tuple[str, ...]:
-    """Return a section's ``(depends: ...)`` refs plus those inherited from its headings.
+    """Return a section's in-plan ``(depends: ...)`` refs plus those inherited from its headings.
 
     A ``(depends: ...)`` annotation on a phase heading (or any heading between
     the phase and the deliverable) applies to every deliverable under it.
+    Cross-plan ``#N`` refs are excluded; see ``section_external_task_refs``.
     """
+    return tuple(
+        ref
+        for ref in _heading_dependency_refs(section, section_by_id)
+        if not _EXTERNAL_TASK_REF_RE.match(ref)
+    )
+
+
+def section_external_task_refs(
+    section: PlanSection,
+    section_by_id: Mapping[str, PlanSection],
+) -> tuple[str, ...]:
+    """Return a section's cross-plan ``#N`` blocked-by refs, inherited like in-plan refs."""
+    return tuple(
+        ref
+        for ref in _heading_dependency_refs(section, section_by_id)
+        if _EXTERNAL_TASK_REF_RE.match(ref)
+    )
+
+
+def _heading_dependency_refs(
+    section: PlanSection,
+    section_by_id: Mapping[str, PlanSection],
+) -> tuple[str, ...]:
     refs: list[str] = list(extract_section_dependencies(section.title))
     current = section
     while current.parent_id is not None:
@@ -571,7 +601,10 @@ def _implementation_domain_for(
 
     targets = collect_target_inventory(document, section)
     frontend = any(path.startswith(_FRONTEND_TARGET_PREFIXES) for path in targets)
-    backend = any(path.startswith(_BACKEND_TARGET_PREFIXES) for path in targets)
+    backend = any(
+        path.startswith(_BACKEND_TARGET_PREFIXES) and not path.startswith(_FRONTEND_TARGET_PREFIXES)
+        for path in targets
+    )
     if not (frontend or backend):
         signal_text = " ".join(
             [
