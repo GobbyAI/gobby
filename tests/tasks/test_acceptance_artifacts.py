@@ -3956,6 +3956,63 @@ def test_validation_matchers_compare_credited_core_command() -> None:
     assert not validation_run_covers_test(wrapped.core_command, wrapped.command, test)
 
 
+@pytest.mark.parametrize(
+    "header,symbol",
+    [
+        (
+            "_ test_env_unset_chdir_ignore_environment_options_are_credited"
+            "[env -u A -u B -C /wt] _",
+            "test_env_unset_chdir_ignore_environment_options_are_credited",
+        ),
+        (
+            "________ test_env_options_command_equivalence_matches_bare[-u X -C /wt] ________",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+        (
+            "1. [FAIL] test_env_options_command_equivalence_matches_bare[-u X -C /wt]",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+    ],
+)
+@pytest.mark.parametrize("case", ["bound", "other-test", "other-path", "no-detail", "sibling"])
+def test_tdd_pytest_spaced_headers_bind_failure_body(header: str, symbol: str, case: str) -> None:
+    started = datetime(2026, 10, 16, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference=f"tests/tasks/test_transcript_outcomes.py::{symbol}",
+        path="tests/tasks/test_transcript_outcomes.py",
+        symbol=symbol,
+        body=f"def {symbol}(): assert feature() == 1",
+    )
+    reported_header = header.replace(symbol, "test_other") if case == "other-test" else header
+    reported_path = "tests/test_other.py" if case == "other-path" else test.path
+    detail = "E   AssertionError: assert 0 == 1\n" if case != "no-detail" else ""
+    if case == "sibling":
+        # A recognized target header must not borrow a sibling's assertion,
+        # including when that sibling uses pytest's shortest padding.
+        reported_header = f"________ {symbol} ________"
+        detail = "_ test_other[env -u A] _\nE   AssertionError: assert 0 == 1\n"
+    red_output = f"{reported_header}\n{reported_path}:37: in {symbol}\n{detail}"
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command=f"pytest {test.path} -k {symbol}",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is (case == "bound"), result.findings
+    assert result.red_runs == ((red.command,) if case == "bound" else ())
+
+
 def test_tdd_evidence_rejection_names_run_and_unattributed_symbol() -> None:
     started = datetime(2026, 8, 31, tzinfo=UTC)
     test = AcceptanceTest(

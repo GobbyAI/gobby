@@ -894,6 +894,11 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     # The daemon rebuilds the Zig mirror below this root before each run, so no run
     # may plant links there for the next one to follow.
     assert str(sandbox_cache.resolve()) not in allowed_writes
+    # Every platform reads the pinned runtime, read-only, but nothing beside it.
+    srt_root = gobby_home / "tools" / "srt"
+    assert str((srt_root / SRT_RELEASE.version).resolve()) in allowed_reads
+    assert str(srt_root.resolve()) not in allowed_reads
+    assert not any(Path(path).is_relative_to(srt_root.resolve()) for path in allowed_writes)
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads

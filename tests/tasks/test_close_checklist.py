@@ -3203,9 +3203,10 @@ def test_excluded_runs_list_gap_covering_records_first(criterion_gap: bool, comm
         {"pytest_uncovered_paths": ["tests/tasks/test_gap.py"]},
         {"python_source_uncovered_tests": {"src/gap.py": ["tests/tasks/test_gap.py"]}},
         {"vitest_related_uncovered_paths": ["tests/tasks/test_gap.py"]},
+        {"test_types_audit_uncovered_paths": ["tests/tasks/test_gap.py"]},
         {"criterion_command_gaps": [{"command": "uv run pytest tests/tasks/test_gap.py -q"}]},
     ],
-    ids=["changed-test", "related-test", "vitest-related", "required-command"],
+    ids=["changed-test", "related-test", "vitest-related", "test-types-audit", "required-command"],
 )
 @pytest.mark.parametrize("record_key,limit", [("uncredited_runs", 16), ("latest_runs", 64)])
 def test_uncredited_selection_keeps_gap_covering_runs(
