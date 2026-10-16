@@ -48,6 +48,7 @@ from gobby.workflows.task_claim_state import (
     resolve_edit_pair,
     task_edit_path_covers,
     task_edited_file_set_for_checkout,
+    task_selection_events,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
@@ -465,6 +466,7 @@ def _live_path_owners(
                 "claimed_tasks",
                 "task_edited_file_checkouts",
                 "task_live_edit_starts",
+                "task_selection_history",
             ),
         )
         held = session_dirty_file_set_for_checkout(variables, checkout_root)
@@ -475,6 +477,11 @@ def _live_path_owners(
         live = variables.get("task_live_edit_starts")
         live_starts = live if isinstance(live, dict) else {}
         root_key = normalize_task_checkout_root(checkout_root) or ""
+        # A claim selects its task, so each task's first selection is its claim time.
+        claimed_at: dict[str, float] = {}
+        for at, selected in task_selection_events(variables.get("task_selection_history")) or []:
+            if selected is not None:
+                claimed_at.setdefault(selected, at)
         session_ref = format_session_ref(
             row["session_seq_num"],
             owner_session_id,
@@ -483,7 +490,9 @@ def _live_path_owners(
         )
         for path in held:
             # Edit history outlives a clean reconcile; the live interval names the owner.
-            task_id = _live_interval_task(live_starts, claimed_tasks, root_key, path) or next(
+            task_id = _live_interval_task(
+                live_starts, claimed_tasks, claimed_at, root_key, path
+            ) or next(
                 (
                     task
                     for task in claimed_tasks
@@ -505,11 +514,19 @@ def _live_path_owners(
 
 
 def _live_interval_task(
-    live_starts: dict[str, Any], claimed_tasks: dict[str, Any], root_key: str, path: str
+    live_starts: dict[str, Any],
+    claimed_tasks: dict[str, Any],
+    claimed_at: dict[str, float],
+    root_key: str,
+    path: str,
 ) -> str | None:
-    """The claim whose live attribution interval covers path; the latest start wins."""
-    best: tuple[float, int, str] | None = None
-    for order, task in enumerate(claimed_tasks):
+    """The claim whose live attribution interval covers path.
+
+    The latest start wins and an equal start goes to the later claim. A claim with no
+    recorded selection ranks oldest; the task id keeps the order total.
+    """
+    candidates: list[tuple[float, float, str]] = []
+    for task in claimed_tasks:
         by_root = live_starts.get(task)
         starts = by_root.get(root_key) if isinstance(by_root, dict) else None
         if not isinstance(starts, dict):
@@ -519,9 +536,9 @@ def _live_interval_task(
             for entry, stamp in starts.items()
             if isinstance(stamp, (int, float)) and task_edit_path_covers(entry, path)
         ]
-        if stamps and (best is None or (max(stamps), order) > best[:2]):
-            best = (max(stamps), order, task)
-    return best[2] if best is not None else None
+        if stamps:
+            candidates.append((max(stamps), claimed_at.get(task, 0.0), task))
+    return max(candidates)[2] if candidates else None
 
 
 def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -> set[str]:
