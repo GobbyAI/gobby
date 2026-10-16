@@ -24,6 +24,7 @@ from gobby.code_index.community_labeler import (
 )
 from gobby.code_index.models import IndexedProject, IndexWriteMode, StoredCommunity
 from gobby.code_index.storage import CodeIndexStorage
+from gobby.config.ai import DecisionsConfig
 from gobby.config.code_index import CodeIndexCommunityLabelConfig, CodeIndexConfig
 from gobby.utils.machine_id import require_machine_id
 from tests.code_index.conftest import PROJECT_ID
@@ -345,7 +346,7 @@ async def test_ungated_validated_name_writes_model_label(code_storage: CodeIndex
     payload = {"name": "Ask Evidence Admission", "rationale": "Admits and validates evidence."}
     adapter = ScriptedJSONAdapter({ASK_MEMBERS[0]: payload})
     labeler = _labeler({"endpoint:lm-studio": adapter})
-    assert CodeIndexCommunityLabelConfig().decisions_api_base is None
+    assert DecisionsConfig().community_label.mode == "off"
 
     generated = await labeler.generate_batch([community])
     outcomes = await labeler.label_batch(

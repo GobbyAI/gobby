@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from dataclasses import replace
@@ -10,11 +11,13 @@ from typing import Literal
 
 import pytest
 
+from gobby.config.shell_lexing import ParsedShellCommand, parse_shell_command
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.tasks.agentic_close_review import build_agentic_review_prompt
 from gobby.tasks.close_checklist import (
     evaluate_validation_commands,
 )
+from gobby.tasks.command_equivalence import parse_validation_shell
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -95,6 +98,33 @@ def test_manual_review_bounds_unrelated_commands_and_keeps_required_outcomes(
     assert gate.details["omitted_latest_run_count"] > 1_500
     if outcome == "unknown":
         assert {"command": "npm ci", "reason": "unknown outcome"} in gate.details["uncredited_runs"]
+
+
+@pytest.mark.parametrize("parser", [parse_shell_command, parse_validation_shell])
+def test_evaluation_parses_each_distinct_command_once(
+    parser: functools._lru_cache_wrapper[ParsedShellCommand],
+) -> None:
+    evidence = TranscriptEvidence(
+        command_runs=(
+            _run("npm ci", 1),
+            *(_run(f"python -c 'web check unrelated_{index}'", index + 2) for index in range(40)),
+        ),
+        validation_runs=(_run("npx prettier --check web", 50, categories=("format",)),),
+    )
+    parser.cache_clear()
+
+    evaluate_validation_commands(
+        task_category="manual",
+        evidence=evidence,
+        has_attributed_edits=False,
+        validation_criteria="Run `npm ci` successfully; Prettier must pass for web checks.",
+    )
+
+    # Each cache miss is one real parse: every distinct string was parsed once,
+    # and the repeated questions about it were answered without reparsing.
+    stats = parser.cache_info()
+    assert stats.misses == stats.currsize > 0
+    assert stats.hits > stats.misses
 
 
 @pytest.mark.parametrize("required", ["npm ci", "CI=1 npm ci", "npx prettier --check web"])

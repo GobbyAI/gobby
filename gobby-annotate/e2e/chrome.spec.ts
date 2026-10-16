@@ -258,6 +258,9 @@ test("native capture, persistent editing, responsive controls and idempotent act
     const bundle = decodeBundle(exportBytes);
     expect(bundle.manifest.annotations).toHaveLength(1);
     expect(bundle.assets.size).toBe(1);
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Checkout review" }),
+    ).toContainText("Exported");
     await writeFile(testInfo.outputPath("capture.zip"), exportBytes);
     await page.reload();
     await activate();

@@ -237,9 +237,8 @@ def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     body = yaml.safe_load(path.read_text())
     assert body["name"] == TASK_CLOSE_REVIEWER_AGENT
     assert body["checkout_mode"] == "none"
-    assert body["provider"] == "codex"
-    assert body["model"] == "gpt-6-luna"
-    assert body["reasoning_effort"] == "medium"
+    # Validation candidates supply the concrete launch choice; the definition inherits.
+    assert body["provider"] == "inherit"
     blocked = set(body["blocked_mcp_tools"])
     assert {
         "gobby-tasks:close_task",
@@ -359,7 +358,8 @@ def test_invalid_terminal_payload_reports_complete_remediation(
         },
     )
 
-    assert payload["outstanding_finding_count"] == len(blocking_reasons)
+    # Criterion gaps are blocking reasons, never findings.
+    assert payload["outstanding_finding_count"] == 0
     assert payload["remediation_guidance"] == (
         "Address every listed blocking reason, validate the complete fix set, and commit the "
         "complete fix set before one resubmission."
@@ -405,7 +405,8 @@ def test_terminal_payload_references_blockers_without_recopying_diagnostics() ->
 
     assert payload["blocking_reasons"] == [blocker]
     assert payload["commit_shas"] == ["abc"]
-    assert payload["outstanding_finding_count"] == 1
+    # A gate blocker is not a reviewer finding.
+    assert payload["outstanding_finding_count"] == 0
     # The blocker already states its action, so the generic remediation stands in.
     assert payload["required_actions"] == [
         "Address every blocking reason, rerun focused validation, commit fixes, and call "

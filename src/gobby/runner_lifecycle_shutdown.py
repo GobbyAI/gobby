@@ -64,6 +64,23 @@ def _reset_finalizer_expiry_backstop() -> None:
     _expiry_exit_backstop_required = False
 
 
+# Loop-clock deadline of the running shutdown; None until shutdown starts.
+_overall_shutdown_deadline: float | None = None
+
+
+def remaining_shutdown_budget(now: float) -> float:
+    """Seconds left before the overall shutdown deadline, on the loop clock.
+
+    gdaemon SIGKILLs a stopping backend after the same 17 s (its drain_timeout),
+    so work still running past the deadline is already abandoned on stop; a
+    backend exiting for restart must not outlive it either. Before shutdown
+    starts, the whole budget remains.
+    """
+    if _overall_shutdown_deadline is None:
+        return _OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    return max(0.0, _overall_shutdown_deadline - now)
+
+
 def _close_http_admission(runner: GobbyRunner) -> None:
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
@@ -779,6 +796,7 @@ async def shutdown_daemon_services(
     ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
     """Run graceful shutdown within the CLI's process-termination deadline."""
+    global _overall_shutdown_deadline
     host = getattr(runner, "terminal_host_manager", None)
     if host is not None:
         host.begin_shutdown()
@@ -786,6 +804,7 @@ async def shutdown_daemon_services(
     services = getattr(getattr(runner, "http_server", None), "services", None)
     loop = asyncio.get_running_loop()
     overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    _overall_shutdown_deadline = overall_deadline
     graceful_deadline = min(
         overall_deadline,
         loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
@@ -864,7 +883,7 @@ async def shutdown_daemon_services(
         from gobby.agents.sandbox_policy import shutdown_pre_commit_store_spare
 
         _best_effort_sync(
-            shutdown_pre_commit_store_spare,
+            lambda: shutdown_pre_commit_store_spare(timeout=remaining_shutdown_budget(loop.time())),
             "Pre-commit store spare cleanup",
         )
 

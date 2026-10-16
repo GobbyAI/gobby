@@ -110,10 +110,15 @@ class TranscriptEdit:
     source_confirmed_at: datetime | None = None
     source_created: bool = False
     source_fragment: str | None = None
+    #: The text a Python Edit replaced with ``source_fragment``.
+    source_replaced: str | None = None
     python_stub: tuple[str, tuple[str, ...]] | None = None
     #: Inert declarations an Edit added around its verbatim-preserved anchor.
     python_added_source: str | None = None
     source_unchanged: bool = False
+    checkout_root: str | None = None
+    #: Off-task owner edits still invalidate GREEN, but cannot prove a TDD cycle.
+    task_attributed: bool = True
 
 
 @dataclass(frozen=True)
@@ -139,6 +144,8 @@ class TranscriptEvidence:
     degraded_capabilities: tuple[str, ...] = ()
     # Observations outside the task link window never enter credit-bearing collections.
     excluded_runs: tuple[TranscriptValidationRun, ...] = ()
+    #: Owner runs made under another claim, eligible only for Gate 10 candidate proof.
+    off_task_author_runs: tuple[TranscriptValidationRun, ...] = ()
     #: gcode's indexed language per task-edited path, attached by close evaluation.
     edit_languages: Mapping[str, str] = field(default_factory=dict, compare=False)
     #: Newest provider record timestamp these transcripts actually contained. Close

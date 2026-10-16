@@ -990,3 +990,40 @@ async def test_team_entrypoint_omitted_worktree_reaches_guard_as_inference(
     assert launch["worktree_id"] == lane_env.worktree
     assert launch["placement"]["split"]["pane"] == lane_env.pane
     print(json.dumps({"explicit_null": explicit_null, "guard_arguments": guard}))
+
+
+async def test_check_runbook_seats_git_runs_off_the_event_loop(
+    lane_env: LaneEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon awaits check_runbook_seats; its worktree Git probe must run on a worker."""
+    probes: list[bool] = []
+
+    def probe_git(*args: Any, **kwargs: Any) -> str | None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            probes.append(False)
+        else:
+            probes.append(True)
+        return run_git_command(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.agents.team_launch_inputs.run_git_command", probe_git)
+    registry = create_agents_registry(
+        MagicMock(), session_manager=SessionManager(lane_env.db), db=lane_env.db
+    )
+    with session_context_for_test(lane_env.caller):
+        result = await registry.call(
+            "check_runbook_seats",
+            {
+                "requested": "developer",
+                "catalogue": [{"name": "developer", "title": "Developer", "agent": "developer"}],
+                "lane": "3",
+                "lane_columns": 205,
+                "lane_rows": 59,
+            },
+        )
+
+    # Launch inputs resolved (the Git probe ran); the seat check then refuses a
+    # caller outside a pipeline, which this test does not build.
+    assert result["error"].endswith("is not a pipeline child session"), result
+    assert probes and not any(probes)

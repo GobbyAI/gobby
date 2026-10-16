@@ -2,13 +2,14 @@
 
 import json
 import os
+import re
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 from threading import Lock
-from typing import BinaryIO, Self, cast
+from typing import BinaryIO, ClassVar, Self, cast
 
 from gobby.agents.watchdog.models import (
     WATCHDOG_TAIL_LIMIT,
@@ -18,6 +19,10 @@ from gobby.agents.watchdog.models import (
 
 _SCAN_STATE_LIMIT = 128
 _RESUME_GUARD_BYTES = 256
+_TURN_SEARCH_CHUNK_BYTES = 1 << 20
+_SCAN_POSITION_FIELDS = frozenset(
+    {"device", "inode", "offset", "line_num", "guard_start", "resume_guard"}
+)
 
 
 class ScanVerdict(StrEnum):
@@ -55,12 +60,71 @@ def scan_jsonl(path: str | Path, classify: ClassifyRecord) -> ScanResult:
     return ScanResult(last_malformed_line_num=last_malformed_line_num)
 
 
+def find_turn_start(
+    handle: BinaryIO,
+    size: int,
+    marker: re.Pattern[bytes],
+    starts_turn: Callable[[dict[str, object]], bool],
+) -> tuple[int, int] | None:
+    """Offset and preceding line count of the latest complete line that starts a turn.
+
+    Scan state is turn-scoped, so a cold scan from the latest turn start matches a scan
+    of the whole transcript; decoding every earlier line held the daemon GIL in
+    proportion to transcript size (#23359). The marker only nominates lines: each
+    candidate is decoded and confirmed, so the result is never past the true start.
+    """
+    buf = b""
+    pos = size
+    while pos > 0:
+        start = max(0, pos - _TURN_SEARCH_CHUNK_BYTES)
+        handle.seek(start)
+        buf = handle.read(pos - start) + buf
+        pos = start
+        # The line before the first newline may continue into unread bytes, and a record
+        # after the last newline may still be unterminated.
+        first = 0 if pos == 0 else buf.find(b"\n") + 1
+        if first == 0 and pos > 0:
+            continue
+        decoded_from = end = buf.rfind(b"\n") + 1
+        for match in reversed(list(marker.finditer(buf, first, end))):
+            line_start = buf.rfind(b"\n", 0, match.start()) + 1
+            if line_start >= decoded_from:
+                continue
+            decoded_from = line_start
+            line_end = buf.index(b"\n", match.end()) + 1
+            try:
+                value = json.loads(buf[line_start:line_end].decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and starts_turn(cast(dict[str, object], value)):
+                offset = pos + line_start
+                return offset, _count_newlines(handle, offset)
+        buf = buf[:first]
+    return None
+
+
+def _count_newlines(handle: BinaryIO, end: int) -> int:
+    handle.seek(0)
+    count = 0
+    remaining = end
+    while remaining > 0:
+        chunk = handle.read(min(_TURN_SEARCH_CHUNK_BYTES, remaining))
+        if not chunk:
+            break
+        count += chunk.count(b"\n")
+        remaining -= len(chunk)
+    return count
+
+
 @dataclass
 class ResumableScanState:
     """Classifier state through the last newline-terminated line of one transcript.
 
-    Providers subclass it with their own fields, `classify` and snapshot.
+    Providers subclass it with their own fields, `classify`, snapshot and turn-start
+    marker, and call `begin_turn` from `classify` when a record starts a turn.
     """
+
+    turn_start_marker: ClassVar[re.Pattern[bytes]]
 
     device: int
     inode: int
@@ -78,6 +142,23 @@ class ResumableScanState:
 
     def snapshot(self) -> WatchdogTranscriptSnapshot:
         raise NotImplementedError
+
+    def starts_turn(self, data: dict[str, object]) -> bool:
+        """Whether `classify` takes this record as a turn start, judged on a fresh state."""
+        probe = type(self)(self.device, self.inode)
+        probe.classify(1, data)
+        return probe.snapshot().turn_started_event is not None
+
+    def begin_turn(self) -> None:
+        """Forget what earlier turns left, keeping only the scan position.
+
+        Every verdict is judged within the latest turn, and a cold scan starts there
+        (`find_turn_start`), so no state may depend on the lines before it.
+        """
+        fresh = type(self)(self.device, self.inode)
+        for item in fields(self):
+            if item.name not in _SCAN_POSITION_FIELDS:
+                setattr(self, item.name, getattr(fresh, item.name))
 
     def resumes(self, handle: BinaryIO, stat: os.stat_result) -> bool:
         """Whether the open file is the one scanned so far, changed only by appends.
@@ -103,7 +184,8 @@ class ResumableScanner[S: ResumableScanState]:
     """Per-path scan states that decode only the lines appended since the last read.
 
     Decoding the whole transcript on every poll held the daemon GIL in proportion to
-    transcript size (#23359), so each read resumes after the last complete line.
+    transcript size (#23359), so each read resumes after the last complete line and a
+    new state starts at the latest turn start.
     """
 
     def __init__(self, new_state: Callable[[int, int], S]) -> None:
@@ -125,6 +207,11 @@ class ResumableScanner[S: ResumableScanState]:
             state = self._states.get(path)
             if state is None or not state.resumes(handle, stat):
                 state = self._new_state(stat.st_dev, stat.st_ino)
+                turn_start = find_turn_start(
+                    handle, stat.st_size, state.turn_start_marker, state.starts_turn
+                )
+                if turn_start is not None:
+                    state.offset, state.line_num = turn_start
                 self._states[path] = state
             handle.seek(state.offset)
             unterminated = b""

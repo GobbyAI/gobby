@@ -10,6 +10,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     validate_functions_exec_wrapper,
 )
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
+from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_tool_path
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -342,6 +343,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         "Failed scheduling post-result terminal handoff delivery",
                         exc_info=True,
                     )
+
+            # Event-loop adapters normalize Bash without shell metadata; derive it here,
+            # on the hook worker, so edit tracking never depends on a rule pass.
+            if tool_name == "Bash" and "canonical_tool_kind" not in input_data:
+                normalize_tool_fields(input_data)
 
             # Structured edit tools and normalized shell writes both count as edits.
             is_canonical_edit = (

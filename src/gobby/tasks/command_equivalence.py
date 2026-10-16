@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import posixpath
 import re
@@ -22,6 +23,9 @@ _TOKEN = re.compile(
 )
 
 
+# Equivalence checks reparse the same command per comparison; caching by the
+# exact string parses each distinct command once. The result is frozen.
+@functools.lru_cache(maxsize=8192)
 def parse_validation_shell(command: str) -> ParsedShellCommand:
     """Parse the supported exit-preserving shell subset, retaining quoted literals.
 
@@ -304,6 +308,12 @@ def _path_scope(
     if len(parsed.segments) != 1:
         return None
     tokens, _locations = _drop_neutral_uv_options(list(parsed.segments[0]))
+    # UV options can hide an inner RTK launcher from the shared normalizer.
+    normalized = normalize_validation_evidence_command(shlex.join(tokens))
+    normalized_shell = parse_validation_shell(normalized)
+    if len(normalized_shell.segments) != 1:
+        return None
+    tokens = list(normalized_shell.segments[0])
     start = 2 if tokens[:2] == ["uv", "run"] else 0
     if (
         len(tokens) > start + 1
@@ -381,6 +391,10 @@ def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], dict[str, st
             index += 2
         elif option in _UV_LOCATION_OPTIONS and has_value:
             locations[option] = value
+            index += 1
+        elif token == "--python" and index + 1 < len(tokens):
+            index += 2
+        elif option == "--python" and has_value and value:
             index += 1
         else:
             break

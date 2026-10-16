@@ -45,8 +45,11 @@ _TOOL_INPUT_FIELD_ALIASES = (
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 
 
-def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
-    """Annotate events with canonical read/search/write semantics across CLIs."""
+def _set_canonical_tool_metadata(data: dict[str, Any], *, shell_metadata: bool = True) -> None:
+    """Annotate events with canonical read/search/write semantics across CLIs.
+
+    ``shell_metadata=False`` skips Bash command analysis, which can run Git.
+    """
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
 
@@ -69,7 +72,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
         metadata["canonical_file_paths"] = canonical_paths
     elif tool_name_lower in {"grep_search", "grep"}:
         metadata = _build_canonical_tool_metadata("search")
-    elif tool_name == "Bash":
+    elif tool_name == "Bash" and shell_metadata:
         command = _get_command_text(tool_input)
         if command:
             metadata = _normalize_shell_tool_metadata(command, base_cwd=current_tool_cwd(data))
@@ -174,6 +177,20 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     Returns:
         The same *data* dict, enriched with normalized fields.
     """
+    return _normalize_tool_fields(data, shell_metadata=True)
+
+
+def normalize_tool_display_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize like :func:`normalize_tool_fields` without Bash command metadata.
+
+    Shell command analysis can run Git, so event-loop callers that read only
+    names, inputs and outcomes use this; the hook engine derives the canonical
+    shell metadata off the loop.
+    """
+    return _normalize_tool_fields(data, shell_metadata=False)
+
+
+def _normalize_tool_fields(data: dict[str, Any], *, shell_metadata: bool) -> dict[str, Any]:
     # Phase 1: field alias normalization
 
     # A marker survives only on a repeat pass over input it already replaced;
@@ -267,7 +284,7 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
         data["command"] = tool_input["command"]
 
     # Phase 2.5: infer canonical read/search/write semantics
-    _set_canonical_tool_metadata(data)
+    _set_canonical_tool_metadata(data, shell_metadata=shell_metadata)
 
     # Phase 3: normalize machine-readable outcomes only for tool-shaped data.
     # Adapters also use this helper for session and turn events, where adding an

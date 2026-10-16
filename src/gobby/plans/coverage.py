@@ -540,6 +540,8 @@ def _invalid_cover_rows(
 ) -> list[CoverageRow]:
     rows: list[CoverageRow] = []
     for task in records:
+        if task.state == "closed" and task.closed_reason == "obsolete":
+            continue
         for label in task.labels:
             if not label.startswith("covers:"):
                 continue
@@ -604,6 +606,8 @@ def _matching_cover_records(
 ) -> list[tuple[CoversRecord, _TaskRecord]]:
     matches: list[tuple[CoversRecord, _TaskRecord]] = []
     for task in records:
+        if task.state == "closed" and task.closed_reason == "obsolete":
+            continue
         for label in task.labels:
             if not label.startswith("covers:"):
                 continue

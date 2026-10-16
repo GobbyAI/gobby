@@ -1997,7 +1997,9 @@ class TestCodexAdapterTranslateToHookEvent:
     def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path: Path) -> None:
         """Synthetic Codex AFTER_TOOL edits inside cwd should still mark had_edits."""
         repo_root = tmp_path / "repo"
-        repo_root.mkdir()
+        # Edit attribution needs a project root; never depend on one above tmp_path.
+        (repo_root / ".gobby").mkdir(parents=True)
+        (repo_root / ".gobby" / "project.json").write_text("{}")
         in_repo_file = repo_root / "src" / "main.py"
         in_repo_file.parent.mkdir(parents=True)
 
@@ -2021,6 +2023,48 @@ class TestCodexAdapterTranslateToHookEvent:
         adapter = CodexAdapter()
         hook_event = adapter.translate_to_hook_event({"method": "item/completed", "params": params})
         assert hook_event is not None
+        hook_event.metadata["_platform_session_id"] = "sess-123"
+
+        session_storage = MagicMock()
+        task_manager = MagicMock()
+        task_manager.list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(session_storage=session_storage, task_manager=task_manager)
+
+        handlers.handle_after_tool(hook_event)
+
+        session_storage.mark_had_edits.assert_called_once_with("sess-123")
+
+    def test_item_completed_shell_write_marks_had_edits_without_rule_pass(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex shell writes mark had_edits from the hook worker, with no rule pass first."""
+        repo_root = tmp_path / "repo"
+        (repo_root / ".gobby").mkdir(parents=True)
+        (repo_root / ".gobby" / "project.json").write_text("{}")
+        (repo_root / "src").mkdir()
+
+        client = CodexAppServerClient()
+        client._thread_cwds["thr-tool"] = str(repo_root)
+        params = client._enrich_notification(
+            "item/completed",
+            {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-command-9",
+                    "type": "commandExecution",
+                    "command": "echo hi > src/main.py",
+                    "aggregatedOutput": "",
+                    "exitCode": 0,
+                    "status": "completed",
+                },
+            },
+        )
+
+        adapter = CodexAdapter()
+        hook_event = adapter.translate_to_hook_event({"method": "item/completed", "params": params})
+        assert hook_event is not None
+        # The event-loop translation carries display fields only.
+        assert "canonical_tool_kind" not in hook_event.data
         hook_event.metadata["_platform_session_id"] = "sess-123"
 
         session_storage = MagicMock()
@@ -4676,6 +4720,39 @@ class TestCodexAdapterApprovalHandling:
 
         assert result == {"action": "accept", "content": None, "_meta": None}
         mock_hm.handle.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_checkout_approval_git_runs_off_the_event_loop(self, tmp_path: Path) -> None:
+        """Canonical shell normalization of an approval probes Git on a worker thread."""
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        probes: list[tuple[list[str], bool]] = []
+
+        def git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                probes.append((argv, False))
+            else:
+                probes.append((argv, True))
+            return subprocess.CompletedProcess(argv, 1, stdout=b"")
+
+        mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="allow")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        with patch("gobby.hooks._normalization_git.subprocess.run", side_effect=git):
+            result = await adapter.handle_approval_request(
+                "item/commandExecution/requestApproval",
+                {
+                    "threadId": "thr-cmd",
+                    "itemId": "item-1",
+                    "parsedCmd": f"git -C {tmp_path} checkout missing.py",
+                },
+            )
+
+        assert result == {"decision": "accept"}
+        assert probes
+        assert all(str(tmp_path) in argv and not on_loop for argv, on_loop in probes)
 
 
 class TestCodexAdapterApprovalAttach:

@@ -22,6 +22,7 @@ from functools import cached_property, lru_cache
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
+from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.tasks.command_equivalence import (
     pytest_targets,
     run_location,
@@ -411,6 +412,12 @@ def uncovered_pytest_paths(
     tree covers only when that tree holds the close ``candidate`` commit's bytes for the
     test and every changed path (#23653).
     """
+    runs = tuple(
+        run
+        for run in runs
+        if runner_reported_success((run.output or "") + "\n")
+        and not runner_reported_failures(run.output)
+    )
     if close_root is None:
         covered: list[str] = []
         for run in runs:
@@ -453,6 +460,49 @@ def drop_foreign_runs(
         command_runs=tuple(filter(in_scope, evidence.command_runs)),
     )
     return scoped, foreign
+
+
+def credit_off_task_author_runs(
+    evidence: TranscriptEvidence,
+    required_tests: tuple[str, ...],
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate,
+) -> TranscriptEvidence:
+    """Project owner-away pytest proof into Gate 10 without changing shared TDD evidence."""
+    credited: list[TranscriptValidationRun] = []
+    for run in evidence.off_task_author_runs:
+        if (
+            run.outcome != "success"
+            or run.wrapped
+            or run.core_command is None
+            or run.categories != ("test",)
+        ):
+            continue
+        targets = pytest_targets(run.core_command)
+        if not targets or any(not target.endswith(".py") for target in targets):
+            continue
+        proven = candidate_pytest_paths(run, required_tests, changed_paths, candidate)
+        covered = set(required_tests).difference(
+            uncovered_pytest_paths(
+                (run,),
+                required_tests,
+                close_root=candidate.root,
+                changed_paths=changed_paths,
+                candidate=candidate,
+            )
+        )
+        if proven and proven == covered:
+            credited.append(run)
+    references = {(run.session_id, run.command, run.started_at) for run in credited}
+    return replace(
+        evidence,
+        validation_runs=(*evidence.validation_runs, *credited),
+        excluded_runs=tuple(
+            run
+            for run in evidence.excluded_runs
+            if (run.session_id, run.command, run.started_at) not in references
+        ),
+    )
 
 
 def candidate_pytest_paths(

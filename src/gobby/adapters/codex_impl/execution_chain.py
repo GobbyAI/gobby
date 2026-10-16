@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
-from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.normalization import normalize_tool_display_fields
 from gobby.hooks.tool_outcomes import ToolOutcome, ToolOutcomeStatus
 
 FUNCTIONS_EXEC_NAMES = frozenset({"exec", "functions.exec"})
@@ -778,7 +778,7 @@ class ExecutionChainCorrelator:
             ),
         ).to_dict()
         data["_tool_outcome_locked"] = True
-        normalize_tool_fields(data)
+        normalize_tool_display_fields(data)
         return data
 
     def snapshot_state(self) -> dict[str, Any]:

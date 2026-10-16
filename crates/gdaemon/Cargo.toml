@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.32"
+version = "0.4.44"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -52,6 +52,7 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 
 [dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1"] }
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 time = { version = "0.3", features = ["parsing"] }
 assert_cmd = "2"

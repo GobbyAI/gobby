@@ -24,6 +24,7 @@ use bytes::Bytes;
 use futures_util::FutureExt;
 use gobby_core::bootstrap::RouteBackend;
 use gobby_core::route_family::ProxiedCheck;
+use gobby_terminals::family::{RouteLatch, RouteModeError, WsRoutes};
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower_service::Service;
@@ -51,6 +52,26 @@ impl RouteFamily<FrontDoorState> for TerminalFamily {
     fn router(&self) -> Router<FrontDoorState> {
         Router::new()
     }
+}
+
+/// The terminal route mode bootstrap selects, latched once per process. Native is
+/// refused until this family claims the terminal WS routes.
+pub fn terminal_route_latch(
+    routes: &BTreeMap<String, RouteBackend>,
+) -> Result<RouteLatch, RouteModeError> {
+    let ws = if TerminalFamily.prefixes().is_empty() {
+        WsRoutes::Unregistered
+    } else {
+        WsRoutes::Registered
+    };
+    RouteLatch::new(terminal_route(routes), ws)
+}
+
+pub fn terminal_route(routes: &BTreeMap<String, RouteBackend>) -> RouteBackend {
+    routes
+        .get(TerminalFamily.name())
+        .copied()
+        .unwrap_or_else(|| TerminalFamily.default_backend())
 }
 
 struct Entry {

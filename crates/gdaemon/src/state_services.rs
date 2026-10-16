@@ -2,9 +2,10 @@
 
 use anyhow::{Context, Result};
 use gobby_core::{
-    bootstrap::{HubDatabaseBootstrap, RouteBackend},
+    bootstrap::HubDatabaseBootstrap,
     postgres_pool::{Pool, PoolSettings},
 };
+use gobby_terminals::family::{RouteLatch, SupervisorMode};
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -15,7 +16,14 @@ pub(crate) struct ActiveServices {
 }
 
 impl ActiveServices {
-    pub(crate) async fn start(bootstrap: &HubDatabaseBootstrap, home: &Path) -> Result<Self> {
+    pub(crate) async fn start(
+        bootstrap: &HubDatabaseBootstrap,
+        terminals: &RouteLatch,
+        home: &Path,
+    ) -> Result<Self> {
+        let mode = terminals.select(crate::front_door::routes::terminal_route(
+            &bootstrap.front_door.routes,
+        ))?;
         let (retention_stop, retention_shutdown) = watch::channel(false);
         let mut services = Self {
             retention_stop,
@@ -34,12 +42,12 @@ impl ActiveServices {
                 acquire_timeout: Duration::from_secs(2),
             },
         )?;
-        if bootstrap.front_door.routes.get("terminal_ws") == Some(&RouteBackend::Native) {
+        if mode == SupervisorMode::Owner {
             let options =
                 gobby_terminals::host::HostOptions::from_pool(&pool, home, machine.clone()).await?;
             if let Some(options) = options {
                 let family = gobby_terminals::family::TerminalFamily::new(
-                    RouteBackend::Native,
+                    terminals,
                     options,
                     Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(
                         Pool::build(
@@ -136,8 +144,12 @@ mod tests {
                 home.path().join("gterm.pid"),
                 host.id().context("host pid")?.to_string(),
             )?;
+            let latch = RouteLatch::new(
+                gobby_core::bootstrap::RouteBackend::Native,
+                gobby_terminals::family::WsRoutes::Registered,
+            )?;
             let family = gobby_terminals::family::TerminalFamily::new(
-                RouteBackend::Native,
+                &latch,
                 HostOptions {
                     socket_dir: home.path().to_owned(),
                     shutdown_grace: Duration::from_millis(100),

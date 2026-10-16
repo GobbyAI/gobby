@@ -6,10 +6,13 @@ use super::{
 };
 use crate::lease::ActiveDaemonLease;
 use anyhow::{Context, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use gobby_terminals::write_api::{TokenLease, TokenSlot};
+use rand::RngCore;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
-    io,
+    io::{self, Write as _},
     os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
@@ -55,6 +58,8 @@ pub struct BackendConfig {
     pub environment: BTreeMap<OsString, OsString>,
     pub drain_timeout: Duration,
     pub heartbeat_interval: Duration,
+    /// Holds the running child's write token; each spawn installs a fresh one.
+    pub write_token: TokenSlot,
 }
 
 impl BackendConfig {
@@ -84,6 +89,7 @@ impl BackendConfig {
             // Python runner_lifecycle_shutdown's overall settlement budget.
             drain_timeout: Duration::from_secs(17),
             heartbeat_interval: Duration::from_secs(1),
+            write_token: TokenSlot::default(),
         })
     }
 }
@@ -299,6 +305,7 @@ struct BackendChild {
     child: Child,
     group: Option<i32>,
     _liveness: std::io::PipeWriter,
+    _write_token: TokenLease,
     stderr: JoinHandle<io::Result<()>>,
     last_line: watch::Receiver<String>,
 }
@@ -337,6 +344,18 @@ impl BackendChild {
         let mut child = command.spawn().context("spawn backend")?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
         drop(reader);
+        let mut token = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut token);
+        let token = URL_SAFE_NO_PAD.encode(token);
+        // Installed before delivery, so the child never presents an unknown token.
+        let write_token = config.write_token.install(token.clone());
+        match (&writer).write_all(format!("{token}\n").as_bytes()) {
+            // A child that already exited is reaped by supervision as a crash.
+            Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
+                return Err(error).context("deliver backend write token");
+            }
+            _ => {}
+        }
         let mut stderr = child.stderr.take().context("backend stderr pipe missing")?;
         let (last, last_line) = watch::channel(String::new());
         let stderr = tokio::spawn(async move {
@@ -365,6 +384,7 @@ impl BackendChild {
             child,
             group: Some(group),
             _liveness: writer,
+            _write_token: write_token,
             stderr,
             last_line,
         })

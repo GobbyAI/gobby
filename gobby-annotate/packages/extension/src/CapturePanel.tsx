@@ -83,7 +83,11 @@ export function CapturePanel({
       {annotation.frame.access === "host-only" && (
         <p>Host selected. Hidden descendants are inaccessible.</p>
       )}
-      <Button variant="destructive" onClick={onDelete}>
+      <Button
+        variant="destructive"
+        className="annotate-danger"
+        onClick={onDelete}
+      >
         Delete annotation
       </Button>
     </section>

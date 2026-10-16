@@ -85,3 +85,42 @@ def test_quoted_separator_is_not_command_boundary(
     assert _blocks(pytest_rule, "echo x | pytest")
     assert _blocks(cargo_rule, "x; cargo test")
     assert _blocks(vitest_rule, "cd web && npx vitest")
+
+
+# The #24561 reproductions: an escaped backtick inside a double-quoted search
+# pattern is literal, so the whole pattern stays string data.
+ESCAPED_BACKTICK_GREPS = (
+    r'gcode grep -n -E "uv run pytest <file>|as \`uv run pytest x\`|^- 2\.2\.6" plan.md -m 10',
+    r'gcode grep -n -E "pytest <file>|pytest x\`\.|^- 2\.2\.6" plan.md -m 10',
+    r'grep -E "a|uv run pytest \$(x)" notes.md',
+)
+
+
+@pytest.mark.parametrize("name", ["no-full-pytest-suite", "require-pytest-guard-env"])
+@pytest.mark.parametrize("command", ESCAPED_BACKTICK_GREPS)
+def test_escaped_substitution_in_double_quotes_is_data(
+    db: HubDatabase, manager: RuleDefinitionManager, name: str, command: str
+) -> None:
+    _sync_bundled(db)
+    assert not _blocks(_get_rule(manager, name), command)
+
+
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [
+        ("no-full-pytest-suite", "uv run pytest"),
+        ("no-full-pytest-suite", 'echo "$(uv run pytest)"'),
+        ("no-full-pytest-suite", 'echo "`uv run pytest`"'),
+        # An escaped backtick runs once a backquote body, `eval` or `bash -c` decodes it.
+        ("no-full-pytest-suite", 'echo `echo "\\`uv run pytest\\`"`'),
+        ("no-full-pytest-suite", 'eval "echo \\`uv run pytest\\`"'),
+        ("no-full-pytest-suite", 'bash -c "echo \\`uv run pytest\\`"'),
+        ("require-pytest-guard-env", "uv run pytest tests/x/test_y.py"),
+        ("require-pytest-guard-env", 'echo "\\` $(uv run pytest tests/x/test_y.py)"'),
+    ],
+)
+def test_live_pytest_still_blocks(
+    db: HubDatabase, manager: RuleDefinitionManager, name: str, command: str
+) -> None:
+    _sync_bundled(db)
+    assert _blocks(_get_rule(manager, name), command)

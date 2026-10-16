@@ -77,7 +77,7 @@ def test_post_production_proof_credits_test_only_tightening() -> None:
     test, evidence = cycle()
     red = evidence.validation_runs[1]
 
-    matched, reason = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+    matched, reason = _red_run_proof(test, evidence, red, red.command, True, {}, {}, None)
 
     assert matched, reason
     assert evaluate_tdd_evidence((test,), evidence).passed
@@ -103,7 +103,7 @@ def test_post_production_proof_rejects_unattributable_red(cause: str) -> None:
         )
     red = evidence.validation_runs[1]
 
-    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {}, None)
 
     assert not matched
     assert not evaluate_tdd_evidence((test,), evidence).passed
@@ -264,7 +264,7 @@ def test_post_production_proof_rejects_behavior_changes(cause: str) -> None:
         )
     red = evidence.validation_runs[1]
 
-    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {}, None)
 
     assert not matched
     assert not evaluate_tdd_evidence((test,), evidence).passed

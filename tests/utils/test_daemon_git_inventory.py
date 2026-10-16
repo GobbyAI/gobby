@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,12 +190,21 @@ class _SyncGitVisitor(ast.NodeVisitor):
         return node.attr if isinstance(node, ast.Attribute) else None
 
 
-def _sync_git_inventory() -> list[SyncGitUse]:
-    uses: set[SyncGitUse] = set()
+@functools.cache
+def _source_trees() -> tuple[tuple[str, ast.Module], ...]:
+    """Parse src/gobby once per test session; every scan below walks these trees."""
+    trees = []
     for path in sorted(_SOURCE_ROOT.rglob("*.py")):
         relative = path.relative_to(_REPO_ROOT).as_posix()
+        trees.append((relative, ast.parse(path.read_text(encoding="utf-8"), filename=relative)))
+    return tuple(trees)
+
+
+def _sync_git_inventory() -> list[SyncGitUse]:
+    uses: set[SyncGitUse] = set()
+    for relative, tree in _source_trees():
         visitor = _SyncGitVisitor(relative)
-        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=relative))
+        visitor.visit(tree)
         uses.update(visitor.uses)
     return sorted(uses)
 
@@ -276,10 +286,9 @@ class _SyncFacadeCallVisitor(ast.NodeVisitor):
 
 def _sync_facade_calls() -> list[SyncFacadeCall]:
     calls: set[SyncFacadeCall] = set()
-    for path in sorted(_SOURCE_ROOT.rglob("*.py")):
-        relative = path.relative_to(_REPO_ROOT).as_posix()
+    for relative, tree in _source_trees():
         visitor = _SyncFacadeCallVisitor(relative)
-        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=relative))
+        visitor.visit(tree)
         calls.update(visitor.calls)
     return sorted(calls)
 
@@ -293,6 +302,9 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/cli/tasks/commits.py", "unlink_commit"),
     ("src/gobby/plans/evidence.py", "_run_git"),
     ("src/gobby/sync/integrity.py", "verify_bundled_integrity"),
+    # Reached only from the `gobby test-types suppressions` Click command
+    # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
+    ("src/gobby/test_types/suppressions.py", "_git_python_files"),
     # Explicit synchronous facades. Daemon callers use the adjacent async APIs.
     ("src/gobby/skills/_loader_github.py", "clone_skill_repo"),
     ("src/gobby/workflows/git_utils.py", "get_dirty_files_categorized"),
@@ -314,6 +326,26 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Reached only from the `gobby status` Click command
     # (test_bin_freshness_git_is_reached_only_from_cli_status below).
     ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
+    # Reached only with a workspace_root, which only install and cutover Click
+    # commands pass; the daemon's bin freshness loop promotes release archives
+    # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
+    ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
+    # check_runbook_seats is a sync tool, so InternalToolRegistry.call runs it
+    # through asyncio.to_thread (tests/agents/test_team_launch_inputs.py
+    # test_check_runbook_seats_git_runs_off_the_event_loop).
+    ("src/gobby/agents/team_launch_inputs.py", "resolve_team_launch_inputs"),
+    # Canonical shell normalization runs off the loop: HookManager and the rule
+    # engine offload it, chat _fire_lifecycle and Codex approvals use
+    # asyncio.to_thread (tests/adapters/test_adapters_codex.py
+    # test_checkout_approval_git_runs_off_the_event_loop), and event-loop display
+    # callers use normalize_tool_display_fields
+    # (test_display_normalization_callers_read_no_canonical_metadata below;
+    # chat base.py keeps only mcp_server/mcp_tool, pinned by
+    # tests/servers/websocket/chat/test_provider_backends.py
+    # test_post_tool_lifecycle_adds_only_mcp_display_fields). handle_after_tool
+    # derives shell metadata on the hook worker (tests/adapters/test_adapters_codex.py
+    # test_item_completed_shell_write_marks_had_edits_without_rule_pass).
+    ("src/gobby/hooks/_normalization_git.py", "_positional_checkout_is_path"),
     # Sync plan tools run through InternalToolRegistry.call's worker; async plan
     # tools resolve projects inside _run_db_call or their complete review-evidence
     # service worker (test_plans_tools covers sync and async checkout forms).
@@ -332,6 +364,11 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Close validation calls evaluate_validation_commands on a worker. Its
     # initial empty-evidence check returns before candidate-tree access.
     ("src/gobby/tasks/close_test_coverage.py", "_candidate_blobs"),
+    # Rooted close validation reaches tracked-script checks only through its
+    # asyncio.to_thread gate; the empty loop-thread probe has no criteria/root.
+    # test_close_task_flow.test_close_tracked_script_git_runs_off_the_event_loop
+    # proves the actual Git boundary runs without an event loop.
+    ("src/gobby/tasks/transcript_outcomes.py", "_tracked_script"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
     # offline validation remains synchronous (test_expansion_service_compile).
     ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),
@@ -407,18 +444,25 @@ def test_daemon_runtime_does_not_call_synchronous_git_facades() -> None:
     )
 
 
+@functools.cache
+def _referenced_names() -> tuple[tuple[str, frozenset[str]], ...]:
+    """Map each src/gobby module to the names, attributes and import aliases it uses."""
+    modules = []
+    for relative, tree in _source_trees():
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.alias):
+                names.add(node.name)
+        modules.append((relative, frozenset(names)))
+    return tuple(modules)
+
+
 def _modules_referencing(name: str) -> set[str]:
-    modules: set[str] = set()
-    for path in _SOURCE_ROOT.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        if any(
-            (isinstance(node, ast.Name) and node.id == name)
-            or (isinstance(node, ast.Attribute) and node.attr == name)
-            or (isinstance(node, ast.alias) and node.name == name)
-            for node in ast.walk(tree)
-        ):
-            modules.add(path.relative_to(_REPO_ROOT).as_posix())
-    return modules
+    return {relative for relative, names in _referenced_names() if name in names}
 
 
 def test_bin_freshness_git_is_reached_only_from_cli_status() -> None:
@@ -428,4 +472,72 @@ def test_bin_freshness_git_is_reached_only_from_cli_status() -> None:
         "src/gobby/install/bin_freshness_promotion.py"
     }
     assert _modules_referencing("native_bin_predates_source") == {"src/gobby/utils/deps.py"}
-    assert _modules_referencing("collect_all_deps") == {"src/gobby/cli/daemon.py"}
+    assert _modules_referencing("collect_all_deps") == {"src/gobby/cli/daemon_lifecycle.py"}
+
+
+def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
+    # _git_python_files backs scan_suppressions, which only the Click group in
+    # test_types/cli.py calls (src/gobby/cli/test_types.py mounts it).
+    assert _modules_referencing("_git_python_files") == {"src/gobby/test_types/suppressions.py"}
+    assert _modules_referencing("scan_suppressions") == {"src/gobby/test_types/cli.py"}
+    # workspace_source_identity runs from cutover, or from check_binary_release
+    # given a workspace_root. Only preflight_binary_promotions supplies one; the
+    # daemon's release path (_stage_and_promote) passes None.
+    assert _modules_referencing("workspace_source_identity") == {
+        "src/gobby/cli/cutover.py",
+        "src/gobby/install/bin_release_identity.py",
+    }
+    assert _modules_referencing("check_binary_release") == {
+        "src/gobby/install/bin_freshness_promotion.py"
+    }
+    assert _modules_referencing("preflight_binary_promotions") == {
+        "src/gobby/cli/cutover.py",
+        "src/gobby/install/bin_freshness_promotion.py",
+        "src/gobby/install/bin_set_coherence.py",
+    }
+    # preflight's callers are workspace entry points reached only from Click commands;
+    # bin_set_coherence's own use sits inside promote_workspace_binary_set.
+    entry_points = (
+        "promote_workspace_binary_set",
+        "install_staged_cargo_binary",
+        "workspace_binary_is_current",
+        "stage_and_promote_binary_file",
+    )
+    callers = set().union(*(_modules_referencing(name) for name in entry_points))
+    assert {module for module in callers if not module.startswith("src/gobby/cli/")} == {
+        "src/gobby/install/bin_set_coherence.py"
+    }
+
+
+_DISPLAY_NORMALIZATION_MODULES = frozenset(
+    {
+        "src/gobby/adapters/codex_impl/app_server_adapter.py",
+        "src/gobby/adapters/codex_impl/execution_chain.py",
+        "src/gobby/adapters/codex_impl/item_normalization.py",
+        "src/gobby/servers/websocket/chat/backends/agy.py",
+        "src/gobby/servers/websocket/chat/backends/base.py",
+        "src/gobby/servers/websocket/chat/backends/codex_events.py",
+        "src/gobby/servers/websocket/chat/backends/codex_turns.py",
+        "src/gobby/servers/websocket/chat/backends/droid.py",
+    }
+)
+
+
+def test_display_normalization_callers_read_no_canonical_metadata() -> None:
+    # These modules normalize on the event loop without shell metadata, so none of
+    # them may read a canonical_* field; HookManager derives those off the loop.
+    # base.py's mcp_server/mcp_tool-only copy is pinned by
+    # test_post_tool_lifecycle_adds_only_mcp_display_fields.
+    callers = _modules_referencing("normalize_tool_display_fields")
+    assert callers - {"src/gobby/hooks/normalization.py"} <= _DISPLAY_NORMALIZATION_MODULES
+    for relative, tree in _source_trees():
+        if relative not in _DISPLAY_NORMALIZATION_MODULES:
+            continue
+        keys = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("canonical_")
+        }
+        assert not keys, f"{relative} reads canonical metadata: {sorted(keys)}"

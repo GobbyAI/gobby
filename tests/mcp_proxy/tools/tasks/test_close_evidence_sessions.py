@@ -1675,7 +1675,7 @@ async def test_owner_edit_without_a_reclaim_stales_the_handed_off_green(edited: 
     )
 
     assert evidence.validation_runs == (green,)
-    assert evidence.edits == ((edit,) if edited else ())
+    assert evidence.edits == ((replace(edit, task_attributed=False),) if edited else ())
     assert gate.passed is not edited, gate.message
 
 

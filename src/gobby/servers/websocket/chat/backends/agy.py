@@ -23,7 +23,7 @@ from gobby.adapters.acp_client import (
 from gobby.adapters.acp_stream import StreamEvent
 from gobby.agents.constants import GOBBY_PROJECT_ID, GOBBY_SESSION_ID
 from gobby.agents.srt_runtime import prepare_sandbox_launch
-from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.normalization import normalize_tool_display_fields
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -287,7 +287,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
                 # parse_agy_stream_line already applied agy_tool_name_adapter.
                 tool_name = str(event.data.get("tool_name") or event.data.get("name") or "unknown")
                 tool_input = event.data.get("tool_input") or event.data.get("input") or {}
-                normalized = normalize_tool_fields(
+                normalized = normalize_tool_display_fields(
                     {
                         "tool_name": tool_name,
                         "tool_input": tool_input if isinstance(tool_input, dict) else {},

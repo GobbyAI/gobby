@@ -892,11 +892,12 @@ def _record_edit(
         old, new = arguments.get("old_string"), arguments.get("new_string")
         python_edit = basename == "edit" and task_file.endswith(".py")
         fragment: str | None = None
+        replaced: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None
         added: str | None = None
         unchanged = False
         if python_edit and isinstance(old, str) and isinstance(new, str):
-            fragment = new
+            fragment, replaced = new, old
             stub = python_keyword_stub(old, new)
             added = python_added_source(old, new)
             old_tokens = python_edit_tokens(old)
@@ -909,8 +910,18 @@ def _record_edit(
                 timestamp=timestamp,
                 order=order,
                 tool_name=tool_name,
+                checkout_root=next(
+                    (
+                        root
+                        for root, known in state.task_checkout_paths or ()
+                        if known == task_file
+                        and Path(root, known).resolve() == Path(path).resolve()
+                    ),
+                    None,
+                ),
                 source_after=source_after,
                 source_fragment=fragment,
+                source_replaced=replaced,
                 python_stub=stub,
                 python_added_source=added,
                 source_unchanged=unchanged,

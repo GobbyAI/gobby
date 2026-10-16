@@ -94,6 +94,9 @@ from gobby.hooks._normalization_tools import (
     _set_canonical_tool_metadata as _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_tools import (
+    normalize_tool_display_fields as normalize_tool_display_fields,
+)
+from gobby.hooks._normalization_tools import (
     normalize_tool_fields as normalize_tool_fields,
 )
 from gobby.hooks.tool_outcomes import ToolOutcome as ToolOutcome
@@ -133,6 +136,7 @@ __all__ = [
     "normalize_mcp_fields",
     "normalize_notification_input",
     "normalize_tool_outcome",
+    "normalize_tool_display_fields",
     "normalize_tool_fields",
     "notification_message_from_payload",
     "notification_type_from_payload",
