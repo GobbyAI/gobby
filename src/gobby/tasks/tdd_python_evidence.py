@@ -318,7 +318,7 @@ def _has_python_module_stub(
     for bridge in latest_by_path.values():
         if bridge.source_after is None or not _source_confirmed_before(bridge, run):
             continue
-        bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
+        bridge_name = _python_module_name(bridge.path)
         imported = {
             alias.asname or alias.name: alias.name
             for statement in statements
@@ -355,7 +355,7 @@ def _has_python_module_stub(
         ):
             # An inserted exception fragment alone cannot rule out existing uses.
             continue
-        module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
+        module_name = _python_module_name(edit.path)
         aliases = {
             alias.asname or alias.name: classes[alias.name]
             for statement in statements
@@ -463,22 +463,19 @@ def _has_python_unchanged_api(
         for item in reachable
         if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store)
     } | {item.arg for item in reachable if isinstance(item, ast.arg)}
-    invoked_paths = {
-        "src/" + aliases[name][0].replace(".", "/") + ".py"
-        for name in called - shadowed
-        if name in aliases
-    }
+    invoked_modules = {aliases[name][0] for name in called - shadowed if name in aliases}
     for alias in called - shadowed:
         binding = aliases.get(alias)
         if binding is None or _binding_count(module, alias, binding_cache) != 1:
             continue
         module_name, function_name = binding
-        path = "src/" + module_name.replace(".", "/") + ".py"
         if any(
-            edit.order > test_edit.order and edit.path in invoked_paths - {path} for edit in edits
+            edit.order > test_edit.order
+            and _python_module_name(edit.path) in invoked_modules - {module_name}
+            for edit in edits
         ):
             continue
-        history = [edit for edit in edits if edit.path == path]
+        history = [edit for edit in edits if _python_module_name(edit.path) == module_name]
         baseline = max(
             (edit for edit in history if edit.order < test_edit.order),
             key=lambda edit: edit.order,
@@ -521,7 +518,7 @@ def _has_python_unchanged_api(
         if any(
             edit.order > baseline.order
             and is_production_edit_path(edit.path)
-            and edit.path != path
+            and _python_module_name(edit.path) != module_name
             and any(
                 _module_dependency_matches(edit.path, dependency) for dependency in dependencies
             )
@@ -558,8 +555,13 @@ def _binding_count(module: ast.Module, name: str, cache: PythonBindingCache | No
     return counts.get(name, 0)
 
 
+def _python_module_name(path: str) -> str:
+    """Return the import name of a source path; a package's ``__init__`` is the package."""
+    return path.removeprefix("src/").removesuffix(".py").removesuffix("/__init__").replace("/", ".")
+
+
 def _module_dependency_matches(path: str, dependency: str) -> bool:
-    module = path.removeprefix("src/").removesuffix(".py").replace("/", ".")
+    module = _python_module_name(path)
     return (
         module == dependency
         or module.startswith(dependency + ".")
