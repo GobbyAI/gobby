@@ -90,9 +90,15 @@ def restart_daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[
         nonlocal elapsed
         elapsed += seconds
 
-    monkeypatch.setattr(daemon_start, "time", SimpleNamespace(time=lambda: elapsed, sleep=advance))
+    monkeypatch.setattr(
+        daemon_start, "time", SimpleNamespace(monotonic=lambda: elapsed, sleep=advance)
+    )
     poll = daemon_start._poll_startup_progress
-    monkeypatch.setattr(daemon_start, "_poll_startup_progress", lambda port: poll(port, max_wait=2))
+    monkeypatch.setattr(
+        daemon_start,
+        "_poll_startup_progress",
+        lambda port, max_wait: poll(port, max_wait=min(max_wait, 2)),
+    )
     try:
         yield state
     finally:
@@ -119,38 +125,87 @@ def test_restart_waits_through_native_unavailability(
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "reason"),
     [
-        None,
-        {"status": "unavailable"},
-        {"status": "unavailable", "backend": {"state": "starting"}},
-        {"status": "unavailable", "backend": {"state": 1, "target": "test"}},
-        {"status": "error", "backend": {"state": "starting", "target": "test"}},
-        {
-            "error": "backend_refused",
-            "status": "unavailable",
-            "backend": {
-                "state": "refused",
-                "refusal": "schema mismatch",
-                "target": "http://127.0.0.1:60888",
+        (
+            {
+                "error": "backend_refused",
+                "status": "unavailable",
+                "backend": {
+                    "state": "refused",
+                    "refusal": "schema mismatch",
+                    "target": "http://127.0.0.1:60888",
+                },
             },
-        },
-        {
-            "error": "standby",
-            "status": "unavailable",
-            "state": "standby",
-            "backend": {"state": "standby", "target": "http://127.0.0.1:60888"},
-        },
+            "schema mismatch",
+        ),
+        (
+            {
+                "error": "standby",
+                "status": "unavailable",
+                "state": "standby",
+                "backend": {"state": "standby", "target": "http://127.0.0.1:60888"},
+            },
+            "standby",
+        ),
     ],
+    ids=["refused", "standby"],
 )
-def test_startup_poll_rejects_unrecognized_503(
-    monkeypatch: pytest.MonkeyPatch, payload: dict[str, object] | None
+def test_startup_poll_fails_fast_on_native_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    payload: dict[str, object],
+    reason: str,
 ) -> None:
     get = MagicMock(return_value=httpx.Response(503, json=payload))
     monkeypatch.setattr(httpx, "get", get)
 
     assert daemon_start._poll_startup_progress(1, max_wait=1) is False
     get.assert_called_once()
+    captured = capsys.readouterr()
+    assert f"Backend unavailable: {reason}" in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "unavailable",
+    [
+        httpx.Response(503, json=None),
+        httpx.Response(503, json={"status": "unavailable"}),
+        httpx.Response(503, json={"status": "unavailable", "backend": {"state": "starting"}}),
+        httpx.Response(503, json={"status": "error", "backend": {"state": 1}}),
+        httpx.Response(503, text="Service Unavailable"),
+        httpx.Response(502, text="Bad Gateway"),
+        httpx.Response(200, text="partial"),
+    ],
+    ids=["null", "no-backend", "no-target", "bad-state", "text-503", "502", "non-json-200"],
+)
+def test_startup_poll_waits_through_transient_unavailability(
+    monkeypatch: pytest.MonkeyPatch, unavailable: httpx.Response
+) -> None:
+    get = MagicMock(side_effect=[unavailable, httpx.Response(200, json={"done": True})])
+    monkeypatch.setattr(httpx, "get", get)
+    sleep = MagicMock()
+    monkeypatch.setattr("gobby.cli.daemon_start.time.sleep", sleep)
+
+    assert daemon_start._poll_startup_progress(1, max_wait=1) is True
+    assert get.call_count == 2
+    sleep.assert_called_once_with(0.5)
+
+
+def test_startup_poll_bounds_each_request_by_the_remaining_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter([100.0, 100.0, 220.0])
+    monkeypatch.setattr(
+        daemon_start, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=MagicMock())
+    )
+    get = MagicMock(
+        side_effect=[httpx.ReadTimeout("loaded"), httpx.Response(200, json={"done": True})]
+    )
+    monkeypatch.setattr(httpx, "get", get)
+
+    assert daemon_start._poll_startup_progress(1, max_wait=300.0) is True
+    assert [call.kwargs["timeout"] for call in get.call_args_list] == [300.0, 180.0]
 
 
 def test_startup_poll_waits_through_down_503(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,7 +8,11 @@ import httpx
 import pytest
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
-from gobby.utils.daemon_client import DaemonClient, DaemonHealthError
+from gobby.utils.daemon_client import (
+    MCP_TOOL_CALL_TIMEOUT_SECONDS,
+    DaemonClient,
+    DaemonHealthError,
+)
 from gobby.utils.daemon_url import DaemonUrlError
 
 pytestmark = pytest.mark.unit
@@ -477,14 +481,16 @@ class TestDaemonClientCallMcpTool:
         with patch.object(client, "call_http_api", return_value=mock_response) as mock_call:
             client.call_mcp_tool("supabase", "list_tables", {"schemas": ["public"]})
 
+        # A tool call gets the stdio proxy's per-tool budget, not the client's
+        # short default, so a loaded daemon does not fail CLI tool calls.
         mock_call.assert_called_once_with(
             endpoint="/api/mcp/supabase/tools/list_tables",
             method="POST",
             json_data={"schemas": ["public"]},
-            timeout=None,
+            timeout=MCP_TOOL_CALL_TIMEOUT_SECONDS,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
-        assert mock_call.call_count == 1
-        assert mock_call.call_args is not None
+        assert MCP_TOOL_CALL_TIMEOUT_SECONDS == 30.0
 
 
 class TestDaemonClientRawAndStream:

@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.agents.sandbox import SandboxConfig, coerce_sandbox_config
-from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation_for_launch
 
 __all__ = [
     "SandboxRequiredError",
     "require_managed_srt",
     "resolve_resume_sandbox",
-    "verify_srt_installation",
+    "verify_srt_installation_for_launch",
 ]
 
 
@@ -26,7 +26,8 @@ def require_managed_srt(config: SandboxConfig) -> SandboxConfig:
             f"spawn_agent requires managed SRT (enabled={config.enabled}, backend={config.backend})"
         )
     try:
-        verify_srt_installation()
+        # Callers run this gate in a worker thread, so the refusal log stays off the loop.
+        verify_srt_installation_for_launch(run_id=None, provider=None, policy_hash=None)
     except (OSError, SrtRuntimeError) as exc:
         raise SandboxRequiredError(f"managed SRT is unavailable: {exc}") from exc
     return config
