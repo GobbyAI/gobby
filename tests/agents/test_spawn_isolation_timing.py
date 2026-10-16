@@ -158,7 +158,7 @@ async def test_isolation_paths_share_spawn_timing_map(
         handler = WorktreeIsolationHandler(git, storage)
     elif kind == "clone":
         monkeypatch.setattr("gobby.agents.isolation_clone.repair_isolation_environment", repair)
-        handler = CloneIsolationHandler(git, storage)
+        handler = CloneIsolationHandler(git, storage, git)
     else:
         monkeypatch.setattr(_worktree_reuse, "repair_isolation_environment", repair)
         monkeypatch.setattr(_worktree_reuse, "sync_reused_worktree_to_base", sync)

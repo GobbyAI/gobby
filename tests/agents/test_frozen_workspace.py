@@ -90,6 +90,8 @@ def _claimed_task(db: HubDatabase, project_id: str, session_id: str) -> str:
 def _git_stops_after_guard() -> MagicMock:
     """A git manager whose creates fail, so a create that passes the guard has no side effects."""
     git_manager = MagicMock()
+    git_manager.run_git_command = AsyncMock(return_value=MagicMock(returncode=0))
+    git_manager.get_local_commit = AsyncMock(return_value="abc123")
     stopped = MagicMock(success=False, error="stopped after guard", message="")
     git_manager.create_worktree = AsyncMock(return_value=stopped)
     git_manager.shallow_clone = AsyncMock(return_value=stopped)
@@ -158,7 +160,6 @@ async def test_bound_run_creates_worktree_for_another_seat(
         "branch_name": "sub-lane",
         "base_branch": "0.5.0",
         "worktree_path": str(tmp_path / "sub-lane"),
-        "use_local": True,
     }
     if for_task == "other-seat":
         seat = _session(session_manager, project_id, "seat")

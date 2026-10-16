@@ -29,7 +29,7 @@ def get_isolation_handler(
 
     Args:
         mode: Isolation mode - 'none', 'worktree', or 'clone'
-        git_manager: Git manager for worktree operations (required for 'worktree')
+        git_manager: Source repository git manager (required for 'worktree' and clone preparation)
         worktree_storage: Storage for worktree records (required for 'worktree')
         clone_manager: Git manager for clone operations (required for 'clone')
         clone_storage: Storage for clone records (required for 'clone')
@@ -57,7 +57,7 @@ def get_isolation_handler(
         return CloneIsolationHandler(
             clone_manager=clone_manager,
             clone_storage=clone_storage,
-            git_manager=git_manager,  # For branch detection
+            git_manager=git_manager,  # Selects the fork commit
         )
 
     raise ValueError(f"Unknown isolation mode: {mode}")

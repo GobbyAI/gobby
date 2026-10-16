@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -1956,12 +1956,20 @@ class TestWorktreeIsolationHandler:
         assert issubclass(WorktreeIsolationHandler, IsolationHandler)
 
 
+def _source_git_manager() -> MagicMock:
+    """Source repository git manager whose main branch resolves to abc123."""
+    git_manager = MagicMock(spec=WorktreeGitManager)
+    git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
+    git_manager.get_local_commit.return_value = "abc123"
+    return git_manager
+
+
 class TestCloneIsolationHandler:
     """Tests for CloneIsolationHandler."""
 
     @pytest.mark.asyncio
     async def test_prepare_environment_creates_clone(self) -> None:
-        """Test prepare_environment creates shallow clone if not exists."""
+        """Test prepare_environment clones the local repository at the selected commit."""
         mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(
             success=True,
@@ -1979,6 +1987,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         config = SpawnConfig(
@@ -1995,44 +2004,26 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        ctx = await handler.prepare_environment(config)
+        with patch("gobby.agents.isolation_clone.repair_isolation_environment", new=AsyncMock()):
+            ctx = await handler.prepare_environment(config)
 
         assert ctx.isolation_type == "clone"
         assert ctx.clone_id == "clone-123"
         assert ctx.branch_name == "my-branch"
-        mock_clone_manager.create_clone.assert_called_once()
-        # Should default to shallow=True, use_local=False when no git_manager
-        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
-        assert call_kwargs.get("shallow") is True
-        assert call_kwargs.get("use_local") is False
+        assert ctx.extra["base_commit_sha"] == "abc123"
+        mock_clone_manager.create_clone.assert_called_once_with(
+            clone_path=ANY,
+            branch_name="my-branch",
+            base_branch="main",
+            base_commit_sha="abc123",
+        )
 
     @pytest.mark.asyncio
-    async def test_prepare_environment_uses_local_with_unpushed_commits(self) -> None:
-        """Test prepare_environment uses local clone when unpushed commits detected."""
+    async def test_prepare_environment_requires_source_git_manager(self) -> None:
+        """Test prepare_environment refuses before any lookup without a source git manager."""
         mock_clone_manager = MagicMock(spec=CloneGitManager)
-        mock_clone_manager.create_clone.return_value = MagicMock(
-            success=True,
-            clone_path="/tmp/clones/my-branch",
-        )
-
         mock_clone_storage = MagicMock()
-        mock_clone_storage.get_by_branch.return_value = None
-        mock_clone_storage.create.return_value = MagicMock(
-            id="clone-456",
-            clone_path="/tmp/clones/my-branch",
-            branch_name="my-branch",
-        )
-
-        mock_git_manager = MagicMock(spec=WorktreeGitManager)
-        mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (True, 3)
-
-        handler = CloneIsolationHandler(
-            clone_manager=mock_clone_manager,
-            clone_storage=mock_clone_storage,
-            git_manager=mock_git_manager,
-        )
-
+        handler = CloneIsolationHandler(mock_clone_manager, mock_clone_storage)
         config = SpawnConfig(
             prompt="Test",
             task_id=None,
@@ -2047,63 +2038,11 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        ctx = await handler.prepare_environment(config)
+        with pytest.raises(RuntimeError, match="source repository's git manager"):
+            await handler.prepare_environment(config)
 
-        assert ctx.isolation_type == "clone"
-        assert ctx.clone_id == "clone-456"
-        # Should use full clone from local when unpushed commits exist
-        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
-        assert call_kwargs.get("use_local") is True
-        assert call_kwargs.get("shallow") is False
-
-    @pytest.mark.asyncio
-    async def test_prepare_environment_no_local_without_unpushed(self) -> None:
-        """Test prepare_environment uses remote clone when no unpushed commits."""
-        mock_clone_manager = MagicMock(spec=CloneGitManager)
-        mock_clone_manager.create_clone.return_value = MagicMock(
-            success=True,
-            clone_path="/tmp/clones/my-branch",
-        )
-
-        mock_clone_storage = MagicMock()
-        mock_clone_storage.get_by_branch.return_value = None
-        mock_clone_storage.create.return_value = MagicMock(
-            id="clone-789",
-            clone_path="/tmp/clones/my-branch",
-            branch_name="my-branch",
-        )
-
-        mock_git_manager = MagicMock(spec=WorktreeGitManager)
-        mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
-
-        handler = CloneIsolationHandler(
-            clone_manager=mock_clone_manager,
-            clone_storage=mock_clone_storage,
-            git_manager=mock_git_manager,
-        )
-
-        config = SpawnConfig(
-            prompt="Test",
-            task_id=None,
-            task_title=None,
-            task_seq_num=None,
-            branch_name="my-branch",
-            branch_prefix=None,
-            base_branch="main",
-            project_id="proj-123",
-            project_path="/path/to/main/repo",
-            provider="claude",
-            parent_session_id="sess-456",
-        )
-
-        ctx = await handler.prepare_environment(config)
-
-        assert ctx.isolation_type == "clone"
-        # Should use shallow remote clone when no unpushed commits
-        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
-        assert call_kwargs.get("use_local") is False
-        assert call_kwargs.get("shallow") is True
+        mock_clone_storage.get_by_branch.assert_not_called()
+        mock_clone_manager.create_clone.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_prepare_environment_reuses_existing_clone(self) -> None:
@@ -2120,6 +2059,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         config = SpawnConfig(
@@ -2168,7 +2108,7 @@ class TestCloneIsolationHandler:
             clone_path=str(clone_path),
             branch_name="stale",
         )
-        handler = CloneIsolationHandler(clone_manager, clone_storage)
+        handler = CloneIsolationHandler(clone_manager, clone_storage, _source_git_manager())
         config = SpawnConfig(
             prompt="Test",
             task_id=None,
@@ -2230,12 +2170,12 @@ class TestCloneIsolationHandler:
 
         with patch("gobby.agents.isolation_clone.repair_isolation_environment", new=AsyncMock()):
             results = await asyncio.gather(
-                CloneIsolationHandler(mock_clone_manager, mock_clone_storage).prepare_environment(
-                    config
-                ),
-                CloneIsolationHandler(mock_clone_manager, mock_clone_storage).prepare_environment(
-                    config
-                ),
+                CloneIsolationHandler(
+                    mock_clone_manager, mock_clone_storage, _source_git_manager()
+                ).prepare_environment(config),
+                CloneIsolationHandler(
+                    mock_clone_manager, mock_clone_storage, _source_git_manager()
+                ).prepare_environment(config),
             )
 
         assert len(set(clone_paths)) == 2
@@ -2270,6 +2210,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         original_prompt = "Please implement the login feature."
@@ -2283,7 +2224,7 @@ class TestCloneIsolationHandler:
 
         result = handler.build_context_prompt(original_prompt, ctx)
 
-        assert "Clone context — you are working in an isolated shallow clone" in result
+        assert "Clone context — you are working in an isolated clone" in result
         assert original_prompt in result
         assert "feature-branch" in result
 
@@ -2300,6 +2241,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         config = SpawnConfig(
@@ -2344,6 +2286,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         with patch(
@@ -2388,6 +2331,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
         config = SpawnConfig(
             prompt="Test",
@@ -2439,6 +2383,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
         config = SpawnConfig(
             prompt="Test",
@@ -2495,6 +2440,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         config = SpawnConfig(
@@ -2538,6 +2484,7 @@ class TestCloneIsolationHandler:
         handler = CloneIsolationHandler(
             clone_manager=mock_clone_manager,
             clone_storage=mock_clone_storage,
+            git_manager=_source_git_manager(),
         )
 
         config = SpawnConfig(
