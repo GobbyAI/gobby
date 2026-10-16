@@ -263,9 +263,15 @@ def _read_path(pending: PendingTool) -> str | None:
     command = pending.arguments.get("command")
     if not isinstance(command, str):
         return None
+    command = command.strip()
+    # shlex reads a newline as a blank; Bash ends the command there.
+    if "\n" in command:
+        return None
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
+        # Bash keeps a word-internal ``#`` literal; shlex would drop the rest of the line.
+        lexer.commenters = ""
         argv = list(lexer)
     except ValueError:
         return None

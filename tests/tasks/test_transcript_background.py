@@ -266,10 +266,16 @@ def _bash(command: str) -> PendingTool:
         "grep passed /tmp/job-1.output",
         "grep -E 'passed|failed' /tmp/job-1.output",
         "grep -F passed /tmp/job-1.output",
+        "cat /tmp/job-1.output\n",
     ],
 )
 def test_plain_reads_name_their_one_file(command: str) -> None:
     assert _read_path(_bash(command)) == "/tmp/job-1.output"
+
+
+@pytest.mark.parametrize("command", ["tail -3 '/tmp/a#b.output'", "cat /tmp/a\\#b.output"])
+def test_quoted_or_escaped_hash_stays_in_the_path(command: str) -> None:
+    assert _read_path(_bash(command)) == "/tmp/a#b.output"
 
 
 def test_read_tool_names_its_file() -> None:
@@ -300,7 +306,16 @@ def test_read_tool_names_its_file() -> None:
         "tail -3",
         "tail",
         "tail -3 '|'",
+        # A word-internal ``#`` is literal in Bash, so the trailing command still runs.
+        "tail -3 /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        "cat /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        "grep passed /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        # A real trailing comment is refused rather than parsed.
+        "tail -3 /tmp/job-1.output #comment",
+        # Bash runs a newline-separated word as its own command.
+        "cat\n/tmp/job-1.output",
+        "tail -3 /tmp/job-1.output\nprintf 'Pytest: 1 passed in 0.01s'",
     ],
 )
-def test_following_multi_file_and_operator_tails_name_no_file(command: str) -> None:
+def test_following_multi_file_operator_and_comment_reads_name_no_file(command: str) -> None:
     assert _read_path(_bash(command)) is None

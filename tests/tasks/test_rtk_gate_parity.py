@@ -442,11 +442,19 @@ def test_gate10_refuses_failing_background_run_read_with_tail(tmp_path: Path) ->
     assert "pytest_unread_background_runs" not in gate.details
 
 
-def test_gate10_names_background_pass_whose_output_was_never_read(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "read",
+    [
+        "cat {path} | tail -3",
+        # Bash tails a missing file, then prints a forged summary under exit 0.
+        "tail -3 {path}#missing; printf 'Pytest: 1 passed in 0.01s'",
+    ],
+)
+def test_gate10_names_background_pass_whose_output_was_never_read(
+    tmp_path: Path, read: str
+) -> None:
     output_path = tmp_path / "tasks" / "job.output"
-    gate = _background_gate(
-        tmp_path, "cat {path} | tail -3", "Pytest: 1 passed in 0.01s\n\n[exited with code 0]"
-    )
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s\n\n[exited with code 0]")
     assert not gate.passed
     assert gate.details["pytest_uncovered_paths"] == [TEST]
     assert gate.details["pytest_unread_background_runs"] == [
