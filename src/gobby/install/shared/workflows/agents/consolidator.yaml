@@ -81,6 +81,7 @@ step_workflow:
         - to: consolidate
           when: "all(skill_loaded(skill) for skill in vars.required_skills)"
     - name: consolidate
+      idle: true
       description: |
         Inspect the backlog and send proposals; never mutate tasks.
         When explicitly directed to retire, call gobby-agents:end_agent_run with
@@ -88,6 +89,10 @@ step_workflow:
         the Orchestrator's next action.
       status_message: |
         Inspect the backlog and send proposals to the Orchestrator.
+        With no consolidation work routed, go idle: call the top-level
+        set_variable with name="seat_idle", value=true, session_id=<your own
+        session> and the default session scope, and end the turn. Do not re-arm
+        a wait; the next message starts a new turn and ends idle.
         Load any required skills through mcp__gobby__call_tool:
         call_tool("gobby-skills", "get_skill", {"name": <name>});
         Follow every page.next_cursor with only cursor until null.

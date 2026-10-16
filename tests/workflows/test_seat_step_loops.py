@@ -67,9 +67,11 @@ class SeatRun:
             "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (SESSION_ID, "ext-seat", "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
         )
+        # network is sync-owned and refused on create; the step workflow never reads it.
+        definition = {key: value for key, value in agent.items() if key != "network"}
         AgentDefinitionManager(db).create(
             name=name,
-            definition_json=json.dumps(agent),
+            definition_json=json.dumps(definition),
             enabled=True,
         )
         self.instances.save(
@@ -429,12 +431,90 @@ async def test_developer_claim_binds_ref_without_a_task_read(temp_db: HubDatabas
     assert (run.step, run.vars["assigned_task_ref"]) == ("implement", "#103")
 
 
-async def test_developer_claim_admits_the_idle_declaration(temp_db: HubDatabase) -> None:
+IDLE_DECLARATION = {"name": "seat_idle", "value": True, "session_id": SESSION_ID}
+OTHER_SESSION_ID = "55555555-5555-4555-8555-555555555555"
+
+
+@pytest.mark.parametrize(
+    ("name", "idle_step"),
+    [
+        ("developer", "claim"),
+        ("code-reviewer", "await"),
+        ("researcher", "serve"),
+        ("consolidator", "consolidate"),
+    ],
+)
+async def test_idle_step_admits_the_own_session_idle_declaration(
+    temp_db: HubDatabase, name: str, idle_step: str
+) -> None:
+    run = SeatRun(temp_db, name)
+    await run.load(*run.vars["required_skills"])
+    assert run.step == idle_step
+    assert await run.admits_native("mcp__gobby__set_variable", IDLE_DECLARATION)
+    assert await run.admits_native(
+        "mcp__gobby__set_variable", {**IDLE_DECLARATION, "value": "true", "scope": "session"}
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {"name": "require_task_before_edit", "value": False, "session_id": SESSION_ID},
+        {**IDLE_DECLARATION, "scope": "step"},
+        {**IDLE_DECLARATION, "session_id": OTHER_SESSION_ID},
+        {**IDLE_DECLARATION, "session_id": "not-a-session"},
+        {**IDLE_DECLARATION, "value": False},
+        {**IDLE_DECLARATION, "value": 1},
+        {**IDLE_DECLARATION, "name": "seat_idle_until"},
+        {"name": "seat_idle", "session_id": SESSION_ID},
+    ],
+    ids=[
+        "other-variable",
+        "step-scope",
+        "other-session",
+        "unresolved-session",
+        "false-value",
+        "non-boolean-value",
+        "other-name",
+        "missing-value",
+    ],
+)
+async def test_developer_claim_refuses_every_write_but_the_idle_declaration(
+    temp_db: HubDatabase, tool_input: dict[str, Any]
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            OTHER_SESSION_ID,
+            "ext-other",
+            "21000000-0000-4000-8000-000000000001",
+            "claude",
+            PROJECT_ID,
+        ),
+    )
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "claim"
+    assert not await run.admits_native("mcp__gobby__set_variable", tool_input)
+
+
+async def test_developer_claim_refuses_the_proxied_set_variable(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "developer")
     await run.load(*run.vars["required_skills"])
     assert run.step == "claim"
-    declaration = {"name": "seat_idle", "value": True, "session_id": SESSION_ID}
-    assert await run.admits_native("mcp__gobby__set_variable", declaration)
+    assert not await run.admits("gobby-workflows", "set_variable")
+
+
+async def test_code_reviewer_await_keeps_its_listed_step_writes(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "await"
+    candidate = {"name": "candidate_task", "value": "#103", "scope": "step"}
+    assert await run.admits_native(
+        "mcp__gobby__set_variable", {**candidate, "session_id": SESSION_ID}
+    )
 
 
 async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase) -> None:

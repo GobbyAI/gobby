@@ -30,6 +30,7 @@ class StepWorkflowContext:
     agent_name: str | None = None
     allowed_tools: list[str] | Literal["all"] = "all"
     is_entry_step: bool = False
+    idle: bool = False
     mcp_progress_only: bool = False
     """The step's only declared route forward is an ``on_mcp_success`` handler.
 
@@ -97,6 +98,7 @@ def _get_active_step_workflow_context(
             is_entry_step=bool(
                 instance.workflow.steps and instance.current_step == instance.workflow.steps[0].name
             ),
+            idle=step.idle,
             mcp_progress_only=bool(step.on_mcp_success)
             and not step.transitions
             and not step.exit_when,

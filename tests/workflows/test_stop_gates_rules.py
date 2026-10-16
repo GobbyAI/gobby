@@ -1052,6 +1052,7 @@ class TestRequireStepCompletion:
         return {
             "is_spawned_agent": True,
             "current_step": "claim",
+            "current_step_idle": True,
             "step_workflow_complete": False,
             "task_claimed": False,
             "stop_attempts": 0,
@@ -1088,10 +1089,45 @@ class TestRequireStepCompletion:
         assert "Current step: claim" in (woken.reason or "")
 
         # A claimed assignment is never exempt, even under a stale idle declaration.
-        variables.update(seat_idle=True, task_claimed=True, current_step="route_skills")
-        assigned = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
-        assert assigned.decision == "block"
-        assert "Current step: route_skills" in (assigned.reason or "")
+        variables.update(seat_idle=True, task_claimed=True)
+        claimed = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert claimed.decision == "block"
+        assert "Current step: claim" in (claimed.reason or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("step", ["route_skills", "review", "verdict", "submit"])
+    async def test_idle_declaration_never_exempts_a_working_step(
+        self, db: HubDatabase, step: str
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            **self._idle_claim_variables(),
+            "seat_idle": True,
+            "current_step": step,
+            "current_step_idle": False,
+        }
+
+        response = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert response.decision == "block"
+        assert f"Current step: {step}" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_idle_declaration_ends_when_the_seat_leaves_its_idle_step(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {**self._idle_claim_variables(), "seat_idle": True}
+        idle = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert idle.decision == "allow", idle.reason
+
+        # Same turn, no turn start to clear the declaration: the step moved on.
+        variables.update(current_step="route_skills", current_step_idle=False)
+        moved = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert moved.decision == "block"
+        assert variables["seat_idle"] is True
+        assert "Current step: route_skills" in (moved.reason or "")
 
 
 class TestBeforeAgentResetsPlumbing:

@@ -178,7 +178,7 @@ steps:
         checkout_mode: none
         project_path: "${{ steps.guard.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the code reviewer seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the code reviewer seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, go idle as your await step directs. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
@@ -232,7 +232,7 @@ steps:
         checkout_mode: none
         project_path: "${{ steps.guard.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the researcher seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the researcher seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, go idle as your serve step directs. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,

@@ -285,3 +285,22 @@ def test_step_without_mcp_handlers_is_not_mcp_progress_only(
 
     assert context is not None
     assert context.mcp_progress_only is False
+
+
+@pytest.mark.parametrize("idle", [True, False])
+def test_step_context_carries_the_idle_step_flag(
+    monkeypatch: pytest.MonkeyPatch, idle: bool
+) -> None:
+    _patch_step_instance(
+        monkeypatch,
+        _instance(
+            "developer",
+            "claim",
+            snapshot=_step_snapshot(WorkflowStep(name="claim", idle=idle), "vars.done"),
+        ),
+    )
+
+    context = get_active_step_workflow_context(MagicMock(), "session-1")
+
+    assert context is not None
+    assert context.idle is idle

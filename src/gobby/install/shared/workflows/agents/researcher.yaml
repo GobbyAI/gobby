@@ -116,10 +116,15 @@ step_workflow:
 
     - name: serve
       mcp_error_policy: stay
+      idle: true
       description: "Research and report"
       status_message: |
         Research the routed question and report findings and proposals to the
         Orchestrator; send decisions for the operator through the Assistant.
+        With no question routed, go idle: call the top-level set_variable with
+        name="seat_idle", value=true, session_id=<your own session> and the
+        default session scope, and end the turn. Do not re-arm a wait; the next
+        message starts a new turn and ends idle.
       # Read-only internal reads (research, memory, sessions, plans) pass any
       # step allowlist; these entries name title bootstrap and messaging.
       allowed_mcp_tools:

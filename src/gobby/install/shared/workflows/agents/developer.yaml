@@ -138,6 +138,7 @@ step_workflow:
 
     - name: claim
       mcp_error_policy: stay
+      idle: true
       description: "Claim the next assigned task"
       status_message: |
         Spawned agents normally arrive with their task already claimed; they
@@ -148,9 +149,10 @@ step_workflow:
         report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
         then go idle: call the top-level set_variable with name="seat_idle",
-        value=true and the default session scope, and end the turn. Do not
-        re-arm a wait; the next message or assignment starts a new turn and
-        ends idle.
+        value=true, session_id=<your own session> and the default session
+        scope, and end the turn. This step admits no other set_variable. Do
+        not re-arm a wait; the next message or assignment starts a new turn
+        and ends idle.
       allowed_tools:
         - Bash
         - Read
@@ -158,7 +160,6 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
         - "gobby-tasks:de_escalate_task"
