@@ -130,6 +130,19 @@ class CloseChecklist:
         }
 
 
+def _required_python_tests(
+    changed_tests: Iterable[str], source_tests: Mapping[str, tuple[str, ...]]
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                *_pytest_module_paths(changed_tests),
+                *(test for tests in source_tests.values() for test in tests),
+            )
+        )
+    )
+
+
 def evaluate_validation_commands(
     *,
     task_category: str | None,
@@ -161,14 +174,7 @@ def evaluate_validation_commands(
         evidence, foreign = drop_foreign_runs(evidence, changed_tests, close_root, paths, candidate)
         if candidate is not None and evidence.off_task_author_runs:
             source_tests = related_python_source_tests_in_pool(paths, base_dir=close_root)
-            required_tests = tuple(
-                dict.fromkeys(
-                    (
-                        *_pytest_module_paths(changed_tests),
-                        *(test for tests in source_tests.values() for test in tests),
-                    )
-                )
-            )
+            required_tests = _required_python_tests(changed_tests, source_tests)
             evidence = credit_off_task_author_runs(evidence, required_tests, paths, candidate)
     gate = _evaluate_validation_commands(
         task_category=task_category,
@@ -335,14 +341,7 @@ def _evaluate_validation_commands(
     ]
     confined_paths, confinement_audit = confinement_credit(
         runs=credited,
-        required_paths=tuple(
-            dict.fromkeys(
-                (
-                    *_pytest_module_paths(changed_python_test_paths),
-                    *(test for tests in source_tests.values() for test in tests),
-                )
-            )
-        ),
+        required_paths=_required_python_tests(changed_python_test_paths, source_tests),
         changed_paths=changed_paths,
         candidate=candidate,
         context=confinement_context,

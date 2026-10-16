@@ -704,6 +704,7 @@ def _while_on_task(
         off_task_author_runs=tuple(
             run for run in evidence.validation_runs if keep_edits and not on_task(run.started_at)
         ),
+        off_task_author_edits=evidence.edits if keep_edits else (),
         excluded_runs=(
             *evidence.excluded_runs,
             *(

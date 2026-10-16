@@ -64,6 +64,9 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
         validation_runs=tuple(run for run in runs if run.categories),
         command_runs=tuple(run for run in runs if not run.categories),
         off_task_author_runs=tuple(author_runs),
+        off_task_author_edits=tuple(
+            edit for evidence in evidence_sets for edit in evidence.off_task_author_edits
+        ),
         excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
         edits=tuple(edits),
         task_claims=tuple(claim for evidence in evidence_sets for claim in evidence.task_claims),
