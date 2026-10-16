@@ -58,9 +58,12 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
    never trusted. Callers without a managed token, and runs whose sandbox backend is
    `provider-native`, are refused with exit 125. A run whose sandbox is disabled runs
    unwrapped, which grants nothing that seat lacks. The daemon's git tree snapshots
-   (2.2) run in a seat-controlled repository, so they run as `wrap_prefix + git -c
-   core.fsmonitor=false ...` inside the same sandbox as the child. Clean filters
-   therefore run with the seat's own authority, never the daemon's. No new
+   (2.2) run in a seat-controlled repository. They run inside the same sandbox as
+   the child, as `wrap_prefix + <absolute git> --git-dir --work-tree -c
+   core.fsmonitor=false ...`, with a daemon-built environment that carries no
+   request variable. Clean filters therefore run with the seat's own authority, and
+   no seat-supplied environment, `PATH` or `core.worktree` can choose the tree a
+   record names. No new
    credential, no sandbox widening.
 4. **After the grace window (ratified at approval).** At the bound gdaemon sends
    SIGTERM to the run's own process group, waits the grace window with the group
@@ -358,7 +361,8 @@ before spawning. A conformance test verifies a token minted by Python's
 
 Checks before admission: `cwd` must resolve, with symlinks resolved, inside a
 registered project checkout or one of its git worktrees for the token's
-`project_id`; `repo_root` is `git rev-parse --show-toplevel` of `cwd`.
+`project_id`; `repo_root` and the gitdir come from the snapshot lookup below, and
+`cwd` must lie under `repo_root`.
 
 Admission: classify the core executable after stripping `env`, `rtk`, `uv run` and
 `nice` prefixes. `ruff`, `mypy`, `gobby test-types audit`, `mkdir`, `tar`, `git` and
@@ -380,11 +384,22 @@ unreaped, SIGKILL the group, reap within 5 seconds (Decision Record item 4). Out
 and records `interrupted`. A client disconnect also drains the run and records
 `interrupted`.
 
-Snapshot (`snapshot.rs`): copy `<gitdir>/index` to `<gitdir>/gobby-run-<id>.index`,
-then run `git -c core.fsmonitor=false add -A` and `git -c core.fsmonitor=false
-write-tree` with `GIT_INDEX_FILE` pointing at the copy, in `repo_root`, each as
-`wrap_prefix + git ...`, so the snapshot runs in the same sandbox as the child
-(Decision Record item 3). Remove the copy afterwards. The real index, HEAD, refs and
+Snapshot (`snapshot.rs`): the tree ids anchor the whole key, so no seat input may
+reach the git that computes them. Every git invocation gdaemon makes for a run
+(the `repo_root` and gitdir lookup, `add` and `write-tree`) has this form:
+- argv `wrap_prefix + <daemon-resolved absolute git> --git-dir=<gitdir>
+  --work-tree=<repo_root> -c core.fsmonitor=false ...`;
+- a minimal environment built by gdaemon, carrying no request variable, with
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and the
+  `GIT_INDEX_FILE` the daemon sets.
+
+The lookup itself runs `git rev-parse --show-toplevel --absolute-git-dir` from
+`cwd` in that environment, before the explicit flags exist. A run whose `cwd` is
+not under the resulting `repo_root` is refused; a seat-written `core.worktree`
+produces exactly that. Copy `<gitdir>/index` to `<gitdir>/gobby-run-<id>.index`,
+then run `add -A` and `write-tree` with `GIT_INDEX_FILE` pointing at the copy, both
+inside the same sandbox as the child (Decision Record item 3). Remove the copy
+afterwards. The real index, HEAD, refs and
 working tree are never written; the only repository write is loose objects. Take it
 once before spawn (`tree_start`) and once after reap (`tree_end`). A failed snapshot
 records null and makes the record not reusable.
@@ -429,7 +444,7 @@ Focused checks: `cargo test -p gobby-daemon --test bounded_run`,
 - 2.2.5 - A cwd outside the token project's checkouts and worktrees is refused. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
 - 2.2.6 - A fourth slot-taking run waits until a slot frees, a trivial command runs without a slot, and a run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_three_slots_and_bounds_queue_wait`.
 - 2.2.7 - At the bound a TERM-ignoring group is TERMed, then KILLed after the grace window and reaped; nothing outside the group is signalled; the outcome is `timed_out`. test: `crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group`.
-- 2.2.8 - The snapshot captures uncommitted and untracked-unignored changes, leaves the real index and HEAD unchanged, runs its git argv behind the run's wrap prefix with `core.fsmonitor=false`, and a mid-run edit makes `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
+- 2.2.8 - The snapshot captures uncommitted and untracked-unignored changes, leaves the real index and HEAD unchanged, runs its git argv behind the run's wrap prefix with an absolute daemon-resolved git, explicit `--git-dir` and `--work-tree`, and `core.fsmonitor=false`. A request env carrying `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG_*`, a `PATH`-shadowed `git`, and a repository `core.worktree` pointing elsewhere change neither tree id; the last refuses the run. A mid-run edit makes `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
 - 2.2.9 - Records carry identity from the verified token, the argv, outcome and exit code (128+N for a signal death), `executable`, `python_version` and `gdaemon_identity`. Each reusability rule above, including the environment denylist, interpreter resolution and targets escaping `repo_root`, refuses with its reason. Insert prunes rows older than 14 days. test: `crates/gdaemon/tests/bounded_run.rs::records_outcome_identity_and_reusability`.
 
 ### 2.3 `gdaemon run` launcher client [category: code] (depends: 2.2)
@@ -576,6 +591,7 @@ Sites:
 - `os.system`, `os.exec*`, `os.spawn*`, `os.popen` and
   `asyncio.create_subprocess_*`.
 - `__file__`, `Path.cwd`, `os.getcwd`, `Path.home` and `expanduser`.
+- `importlib.resources` traversal (`files`, `as_file`).
 - String literals starting with `src/`, `tests/`, `crates/`, `web/` or `.gobby/`.
 - `importlib.import_module`, `__import__`, `pkgutil` iteration, or
   `importlib.metadata.entry_points` with a non-literal argument.
@@ -595,7 +611,9 @@ Units scanned for `m`:
 
 Requested fixtures:
 - The sources are test-function and `m`-local fixture parameters, other than
-  `self`, `cls` and `parametrize` argnames; literal `usefixtures` names in
+  `self`, `cls` and direct `parametrize` argnames. An argname under
+  `indirect=True`, or listed in a literal `indirect=[...]`, is a request, and a
+  non-literal `indirect` refuses `m`. Literal `usefixtures` names in
   decorators and `pytestmark`; and literal `request.getfixturevalue(...)` names.
 - Requests are followed transitively through fixture parameters. Each name
   resolves nearest-first: `m`, then the chain deepest-first, then the plugin
@@ -652,7 +670,7 @@ reuse; that is correct.
 - 3.1.1 - Against the real tree, `tests/tasks/test_criterion_commands.py` is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is refused with a reason naming the `repo_root` fixture it requests through its local `agent` fixture. test: `tests/tasks/test_validation_reuse_classifier.py::test_real_root_chain_leaves_plain_module_eligible`.
 - 3.1.2 - Every disposition pin matches the current tree, and an edited exempted unit or a lazily imported module refuses every module with `infrastructure_pin_stale`. test: `tests/tasks/test_validation_reuse_classifier.py::test_disposition_pins_are_current_and_fail_closed`.
 - 3.1.3 - A site in `m`, in a helper, in an undispositioned autouse fixture or hook, or in a fixture requested directly, through `usefixtures` or transitively, refuses `m`. A site in an unrequested fixture does not. test: `tests/tasks/test_validation_reuse_classifier.py::test_sites_in_executed_units_refuse`.
-- 3.1.4 - A non-literal `getfixturevalue`, an unresolvable fixture name, `cache`, and a non-literal dynamic import each refuse `m`; `parametrize` argnames are not fixture requests. test: `tests/tasks/test_validation_reuse_classifier.py::test_unresolvable_and_dynamic_requests_refuse`.
+- 3.1.4 - A non-literal `getfixturevalue`, an unresolvable fixture name, `cache`, a non-literal `indirect`, and a non-literal dynamic import each refuse `m`; direct `parametrize` argnames are not fixture requests, while `indirect=True` and literal `indirect=[...]` argnames are. test: `tests/tasks/test_validation_reuse_classifier.py::test_unresolvable_and_dynamic_requests_refuse`.
 
 ### 3.2 Reuse key and evaluation [category: code] (depends: 1.1, 3.1)
 `kind: deliverable`
@@ -779,8 +797,13 @@ evidence for 3.2's conflict rule. Remove reused modules in `covers` the same way
 confined ones. `criterion_command_records` evaluates fresh transcript runs only, so
 after it runs, mark an unsatisfied criterion record satisfied when its command is a
 pytest command in reusable form (2.2's argv rules) and `covers` leaves none of its
-expanded modules uncovered. Set its `status` to `"reused"` and add its
-`reused_modules`. Every other criterion command stays fresh-only. Fresh transcript
+expanded modules uncovered. Leading environment assignments
+(`DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest <file>`, the repository's
+standard form) are stripped before judging that form, unless one sets a 2.2
+denylisted variable. Set its `status` to `"reused"` and add its
+`reused_modules`. Every other criterion command stays fresh-only. The marking
+helper, `apply_criterion_reuse`, lives in `validation_reuse.py`, so
+`close_checklist.py` (805 lines) gains only call sites and the details entries. Fresh transcript
 evidence keeps priority: a reused module never hides a fresh failure, and
 `unresolved_failures` still blocks.
 `has_success` for the required `test` category is also true when reuse covered at
@@ -802,7 +825,7 @@ tests/tasks/test_validation_reuse_classifier.py -q`.
 - 3.3.2 - After a one-line edit, Gate 10 passes with fresh runs for affected modules and reuse for the rest, with no fresh run of the reused modules. test: `tests/tasks/test_close_checklist.py::test_gate10_reuses_unaffected_module_records`.
 - 3.3.3 - A fresh unresolved test failure still fails the gate even when every required module has reuse credit. test: `tests/tasks/test_close_checklist.py::test_gate10_reuse_never_hides_fresh_failure`.
 - 3.3.4 - Gate details list every reused pass with record id, session, original start and end time and tree, and every refusal with its reason. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
-- 3.3.5 - A criterion `uv run pytest <file>` command is satisfied with `status: "reused"` when its module has reuse credit. A criterion with a node id, `-k` or an unlisted option stays unsatisfied without a fresh run, as does a criterion one of whose modules lacks credit. test: `tests/tasks/test_close_checklist.py::test_gate10_criterion_pytest_command_accepts_reuse`.
+- 3.3.5 - A criterion `uv run pytest <file>` command, also behind leading `DATABASE_URL=... GOBBY_TEST_PROTECT=1` assignments, is satisfied with `status: "reused"` when its module has reuse credit; a leading `PYTHONPATH=` assignment keeps it fresh-only. A criterion with a node id, `-k` or an unlisted option stays unsatisfied without a fresh run, as does a criterion one of whose modules lacks credit. test: `tests/tasks/test_close_checklist.py::test_gate10_criterion_pytest_command_accepts_reuse`.
 
 ## P4: Documentation
 `kind: framing`
