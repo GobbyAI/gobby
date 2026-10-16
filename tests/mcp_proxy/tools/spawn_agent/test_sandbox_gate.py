@@ -19,7 +19,7 @@ from tests.servers import test_mcp_programmatic_boundary as programmatic
 pytestmark = pytest.mark.unit
 
 _IMPL = "gobby.mcp_proxy.tools.spawn_agent._implementation"
-_VERIFIER = "gobby.agents.sandbox_gate.verify_srt_installation"
+_VERIFIER = "gobby.agents.sandbox_gate.verify_srt_installation_for_launch"
 
 # The agent-token MCP boundary, reused so 1.8.5 drives the same daemon routes.
 boundary = programmatic.boundary
@@ -79,7 +79,7 @@ def test_gate_passes_only_verified_managed_srt() -> None:
     config = SandboxConfig(enabled=True, backend="srt")
     with patch(_VERIFIER) as verifier:
         assert require_managed_srt(config) == config
-    verifier.assert_called_once_with()
+    verifier.assert_called_once_with(run_id=None, provider=None, policy_hash=None)
 
     with patch(_VERIFIER, side_effect=SrtRuntimeError("manifest mismatch")):
         with pytest.raises(SandboxRequiredError, match="manifest mismatch"):

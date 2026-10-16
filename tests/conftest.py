@@ -411,7 +411,7 @@ def composer_ledger() -> "ComposerLedger":
 @pytest.fixture
 def stub_srt_verifier() -> Iterator[MagicMock]:
     """Pass the managed-SRT gate without the pinned install; unit spawn modules opt in."""
-    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch") as verifier:
         yield verifier
 
 
