@@ -15,7 +15,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
@@ -305,6 +305,8 @@ async def test_live_spinner_defers_stagnation_and_a_frozen_one_does_not(
 
     assert [first, ticking, frozen] == [0, 0, 1]
     cleanup_agent.assert_awaited_once_with(
-        run,
+        ANY,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+    assert cleanup_agent.await_args is not None
+    assert cleanup_agent.await_args.args[0].id == run.id
