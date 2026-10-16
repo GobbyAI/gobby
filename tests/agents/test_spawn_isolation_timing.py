@@ -147,7 +147,6 @@ async def test_isolation_paths_share_spawn_timing_map(
     git.get_current_branch = AsyncMock(return_value="main")
     git.get_local_commit = AsyncMock(return_value="base-sha")
     git.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
-    git.has_unpushed_commits = AsyncMock(return_value=(False, 0))
     git.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True))
     git.create_clone = AsyncMock(return_value=SimpleNamespace(success=True))
     sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha=None))

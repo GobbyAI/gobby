@@ -214,7 +214,6 @@ def _worktree_handler(
     git_manager = MagicMock(spec=WorktreeGitManager)
     git_manager.repo_path = str(tmp_path / "repo")
     git_manager.get_current_branch.return_value = "main"
-    git_manager.has_unpushed_commits.return_value = (False, 0)
     git_manager.create_worktree.return_value = MagicMock(success=True)
     storage = MagicMock()
     storage.db = temp_db

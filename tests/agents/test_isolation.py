@@ -1245,7 +1245,6 @@ class TestWorktreeIsolationHandler:
         git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         git_manager.repo_path = "/path/to/main/repo"
         git_manager.get_current_branch.return_value = "main"
-        git_manager.has_unpushed_commits.return_value = (False, 0)
         git_manager.create_worktree.return_value = MagicMock(
             success=False, error=None, message="Git command timed out after 60s"
         )
@@ -1282,7 +1281,6 @@ class TestWorktreeIsolationHandler:
             worktree_path="/tmp/worktrees/my-branch",
         )
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None  # No existing worktree
@@ -1460,7 +1458,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.run_git_command.return_value = subprocess.CompletedProcess([], 0, "", "")
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.delete_worktree.return_value = MagicMock(success=True, error=None)
         mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
@@ -1629,7 +1626,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None
@@ -1704,7 +1700,6 @@ class TestWorktreeIsolationHandler:
         )
 
         git_manager = WorktreeGitManager(repo_path)
-        monkeypatch.setattr(git_manager, "has_unpushed_commits", AsyncMock(return_value=(True, 1)))
         worktree_path = tmp_path / "worktree"
 
         worktree_storage = MagicMock()
@@ -1750,7 +1745,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None
@@ -1802,7 +1796,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.delete_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None
         mock_worktree_storage.create.return_value = MagicMock(
@@ -1860,7 +1853,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None
@@ -1910,7 +1902,6 @@ class TestWorktreeIsolationHandler:
         mock_git_manager.repo_path = "/path/to/main/repo"
         mock_git_manager.create_worktree.return_value = MagicMock(success=True)
         mock_git_manager.get_current_branch.return_value = "main"
-        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = None

@@ -137,7 +137,6 @@ def test_create_worktree_provider_schema_rejects_qwen(registry: InternalToolRegi
 
 @pytest.mark.asyncio
 async def test_create_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -221,7 +220,6 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
     repo_path.joinpath(".gobby", "project.json").write_text(expected_project_json)
 
     mock_git_manager.repo_path = str(repo_path)
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -360,7 +358,6 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
 async def test_create_worktree_installs_droid_hooks(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -405,7 +402,6 @@ async def test_create_worktree_installs_droid_hooks(
 async def test_create_worktree_installs_codex_hooks(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -448,7 +444,6 @@ async def test_create_worktree_installs_codex_hooks(
 
 @pytest.mark.asyncio
 async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git_manager) -> None:
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = False
     mock_git_manager.create_worktree.return_value.error = "Git error"
     mock_worktree_storage.get_by_branch.return_value = None
@@ -554,7 +549,6 @@ async def test_create_worktree_existing(registry, mock_worktree_storage) -> None
 
 @pytest.mark.asyncio
 async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktree_storage) -> None:
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -621,15 +615,13 @@ async def test_create_worktree_explicit_local_branch(
         create_branch=True,
         base_commit_sha="base-sha",
     )
-    mock_git_manager.has_unpushed_commits.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_create_worktree_omitted_base_keeps_unpushed_head(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
-    """Omitted bases use HEAD without querying remote divergence."""
-    mock_git_manager.has_unpushed_commits.return_value = (True, 3)
+    """Omitted bases fork the caller's HEAD commit."""
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -653,51 +645,9 @@ async def test_create_worktree_omitted_base_keeps_unpushed_head(
         },
     )
     assert result["success"] is True
-    mock_git_manager.has_unpushed_commits.assert_not_called()
     mock_git_manager.create_worktree.assert_called_once_with(
         worktree_path=_canonical("/tmp/wt/feature-auto-local"),
         branch_name="feature/auto-local",
-        base_branch="main",
-        create_branch=True,
-        base_commit_sha="base-sha",
-    )
-
-
-@pytest.mark.asyncio
-async def test_create_worktree_omitted_base_stays_local_when_pushed(
-    registry: InternalToolRegistry,
-    mock_worktree_storage: MagicMock,
-    mock_git_manager: MagicMock,
-) -> None:
-    """Pushed caller heads still select the local commit."""
-    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
-    mock_git_manager.create_worktree.return_value.success = True
-    mock_worktree_storage.get_by_branch.return_value = None
-    mock_worktree_storage.create.return_value = Worktree(
-        id="wt-remote",
-        project_id="11111111-1111-4111-8111-111111110001",
-        task_id=None,
-        branch_name="feature/remote",
-        worktree_path="/tmp/wt/feature-remote",
-        base_branch="main",
-        agent_session_id=None,
-        status="active",
-        created_at=STORED_AT,
-        updated_at=STORED_AT,
-        merged_at=None,
-    )
-    result = await registry.call(
-        "create_worktree",
-        {
-            "branch_name": "feature/remote",
-            "worktree_path": "/tmp/wt/feature-remote",
-        },
-    )
-    assert result["success"] is True
-    mock_git_manager.has_unpushed_commits.assert_not_called()
-    mock_git_manager.create_worktree.assert_called_once_with(
-        worktree_path=_canonical("/tmp/wt/feature-remote"),
-        branch_name="feature/remote",
         base_branch="main",
         create_branch=True,
         base_commit_sha="base-sha",
