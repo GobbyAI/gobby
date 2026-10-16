@@ -1,11 +1,11 @@
 header:
   plan_id: gate10-test-run-reuse
-  plan_hash: 01e7d890798afd553c9c5e052380b0f936fbaffc0c8bb27f80ad624c6236ffd7
+  plan_hash: 2a6c47fe8c83ec0f84b8dbfb2458be879104e20d8e318b89cc844c66aa6bf577
   root_task_ref: '24538'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T04:00:33Z'
+  generated_at: '2026-10-16T04:11:52Z'
   task_tree_source: db
-  task_tree_source_hash: ebf2f16b4d7e2a3257a3140a5bae3357e6be703aabb9e82c2dd83f629a0e240e
+  task_tree_source_hash: d818d79262219156737c15faef1f6b4a5e392e2cd7d93674e252144093e0a29b
   evidence_summary: []
   evidence: []
 rows:
@@ -119,7 +119,7 @@ rows:
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.6
-  plan_node_hash: 94d83d7dd91b36e010d6a37384f919ca6841979ee821f1d6c5ef7f7d70172b74
+  plan_node_hash: 4903e829da4834d131c60769619281f6f903272bd09f9a739e7c3415645f7d61
   status: covered
   leaves:
   - leaf_task_ref: '#24550'
@@ -223,7 +223,7 @@ rows:
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.2
-  plan_node_hash: fd4224d58ce64c2932619c3ad70875b8ca4d33d61e2c05c17eb279290fb90b02
+  plan_node_hash: bd463cb447bd6eac8ef3c867841a76d9703b0bf1583b285541dd368dad1cca5c
   status: covered
   leaves:
   - leaf_task_ref: '#24552'
@@ -487,7 +487,7 @@ rows:
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.5
-  plan_node_hash: 88944644aa3b0803c98b5708ba59c4fb5d560fffc7fa9d040c69f8a257aa50eb
+  plan_node_hash: dddda2566bd0d198f84b5b936eba9568f53704c79171e1307c4897f21cd79b83
   status: covered
   leaves:
   - leaf_task_ref: '#24556'
