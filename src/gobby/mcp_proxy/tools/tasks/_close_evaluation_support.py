@@ -379,10 +379,10 @@ async def derive_close_transcript_evidence(
                 or session_id not in required
                 or session_id == owner_session_id
             ):
-                # The owner leaves too: once this task is handed off it may claim newer
-                # work, whose runs must neither fail nor pass this close (#23665). It
-                # still holds this task, so its unambiguous edits continue to count;
-                # shared paths need selection at the edit's timestamp.
+                # Selection bounds shared TDD runs and edits. The owner's away runs
+                # remain separate for Gate 10's explicit candidate-byte proof; newer
+                # work's failures never judge this task. Its unambiguous edits still
+                # count; shared paths need selection at the edit's timestamp.
                 if task_links is None:
                     task_links = await asyncio.to_thread(
                         ctx.session_task_manager.get_session_tasks, session_id
@@ -581,6 +581,7 @@ def _while_on_task(
     call marked a return. ``temporally_scoped_paths``, the shared paths another task
     also edited in this checkout, are carved out: selection history attributes each
     of their edits by timestamp, so they count only while on this task.
+    Owner-away validation stays separate for Gate 10; it cannot supply TDD proof.
     """
 
     def on_task(value: datetime) -> bool:
@@ -598,6 +599,9 @@ def _while_on_task(
         evidence,
         validation_runs=tuple(r for r in evidence.validation_runs if on_task(r.started_at)),
         command_runs=tuple(r for r in evidence.command_runs if on_task(r.started_at)),
+        off_task_author_runs=tuple(
+            run for run in evidence.validation_runs if keep_edits and not on_task(run.started_at)
+        ),
         excluded_runs=(
             *evidence.excluded_runs,
             *(

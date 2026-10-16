@@ -139,6 +139,8 @@ class TranscriptEvidence:
     degraded_capabilities: tuple[str, ...] = ()
     # Observations outside the task link window never enter credit-bearing collections.
     excluded_runs: tuple[TranscriptValidationRun, ...] = ()
+    #: Owner runs made under another claim, eligible only for Gate 10 candidate proof.
+    off_task_author_runs: tuple[TranscriptValidationRun, ...] = ()
     #: gcode's indexed language per task-edited path, attached by close evaluation.
     edit_languages: Mapping[str, str] = field(default_factory=dict, compare=False)
     #: Newest provider record timestamp these transcripts actually contained. Close

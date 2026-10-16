@@ -66,6 +66,36 @@
               "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b"
             }
           ],
+          "decisions": {
+            "api_base": null,
+            "api_key": "@secret@",
+            "backend_max_state_tokens": null,
+            "failure_cooldown_seconds": 60.0,
+            "identity_contract": null,
+            "max_input_tokens": 8192,
+            "model": null,
+            "timeout_seconds": 2.0,
+            "wire_api": "systemone",
+            "community_label": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_confidence": 0.5,
+              "mode": "off"
+            },
+            "found_work": {
+              "accept_above": 0.9,
+              "accept_below": 0.1,
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "mode": "off"
+            },
+            "tool_rerank": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_probability": 0.5,
+              "mode": "off"
+            }
+          },
           "embeddings": {
             "api_base": null,
             "api_key": "@secret@",
@@ -151,11 +181,6 @@
                 "reasoning_effort": null
               }
             ],
-            "decisions_api_base": null,
-            "decisions_api_key": null,
-            "decisions_min_confidence": 0.5,
-            "decisions_model": "jev-latest",
-            "decisions_timeout_seconds": 30,
             "enabled": true,
             "max_concurrency": 2,
             "max_tokens": 120,
@@ -1130,6 +1155,36 @@
               "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b"
             }
           ],
+          "decisions": {
+            "api_base": null,
+            "api_key": "@secret@",
+            "backend_max_state_tokens": null,
+            "failure_cooldown_seconds": 60.0,
+            "identity_contract": null,
+            "max_input_tokens": 8192,
+            "model": null,
+            "timeout_seconds": 2.0,
+            "wire_api": "systemone",
+            "community_label": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_confidence": 0.5,
+              "mode": "off"
+            },
+            "found_work": {
+              "accept_above": 0.9,
+              "accept_below": 0.1,
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "mode": "off"
+            },
+            "tool_rerank": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_probability": 0.5,
+              "mode": "off"
+            }
+          },
           "embeddings": {
             "api_base": null,
             "api_key": "@secret@",
@@ -1215,11 +1270,6 @@
                 "reasoning_effort": null
               }
             ],
-            "decisions_api_base": null,
-            "decisions_api_key": null,
-            "decisions_min_confidence": 0.5,
-            "decisions_model": "jev-latest",
-            "decisions_timeout_seconds": 30,
             "enabled": true,
             "max_concurrency": 2,
             "max_tokens": 120,
@@ -2147,11 +2197,11 @@
         }
       },
       "secret_set": {
-        "ai.embeddings.api_key": {
+        "ai.decisions.api_key": {
           "desired": false,
           "active": false
         },
-        "code_index.community_label.decisions_api_key": {
+        "ai.embeddings.api_key": {
           "desired": false,
           "active": false
         },

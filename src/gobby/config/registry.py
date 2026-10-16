@@ -592,9 +592,18 @@ _REMOVED_TMUX_SPAWN_KEYS = (
     "wsl_distribution",
     "registration_timeout_seconds",
 )
+# Superseded by ai.decisions.
+_REMOVED_COMMUNITY_LABEL_DECISION_KEYS = (
+    "decisions_api_base",
+    "decisions_api_key",
+    "decisions_model",
+    "decisions_min_confidence",
+    "decisions_timeout_seconds",
+)
 _REMOVED_STORED_KEYS = frozenset(
     {f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS}
     | {f"tmux.{key}" for key in _REMOVED_TMUX_SPAWN_KEYS}
+    | {f"code_index.community_label.{key}" for key in _REMOVED_COMMUNITY_LABEL_DECISION_KEYS}
     | {"auth.api_token_hash"}
 )
 _REMOVED_STORED_SECTIONS = ("memory_usefulness",)

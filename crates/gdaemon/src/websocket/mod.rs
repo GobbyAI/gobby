@@ -1,6 +1,8 @@
 //! Native WebSocket transport primitives.
 //!
-//! Each module here is pure protocol logic with no socket, auth, database, or
-//! process dependency, so it can be replayed against the shared Python corpus.
+//! These modules have no listener, auth, database, or process dependency:
+//! sockets arrive from the caller as sinks, so each module can be replayed
+//! against the shared Python corpus and in-memory writers.
 
+pub mod broker;
 pub mod subscriptions;
