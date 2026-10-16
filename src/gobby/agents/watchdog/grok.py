@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypeGuard
+from typing import ClassVar, TypeGuard
 
 from gobby.agents.watchdog._scan import ResumableScanner, ResumableScanState, ScanVerdict
 from gobby.agents.watchdog.models import (
@@ -99,6 +100,10 @@ def _activity_kind(update_type: str) -> ActivityKind | None:
 
 @dataclass
 class _GrokScanState(ResumableScanState):
+    turn_start_marker: ClassVar[re.Pattern[bytes]] = re.compile(
+        rb'"sessionUpdate"\s*:\s*"user_message_chunk"'
+    )
+
     turn_started_event: TranscriptEventSummary | None = None
     latest_turn_event: TranscriptEventSummary | None = None
     latest_turn_kind: TurnEventKind | None = None
@@ -136,6 +141,8 @@ class _GrokScanState(ResumableScanState):
         if update_type == "retry_state" and not _valid_retry_state(update):
             return ScanVerdict.MALFORMED
 
+        if update_type == "user_message_chunk":
+            self.begin_turn()
         summary = TranscriptEventSummary(
             line_num=line_num,
             timestamp=_parse_timestamp(data, params),

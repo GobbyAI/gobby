@@ -374,6 +374,86 @@ async def test_malformed_records_poison_conclusiveness(
 
 
 @pytest.mark.asyncio
+async def test_malformed_record_before_the_latest_turn_does_not_block_its_completion(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "earlier-malformed.jsonl"
+    _write(
+        path,
+        ["{broken", _record("event_msg", "task_started"), _record("event_msg", "task_complete")],
+    )
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.last_malformed_line_num is None
+    assert snapshot.turn_started_event is not None
+    assert snapshot.turn_started_event.line_num == 2
+    assert snapshot.has_conclusive_turn_completed is True
+
+
+@pytest.mark.asyncio
+async def test_new_turn_forgets_the_previous_turns_reasoning_activity(tmp_path: Path) -> None:
+    path = tmp_path / "new-turn.jsonl"
+    _write(
+        path,
+        [
+            _record("event_msg", "task_started"),
+            _record("response_item", "reasoning", summary=[_SECRET]),
+            _record("event_msg", "task_started"),
+        ],
+    )
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.latest_activity_kind is None
+    assert snapshot.latest_model_output_line_num is None
+    assert snapshot.tail == ()
+
+
+@pytest.mark.asyncio
+async def test_cold_read_decodes_from_the_latest_turn_and_matches_an_incremental_read(
+    tmp_path: Path,
+) -> None:
+    earlier_turns = [
+        _record(event_type, payload_type)
+        for _ in range(20)
+        for event_type, payload_type in (
+            ("event_msg", "task_started"),
+            ("response_item", "reasoning"),
+            ("event_msg", "task_complete"),
+        )
+    ]
+    latest_turn = [
+        _record("event_msg", "task_started"),
+        _record("response_item", "function_call"),
+        _record(
+            "event_msg",
+            "error",
+            message=CODEX_MODEL_CAPACITY_MESSAGE,
+            codex_error_info="server_overloaded",
+        ),
+        _record("event_msg", "task_complete"),
+    ]
+    records: list[dict[str, object] | str] = ["{broken", *earlier_turns, *latest_turn]
+    path = tmp_path / "long.jsonl"
+    path.write_text("", encoding="utf-8")
+    incremental = CodexTranscriptWatchdogReader()
+    for record in records:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write((record if isinstance(record, str) else json.dumps(record)) + "\n")
+        await incremental.read(str(path))
+
+    with patch("gobby.agents.watchdog.codex.json.loads", wraps=json.loads) as loads:
+        cold = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert loads.call_count < len(latest_turn) * 2
+    assert cold == await incremental.read(str(path))
+    assert cold.turn_started_event is not None
+    assert cold.turn_started_event.line_num == len(records) - len(latest_turn) + 1
+    assert cold.has_conclusive_capacity_error is True
+
+
+@pytest.mark.asyncio
 async def test_unknown_record_and_blank_line_do_not_poison_completion(tmp_path: Path) -> None:
     path = tmp_path / "unknown.jsonl"
     _write(
