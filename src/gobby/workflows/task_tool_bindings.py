@@ -305,35 +305,45 @@ class TaskToolBindings:
             else None
         )
 
-    def record_dirty_baseline(self, event: HookEvent, checkout_root: str, paths: set[str]) -> None:
-        """Keep the checkout's dirty paths as the call starts, for its after-tool diff."""
+    def record_operand_baseline(
+        self, event: HookEvent, baseline: dict[str, dict[str, list[str]]]
+    ) -> None:
+        """Keep the call's program operands and their start-time dirt, per checkout root."""
 
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
             key = _matching_key(event, variables)
             calls = _bindings(variables)
             if key is None or key not in calls:
                 return None, False
-            calls[key]["dirty_baseline"] = {"root": checkout_root, "paths": sorted(paths)}
+            calls[key]["operand_baseline"] = baseline
             variables["task_tool_bindings"] = calls
             return None, True
 
         self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_bindings",))
 
-    def take_dirty_baseline(self, event: HookEvent, checkout_root: str) -> set[str] | None:
-        """Remove and return the call's start-time dirty paths in ``checkout_root``."""
+    def take_operand_baseline(self, event: HookEvent) -> dict[str, dict[str, list[str]]] | None:
+        """Remove and return the call's operand baseline; None when none was recorded."""
 
-        def mutate(variables: dict[str, Any]) -> tuple[set[str] | None, bool]:
+        def mutate(
+            variables: dict[str, Any],
+        ) -> tuple[dict[str, dict[str, list[str]]] | None, bool]:
             key = _matching_key(event, variables)
             calls = _bindings(variables)
             call = calls.get(key) if key is not None else None
-            baseline = call.pop("dirty_baseline", None) if call is not None else None
+            baseline = call.pop("operand_baseline", None) if call is not None else None
             if not isinstance(baseline, dict):
                 return None, False
             variables["task_tool_bindings"] = calls
-            paths = baseline.get("paths")
-            if baseline.get("root") != checkout_root or not isinstance(paths, list):
-                return None, True
-            return {path for path in paths if isinstance(path, str)}, True
+            return {
+                root: {
+                    field: [path for path in entry[field] if isinstance(path, str)]
+                    for field in ("operands", "dirty")
+                }
+                for root, entry in baseline.items()
+                if isinstance(root, str)
+                and isinstance(entry, dict)
+                and all(isinstance(entry.get(field), list) for field in ("operands", "dirty"))
+            }, True
 
         return self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_bindings",))
 

@@ -29,18 +29,21 @@ TARFILE_READ = (
     "print(t.extractfile('x/Cargo.toml').read()[:200])\n"
     '"'
 )
-# 15994's exact process inventory.
-PSUTIL_INVENTORY = (
-    "uv run --no-sync python -c 'import psutil; from pathlib import Path; "
+_PSUTIL_INVENTORY = (
+    "uv run --no-sync python -c 'import psutil{imports}; from pathlib import Path; "
     "root = str(Path.cwd()); matches = []; \n"
     'for p in psutil.process_iter(["pid", "cmdline"]):\n'
     " try:\n"
     '  cmd = p.info["cmdline"] or []\n'
     '  if any("pytest" in arg for arg in cmd) and p.cwd() == root and '
-    'p.pid != __import__("os").getpid(): matches.append((p.pid, cmd))\n'
+    "p.pid != {os}.getpid(): matches.append((p.pid, cmd))\n"
     " except (psutil.NoSuchProcess, psutil.AccessDenied): pass\n"
-    'print({"owned_pid5439_exists": psutil.pid_exists(5439), "own_wt_pytest": matches})\''
+    'print({{"owned_pid5439_exists": psutil.pid_exists(5439), "own_wt_pytest": matches}})\''
 )
+# 15994's process inventory, importing os up front.
+PSUTIL_INVENTORY = _PSUTIL_INVENTORY.format(imports=", os", os="os")
+# 15994's exact inventory: `__import__` is a reflection escape, fail-closed by PD's ruling.
+PSUTIL_INVENTORY_REFLECTED = _PSUTIL_INVENTORY.format(imports="", os='__import__("os")')
 
 
 def _metadata(command: str, root: Path) -> dict[str, Any]:
@@ -188,8 +191,6 @@ def test_inline_python_reads_are_not_writes(repo: Path, command: str) -> None:
         ("import shutil; shutil.unpack_archive('x.zip', 'out')", ["out"]),
         ("import tarfile; tarfile.open('out.tar', 'w')", ["out.tar"]),
         ("open('out.txt', 'w').write('x')", ["out.txt"]),
-        ("__import__('os').remove('out.txt')", ["out.txt"]),
-        ("__import__('os.path').remove('out.txt')", ["out.txt"]),
     ],
 )
 def test_inline_python_writes_name_their_targets(
@@ -208,11 +209,8 @@ def test_inline_python_writes_name_their_targets(
         "import tarfile, sys; tarfile.open('x.tgz').extractall(sys.argv[1])",
         "import zipfile; zipfile.ZipFile('x.zip').extract('m')",
         "import shutil; shutil.unpack_archive('x.zip')",
-        "import pathlib as os; __import__('os').remove('out.txt')",
-        "os = 1; __import__('os').remove('out.txt')",
-        "def __import__(name): return name\n__import__('os')",
-        "__import__(name).remove('out.txt')",
-        "__import__('os', fromlist=['path']).remove('out.txt')",
+        "__import__('os').remove('out.txt')",
+        "__import__('os').getpid()",
         "f = __import__; f('os')",
     ],
 )
@@ -247,6 +245,7 @@ def scope_engine(hub_db: HubDatabase) -> RuleEngine:
         ),
         (TARFILE_READ, False),
         (PSUTIL_INVENTORY, False),
+        (PSUTIL_INVENTORY_REFLECTED, True),
         ('sed -n "${a},${b}p" src/x.py', True),
         ("a='1w out.txt'; sed -n \"${a}\" src/x.py", True),
         ("uv run python -c \"import tarfile; tarfile.open('x.tgz').extractall()\"", True),

@@ -118,9 +118,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
             except ValueError as exc:
                 return HookResponse(decision="block", reason=str(exc))
             try:
-                self._snapshot_opaque_program_dirt(event, session_id)
+                self._snapshot_opaque_program_operands(event, session_id)
             except Exception as e:
-                self.logger.warning("Failed to snapshot opaque program dirt: %s", e, exc_info=True)
+                self.logger.warning(
+                    "Failed to snapshot opaque program operands: %s", e, exc_info=True
+                )
 
         return HookResponse(decision="allow")
 
@@ -445,57 +447,58 @@ class ToolEventHandlerMixin(EventHandlersBase):
             )
         self._record_file_paths(event, session_id, file_paths)
 
-    @staticmethod
-    def _opaque_program_checkout(event: HookEvent) -> str | None:
-        """The checkout a tool call's unclassifiable program runs in, if it runs one."""
-        from gobby.workflows.task_claim_state import effective_tool_cwd
-
-        data = event.data
-        if (
-            data.get("canonical_opaque_program") is not True
-            and data.get("canonical_script_execution") is not True
-        ):
-            return None
-        cwd = effective_tool_cwd(event.cwd, data)
-        root = checkout_root(Path(cwd)) if cwd is not None else None
-        return os.fspath(root) if root is not None else None
-
-    def _snapshot_opaque_program_dirt(self, event: HookEvent, session_id: str) -> None:
-        """Record the checkout's dirt before a bound call runs an unclassifiable program."""
-        from gobby.workflows.opaque_write_attribution import checkout_dirty_paths
+    def _snapshot_opaque_program_operands(self, event: HookEvent, session_id: str) -> None:
+        """Record which operands are dirty before a bound call runs an unclassifiable program."""
+        from gobby.workflows.opaque_write_attribution import operand_baseline
+        from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
 
         db = getattr(self._session_manager, "db", None)
-        root = self._opaque_program_checkout(event)
-        if db is None or root is None:
+        operands = event.data.get("canonical_opaque_program_operands")
+        if db is None or not isinstance(operands, list) or not operands:
             return
-        bindings = TaskToolBindings(SessionVariableManager(db), session_id)
+        variable_manager = SessionVariableManager(db)
+        bindings = TaskToolBindings(variable_manager, session_id)
         if bindings.started_at(event) is None:
             return
-        dirty = run_coro_blocking(
-            checkout_dirty_paths(root), self._event_loop, self.logger, label="opaque_dirt_baseline"
+        variables = variable_manager.get_variables(session_id)
+        cwd = effective_tool_cwd(event.cwd, event.data)
+        operands_by_checkout: dict[str, set[str]] = {}
+        for operand in operands:
+            pair = (
+                resolve_edit_pair(
+                    operand, cwd, project_id=event.project_id, db=db, variables=variables
+                )
+                if isinstance(operand, str)
+                else None
+            )
+            if pair is not None:
+                operands_by_checkout.setdefault(pair[0], set()).add(pair[1])
+        baseline = run_coro_blocking(
+            operand_baseline(operands_by_checkout),
+            self._event_loop,
+            self.logger,
+            label="opaque_operand_baseline",
         )
-        if isinstance(dirty, set):
-            bindings.record_dirty_baseline(event, root, dirty)
+        if isinstance(baseline, dict) and baseline:
+            bindings.record_operand_baseline(event, baseline)
 
     def _record_opaque_program_writes(self, event: HookEvent, session_id: str) -> None:
-        """Attribute the dirt an unclassifiable program left to the session and claim that ran it."""
+        """Attribute the operands an unclassifiable program dirtied to the session and claim."""
         from gobby.workflows.opaque_write_attribution import opaque_program_writes
 
         db = getattr(self._session_manager, "db", None)
-        root = self._opaque_program_checkout(event)
-        if db is None or root is None:
+        if db is None or not event.data.get("canonical_opaque_program_operands"):
             return
         variable_manager = SessionVariableManager(db)
-        # Without a start-time snapshot, the program's dirt and older dirt look alike.
-        baseline = TaskToolBindings(variable_manager, session_id).take_dirty_baseline(event, root)
-        if baseline is None:
+        # Without a start-time baseline, the program's dirt and older dirt look alike.
+        baseline = TaskToolBindings(variable_manager, session_id).take_operand_baseline(event)
+        if not baseline:
             return
         paths = run_coro_blocking(
             opaque_program_writes(
                 db,
                 variable_manager.get_variables(session_id),
                 session_id=session_id,
-                checkout_root=root,
                 baseline=baseline,
             ),
             self._event_loop,

@@ -95,9 +95,14 @@ def classify_base_command(
                     else "low"
                 ),
             )
-        if _runs_program_file(interpreter, interpreter_args):
-            # Its writes are unknowable before it runs; they are attributed afterwards.
-            return _ShellSegmentMetadata("execute", extra={"canonical_opaque_program": True})
+        operands = _program_file_operands(interpreter, interpreter_args)
+        if operands is not None:
+            # Its writes are unknowable before it runs. Afterwards, the operands it was
+            # given that it turned from clean to dirty are attributed to the caller.
+            return _ShellSegmentMetadata(
+                "execute",
+                extra={"canonical_opaque_program_operands": _rebase_shell_paths(operands, cwd)},
+            )
 
     if cmd == "curl":
         writes_file, paths = _curl_output_paths(parts)
@@ -205,23 +210,38 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
     )
 
 
-def _runs_program_file(interpreter: str, args: list[str]) -> bool:
-    """Whether an interpreter runs a script file or module rather than stdin or nothing."""
+def _program_file_operands(interpreter: str, args: list[str]) -> list[str] | None:
+    """The path operands an interpreter passes to the script file or module it runs.
+
+    None when it runs stdin or nothing. Option words are dropped, except the value of
+    ``--name=value``.
+    """
     if interpreter not in {"python", "python3", "node", "ruby"}:
-        return False
+        return None
     words = iter(args)
     for arg in words:
         if arg == "--":
-            return next(words, None) is not None
-        if arg == "-" or not arg.startswith("-"):
-            return arg != "-"
+            if next(words, None) is None:
+                return None
+            break
+        if arg == "-":
+            return None
+        if not arg.startswith("-"):
+            break
         if interpreter in {"python", "python3"} and not arg.startswith("--"):
-            # ``-m`` runs a module; ``-W``/``-X`` take the next word unless attached.
-            for position, letter in enumerate(arg[1:], start=1):
-                if letter == "m":
-                    return True
-                if letter in "WX":
-                    if position == len(arg) - 1:
-                        next(words, None)
-                    break
-    return False
+            # ``-m`` names a module and ``-W``/``-X`` a value, attached or as the next word.
+            letters = arg[1:]
+            index = next((i for i, letter in enumerate(letters) if letter in "mWX"), None)
+            if index is None:
+                continue
+            if index == len(letters) - 1:
+                next(words, None)
+            if letters[index] == "m":
+                break
+    else:
+        return None
+    return [
+        word.partition("=")[2] if word.startswith("-") else word
+        for word in words
+        if word and (not word.startswith("-") or ("=" in word and not word.endswith("=")))
+    ]

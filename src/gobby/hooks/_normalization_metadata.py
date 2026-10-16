@@ -169,7 +169,11 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
     merged: dict[str, Any] = {}
     for extra in extras:
         merged.update(extra)
-    for key in ("canonical_git_force_checkout_roots", "canonical_git_sequencer_scope_paths"):
+    for key in (
+        "canonical_git_force_checkout_roots",
+        "canonical_git_sequencer_scope_paths",
+        "canonical_opaque_program_operands",
+    ):
         values = [path for extra in extras for path in extra.get(key, [])]
         if values:
             merged[key] = list(dict.fromkeys(values))

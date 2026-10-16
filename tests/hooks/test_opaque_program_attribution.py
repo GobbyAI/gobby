@@ -1,9 +1,11 @@
 """Writes from a program the classifier cannot read are attributed after it runs.
 
-``uv run python tool.py`` names no write paths up front. The paths it takes from
-clean to dirty must join the running claim's ledger afterwards, or rule 3
-refuses the session's own files as dirt no live session owns. Dirt that predates
-the call stays unowned, so rule 3 still guards it.
+``uv run python tool.py out.txt`` names no write paths up front. The operands it
+takes from clean to dirty must join the running claim's ledger afterwards, or
+rule 3 refuses the session's own files as dirt no live session owns. Nothing
+else is adopted: dirt that predates the call, files under an operand directory,
+and paths an operator or another session changed meanwhile stay unowned or
+theirs, so rule 3 still guards them.
 """
 
 from __future__ import annotations
@@ -27,16 +29,20 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
-from gobby.workflows.opaque_write_attribution import checkout_dirty_paths, opaque_program_writes
+from gobby.workflows.opaque_write_attribution import opaque_program_writes, operand_baseline
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "21000000-0000-4000-8000-000000000003"
-PROGRAM = "uv run python /tmp/tool.py out"
-# The program's own outputs: created, rewritten from clean, and deleted.
-PROGRAM_WRITES = {"new.txt", "base.txt", "pkg/gone.txt"}
+OPERANDS = {"new.txt", "base.txt", "pkg/gone.txt", "stale.txt", "foreign.txt", "gen.txt", "pkg"}
+PROGRAM = (
+    "uv run python /tmp/tool.py new.txt base.txt pkg/gone.txt stale.txt foreign.txt "
+    "--out=gen.txt pkg"
+)
+# The program's own outputs: operands created, rewritten from clean, and deleted.
+PROGRAM_WRITES = {"new.txt", "base.txt", "pkg/gone.txt", "gen.txt"}
 
 
 @pytest.fixture(autouse=True)
@@ -55,15 +61,26 @@ class Checkout:
     repo: Path
     project_id: str
     session_id: str
+    foreign_session_id: str
     task_id: str
 
     def program_ran(self) -> None:
-        """``tool.py``'s writes, plus a pre-dirty and a foreign-held path it also touches."""
+        """``tool.py``'s writes and the other writers active while it ran.
+
+        The program also rewrites a pre-dirty and a foreign-held operand and
+        creates a file under its ``pkg`` directory operand. Meanwhile the
+        operator edits ``operator.txt`` and the foreign session writes
+        ``racer.txt`` before its ledger records it.
+        """
         (self.repo / "new.txt").write_text("generated\n", encoding="utf-8")
         (self.repo / "base.txt").write_text("rewritten\n", encoding="utf-8")
         (self.repo / "pkg" / "gone.txt").unlink()
+        (self.repo / "gen.txt").write_text("generated\n", encoding="utf-8")
         (self.repo / "stale.txt").write_text("rewritten\n", encoding="utf-8")
         (self.repo / "foreign.txt").write_text("rewritten\n", encoding="utf-8")
+        (self.repo / "pkg" / "made.txt").write_text("generated\n", encoding="utf-8")
+        (self.repo / "operator.txt").write_text("operator edit\n", encoding="utf-8")
+        (self.repo / "racer.txt").write_text("foreign edit\n", encoding="utf-8")
 
     def tool_event(
         self, event_type: HookEventType, command: str, *, failed: bool = False
@@ -126,7 +143,15 @@ def checkout(
     (repo / "pkg").mkdir(parents=True)
     _git(repo, "init", "-q")
     project = isolated_checkout_factory(temp_db, "opaque-writes", root=repo).project
-    for name in ("base.txt", "owned.txt", "foreign.txt", "stale.txt", "pkg/gone.txt"):
+    for name in (
+        "base.txt",
+        "owned.txt",
+        "foreign.txt",
+        "stale.txt",
+        "operator.txt",
+        "racer.txt",
+        "pkg/gone.txt",
+    ):
         (repo / name).write_text("base\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.email=t@gobby.local", "-c", "user.name=T", "commit", "-qm", "base")
@@ -168,7 +193,7 @@ def checkout(
     # Dirt before the call: the session's own, and an operator edit no session owns.
     for name in ("owned.txt", "stale.txt"):
         (repo / name).write_text("edited\n", encoding="utf-8")
-    return Checkout(temp_db, repo, project.id, current.id, task.id)
+    return Checkout(temp_db, repo, project.id, current.id, foreign.id, task.id)
 
 
 def _handlers(mock_dependencies: dict[str, Any], db: HubDatabase) -> EventHandlers:
@@ -179,22 +204,23 @@ def _handlers(mock_dependencies: dict[str, Any], db: HubDatabase) -> EventHandle
 
 
 @pytest.mark.parametrize(
-    "command,opaque",
+    "command,operands",
     [
-        ("uv run python tool.py", True),
-        ("uv run --no-sync python3 -W ignore tool.py", True),
-        ("python3 -um pytest", True),
-        ("node build.js", True),
-        ("python3 tool.py > out.txt", True),
-        ("python3 -W ignore", False),
-        ("python3 --version", False),
-        ("python3 - <<'EOF'\nprint(1)\nEOF", False),
-        ("python3 -c 'print(1)'", False),
-        ("ls -la", False),
+        ("uv run python tool.py", []),
+        ("uv run --no-sync python3 -W ignore tool.py out.txt", ["out.txt"]),
+        ("python3 -um pytest tests/x.py -q", ["tests/x.py"]),
+        ("python3 -mpytest tests/x.py", ["tests/x.py"]),
+        ("node build.js --out=dist/a.js --minify", ["dist/a.js"]),
+        ("python3 tool.py > out.txt", []),
+        ("python3 -W ignore", None),
+        ("python3 --version", None),
+        ("python3 - <<'EOF'\nprint(1)\nEOF", None),
+        ("python3 -c 'print(1)'", None),
+        ("ls -la", None),
     ],
 )
-def test_interpreter_running_a_file_is_an_opaque_program(
-    tmp_path: Path, command: str, opaque: bool
+def test_interpreter_running_a_file_names_its_operands(
+    tmp_path: Path, command: str, operands: list[str] | None
 ) -> None:
     data: dict[str, Any] = {
         "tool_name": "Bash",
@@ -203,24 +229,21 @@ def test_interpreter_running_a_file_is_an_opaque_program(
     }
     normalize_tool_fields(data)
 
-    assert data.get("canonical_opaque_program", False) is opaque
+    assert data.get("canonical_opaque_program_operands") == operands
 
 
 @pytest.mark.asyncio
-async def test_sweep_returns_only_unheld_paths_dirtied_since_the_baseline(
+async def test_sweep_returns_only_unheld_operands_dirtied_since_the_baseline(
     checkout: Checkout,
 ) -> None:
-    baseline = await checkout_dirty_paths(str(checkout.repo))
-    assert baseline == {"owned.txt", "stale.txt"}
+    root = str(checkout.repo)
+    baseline = await operand_baseline({root: OPERANDS})
+    assert baseline == {root: {"operands": sorted(OPERANDS), "dirty": ["stale.txt"]}}
     checkout.program_ran()
     variables = SessionVariableManager(checkout.db).get_variables(checkout.session_id)
 
     paths = await opaque_program_writes(
-        checkout.db,
-        variables,
-        session_id=checkout.session_id,
-        checkout_root=str(checkout.repo),
-        baseline=baseline,
+        checkout.db, variables, session_id=checkout.session_id, baseline=baseline
     )
 
     assert paths == [str(checkout.repo / name) for name in sorted(PROGRAM_WRITES)]
@@ -232,7 +255,7 @@ def test_opaque_program_writes_join_the_claim_and_clear_rule_3(
 ) -> None:
     handlers = _handlers(mock_dependencies, checkout.db)
     before = checkout.tool_event(HookEventType.BEFORE_TOOL, PROGRAM)
-    assert before.data["canonical_opaque_program"] is True
+    assert set(before.data["canonical_opaque_program_operands"]) == OPERANDS
 
     assert handlers.handle_before_tool(before).decision == "allow"
     checkout.program_ran()
@@ -244,11 +267,35 @@ def test_opaque_program_writes_join_the_claim_and_clear_rule_3(
     variables = SessionVariableManager(checkout.db).get_variables(checkout.session_id)
     task_paths = variables["task_edited_file_checkouts"][checkout.task_id][str(checkout.repo)]
     assert set(task_paths) == PROGRAM_WRITES
-    for rel_path in ("base.txt", "new.txt"):
+    for rel_path in ("base.txt", "new.txt", "gen.txt"):
         reason = checkout.rule_3_reason(rel_path)
         assert reason == "", reason
-    # Rewriting pre-existing unowned dirt does not make it the program's.
-    assert "no live session owns it" in checkout.rule_3_reason("stale.txt")
+    # Pre-existing unowned dirt and files under a directory operand are not the program's.
+    for rel_path in ("stale.txt", "pkg/made.txt"):
+        assert "no live session owns it" in checkout.rule_3_reason(rel_path)
+
+
+def test_writes_by_others_during_the_call_are_not_adopted(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    handlers = _handlers(mock_dependencies, checkout.db)
+
+    handlers.handle_before_tool(checkout.tool_event(HookEventType.BEFORE_TOOL, PROGRAM))
+    checkout.program_ran()
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, PROGRAM))
+
+    assert not checkout.ledger() & {"operator.txt", "racer.txt"}
+    assert "operator.txt — no live session owns it" in checkout.rule_3_reason("operator.txt")
+    # The foreign writer's ledger lands after the program's after-tool.
+    SessionVariableManager(checkout.db).merge_variables(
+        checkout.foreign_session_id,
+        {
+            "session_dirty_files": ["foreign.txt", "racer.txt"],
+            "session_dirty_file_checkouts": {str(checkout.repo): ["foreign.txt", "racer.txt"]},
+        },
+    )
+    reason = checkout.rule_3_reason("racer.txt")
+    assert "racer.txt — session" in reason, reason
 
 
 def test_no_adoption_without_a_start_time_snapshot(
@@ -263,14 +310,14 @@ def test_no_adoption_without_a_start_time_snapshot(
     assert checkout.ledger() == {"owned.txt"}
 
 
-@pytest.mark.parametrize("command", ["ls -la", "python3 --version"])
-def test_no_status_without_an_opaque_program(
+@pytest.mark.parametrize("command", ["ls -la", "python3 --version", "uv run python tool.py"])
+def test_no_status_without_program_operands(
     mock_dependencies: dict[str, Any], checkout: Checkout, command: str
 ) -> None:
     handlers = _handlers(mock_dependencies, checkout.db)
     status = AsyncMock()
 
-    with patch("gobby.workflows.opaque_write_attribution.daemon_git.status", status):
+    with patch("gobby.workflows.opaque_write_attribution.task_dirty_paths_async", status):
         handlers.handle_before_tool(checkout.tool_event(HookEventType.BEFORE_TOOL, command))
         checkout.program_ran()
         handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
