@@ -1,0 +1,120 @@
+{
+  "release": "1.0.1",
+  "archive_sha256": "4aae2f60cfc49c9e81b8c8c57020aa0cb824da608c78b4f0cf5c0988e19e824e",
+  "version": {
+    "argv": [
+      "--version"
+    ],
+    "exit": 0,
+    "stdout": "rtk 1.0.1\n",
+    "stderr": ""
+  },
+  "help": {
+    "argv": [
+      "rewrite",
+      "--help"
+    ],
+    "exit": 0,
+    "stdout": "Rewrite a raw command to its RTK equivalent (single source of truth for hooks)\n\nExit codes (a hook must handle all four). The rules are Claude Code's permission rules, checked against every command in a chain.\n\n0 - rewrite printed, allow rules cover every command: the hook may auto-allow it. RTK_REWRITE_HOST=openclaw, for a delegate that gates commands itself, turns every 3 but an ask rule's into 0, so a hook that auto-allows on 0 runs rtk with that variable unset.\n\n1 - nothing printed, no rewrite (no RTK equivalent, nothing left to rewrite, a command excluded in config, a construct RTK does not rewrite such as `$(...)` or a file redirect, or a deny rule matched inside a shell wrapper's script): run the command unchanged.\n\n2 - a deny matched (checked before anything else). Nothing printed: a deny rule, defer to the agent's own deny. A message printed: an rtk pipeline rule denied or routed the command, block it with that message.\n\n3 - rewrite printed, an ask rule matched or allow rules do not cover every command, including when there are no rules at all: use the rewrite and defer approval to the host.\n\nCompare the rewrite with the original: a command already in RTK form can come back as itself under 0 or 3.\n\nExit 3 is still a rewrite, so `REWRITTEN=$(rtk rewrite \"$CMD\") || exit 0` drops it.\n\nSee hooks/claude/rtk-rewrite.sh in the RTK repository for reference handling.\n\nUsage: rtk rewrite [OPTIONS] [ARGS]...\n\nArguments:\n  [ARGS]...\n          Raw command to rewrite (e.g. \"git status\", \"cargo test && git push\") Accepts multiple args: `rtk rewrite ls -al` is equivalent to `rtk rewrite \"ls -al\"`\n\nOptions:\n      --skip-env\n          Set SKIP_ENV_VALIDATION=1 for child processes (Next.js, tsc, lint, prisma)\n\n  -h, --help\n          Print help (see a summary with '-h')\n",
+    "stderr": ""
+  },
+  "ask": {
+    "argv": [
+      "rewrite",
+      "--",
+      "git status"
+    ],
+    "exit": 3,
+    "stdout": "rtk git status",
+    "stderr": ""
+  },
+  "allow": {
+    "argv": [
+      "rewrite",
+      "--",
+      "git status"
+    ],
+    "exit": 0,
+    "stdout": "rtk git status",
+    "stderr": ""
+  },
+  "deny": {
+    "argv": [
+      "rewrite",
+      "--",
+      "git status"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": ""
+  },
+  "hook_pipeline_deny": {
+    "argv": [
+      "hook",
+      "claude"
+    ],
+    "exit": 0,
+    "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Compatibility policy: command refused\"}}\n",
+    "stderr": ""
+  },
+  "compact": {
+    "argv": [
+      "pipe",
+      "-f",
+      "pytest"
+    ],
+    "exit": 0,
+    "stdout": "Pytest: 0 passed, 1 failed in 0.01s\n\nFailures:\n1. [FAIL] test_feature\n     >       assert feature() == 1\n     E       assert 0 == 1\n     tests/test_feature.py:4: AssertionError\n\n2. [FAIL] tests/test_feature.py::test_feature\n     assert 0 == 1",
+    "stderr": ""
+  },
+  "pytest": {
+    "argv": [
+      "pytest",
+      "tests/test_feature.py",
+      "-q"
+    ],
+    "exit": 1,
+    "stdout": "Pytest: 0 passed, 1 failed in 0.01s\n\nFailures:\n1. [FAIL] test_feature\n     >       assert feature() == 1\n     E       assert 0 == 1\n     tests/test_feature.py:4: AssertionError\n\n2. [FAIL] tests/test_feature.py::test_feature\n     assert 0 == 1\n[full output: rtk recall bac15d0b1278]\n",
+    "stderr": ""
+  },
+  "proxy": {
+    "argv": [
+      "proxy",
+      "printf",
+      "compatibility\\n"
+    ],
+    "exit": 0,
+    "stdout": "compatibility\n",
+    "stderr": ""
+  },
+  "bypass": {
+    "argv": [
+      "bypass",
+      "printf",
+      "compatibility\\n"
+    ],
+    "exit": 0,
+    "stdout": "compatibility\n",
+    "stderr": ""
+  },
+  "recall_full": {
+    "argv": [
+      "recall",
+      "bac15d0b1278",
+      "--full"
+    ],
+    "exit": 0,
+    "stdout": "============================= test session starts ==============================\ncollected 1 item\n\ntests/test_feature.py F                                                   [100%]\n\n=================================== FAILURES ===================================\n_________________________________ test_feature _________________________________\n\n    def test_feature():\n>       assert feature() == 1\nE       assert 0 == 1\n\ntests/test_feature.py:4: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_feature.py::test_feature - assert 0 == 1\n============================== 1 failed in 0.01s ===============================\n",
+    "stderr": ""
+  },
+  "pytest_pass": {
+    "argv": [
+      "pytest",
+      "tests/test_feature.py",
+      "-q"
+    ],
+    "exit": 0,
+    "stdout": "1 passed in 0.01s\n",
+    "stderr": ""
+  }
+}
