@@ -2686,6 +2686,17 @@ Failures:
     ("recall_command", "retrieval", "duplicate_red", "expected"),
     [
         pytest.param("rtk recall d1965a04eb04", "success", False, True, id="original-receipt"),
+        pytest.param("rtk recall d1965a04eb04 --full", "success", False, True, id="full-receipt"),
+        pytest.param(
+            "uv run rtk recall d1965a04eb04 --full", "success", False, True, id="uv-full-receipt"
+        ),
+        pytest.param(
+            "rtk recall d1965a04eb04 --full", "success", True, False, id="ambiguous-full-receipt"
+        ),
+        pytest.param(
+            "rtk recall d1965a04eb04 --full | cat", "success", False, False, id="full-pipe"
+        ),
+        pytest.param("rtk recall d1965a04eb04 --raw", "success", False, False, id="unknown-option"),
         pytest.param(
             "rtk recall d1965a04eb04", "indented", False, True, id="indented-native-reference"
         ),

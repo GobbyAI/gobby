@@ -47,6 +47,7 @@ pub enum Action {
     NextTab,
     MoveTabLeft,
     MoveTabRight,
+    SortTabs,
     SwitchTab(u8),
     MovePaneToTab(u8),
     MovePaneToNewTab,
@@ -214,6 +215,7 @@ pub const BINDINGS: &[BindingSpec] = &[
         "Move the active tab right",
         &["prefix+shift+right"],
     ),
+    spec("sort_tabs", "Sort the workspace's tabs by title", &[]),
     indexed("switch_tab", "Switch to tab 1-9", &["prefix+1..9"]),
     indexed(
         "move_pane_to_tab",
@@ -357,6 +359,7 @@ action_names! {
     "next_workspace" => NextWorkspace, "rename_tab" => RenameTab,
     "previous_tab" => PreviousTab, "next_tab" => NextTab,
     "move_tab_left" => MoveTabLeft, "move_tab_right" => MoveTabRight,
+    "sort_tabs" => SortTabs,
     "move_pane_to_new_tab" => MovePaneToNewTab,
     "close_tab" => CloseTab,
     "rename_pane" => RenamePane, "copy_mode" => CopyMode,

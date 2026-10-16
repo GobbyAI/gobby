@@ -590,15 +590,18 @@ async def test_replay_shared_key_passes_through_front_door_auth(
 
 
 @pytest.mark.asyncio
-async def test_replay_terminal_401_is_quarantined_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("status", "reason"), [(401, "replay_auth_rejected"), (403, "hook_machine_mismatch")]
+)
+async def test_replay_terminal_rejection_is_quarantined_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, status: int, reason: str
 ) -> None:
     inbox_dir = tmp_path / "inbox"
     inbox_dir.mkdir()
     envelope = _valid_envelope()
     envelope["headers"] = {"Authorization": "Bearer persisted-secret"}
     envelope_path = _write_inbox_envelope(inbox_dir, "terminal-auth", envelope)
-    post = AsyncMock(return_value=httpx.Response(401, text="response-secret"))
+    post = AsyncMock(return_value=httpx.Response(status, text="response-secret"))
     settled = MagicMock()
     app = FastAPI()
     _get_hook_settle_listeners(app).add(settled)
@@ -618,11 +621,11 @@ async def test_replay_terminal_401_is_quarantined_once(
     quarantine = get_hook_quarantine_dir(inbox_dir)
     assert (quarantine / envelope_path.name).read_bytes() == json.dumps(envelope).encode()
     metadata = json.loads((quarantine / f"{envelope_path.name}.meta.json").read_text())
-    assert metadata["reason"] == "replay_auth_rejected"
-    assert metadata["detail"] == "Hook replay returned HTTP 401"
+    assert metadata["reason"] == reason
+    assert metadata["detail"] == f"Hook replay returned HTTP {status}"
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
     assert len(warnings) == 1
-    assert "401" in warnings[0].getMessage()
+    assert str(status) in warnings[0].getMessage()
     assert "persisted-secret" not in caplog.text
     assert "response-secret" not in caplog.text
 
@@ -1940,3 +1943,57 @@ def test_receipt_read_by_six_consumers_is_acknowledged_and_logged_once(
     assert acknowledge.call_count == 1
     assert sum(consumed) == 1
     assert [r.levelno for r in stale] == [logging.DEBUG]
+
+
+@pytest.mark.asyncio
+async def test_drain_skips_session_after_adapter_timeout_and_replays_others(
+    tmp_path: Path,
+) -> None:
+    """One wedged session costs a pass one adapter timeout, not one per envelope (#24505)."""
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    paths: dict[str, Path] = {}
+    for envelope_id, session_id in (
+        ("n-0000000000001-wedged-first", "wedged-session"),
+        ("n-0000000000002-wedged-second", "wedged-session"),
+        ("n-0000000000003-healthy", "healthy-session"),
+    ):
+        envelope = _valid_envelope()
+        envelope["headers"] = {"X-Gobby-Session-Id": session_id}
+        paths[envelope_id] = _write_inbox_envelope(inbox_dir, envelope_id, envelope)
+    posted: list[str | None] = []
+
+    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+        posted.append(envelope_id)
+        if envelope["headers"]["X-Gobby-Session-Id"] == "wedged-session":
+            return httpx.Response(503, json={"status": "retry", "retry_kind": "adapter_timeout"})
+        return httpx.Response(200, json={"continue": True})
+
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir, include_fresh=True)
+
+    assert posted == ["n-0000000000001-wedged-first", "n-0000000000003-healthy"]
+    assert replayed == 1
+    assert paths["n-0000000000001-wedged-first"].exists()
+    assert paths["n-0000000000002-wedged-second"].exists()
+    assert not paths["n-0000000000003-healthy"].exists()
+
+
+@pytest.mark.asyncio
+async def test_drain_keeps_replaying_session_after_other_503(tmp_path: Path) -> None:
+    """Only an adapter timeout marks the session; other retryable 503s replay its next envelope."""
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    for envelope_id in ("n-0000000000001-first", "n-0000000000002-second"):
+        envelope = _valid_envelope()
+        envelope["headers"] = {"X-Gobby-Session-Id": "busy-session"}
+        _write_inbox_envelope(inbox_dir, envelope_id, envelope)
+    posted: list[str | None] = []
+
+    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+        posted.append(envelope_id)
+        return httpx.Response(503, json={"status": "retry", "retry_kind": "preflight_timeout"})
+
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir, include_fresh=True)
+
+    assert posted == ["n-0000000000001-first", "n-0000000000002-second"]
+    assert replayed == 0

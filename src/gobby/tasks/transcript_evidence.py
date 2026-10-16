@@ -807,7 +807,8 @@ def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
         and (
             reference.search(run.output or "")
             or re.fullmatch(
-                rf"(?:uv run )?rtk recall {match.group(1)}", run.output_recovered_from or ""
+                rf"(?:uv run )?rtk recall {match.group(1)}(?: --full)?",
+                run.output_recovered_from or "",
             )
         )
     ]

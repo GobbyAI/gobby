@@ -837,3 +837,55 @@ def test_sweep_keeps_orphaned_panes(
     swept = manager.sweep_dead_panes(workspace.id)
     assert [pane.id for pane in swept.removed_panes] == [seat.id]
     assert manager.list_panes(workspace.id) == []
+
+
+def test_reorder_tabs_persists_order_and_keeps_pane_bindings(
+    manager: WorkspaceManager, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    workspace, _created = manager.create(manager.resolve_node(None).id)
+    terminals = TerminalManager(temp_db)
+    tabs = []
+    for title in ("Lane 10", "lane 2", "Alpha"):
+        created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
+        terminal = _terminal(terminals, project_id, live=True)
+        bound = manager.set_pane_terminal(created.panes[0].id, terminal.id, owns_terminal=True)
+        assert bound is not None
+        tabs.append(manager.rename_tab(created.tabs[0].id, title))
+    bindings = {
+        (pane.tab_id, pane.id, pane.terminal_id) for pane in manager.list_panes(workspace.id)
+    }
+    order = [tabs[2].id, tabs[1].id, tabs[0].id]
+
+    change = manager.reorder_tabs(workspace.id, order)
+
+    assert [(row.id, row.position) for row in change.tabs] == list(
+        zip(order, range(3), strict=True)
+    )
+    reread = WorkspaceManager(temp_db)
+    stored = reread.list_tabs(workspace.id)
+    assert [(row.id, row.layout) for row in stored] == [
+        (tab.id, tab.layout) for tab in reversed(tabs)
+    ]
+    panes = reread.list_panes(workspace.id)
+    assert {(pane.tab_id, pane.id, pane.terminal_id) for pane in panes} == bindings
+
+
+def test_reorder_tabs_rejects_repeats_and_stale_orders(
+    manager: WorkspaceManager, sample_project: dict[str, Any]
+) -> None:
+    workspace, _created = manager.create(manager.resolve_node(None).id)
+    first, second = (
+        manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=sample_project["id"]).tabs[
+            0
+        ]
+        for _ in range(2)
+    )
+
+    with pytest.raises(InvalidWorkspaceOpError, match="more than once"):
+        manager.reorder_tabs(workspace.id, [first.id, first.id])
+    with pytest.raises(WorkspaceBusyError, match="retry"):
+        manager.reorder_tabs(workspace.id, [second.id])
+    with pytest.raises(WorkspaceBusyError, match="retry"):
+        manager.reorder_tabs(workspace.id, [second.id, first.id, str(uuid.uuid4())])
+    assert [row.id for row in manager.list_tabs(workspace.id)] == [first.id, second.id]

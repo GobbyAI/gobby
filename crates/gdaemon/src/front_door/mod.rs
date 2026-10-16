@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod challenge;
+pub mod compare;
 pub mod health;
 pub mod proxy;
 pub mod relay;
@@ -31,6 +32,8 @@ pub struct FrontDoorState {
     pub backend_state: BackendState,
     pub client: ProxyClient,
     pub auth: Arc<auth::AuthState>,
+    /// Where Compare-mode families record outcomes; `None` records nothing.
+    pub compare_log: Option<Arc<compare::CompareLog>>,
 }
 
 impl FrontDoorState {
@@ -47,6 +50,7 @@ impl FrontDoorState {
             backend_state,
             client: proxy::client(),
             auth,
+            compare_log: None,
         }
     }
 }

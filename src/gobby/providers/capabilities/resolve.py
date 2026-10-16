@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -247,17 +248,26 @@ class CapabilityResolver:
 
     def find_model(self, provider: str, model: str) -> ModelCapability | None:
         """Return the provider snapshot row for ``model``, if the catalog has one."""
+        return self.find_models(provider, (model,))[model]
+
+    def find_models(
+        self, provider: str, models: Iterable[str]
+    ) -> dict[str, ModelCapability | None]:
+        """Return each of ``models``' provider snapshot rows, reading the snapshot once."""
         snapshot = self._store.get_provider_snapshot(provider)
-        if snapshot is None:
-            return None
-        return next(
-            (
-                capability
-                for capability in snapshot.models
-                if model == capability.canonical_model or model in capability.aliases
-            ),
-            None,
-        )
+        return {
+            model: None
+            if snapshot is None
+            else next(
+                (
+                    capability
+                    for capability in snapshot.models
+                    if model == capability.canonical_model or model in capability.aliases
+                ),
+                None,
+            )
+            for model in models
+        }
 
     def has_authoritative_provider_catalog(self, provider: str) -> bool:
         """Return whether a live-collected capability snapshot is loaded for ``provider``.

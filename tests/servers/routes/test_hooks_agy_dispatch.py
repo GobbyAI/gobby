@@ -33,6 +33,7 @@ from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.hooks.startup_claim_preflight import StartupClaimLease
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.state_manager import StartupContextClaim
 from tests._timing import wait_for_condition
 from tests.servers.conftest import create_http_server
@@ -93,6 +94,7 @@ def _agy_pre_invocation_envelope(*, conversation_id: str = _SESSION_UUID) -> dic
             "conversationId": conversation_id,
             "workspacePaths": ["/tmp/agy-ws"],
             "cwd": "/tmp/agy-ws",
+            "machine_id": get_machine_id(),
         },
     }
 
@@ -122,6 +124,7 @@ def _agy_post_invocation_envelope(
             "executionNum": execution_num,
             "workspacePaths": ["/tmp/agy-ws"],
             "cwd": "/tmp/agy-ws",
+            "machine_id": get_machine_id(),
         },
     }
 
@@ -178,6 +181,7 @@ def test_execute_hook_dispatches_agy_adapter(session_storage: SessionManager) ->
                     "hook_event_name": "PreToolUse",
                     "session_id": "agy-123",
                     "cwd": "/tmp",
+                    "machine_id": get_machine_id(),
                 },
             },
         )
@@ -194,6 +198,7 @@ def test_execute_hook_dispatches_agy_adapter(session_storage: SessionManager) ->
             "hook_event_name": "PreToolUse",
             "session_id": "agy-123",
             "cwd": "/tmp",
+            "machine_id": get_machine_id(),
         },
         "_enqueued_at": "2026-06-24T12:00:00Z",
     }
@@ -244,7 +249,7 @@ class TestAgyStartupClaimPreflight:
             id="sess-preflight-1",
             project_id="proj-agy",
             source="agy",
-            machine_id="machine-agy",
+            machine_id=get_machine_id(),
             session_type="interactive",
             status="active",
             workspace_path="/tmp/agy-ws",
@@ -316,7 +321,7 @@ class TestAgyStartupClaimPreflight:
             id=_SESSION_UUID,
             project_id="proj-agy",
             source="agy",
-            machine_id="machine-agy",
+            machine_id=get_machine_id(),
             session_type="interactive",
             status="active",
             workspace_path="/tmp/agy-ws",
@@ -1070,7 +1075,7 @@ class TestAgyAdapterTimeoutFencing:
             id="sess-fence-1",
             project_id="proj-agy",
             source="agy",
-            machine_id="machine-agy",
+            machine_id=get_machine_id(),
             session_type="interactive",
             status="active",
             workspace_path="/tmp/agy-ws",
@@ -1154,7 +1159,11 @@ class TestAgyAdapterTimeoutFencing:
             "critical": critical,
             "hook_type": hook_type,
             "source": source,
-            "input_data": {"session_id": f"{source}-1", "cwd": "/tmp"},
+            "input_data": {
+                "session_id": f"{source}-1",
+                "cwd": "/tmp",
+                "machine_id": get_machine_id(),
+            },
             "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         }
         started = threading.Event()

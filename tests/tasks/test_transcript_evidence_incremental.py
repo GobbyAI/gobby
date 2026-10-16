@@ -456,6 +456,35 @@ async def test_restart_resumes_from_durable_checkpoint(
     assert [run.outcome for run in second.validation_runs] == ["failure", "success"]
 
 
+async def test_pre_rtk_parity_checkpoint_is_rederived(
+    tmp_path: Path, parse_counts: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Version-21 prefixes must be reparsed after RTK evidence semantics change."""
+    transcript = tmp_path / "rtk-version.jsonl"
+    records = _claude_tool_pair(
+        command="rtk proxy pytest tests/tasks/test_a.py",
+        call_id="run-1",
+        start=BASE_TIME,
+        result={"exit_code": 0, "stdout": "1 passed"},
+    )
+    _write_jsonl(transcript, records)
+    session = _session("claude", transcript)
+    original_dumps = json.dumps
+
+    def legacy_dumps(value: Any, **kwargs: Any) -> str:
+        if isinstance(value, dict) and "derivation_version" in value:
+            value = {**value, "derivation_version": 21}
+        return original_dumps(value, **kwargs)
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(json, "dumps", legacy_dumps)
+        await _derive(session, BASE_TIME, set(), tmp_path)
+
+    refreshed = await _derive(session, BASE_TIME, set(), tmp_path)
+    assert parse_counts == [len(records), len(records)]
+    assert refreshed.validation_runs[0].outcome == "success"
+
+
 @pytest.mark.parametrize(
     "corruption", ["invalid-json", "negative-watermark", "tail-overrun", "tail-digest"]
 )

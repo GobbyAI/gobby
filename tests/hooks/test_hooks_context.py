@@ -96,6 +96,9 @@ def test_hook_event_task_id(mock_hook_manager: Any) -> None:
 
     # Mock session lookup
     mock_hook_manager._session_manager.get_session_id.return_value = platform_session_id
+    mock_hook_manager._session_manager.get.return_value.machine_id = (
+        mock_hook_manager.get_machine_id()
+    )
 
     # Mock active task lookup
     mock_task = MagicMock(spec=Task)
@@ -165,6 +168,7 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
     assert "_platform_session_id" not in start_event.metadata
 
     session_obj = MagicMock()
+    session_obj.machine_id = mock_hook_manager.get_machine_id()
     session_obj.project_id = "test-project-id"
     session_obj.parent_session_id = None
     session_obj.transcript_path = None

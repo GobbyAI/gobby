@@ -15,6 +15,7 @@
 
 mod mock_daemon;
 
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,7 +27,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::app::{run_live_loop, spawn_job, JobKey, JobLedger, JobResult, PaneId};
 use gobby_client::daemon::{Daemon, Generation, LiveDaemon, REQUEST_DEADLINE};
-use gobby_client::frame_source::Transport;
+use gobby_client::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
@@ -36,7 +37,7 @@ use gobby_terminal::protocol::{
     PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use gobby_terminal::raw_input::RawInputEvent;
-use mock_daemon::MockDaemon;
+use mock_daemon::{DirectHost, MockDaemon};
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
@@ -44,6 +45,7 @@ use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::timeout;
+use tracing::subscriber::DefaultGuard;
 
 /// How long a live loop may take to show one probe's progress.
 const LIVENESS_DEADLINE: Duration = Duration::from_secs(2);
@@ -139,7 +141,14 @@ impl Backend for DrawRecorder {
 }
 
 fn encoded_frame(text: &str) -> String {
-    let message = ServerMessage::Frame(FrameData {
+    let mut framed = Vec::new();
+    write_message(&mut framed, &frame_message(text)).expect("encode test frame");
+    STANDARD.encode(&framed[4..])
+}
+
+/// One row of `text`, as a host or the daemon's proxy delivers it.
+fn frame_message(text: &str) -> ServerMessage {
+    ServerMessage::Frame(FrameData {
         cells: text
             .chars()
             .map(|symbol| CellData {
@@ -157,10 +166,7 @@ fn encoded_frame(text: &str) -> String {
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
         modes: PaneModes::default(),
-    });
-    let mut framed = Vec::new();
-    write_message(&mut framed, &message).expect("encode test frame");
-    STANDARD.encode(&framed[4..])
+    })
 }
 
 fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
@@ -413,6 +419,12 @@ struct StallingHost {
 
 impl StallingHost {
     async fn start() -> Self {
+        Self::start_gated(None).await
+    }
+
+    /// As `start`, but the host answers the client's hello only once
+    /// `welcome` is notified, so the direct handshake stays open until then.
+    async fn start_gated(welcome: Option<Arc<Notify>>) -> Self {
         let socket_dir = tempfile::tempdir().expect("direct socket dir");
         let socket_path = socket_dir.path().join("frames.sock");
         let listener =
@@ -428,6 +440,9 @@ impl StallingHost {
             let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
                 .await
                 .expect("direct hello");
+            if let Some(welcome) = welcome {
+                welcome.notified().await;
+            }
             write_message_async(
                 &mut stream,
                 &ServerMessage::Welcome {
@@ -2480,5 +2495,602 @@ async fn a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take() {
         at("release terminal-b") < at("take terminal-a"),
         "b's release still precedes a's take: {wire:?}"
     );
+    mock.shutdown().await;
+}
+
+// ---- Attach and recovery beside the loop (plan A3) ----
+
+struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for LogWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .expect("captured logs")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Records this thread's log lines until the guard drops. The tests run on
+/// tokio's current-thread runtime, so the live loop's lines land here too.
+fn capture_logs() -> (DefaultGuard, Arc<Mutex<Vec<u8>>>) {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&captured);
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_target(false)
+        .with_writer(move || LogWriter(Arc::clone(&writer)))
+        .finish();
+    (tracing::subscriber::set_default(subscriber), captured)
+}
+
+/// The captured lines that carry the record `name`.
+fn records(captured: &Arc<Mutex<Vec<u8>>>, name: &str) -> Vec<String> {
+    let bytes = captured.lock().expect("captured logs").clone();
+    String::from_utf8(bytes)
+        .expect("UTF-8 logs")
+        .lines()
+        .filter(|line| line.contains(name))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Asserts `line` carries the pane context every recovery record names.
+fn assert_recovery_context(line: &str, terminal_id: &str, stage: &str, error_class: &str) {
+    for field in [
+        "pane_id=".to_string(),
+        format!("terminal_id={terminal_id}"),
+        "generation=".to_string(),
+        format!("stage=\"{stage}\""),
+        format!("error_class=\"{error_class}\""),
+        "elapsed_ms=".to_string(),
+    ] {
+        assert!(line.contains(&field), "{field} missing from {line}");
+    }
+}
+
+fn attach_requests(mock: &MockDaemon, terminal_id: &str) -> Vec<Value> {
+    websocket_requests(mock, "terminal_attach")
+        .into_iter()
+        .filter(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+        .collect()
+}
+
+fn detaches_of(mock: &MockDaemon, attachment_id: &str) -> usize {
+    websocket_requests(mock, "terminal_detach")
+        .iter()
+        .filter(|request| request.get("attachment_id") == Some(&json!(attachment_id)))
+        .count()
+}
+
+fn roster(mock: &MockDaemon, items: Vec<Value>) {
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+}
+
+/// A3.2: a pane whose attach the daemon holds never holds up the pane
+/// already attached beside it.
+#[tokio::test]
+async fn a_held_attach_on_one_pane_keeps_the_other_pane_rendering() {
+    let mock = MockDaemon::start("local-token").await;
+    let release = mock.hold_ws("terminal_attach", for_terminal("terminal-a"));
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let ticker_before = chrome.ticker;
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.assert_live("terminal-b", "terminal-b", 'x').await;
+        probe.assert_live("terminal-b", "terminal-b", 'y').await;
+        assert!(
+            attach_requests(&mock, "terminal-a").len() == 1 && mock.replies("terminal_attach") == 1,
+            "terminal-a's attach is still held while terminal-b streams"
+        );
+        release.notify_one();
+        wait_until("terminal-a's viewport claim", || {
+            websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|request| request.get("terminal_id") == Some(&json!("terminal-a")))
+        })
+        .await;
+        probe.frames_render("terminal-a").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(chrome.ticker > ticker_before, "the render tick advanced");
+    assert_eq!(written(&mock, "terminal-b"), ["x", "y"]);
+    mock.shutdown().await;
+}
+
+/// Holds terminal-b's direct handshake open across a reconnect, then lets it
+/// finish once the new connection has rolled the generation forward. Once
+/// the loop logs dropping that result, the new connection comes up and
+/// terminal-b attaches again. Returns the attachment the stale attach won.
+async fn finish_a_direct_attach_after_a_reconnect(
+    mock: &MockDaemon,
+    logs: &Arc<Mutex<Vec<u8>>>,
+) -> (Workspace<LiveDaemon>, String) {
+    let welcome = Arc::new(Notify::new());
+    let host = StallingHost::start_gated(Some(Arc::clone(&welcome))).await;
+    let (mut workspace, _home) = two_pane_workspace(mock, Some(&host)).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        wait_until("terminal-b's direct attach", || {
+            !attach_requests(mock, "terminal-b").is_empty()
+        })
+        .await;
+        wait_for_replies(mock, "terminal_attach", 2).await;
+        // The mock numbers attachments in request order.
+        let index = websocket_requests(mock, "terminal_attach")
+            .iter()
+            .position(|request| request.get("terminal_id") == Some(&json!("terminal-b")))
+            .expect("terminal-b attach");
+        let stale = format!("attachment-{}", index + 1);
+        let subscribes = websocket_requests(mock, "subscribe").len();
+        let subscribed = mock.hold_ws("subscribe", |_| true);
+        mock.drop_websockets();
+        wait_within(DRAIN_DEADLINE, "the reconnect's subscribe", || {
+            websocket_requests(mock, "subscribe").len() > subscribes
+        })
+        .await;
+        welcome.notify_one();
+        // terminal-a's proxy can give up a recovery of its own across the
+        // same reconnect; only terminal-b's attach was won on the old one.
+        wait_until("the stale attach result's record", || {
+            records(logs, "frame_recovery_gave_up")
+                .iter()
+                .any(|line| line.contains("terminal_id=terminal-b"))
+        })
+        .await;
+        subscribed.notify_one();
+        wait_until("terminal-b's attach on the new connection", || {
+            attach_requests(mock, "terminal-b").len() == 2
+        })
+        .await;
+        drop(input_tx);
+        stale
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, stale) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    (workspace, stale)
+}
+
+/// A3.3: an attach that lands after a reconnect is never installed, and the
+/// pane attaches again on the new connection. The attachment it won died
+/// with the old connection, which the daemon finalizes on close, so no
+/// detach names it. A result superseded on the current connection still
+/// holds a live attachment, so that one is detached exactly once.
+#[tokio::test]
+async fn an_attach_outcome_from_a_previous_generation_is_dropped() {
+    let (_guard, logs) = capture_logs();
+    let mock = MockDaemon::start("local-token").await;
+    let (workspace, stale) = finish_a_direct_attach_after_a_reconnect(&mock, &logs).await;
+    let pane_b = workspace.pane_for_terminal("terminal-b").expect("pane b");
+    assert_ne!(workspace.pane(pane_b).attachment_id(), stale);
+    assert_eq!(
+        detaches_of(&mock, &stale),
+        0,
+        "the old connection's close finalized it"
+    );
+    let attaches = attach_requests(&mock, "terminal-b");
+    assert_eq!(
+        attaches.len(),
+        2,
+        "terminal-b attaches afresh: {attaches:?}"
+    );
+    mock.shutdown().await;
+
+    let mock = MockDaemon::start("local-token").await;
+    let superseded = supersede_an_attach_on_the_current_connection(&mock).await;
+    assert_eq!(detaches_of(&mock, &superseded), 1, "detached exactly once");
+    mock.shutdown().await;
+}
+
+/// Holds terminal-a's attach while its terminal exits, so the pane is gone
+/// when the attach lands on the same connection. Returns the attachment that
+/// attach won.
+async fn supersede_an_attach_on_the_current_connection(mock: &MockDaemon) -> String {
+    let release = mock.hold_ws("terminal_attach", for_terminal("terminal-a"));
+    let (mut workspace, _home) = two_pane_workspace(mock, None).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        wait_until("terminal-a's attach", || {
+            !attach_requests(mock, "terminal-a").is_empty()
+        })
+        .await;
+        // The mock numbers attachments in request order.
+        let index = websocket_requests(mock, "terminal_attach")
+            .iter()
+            .position(|request| request.get("terminal_id") == Some(&json!("terminal-a")))
+            .expect("terminal-a attach");
+        let superseded = format!("attachment-{}", index + 1);
+        // Written ahead of the attach reply, the exit reaches the loop's
+        // event branch, which it polls before recoveries.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_event",
+            "event": "exited",
+            "terminal_id": "terminal-a",
+            "daemon_epoch": "epoch-1",
+            "seq": 2,
+            "timestamp": "2026-01-01T00:00:00Z"
+        }))
+        .await;
+        release.notify_one();
+        wait_until("the superseded attachment's detach", || {
+            detaches_of(mock, &superseded) == 1
+        })
+        .await;
+        drop(input_tx);
+        superseded
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, superseded) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(workspace.pane_for_terminal("terminal-a").is_none());
+    superseded
+}
+
+/// A3.4: a recovery's detach and attach run beside the loop, so keys keep
+/// reaching the pane next to it while both are held.
+#[tokio::test]
+async fn recovery_detaches_then_attaches_while_input_still_routes() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        let old = attachment_for(&mock, "terminal-a");
+        let detach = mock.hold_ws("terminal_detach", for_terminal("terminal-a"));
+        let attach = mock.hold_ws("terminal_attach", for_terminal("terminal-a"));
+        // A frame with no payload fails terminal-a's proxy source.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-a",
+            "attachment_id": old,
+            "encoding": "bincode-b64",
+        }))
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        probe.assert_live("terminal-b", "terminal-b", 'x').await;
+        detach.notify_one();
+        wait_until("the recovery's attach", || {
+            attach_requests(&mock, "terminal-a").len() == 2
+        })
+        .await;
+        probe.assert_live("terminal-b", "terminal-b", 'y').await;
+        attach.notify_one();
+        wait_until("terminal-a's fresh attachment", || {
+            attachment_for(&mock, "terminal-a") != old
+        })
+        .await;
+        probe.frames_render("terminal-a").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(written(&mock, "terminal-b"), ["x", "y"]);
+    mock.shutdown().await;
+}
+
+/// Runs the loop over one proxy pane whose frame source fails with `error`
+/// at once, until a captured line carries `until`.
+async fn recover_a_failed_pane(
+    error: FrameError,
+    arrange: impl FnOnce(&MockDaemon),
+    logs: &Arc<Mutex<Vec<u8>>>,
+    until: &str,
+) {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let items = vec![json!({"terminal_id": "terminal-a", "backend": "native", "state": "live"})];
+    roster(&mock, items.clone());
+    roster(&mock, items);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attach terminal-a");
+    let pane = workspace.pane_for_terminal("terminal-a").expect("pane a");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue_error(error);
+    workspace
+        .replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("install failing source");
+    arrange(&mock);
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let driver = async {
+        wait_within(DRAIN_DEADLINE, until, || !records(logs, until).is_empty()).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+}
+
+/// A3.6: every frame failure, give-up and recovered pane leaves one record
+/// naming the pane, so `gclient.log` closes each attempt.
+#[tokio::test]
+async fn frame_errors_and_recovery_giveups_are_logged_with_pane_context() {
+    let (guard, logs) = capture_logs();
+
+    // A lagged source starts a recovery that lands on a fresh proxy attach.
+    recover_a_failed_pane(FrameError::Lag, |_| {}, &logs, "frame_recovery_completed").await;
+    let started = records(&logs, "frame_recovery_started");
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert_recovery_context(&started[0], "terminal-a", "detach", "lag");
+    assert!(started[0].contains("attachment_id="), "{}", started[0]);
+    let completed = records(&logs, "frame_recovery_completed");
+    assert_eq!(completed.len(), 1, "{completed:?}");
+    assert!(
+        completed[0].contains("transport=\"proxy\""),
+        "{}",
+        completed[0]
+    );
+    assert!(completed[0].contains("elapsed_ms="), "{}", completed[0]);
+
+    // A detach the daemon never answers gives up at its deadline.
+    recover_a_failed_pane(
+        FrameError::Eof,
+        |mock| mock.suppress_ws("terminal_detach"),
+        &logs,
+        "frame_recovery_gave_up",
+    )
+    .await;
+    let gave_up = records(&logs, "frame_recovery_gave_up");
+    assert_eq!(gave_up.len(), 1, "{gave_up:?}");
+    assert_recovery_context(&gave_up[0], "terminal-a", "detach", "deadline");
+
+    // A refused re-attach gives up with the daemon's code.
+    recover_a_failed_pane(
+        FrameError::Io("frame socket reset".into()),
+        |mock| mock.refuse_next_proxy_attach("terminal_gone", "terminal exited"),
+        &logs,
+        // Earlier cases already logged proxy_attach records; wait for this
+        // refusal's own.
+        "error_class=\"terminal_gone\"",
+    )
+    .await;
+    let gave_up = records(&logs, "frame_recovery_gave_up");
+    assert_eq!(gave_up.len(), 2, "{gave_up:?}");
+    assert_recovery_context(&gave_up[1], "terminal-a", "proxy_attach", "terminal_gone");
+
+    // A stale attach result is discarded without a replacement.
+    let mock = MockDaemon::start("local-token").await;
+    let _ = finish_a_direct_attach_after_a_reconnect(&mock, &logs).await;
+    mock.shutdown().await;
+    let stale: Vec<String> = records(&logs, "frame_recovery_gave_up")
+        .into_iter()
+        .filter(|line| line.contains("terminal_id=terminal-b"))
+        .collect();
+    assert_eq!(stale.len(), 1, "{stale:?}");
+    assert_recovery_context(&stale[0], "terminal-b", "direct_attach", "stale");
+    let completed_before = records(&logs, "frame_recovery_completed").len();
+
+    // A direct handshake the host never answers times out, and the pane
+    // closes the attempt on the proxy.
+    let mock = MockDaemon::start("local-token").await;
+    let host = StallingHost::start_gated(Some(Arc::new(Notify::new()))).await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, Some(&host)).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let driver = async {
+        wait_within(Duration::from_secs(15), "the proxy fallback", || {
+            records(&logs, "frame_recovery_completed")[completed_before..]
+                .iter()
+                .any(|line| {
+                    line.contains("terminal_id=terminal-b") && line.contains("transport=\"proxy\"")
+                })
+        })
+        .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+    drop(guard);
+    let timed_out = records(&logs, "direct_attach_timed_out");
+    assert_eq!(timed_out.len(), 1, "{timed_out:?}");
+    assert_recovery_context(&timed_out[0], "terminal-b", "direct_attach", "timeout");
+}
+
+/// A3.7: a new terminal whose attach the daemon holds for three seconds
+/// never stops frames, ticks or keys on a pane streaming from its host.
+#[tokio::test]
+async fn a_slow_new_terminal_attach_never_stalls_streaming_direct_panes() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let host = DirectHost::start("epoch-1").await;
+    mock.serve_direct_attach(host.attach_locator("terminal-b"));
+    roster(
+        &mock,
+        vec![json!({
+            "terminal_id": "terminal-b",
+            "backend": "native",
+            "state": "live",
+            "attach": host.roster_attach("terminal-b"),
+        })],
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("gobby home");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n")
+        .expect("write API key");
+    mock.seed_workspace("project-1", &[(&["terminal-b"], "terminal-b")]);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, Arc::clone(&draws), Arc::clone(&frames));
+        host.expect_attaches(1).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        let release = mock.hold_ws("terminal_attach", for_terminal("terminal-c"));
+        mock.send_event(json!({
+            "type": "terminal_event",
+            "event": "created",
+            "terminal_id": "terminal-c",
+            "daemon_epoch": "epoch-1",
+            "seq": 2,
+            "timestamp": "2026-01-01T00:00:00Z"
+        }));
+        wait_until("terminal-c's attach", || {
+            !attach_requests(&mock, "terminal-c").is_empty()
+        })
+        .await;
+        tokio::time::pause();
+        for second in 1..=3 {
+            let tag = format!("slow-{second}");
+            host.to_client
+                .send(frame_message(&tag))
+                .expect("host frame");
+            let ticks = draws.load(Ordering::SeqCst);
+            tokio::time::advance(Duration::from_secs(1)).await;
+            wait_until(&format!("terminal-b to draw {tag}"), || {
+                draws.load(Ordering::SeqCst) > ticks
+                    && frames
+                        .lock()
+                        .expect("recorded frames")
+                        .last()
+                        .is_some_and(|frame| frame.contains(&tag))
+            })
+            .await;
+            let key = char::from(b'0' + second);
+            probe.key(KeyCode::Char(key), KeyModifiers::NONE).await;
+            let typed = key.to_string().into_bytes();
+            host.wait_for(&format!("key {key}"), |seen| {
+                seen.iter().any(
+                    |message| matches!(message, ClientMessage::Input { data } if *data == typed),
+                )
+            })
+            .await;
+        }
+        tokio::time::resume();
+        assert_eq!(
+            mock.replies("terminal_attach"),
+            1,
+            "terminal-c's attach stayed held for three seconds"
+        );
+        release.notify_one();
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
     mock.shutdown().await;
 }

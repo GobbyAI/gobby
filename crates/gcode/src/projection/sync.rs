@@ -644,14 +644,22 @@ struct VectorProjectionState<'a> {
 
 impl VectorProjectionState<'_> {
     fn sync_file(&mut self, file_path: &str) -> anyhow::Result<ProjectionFileSyncOutcome> {
-        if !db::mark_vector_sync_attempted(&mut self.conn, &self.ctx.project_id, file_path)? {
+        let Some(attempt) =
+            db::mark_vector_sync_attempted(&mut self.conn, &self.ctx.project_id, file_path)?
+        else {
             return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
-        }
+        };
         let symbols =
             code_symbols::fetch_symbols_for_file(&mut self.conn, &self.ctx.project_id, file_path)?;
         let symbol_count = symbols.len();
         self.lifecycle.sync_file_symbols(file_path, &symbols)?;
-        if db::mark_vectors_synced(&mut self.conn, &self.ctx.project_id, file_path)? {
+        if db::mark_vectors_synced(
+            &mut self.conn,
+            &self.ctx.project_id,
+            file_path,
+            &attempt.content_hash,
+            attempt.attempted_at,
+        )? {
             Ok(ProjectionFileSyncOutcome::Synced {
                 symbols: symbol_count,
             })

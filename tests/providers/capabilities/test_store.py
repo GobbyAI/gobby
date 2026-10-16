@@ -1,7 +1,9 @@
 """PostgreSQL persistence tests for provider capability snapshots."""
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -195,3 +197,19 @@ def test_store_round_trips_structured_local_context_provenance(
     store.replace_provider_snapshot(snapshot)
 
     assert store.get_provider_snapshot("codex") == replace(snapshot, generation=1)
+
+
+def test_snapshot_reads_decode_json_columns_once_without_redumping(
+    postgres_db: HubDatabase,
+) -> None:
+    # The pool's jsonb loader decoded and re-dumped aliases, efforts, modalities
+    # and provenance, and _model_capability decoded them again (#23359).
+    store = ProviderCapabilityStore(postgres_db)
+    snapshot = _snapshot()
+    store.replace_provider_snapshot(snapshot)
+
+    with patch("json.dumps", wraps=json.dumps) as dumps:
+        loaded = store.get_provider_snapshot("codex")
+
+    assert dumps.call_count == 0
+    assert loaded == replace(snapshot, generation=1)

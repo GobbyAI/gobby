@@ -391,6 +391,7 @@ async def _drain_hook_inbox_once_locked(
             listener()
 
     processed_dir = get_processed_envelope_dir(pending_dir)
+    admission_timed_out_sessions: set[str] = set()
     for path in pending_files:
         if replay_stopping(app):
             break
@@ -468,6 +469,10 @@ async def _drain_hook_inbox_once_locked(
             hook_settled()
             continue
 
+        session_id = _envelope_session_id(envelope)
+        if session_id is not None and session_id in admission_timed_out_sessions:
+            continue
+
         if envelope_id and clear_stale_envelope_processing_marker(
             envelope_id,
             processed_dir=processed_dir,
@@ -479,6 +484,11 @@ async def _drain_hook_inbox_once_locked(
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue
+
+        if session_id is not None and _is_adapter_timeout(response):
+            # The session's admission is still held, so each of its later envelopes
+            # would wait out the same timeout; the next pass retries them (#24505).
+            admission_timed_out_sessions.add(session_id)
 
         if 200 <= response.status_code < 300:
             if not envelope_id:
@@ -538,6 +548,23 @@ async def _drain_hook_inbox_once_locked(
                 hook_settled()
             continue
 
+        if response.status_code == 403:
+            # hook_machine_mismatch is refused before any envelope claim, and
+            # the envelope's machine can never match on a later pass.
+            quarantined = await asyncio.to_thread(
+                inbox_envelopes.quarantine_file,
+                path,
+                reason="hook_machine_mismatch",
+                detail="Hook replay returned HTTP 403",
+            )
+            if quarantined:
+                logger.warning(
+                    "Hook inbox replay returned 403 for %s; quarantined",
+                    path.name,
+                )
+                hook_settled()
+            continue
+
         logger.warning(
             "Hook inbox replay returned %s for %s",
             response.status_code,
@@ -545,6 +572,25 @@ async def _drain_hook_inbox_once_locked(
         )
 
     return replayed
+
+
+def _envelope_session_id(envelope: dict[str, Any]) -> str | None:
+    """Return the session header the hook route keys adapter admission on."""
+    headers = envelope.get("headers")
+    if not isinstance(headers, dict):
+        return None
+    session_id = headers.get("X-Gobby-Session-Id") or headers.get("x-gobby-session-id")
+    return session_id if isinstance(session_id, str) and session_id else None
+
+
+def _is_adapter_timeout(response: httpx.Response) -> bool:
+    if response.status_code != 503:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("retry_kind") == "adapter_timeout"
 
 
 async def drain_hook_inbox_once(

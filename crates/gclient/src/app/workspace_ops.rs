@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use super::tab_sort::title_cmp;
 use super::Workspace;
 use crate::daemon::{
     Daemon, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind, WorkspaceRow,
@@ -120,6 +121,17 @@ impl WorkspaceModel {
             .collect();
         tabs.sort_by_key(|tab| (tab.position, tab.reference));
         tabs
+    }
+
+    /// Every tab's id in title order (`tab_sort::title_cmp`), or `None` when
+    /// the tabs already stand that way. Ties keep their current order.
+    pub fn sorted_tab_order(&self) -> Option<Vec<String>> {
+        let mut tabs: Vec<&TabRow> = self.tabs.values().collect();
+        tabs.sort_by_key(|tab| (tab.position, tab.reference));
+        let current: Vec<&str> = tabs.iter().map(|tab| tab.id.as_str()).collect();
+        tabs.sort_by(|a, b| title_cmp(a.title.as_deref(), b.title.as_deref()));
+        let order: Vec<String> = tabs.iter().map(|tab| tab.id.clone()).collect();
+        (order != current).then_some(order)
     }
 
     /// The tab's address, `node:workspace:tab`, zero-based and letterless:

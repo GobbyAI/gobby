@@ -10,7 +10,7 @@ use registry::Registry;
 use std::sync::Arc;
 
 pub struct HubNodes {
-    pub db: Pool,
+    pub db: Arc<Pool>,
     pub registry: Registry,
     pub timing: ChannelTiming,
 }

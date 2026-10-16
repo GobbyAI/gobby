@@ -73,6 +73,29 @@ def test_resolve_edit_pair_finds_root_from_resolved_target(tmp_path: Path) -> No
     )
 
 
+def test_resolve_edit_pair_keys_on_git_checkout_nested_below_project_root(
+    tmp_path: Path,
+) -> None:
+    # The Git checkout enclosing the project root does not displace the root.
+    root = tmp_path / "outer" / "export"
+    nested = root / "nested"
+    (tmp_path / "outer" / ".git").mkdir(parents=True)
+    (nested / ".git").mkdir(parents=True)
+    write_project_marker(root, project_id="project-a", name="project")
+    resolve = task_claim_state.resolve_edit_pair
+    assert resolve(
+        str(nested / "sub" / "p.py"), None, project_id="project-a", db=None, variables={}
+    ) == (str(nested), "sub/p.py")
+    assert resolve(str(nested), None, project_id="project-a", db=None, variables={}) == (
+        str(nested),
+        ".",
+    )
+    assert resolve("other/p.py", str(root), project_id="project-a", db=None, variables={}) == (
+        str(root),
+        "other/p.py",
+    )
+
+
 @pytest.mark.parametrize(
     "base, tool_input, expected",
     [

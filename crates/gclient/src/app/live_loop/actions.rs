@@ -31,7 +31,7 @@ use super::control::{
 };
 use super::daemon_ops::{
     move_active_daemon_tab, move_daemon_tab, move_focused_pane_to_tab, rename_daemon_target,
-    resize_daemon_split, swap_live_slots,
+    resize_daemon_split, sort_daemon_tabs, swap_live_slots,
 };
 use super::jobs::{issue_response, JobOutcome, LoopJobs};
 use super::lifecycle::{close_live_pane, close_live_tab, open_empty_tab, spawn_live_terminal};
@@ -415,6 +415,7 @@ pub(super) async fn handle_live_action(
         Action::NextTab => activate_relative_live_tab(workspace, chrome, 1).await?,
         Action::MoveTabLeft => move_active_daemon_tab(workspace, chrome, outcomes, -1),
         Action::MoveTabRight => move_active_daemon_tab(workspace, chrome, outcomes, 1),
+        Action::SortTabs => sort_daemon_tabs(workspace, chrome, outcomes),
         Action::MovePaneToTab(index) => {
             if let Some(index) = usize::from(index).checked_sub(1) {
                 move_focused_pane_to_tab(workspace, chrome, outcomes, Some(index));

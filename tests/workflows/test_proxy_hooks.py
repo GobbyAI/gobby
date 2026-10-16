@@ -110,6 +110,8 @@ def fake_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             return FakeProcess(code=1)
         if mode == "deny":
             return FakeProcess(code=2)
+        if mode == "pipeline_deny":
+            return FakeProcess(code=2, stdout=os.environ["FAKE_RTK_DENY_MESSAGE"].encode())
         if mode == "ask":
             return FakeProcess(code=3, stdout=f"rtk {command}".encode())
         if mode == "runtime_error":
@@ -186,9 +188,9 @@ def _proxy_effect(**kwargs: Any) -> RuleEffect:
     return RuleEffect(type="proxy_hook", handler="rtk", **kwargs)
 
 
-def _record_rtk_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+def _record_rtk_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[bool | HookResponse]:
     """Capture every _run_rtk_proxy return value so skip behavior stays assertable."""
-    outcomes: list[bool] = []
+    outcomes: list[bool | HookResponse] = []
     original = proxy_hooks.ProxyHooksMixin._run_rtk_proxy
 
     async def _record(
@@ -197,7 +199,7 @@ def _record_rtk_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None,
-    ) -> bool:
+    ) -> bool | HookResponse:
         outcome = await original(mixin, invocation, event, blocking_deadline=blocking_deadline)
         outcomes.append(outcome)
         return outcome
@@ -289,6 +291,63 @@ def test_bundled_rtk_rule_syncs_as_disabled_installed_row(
     assert body.effects is not None
     [effect] = body.effects
     assert (effect.type, effect.handler, effect.timeout_seconds) == ("proxy_hook", "rtk", 2)
+
+
+@pytest.mark.parametrize(
+    ("mode", "decision", "rewritten"),
+    [
+        ("rewrite", "allow", True),
+        ("ask", "allow", True),
+        ("deny", "allow", False),
+        ("pipeline_deny", "block", False),
+    ],
+)
+async def test_rtk_rewrite_exit_contract(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    decision: str,
+    rewritten: bool,
+) -> None:
+    _create_rule(manager, "rtk-contract", [_proxy_effect()], priority=90)
+    monkeypatch.setenv("FAKE_RTK_MODE", mode)
+    monkeypatch.setenv("FAKE_RTK_DENY_MESSAGE", "Pipeline policy: command refused")
+    event = _event()
+    response = await RuleEngine(db).evaluate(event, SESSION_ID, {})
+    assert response.decision == decision
+    assert response.modified_input == ({"command": "rtk git status"} if rewritten else None)
+    assert response.permission_decision is None
+    if mode == "pipeline_deny":
+        assert response.reason == "Pipeline policy: command refused"
+        assert event.data["tool_input"]["command"] == "git status"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [("\x1b[31mDenied\x1b[0m\x00\x07", "Denied"), ("x" * 5000, "x" * 4096)],
+)
+async def test_rtk_pipeline_denial_is_bounded_plain_text_and_stops_rewrites(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+    expected: str,
+) -> None:
+    _create_rule(manager, "rtk-first", [_proxy_effect()], priority=80)
+    _create_rule(manager, "rtk-second", [_proxy_effect()], priority=90)
+    monkeypatch.setenv("FAKE_RTK_MODE", "pipeline_deny")
+    monkeypatch.setenv("FAKE_RTK_DENY_MESSAGE", message.replace("\x00", ""))
+    outcomes = _record_rtk_outcomes(monkeypatch)
+    variables: dict[str, Any] = {}
+    response = await RuleEngine(db).evaluate(_event(), SESSION_ID, variables)
+    assert response.decision == "block"
+    assert response.reason == expected
+    assert response.modified_input is None
+    assert len(outcomes) == 1
+    assert "_rewrite_input" not in variables
 
 
 async def test_rtk_rewrite_is_permission_neutral(

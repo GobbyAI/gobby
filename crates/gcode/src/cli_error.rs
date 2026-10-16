@@ -170,6 +170,7 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
             Some("restart the Gobby daemon so grants match the installed schema and config")
         }
         GrantError::Timeout
+        | GrantError::BootstrapConfig(_)
         | GrantError::Malformed(_)
         | GrantError::Io(_)
         | GrantError::RemoteEndpoint => None,
