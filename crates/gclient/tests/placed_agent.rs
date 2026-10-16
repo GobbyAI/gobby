@@ -7,9 +7,11 @@
 
 mod mock_daemon;
 
-use gobby_client::app::{focus_agent, sync_live_chrome};
+use gobby_client::app::{
+    apply_live_menu_action, focus_agent, sync_live_chrome, ContextMenuKind, MenuAction,
+};
 use gobby_client::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
-use gobby_client::ui::Chrome;
+use gobby_client::ui::{Action, Chrome};
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
@@ -360,10 +362,8 @@ async fn a_placement_lost_with_the_connection_never_moves_the_view() {
     s.mock.shutdown().await;
 }
 
-/// A roster seat with no pane opens in a tab named after it.
-#[tokio::test]
-async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
-    let mock = MockDaemon::start("local-token").await;
+/// Put the seat on the attention roster under its definition title.
+fn seat_on_roster(mock: &MockDaemon) {
     let attention = json!({"epoch": "attention-1", "seq": 1, "entries": [{
         "entry_id": format!("run:run-{AGENT}"),
         "run_id": format!("run-{AGENT}"),
@@ -382,6 +382,31 @@ async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
     for _ in 0..6 {
         mock.enqueue("GET", "/api/attention/roster", 200, attention.clone());
     }
+}
+
+/// The first `tab.create` this window sent the daemon.
+async fn tab_create(mock: &MockDaemon) -> Value {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let found = mock
+                .workspace_requests()
+                .into_iter()
+                .find(|request| request.get("op") == Some(&json!("tab.create")));
+            if let Some(request) = found {
+                return request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a new tab was requested")
+}
+
+/// A roster seat with no pane opens in a tab named after it.
+#[tokio::test]
+async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    seat_on_roster(&mock);
     let mut s = session_on(mock, &[(&["existing"], "existing")], &["existing", AGENT]).await;
     s.mock
         .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
@@ -395,21 +420,42 @@ async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
     .await
     .expect("focus the unplaced agent");
 
-    let create = timeout(Duration::from_secs(1), async {
-        loop {
-            let found = s.mock.workspace_requests().into_iter().find(|request| {
-                request.get("op") == Some(&json!("tab.create"))
-                    && request["terminal_id"] == json!(AGENT)
-            });
-            if let Some(request) = found {
-                return request;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the agent was sent to a new tab");
+    let create = tab_create(&s.mock).await;
+    assert_eq!(create["terminal_id"], json!(AGENT));
     assert_eq!(create["title"], json!("Lane 8 developer"));
+    s.mock.shutdown().await;
+}
+
+/// Moving a seat's pane out to a new tab names that tab after the seat.
+#[tokio::test]
+async fn an_agent_pane_moved_to_a_new_tab_names_it_after_the_agent() {
+    let mock = MockDaemon::start("local-token").await;
+    seat_on_roster(&mock);
+    let mut s = session_on(
+        mock,
+        &[(&["existing", AGENT], "Lane 8")],
+        &["existing", AGENT],
+    )
+    .await;
+    let pane = s
+        .workspace
+        .pane_for_terminal(AGENT)
+        .expect("the seat holds a pane");
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    apply_live_menu_action(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        ContextMenuKind::Pane(pane),
+        MenuAction::Act(Action::MovePaneToNewTab),
+    )
+    .await
+    .expect("move the seat's pane to a new tab");
+
+    assert_eq!(
+        tab_create(&s.mock).await["title"],
+        json!("Lane 8 developer")
+    );
     s.mock.shutdown().await;
 }
 
