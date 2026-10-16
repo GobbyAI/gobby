@@ -3158,8 +3158,18 @@ def test_uncredited_compound_success_reports_specific_wrapper_reason(
 
 
 @pytest.mark.parametrize("criterion_gap", [False, True])
-def test_excluded_runs_list_gap_covering_records_first(criterion_gap: bool) -> None:
-    command = "uv run pytest tests/tasks/test_gap.py -q"
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run pytest tests/tasks/test_gap.py -q",
+        "uv run pytest /Users/josh/wt/tests/tasks/test_gap.py -q",
+        "uv run --directory /Users/josh/Projects/gobby pytest --rootdir /tmp/exp "
+        "/tmp/exp/tests/tasks/test_gap.py -q",
+        "uv run pytest /Users/josh/wt/tests/tasks -q",
+    ],
+    ids=["relative-file", "absolute-file", "absolute-export", "absolute-directory"],
+)
+def test_excluded_runs_list_gap_covering_records_first(criterion_gap: bool, command: str) -> None:
     gap_run = replace(_run(1, command=command), exclusion_reason="off-task")
     unrelated = tuple(
         replace(

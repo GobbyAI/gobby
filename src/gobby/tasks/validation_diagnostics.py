@@ -7,6 +7,7 @@ import json
 import re
 import shlex
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import PurePosixPath
 from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
@@ -249,6 +250,12 @@ def gap_covering_records(
         paths.update(tests)
     for path in details.get("vitest_related_uncovered_paths", []):
         paths.update((path, path.removeprefix("web/")))
+    path_suffixes = {
+        str(part)
+        for path in paths
+        for part in (PurePosixPath(path), *PurePosixPath(path).parents)
+        if str(part) != "."
+    }
     matches: set[int] = set()
     if not commands and not paths:
         return matches
@@ -264,7 +271,7 @@ def gap_covering_records(
             for argument in segment[1:]:
                 target = argument.split("::", 1)[0].removeprefix("./").rstrip("/")
                 if target and any(
-                    path == target or path.startswith(target + "/") for path in paths
+                    target == path or target.endswith("/" + path) for path in path_suffixes
                 ):
                     matches.add(id(record))
     return matches
