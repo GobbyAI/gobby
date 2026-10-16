@@ -8,21 +8,30 @@
 //! claims, requests a family's `claims` declines, and every upgrade stay on the hyper
 //! proxy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
+use std::panic::AssertUnwindSafe;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{Response, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::request::Parts;
+use axum::http::response::Parts as ResponseParts;
+use axum::http::{HeaderMap, Method, Response, StatusCode};
 use bytes::Bytes;
+use futures_util::FutureExt;
 use gobby_core::bootstrap::RouteBackend;
+use gobby_core::route_family::ProxiedCheck;
 use http_body_util::BodyExt;
+use serde_json::Value;
 use tower_service::Service;
 
 use super::FrontDoorState;
-use super::health::{self, HealthFamily};
-use super::proxy;
+use super::compare::{Outcome, Record};
+use super::health::HealthFamily;
+use super::proxy::{self, ForwardError};
 
 pub use gobby_core::route_family::RouteFamily;
 
@@ -149,8 +158,10 @@ async fn call(router: &Router, request: Request) -> Response<Body> {
     }
 }
 
-/// Run the native and proxied legs on the same request, log any difference, and
-/// return the proxied response. Only this mode buffers bodies.
+/// Compare mode for a claimed request; the caller always receives the proxied
+/// response and every outcome is recorded. GET and HEAD run both legs and compare
+/// them. Any other method proxies once and runs the family's `check_proxied`, so a
+/// write never runs twice. Only this mode buffers bodies.
 async fn compare(entry: &Entry, state: &FrontDoorState, request: Request) -> Response<Body> {
     let (parts, body) = request.into_parts();
     let body = match body.collect().await {
@@ -161,39 +172,235 @@ async fn compare(entry: &Entry, state: &FrontDoorState, request: Request) -> Res
             return response;
         }
     };
-    let mut native_request = Request::new(Body::from(body.clone()));
-    *native_request.method_mut() = parts.method.clone();
-    *native_request.uri_mut() = parts.uri.clone();
-    *native_request.version_mut() = parts.version;
-    *native_request.headers_mut() = parts.headers.clone();
-    let path = parts.uri.path().to_owned();
-    let proxied_request = Request::from_parts(parts, Body::from(body));
+    let proxied_request = copy_request(&parts, body.clone());
 
-    let (native, proxied) = tokio::join!(
-        call(&entry.router, native_request),
-        proxy::forward(state, proxied_request)
-    );
-    let (proxied_parts, proxied_body) = proxied.into_parts();
-    let proxied_body = match proxied_body.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(error) => return health::bad_gateway(state.target, error),
+    if parts.method == Method::GET || parts.method == Method::HEAD {
+        let native_request = copy_request(&parts, body);
+        let (native, proxied) = tokio::join!(
+            native_leg(&entry.router, native_request),
+            proxied_leg(state, proxied_request)
+        );
+        let (proxied_parts, proxied_body) = match proxied {
+            Ok(proxied) => proxied,
+            Err(error) => return unanswered(entry, state, &parts, error),
+        };
+        let (outcome, native_status, detail) = match native {
+            Ok((native_parts, native_body)) => {
+                let detail = difference(&native_parts, &native_body, &proxied_parts, &proxied_body);
+                let outcome = if detail.is_some() {
+                    Outcome::Diff
+                } else {
+                    Outcome::Match
+                };
+                (outcome, Some(native_parts.status), detail)
+            }
+            Err(NativeFailure::Body(status)) => {
+                (Outcome::NativeError, Some(status), Some("body".to_owned()))
+            }
+            Err(NativeFailure::Panic) => (Outcome::NativeError, None, Some("panic".to_owned())),
+        };
+        let proxied_status = Some(proxied_parts.status);
+        record(
+            entry,
+            state,
+            &parts,
+            outcome,
+            native_status,
+            proxied_status,
+            detail,
+        );
+        return Response::from_parts(proxied_parts, Body::from(proxied_body));
+    }
+
+    // Any other method may write: proxy once and let the family check Python's
+    // answer against the request bytes.
+    let (proxied_parts, proxied_body) = match proxied_leg(state, proxied_request).await {
+        Ok(proxied) => proxied,
+        Err(error) => return unanswered(entry, state, &parts, error),
     };
-    let (native_parts, native_body) = native.into_parts();
-    let native_body: Result<Bytes, _> = native_body
+    let check = entry
+        .family
+        .check_proxied(&parts, &body, proxied_parts.status, &proxied_body)
+        .await;
+    let (outcome, detail) = match check {
+        ProxiedCheck::Skipped => (Outcome::Skipped, None),
+        ProxiedCheck::Verified => (Outcome::Verified, None),
+        ProxiedCheck::Mismatch(detail) => (Outcome::Mismatch, Some(detail)),
+    };
+    let proxied_status = Some(proxied_parts.status);
+    record(entry, state, &parts, outcome, None, proxied_status, detail);
+    Response::from_parts(proxied_parts, Body::from(proxied_body))
+}
+
+/// A request with `parts`' method, URI, version and headers over `body`.
+fn copy_request(parts: &Parts, body: Bytes) -> Request {
+    let mut request = Request::new(Body::from(body));
+    *request.method_mut() = parts.method.clone();
+    *request.uri_mut() = parts.uri.clone();
+    *request.version_mut() = parts.version;
+    *request.headers_mut() = parts.headers.clone();
+    request
+}
+
+/// Why the native leg produced no comparable response.
+enum NativeFailure {
+    /// The body failed to collect after the handler answered `StatusCode`.
+    Body(StatusCode),
+    /// The handler panicked.
+    Panic,
+}
+
+/// Runs the native leg to a collected body. A panic stays inside this leg, so the
+/// caller still receives the proxied response.
+async fn native_leg(
+    router: &Router,
+    request: Request,
+) -> Result<(ResponseParts, Bytes), NativeFailure> {
+    let leg = async {
+        let (parts, body) = call(router, request).await.into_parts();
+        match body.collect().await {
+            Ok(collected) => Ok((parts, collected.to_bytes())),
+            Err(_) => Err(NativeFailure::Body(parts.status)),
+        }
+    };
+    AssertUnwindSafe(leg)
+        .catch_unwind()
+        .await
+        .unwrap_or(Err(NativeFailure::Panic))
+}
+
+/// Forwards to Python and collects its answer.
+async fn proxied_leg(
+    state: &FrontDoorState,
+    request: Request,
+) -> Result<(ResponseParts, Bytes), ForwardError> {
+    let (parts, body) = proxy::try_forward(state, request).await?.into_parts();
+    let body = body
         .collect()
         .await
-        .map(|collected| collected.to_bytes());
-    let body_equal = native_body.as_ref().is_ok_and(|body| *body == proxied_body);
-    if native_parts.status != proxied_parts.status || !body_equal {
-        eprintln!(
-            "front_door compare diff: family={} path={path} native_status={} proxied_status={} body_equal={body_equal} native_body_error={:?}",
-            entry.family.name(),
-            native_parts.status.as_u16(),
-            proxied_parts.status.as_u16(),
-            native_body.err().map(|error| error.to_string()),
-        );
+        .map_err(|error| ForwardError::BadGateway(error.into()))?;
+    Ok((parts, body.to_bytes()))
+}
+
+/// Python gave no answer to compare: record `skipped` and return the response
+/// `proxy::forward` builds for the same failure.
+fn unanswered(
+    entry: &Entry,
+    state: &FrontDoorState,
+    parts: &Parts,
+    error: ForwardError,
+) -> Response<Body> {
+    let detail = match error {
+        ForwardError::Unavailable => "backend_unavailable",
+        ForwardError::BadGateway(_) => "bad_gateway",
+    };
+    record(
+        entry,
+        state,
+        parts,
+        Outcome::Skipped,
+        None,
+        None,
+        Some(detail.to_owned()),
+    );
+    error.into_response(state)
+}
+
+/// The first way the native response differs from the proxied one: `status`,
+/// `header:<name>`, the first differing JSON pointer when both bodies are JSON, or
+/// `bytes`. `None` when they match.
+fn difference(
+    native: &ResponseParts,
+    native_body: &[u8],
+    proxied: &ResponseParts,
+    proxied_body: &[u8],
+) -> Option<String> {
+    if native.status != proxied.status {
+        return Some("status".to_owned());
     }
-    Response::from_parts(proxied_parts, Body::from(proxied_body))
+    for name in [CONTENT_TYPE, CACHE_CONTROL] {
+        if !native
+            .headers
+            .get_all(&name)
+            .iter()
+            .eq(proxied.headers.get_all(&name))
+        {
+            return Some(format!("header:{name}"));
+        }
+    }
+    if is_json(&proxied.headers)
+        && let (Ok(native), Ok(proxied)) = (
+            serde_json::from_slice::<Value>(native_body),
+            serde_json::from_slice::<Value>(proxied_body),
+        )
+    {
+        return first_difference(&native, &proxied, String::new());
+    }
+    (native_body != proxied_body).then(|| "bytes".to_owned())
+}
+
+fn is_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json"))
+}
+
+/// The JSON pointer of the first difference, visiting object keys in sorted order.
+fn first_difference(native: &Value, proxied: &Value, pointer: String) -> Option<String> {
+    match (native, proxied) {
+        (Value::Object(native), Value::Object(proxied)) => {
+            let keys: BTreeSet<&String> = native.keys().chain(proxied.keys()).collect();
+            keys.into_iter().find_map(|key| {
+                let escaped = key.replace('~', "~0").replace('/', "~1");
+                let pointer = format!("{pointer}/{escaped}");
+                match (native.get(key), proxied.get(key)) {
+                    (Some(native), Some(proxied)) => first_difference(native, proxied, pointer),
+                    _ => Some(pointer),
+                }
+            })
+        }
+        (Value::Array(native), Value::Array(proxied)) => (0..native.len().max(proxied.len()))
+            .find_map(|index| {
+                let pointer = format!("{pointer}/{index}");
+                match (native.get(index), proxied.get(index)) {
+                    (Some(native), Some(proxied)) => first_difference(native, proxied, pointer),
+                    _ => Some(pointer),
+                }
+            }),
+        _ => (native != proxied).then_some(pointer),
+    }
+}
+
+/// Appends one compare record; the path drops its query and no body value is kept.
+fn record(
+    entry: &Entry,
+    state: &FrontDoorState,
+    parts: &Parts,
+    outcome: Outcome,
+    native_status: Option<StatusCode>,
+    proxied_status: Option<StatusCode>,
+    detail: Option<String>,
+) {
+    let Some(log) = &state.compare_log else {
+        return;
+    };
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+        });
+    log.append(&Record {
+        ts,
+        family: entry.family.name().to_owned(),
+        method: parts.method.to_string(),
+        path: parts.uri.path().to_owned(),
+        outcome,
+        native_status: native_status.map(|status| status.as_u16()),
+        proxied_status: proxied_status.map(|status| status.as_u16()),
+        detail,
+    });
 }
 
 #[cfg(test)]
