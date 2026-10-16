@@ -38,6 +38,7 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
     render_srt_settings,
     verify_srt_installation,
+    verify_srt_installation_for_launch,
 )
 from gobby.utils import spawn
 from gobby.utils.dependency_requirements import (
@@ -1179,7 +1180,15 @@ def test_verify_srt_installation_wraps_missing_lockfile(
         caplog.at_level("WARNING"),
         pytest.raises(SrtRuntimeError, match="missing or invalid"),
     ):
-        verify_srt_installation(
+        verify_srt_installation()
+    # Status probes share this verification, so it raises without a lockout record.
+    assert "Managed SRT validation failed closed" not in caplog.messages
+
+    with (
+        caplog.at_level("WARNING"),
+        pytest.raises(SrtRuntimeError, match="missing or invalid"),
+    ):
+        verify_srt_installation_for_launch(
             run_id="run-lockout",
             provider="codex",
             policy_hash="policy-hash",

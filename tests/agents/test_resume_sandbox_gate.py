@@ -51,7 +51,7 @@ async def test_resume_refuses_unsandboxed_config(
     else:
         metadata["sandbox_config"] = sandbox_config
 
-    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch") as verifier:
         result = await resume_executor.resume_agent_run(
             _original_run(),
             resume_metadata=metadata,
@@ -129,7 +129,7 @@ async def test_cancel_during_refusal_parking_still_parks_once(
     _patch_common(monkeypatch, spawner=MagicMock(), finalize=finalize)
     task = _resume_task(runner)
     with patch(
-        "gobby.agents.sandbox_gate.verify_srt_installation",
+        "gobby.agents.sandbox_gate.verify_srt_installation_for_launch",
         side_effect=SrtRuntimeError("not installed"),
     ):
         await asyncio.wait_for(parking.wait(), 5)
@@ -165,7 +165,7 @@ async def _replayed_config(monkeypatch: pytest.MonkeyPatch, saved: SandboxConfig
 
     # The seed is unreadable now: the resume must replay its snapshot, never re-resolve.
     with (
-        patch("gobby.agents.sandbox_gate.verify_srt_installation"),
+        patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch"),
         patch("gobby.agents.sandbox_network.trusted_domains", side_effect=OSError("gone")),
     ):
         await resume_executor.resume_agent_run(
