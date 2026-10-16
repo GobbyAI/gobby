@@ -112,19 +112,31 @@ def _literal_assignment_bindings(
     raw_words: tuple[str, ...],
 ) -> tuple[tuple[str, str], ...] | None:
     """Return absolute literal bindings of a bare-assignment segment, else ``None``."""
+    values = _literal_assignment_values(words, raw_words)
+    if values is None:
+        return None
+    return tuple((name, value) for name, value in values.items() if value and value.startswith("/"))
+
+
+def _literal_assignment_values(
+    words: tuple[str, ...],
+    raw_words: tuple[str, ...],
+) -> dict[str, str | None] | None:
+    """Map each name a bare-assignment segment assigns to its literal value or ``None``.
+
+    ``None`` overall means the segment is not all bare assignments.
+    """
     if not words or len(words) != len(raw_words):
         return None
-    bindings: dict[str, str] = {}
+    values: dict[str, str | None] = {}
     for word, raw in zip(words, raw_words, strict=True):
         name, _, value = word.partition("=")
         if not _is_env_assignment(word) or not raw.startswith(f"{name}="):
             return None
         raw_value = raw[len(name) + 1 :]
-        if value.startswith("/") and "~" not in raw_value and _raw_shell_word_is_literal(raw_value):
-            bindings[name] = value
-        else:
-            bindings.pop(name, None)
-    return tuple(bindings.items())
+        literal = "~" not in raw_value and _raw_shell_word_is_literal(raw_value)
+        values[name] = value if literal else None
+    return values
 
 
 def _plain_loop_binding_reference(

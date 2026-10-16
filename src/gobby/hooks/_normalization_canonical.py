@@ -1,13 +1,17 @@
 """Canonical tool metadata inference."""
 
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from gobby.hooks._normalization_base_commands import classify_base_command
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
+    _literal_assignment_values,
+    _loop_binding_variable_is_stable,
     _raw_shell_word_is_literal,
 )
 from gobby.hooks._normalization_compound import (
@@ -84,6 +88,7 @@ from gobby.hooks._normalization_shell_stdin import shell_stdin_arguments
 from gobby.hooks._path_scope import (
     resolve_tool_path,
 )
+from gobby.hooks._sed_expansion import sed_literal_bindings
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
     MAX_NARROW_SOURCE_LINES,
@@ -126,6 +131,8 @@ def _normalize_shell_tool_metadata(
     selectors = exported_git_selector.set(exported_git_selector.get() if depth else False)
     startup = shell_startup_unproven.set(shell_startup_unproven.get() if depth else False)
     budget = _script_reads_left.set(SCRIPT_READ_BUDGET) if not depth else None
+    # A nested program starts without its caller's assignments.
+    sed_bindings = sed_literal_bindings.set(MappingProxyType({}))
     entry = (exported_git_selector.get(), _script_reads_left.get())
     unstable: frozenset[int] = frozenset()
     try:
@@ -179,6 +186,7 @@ def _normalize_shell_tool_metadata(
             _script_reads_left.reset(budget)
         exported_git_selector.reset(selectors)
         shell_startup_unproven.reset(startup)
+        sed_literal_bindings.reset(sed_bindings)
 
 
 def _classify_shell_command(
@@ -241,6 +249,7 @@ def _classify_shell_command(
     compound_directory_change = False
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
+    literal_values: dict[str, str] = {}
     for index, segment in enumerate(segments):
         consuming_case_pattern = pending_case_pattern
         start = token_positions[id(segment.tokens[0])]
@@ -317,6 +326,20 @@ def _classify_shell_command(
             else None
         )
         leading_assignments = assignment_bindings is not None
+        # Leading literal assignments reach only the first command, before anything rebinds them.
+        segment_values: Mapping[str, str] = MappingProxyType({})
+        if assignment_bindings is not None:
+            for name, value in (
+                _literal_assignment_values(tuple(raw_parts), source_parts) or {}
+            ).items():
+                if value is not None and _loop_binding_variable_is_stable(name):
+                    literal_values[name] = value
+                else:
+                    literal_values.pop(name, None)
+        else:
+            if segment.separator_before in {None, "&&", ";", "\n"}:
+                segment_values = MappingProxyType(literal_values)
+            literal_values = {}
         parts = _strip_shell_wrappers(raw_parts)
         if git_selector_setup(raw_parts, parts):
             exported_git_selector.set(True)
@@ -464,19 +487,24 @@ def _classify_shell_command(
         stdin_tokens, stdin_parts, stdin_raw = shell_stdin_arguments(
             segment, segments[index - 1] if index else None, scan, raw_by_token
         )
+        bound = sed_literal_bindings.set(segment_values)
+        try:
+            segment_metadata = _classify_shell_segment(
+                stdin_tokens,
+                stdin_parts,
+                directory.redirect_cwd(),
+                depth=depth,
+                piped_stdin=segment.separator_before == "|",
+                base_cwd=segment_base,
+                invocation_cwd=segment_cwd,
+                search_base_cwd=base_cwd,
+                raw_by_token=stdin_raw,
+            )
+        finally:
+            sed_literal_bindings.reset(bound)
         metadata.append(
             replace(
-                _classify_shell_segment(
-                    stdin_tokens,
-                    stdin_parts,
-                    directory.redirect_cwd(),
-                    depth=depth,
-                    piped_stdin=segment.separator_before == "|",
-                    base_cwd=segment_base,
-                    invocation_cwd=segment_cwd,
-                    search_base_cwd=base_cwd,
-                    raw_by_token=stdin_raw,
-                ),
+                segment_metadata,
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
                 literal_path_root=(
@@ -761,6 +789,13 @@ def _classify_shell_segment_without_redirection(
         )
 
     execution = path_execution(parts, base_cwd) or shell_execution(parts, stdin=shell_stdin)
+    if execution is not None and execution.parse_only:
+        # A syntax check reads its script and runs none of it.
+        if execution.script_word is None:
+            return _ShellSegmentMetadata("execute")
+        return _ShellSegmentMetadata(
+            "read", paths=tuple(_rebase_shell_paths([execution.script_word], cwd))
+        )
     if execution is not None:
         if cmd in {"source", "."}:
             # Sourced code can export functions whose later call directory is unknowable.
