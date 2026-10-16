@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -2293,8 +2294,29 @@ def test_file_evidence_missing_at_the_close_candidate_names_it(tmp_path: Path) -
 def test_native_backend_evidence_regression_fails_on_local_contradictions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-01-02T00:00:00+00:00")
-    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-01-02T00:00:00+00:00")
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key)
+    for key, value in {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TEMPLATE_DIR": "",
+        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_VALUE_0": os.devnull,
+        "GIT_CONFIG_KEY_1": "commit.gpgSign",
+        "GIT_CONFIG_VALUE_1": "false",
+        "GIT_CONFIG_KEY_2": "tag.gpgSign",
+        "GIT_CONFIG_VALUE_2": "false",
+        "GIT_AUTHOR_NAME": "Tests",
+        "GIT_AUTHOR_EMAIL": "tests@example.com",
+        "GIT_COMMITTER_NAME": "Tests",
+        "GIT_COMMITTER_EMAIL": "tests@example.com",
+        "GIT_AUTHOR_DATE": "2026-01-02T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-02T00:00:00+00:00",
+    }.items():
+        monkeypatch.setenv(key, value)
     repo = _init_repo(tmp_path)
     seed = repo / "seed.txt"
     seed.write_text("first\n", encoding="utf-8")
