@@ -19,8 +19,7 @@ pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures/provider_contracts/grok/background-pytest-24501.jsonl"
+    Path(__file__).resolve().parents[1] / "fixtures/transcripts/grok-background-pytest-24501.jsonl"
 )
 
 
