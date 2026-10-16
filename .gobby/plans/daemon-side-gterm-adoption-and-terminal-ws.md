@@ -234,15 +234,13 @@ external work has not started can be flipped without changing this plan.
 | 2.4 | node-halves 2.2 (Node terminal host, #24371) | blocks | Both change `crates/gdaemon/src/serve.rs::run`. |
 | 2.6 | native-ws-transport A3 (Bounded native broadcast fanout, #23880) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`. |
 | 2.6 | node-halves 1.5 (Node hook ingress arm, #24368) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`; the Orchestrator flipped this row on 2026-10-16 for hub-node priority. |
+| 2.6 | hub-mode 1.2 (gdaemon internal node-command route over the node channel) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, and following node-halves 1.5 alone does not order them; the Orchestrator ruled hub-mode 1.2 first on 2026-10-16 for hub-node priority. Hub-mode 1.2 has no leaf until #21575 (Hub mode) expands, and the Orchestrator wires this edge at that expansion. |
 
 Relations that set no edge:
 - node-halves 2.1 (Durable node agent state, #24370) changes `crates/gdaemon/src/state.rs`
   through `NodeServices`; 2.4 and 2.6 change `RuntimeState`, a different struct.
 - node-halves 2.10 (#24379) adds a snapshot method to `crates/gterminals/src/control.rs`; 2.5,
   2.8, and 2.2 add `write_batch`, `revoke_input`, and `grant_input`, distinct new methods.
-- hub-mode 1.2 (gdaemon internal node-command route over the node channel) changes
-  `FrontDoor::handle` after node-halves 1.5 through node-halves 2.1, so it follows the
-  node-halves chain; with node-halves 1.5 blocking 2.6, it needs no edge to 2.6.
 - #23219 (#21558 terminal WS operations, relay, and family cutover) is retired at expansion,
   superseded by 2.2, 2.3, 2.12, and 2.13 (A2).
 
@@ -2882,6 +2880,14 @@ Executors run focused verification after each leaf and the complete matrix befor
   scope-reasons, migration-slot note, and 1.9.1 now name 457. The Orchestrator flipped the 2.6
   row so node-halves 1.5 (#24368) blocks 2.6, and the Cross-plan edges table and its hub-mode
   1.2 note now match. No other narrative changed; the Adversary re-derives M1 from this revision.
+- 2026-10-16: Delta consensus. Adversary gobby#16983 verified and accepted the 457 correction at
+  `68eea3b76f` and raised F7 (cross-plan.flip-retains-shared-edit-order, blocking): after the
+  flip, 2.6 and hub-mode 1.2 both follow node-halves 1.5, and a common predecessor does not order
+  two edits of `FrontDoor::handle`. Orchestrator gobby#15977 accepted F7 and ruled that hub-mode
+  1.2 blocks 2.6 for hub-node priority. The Cross-plan edges table carries that row, the stale
+  relations note is removed, and `.gobby/plans/hub-mode.md` mirrors the row under its 1.2. The
+  Orchestrator wires the edge when #21575 (Hub mode) expands. No other narrative changed; the
+  Adversary derives M1 from this revision.
 
 ## M1 Task Manifest
 `kind: manifest`
