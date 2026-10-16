@@ -1,9 +1,9 @@
 header:
   plan_id: native-ws-transport
-  plan_hash: a6ab15d06946a43bbb7c5014335648bc2776227ac262e325b78b2956e6a64cf6
+  plan_hash: 8d693dac88250def93533df6ec587f77110f21becf7f45c7703e66dab0817216
   root_task_ref: '21558'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T11:37:48Z'
+  generated_at: '2026-10-16T12:05:29Z'
   task_tree_source: db
   task_tree_source_hash: 722fdc3cada6fc901f6289cf5a106dc62e91e9d251f5ceec6b662238eab3ef58
   evidence_summary: []
@@ -331,59 +331,3 @@ rows:
   leaves: []
   deferral_target: null
   detail: ''
-- section_id: D1
-  item_id: D1.1
-  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.2
-  plan_node_hash: 9099a07e8e523c9823309f7d63765d8e810a09b6c5b2c1eccc65fbe6427f567f
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.3
-  plan_node_hash: 93ea7538f85a2b590833021b8d44119fcd375d0c70bd1b256e5932406c475c75
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.4
-  plan_node_hash: f91846ae06af20e71d15390236bff7d157e8f8dab3afa9de4a3e3c6fbfa84346
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.5
-  plan_node_hash: 5fee887775f04a195c8d018e3243564d25da810f15973740ae4ca0c208728260
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.6
-  plan_node_hash: f6100d58a482d4dcdfb8cf15255ff1c5679870c6757f6ddc92503a2e00b66b1c
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.7
-  plan_node_hash: dfc88dd9ca2768e90339f08f0ff624c65598840b98d1a847bcc18b0e3954c120
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid
-- section_id: D1
-  item_id: D1.8
-  plan_node_hash: edd3faaab44d57c7666592516b198b28201ede0ef28abc29bdd9f166b590d0eb
-  status: deferred
-  leaves: []
-  deferral_target: '#23881'
-  detail: deferral is valid

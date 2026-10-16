@@ -448,6 +448,8 @@ Implementation:
 
 2026-10-16: ORC-1 repair by Plan Writer gobby#16490 after the Orchestrator's review of stamped `a6ab15d0`. D1 still read as a live deferral, which contradicted P2 and would have led expansion to treat it as a deferred tail beside B1 to B3. The D1 deferred section is removed, and its obligation mapping moves into the P2 framing as a coverage note. Decision 7, the C1 Downstream paragraph and the status line now name P2. #23519 and #23523 are closed, so the B leaves need no external edge. No B section, acceptance item, Target or decision changed. The stale M1 stays in place through this commit; it is withdrawn and re-derived after Lane 8 reviewer gobby#16912 checks this delta and the Adversary agrees.
 
+2026-10-16: Renewed consensus between Plan Writer gobby#16490 and Adversary gobby#16983 on the unchanged narrative of the ORC-1 repair `233c8c235d1dcba7cd6f37816944420671d6e762` (plan sha256 `9b0fb5cc0ed8b1199b52bfb786df4993d0847d7632897e775bf5b3768a950f98`). Lane 8 reviewer gobby#16912 passed the delta (LANE=8 DELTA_VERDICT PASS), with one non-blocking note: regenerate coverage so no D1 rows survive. The Adversary agreed with no new findings. Following the stale-manifest route (memory `f5577ae0`), the Writer withdrew the entire superseded `## M1 Task Manifest` block; its bytes remain in Git history at `233c8c235d`. No narrative section changed. The Adversary derives and applies a fresh M1 for A1 to A3 and B1 to B3 from the commit that adds this entry.
+
 ## E1 Source evidence
 `kind: framing`
 

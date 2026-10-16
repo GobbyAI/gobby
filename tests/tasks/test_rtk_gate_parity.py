@@ -25,6 +25,7 @@ SOURCE = "src/feature.py"
 RECALL = "d1965a04eb04"
 FORMS = ("bare", "hook", "explicit", "proxy", "bypass")
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "rtk"
+CAPTURE_101: dict[str, Any] = json.loads((FIXTURES / "contracts-1.0.1.json").read_text())
 
 
 def _wrapped(command: str, form: str) -> str:
@@ -179,6 +180,8 @@ def test_gate10_uv_interpreter_rtk_requires_clean_pass_summary(tmp_path: Path) -
         (0, "Pytest: 14 passed, 1 skipped, 2 deselected, 1 xfailed, 1 xpassed, 2 warnings"),
         (1, "Pytest: 0 passed, 1 failed"),
         (1, "Pytest: 14 passed, 1 failed, 1 skipped in 1.0s"),
+        (0, CAPTURE_101["pytest_pass"]["stdout"]),
+        (1, CAPTURE_101["pytest"]["stdout"]),
     ],
 )
 def test_gate10_pytest_audit_and_criteria_parity(
@@ -240,12 +243,17 @@ def test_gate10_vitest_related_parity(tmp_path: Path, form: str, code: int) -> N
 
 @pytest.mark.parametrize("form", FORMS)
 @pytest.mark.parametrize("recall", ["compact", "recall", "full"])
-@pytest.mark.parametrize("stub", [False, True], ids=["assertion", "stub"])
+@pytest.mark.parametrize(
+    "stub,release",
+    [(False, "0.51.0"), (True, "0.51.0"), (False, "1.0.1")],
+    ids=["assertion-051", "stub-051", "assertion-101"],
+)
 def test_gate12_red_green_attribution_parity(
     tmp_path: Path,
     form: str,
     recall: str,
     stub: bool,
+    release: str,
 ) -> None:
     command = f"uv run pytest {TEST}::test_feature -q"
     exception = "NotImplementedError" if stub else "AssertionError: assert 0 == 1"
@@ -264,8 +272,17 @@ def test_gate12_red_green_attribution_parity(
     if not stub:
         raw = (FIXTURES / "pytest-assertion-raw.txt").read_text()
         compact = (FIXTURES / "pytest-assertion-0.51.0.txt").read_text()
+    recall_id = RECALL
+    green = "Pytest: 1 passed"
+    if release == "1.0.1":
+        raw = CAPTURE_101["recall_full"]["stdout"]
+        compact = CAPTURE_101["compact"]["stdout"]
+        recall_id = CAPTURE_101["recall_full"]["argv"][1]
+        green = CAPTURE_101["pytest_pass"]["stdout"]
     if recall != "compact":
-        compact = f"Pytest: 0 passed, 1 failed\n[full output: rtk recall {RECALL}]"
+        compact = f"Pytest: 0 passed, 1 failed\n[full output: rtk recall {recall_id}]"
+        if release == "1.0.1":
+            compact = CAPTURE_101["pytest"]["stdout"]
     records: list[dict[str, Any]] = []
     test_body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
     if stub:
@@ -280,11 +297,11 @@ def test_gate12_red_green_attribution_parity(
         2, "Write", {"file_path": str(tmp_path / TEST), "content": test_body}, "written"
     )
     records += _pair(4, "Bash", {"command": _wrapped(command, form)}, compact, 1)
-    recall_command = f"rtk recall {RECALL}" + (" --full" if recall == "full" else "")
+    recall_command = f"rtk recall {recall_id}" + (" --full" if recall == "full" else "")
     if recall != "compact":
         records += _pair(6, "Bash", {"command": recall_command}, raw)
     records += _pair(8, "Write", {"file_path": str(tmp_path / SOURCE)}, "written")
-    records += _pair(10, "Bash", {"command": _wrapped(command, form)}, "Pytest: 1 passed")
+    records += _pair(10, "Bash", {"command": _wrapped(command, form)}, green)
     evidence = _derive(tmp_path, records)
     test = AcceptanceTest(
         reference=f"{TEST}::test_feature",

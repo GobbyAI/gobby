@@ -146,6 +146,8 @@ class TranscriptEvidence:
     excluded_runs: tuple[TranscriptValidationRun, ...] = ()
     #: Owner runs made under another claim, eligible only for Gate 10 candidate proof.
     off_task_author_runs: tuple[TranscriptValidationRun, ...] = ()
+    #: Unfiltered owner edits for Gate 10's off-task proof; never Gate 12 attribution.
+    off_task_author_edits: tuple[TranscriptEdit, ...] = ()
     #: gcode's indexed language per task-edited path, attached by close evaluation.
     edit_languages: Mapping[str, str] = field(default_factory=dict, compare=False)
     #: Newest provider record timestamp these transcripts actually contained. Close
