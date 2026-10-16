@@ -37,7 +37,7 @@ use gobby_terminal::protocol::{
     PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use gobby_terminal::raw_input::RawInputEvent;
-use mock_daemon::{DirectHost, MockDaemon};
+use mock_daemon::{live_workspace_on_direct_host, DirectHost, MockDaemon};
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
@@ -2988,6 +2988,78 @@ async fn frame_errors_and_recovery_giveups_are_logged_with_pane_context() {
     );
     result.expect("live loop exits cleanly");
     mock.shutdown().await;
+
+    // A real direct source the pane does not drain retires with
+    // `RetireReason::Lag`: the host floods frames before the loop runs, the
+    // reader's bounded channel fills, and the reader closes its socket. The
+    // loop drains what was buffered, reconnects straight to the host and
+    // closes the attempt on the restored direct stream.
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, "terminal-d").await;
+    wait_within(DRAIN_DEADLINE, "the direct source to retire on lag", || {
+        // The host's connection task drops its receiver only once the client
+        // closed the socket, which the reader does when it retires.
+        while host.to_client.receiver_count() > 0 && host.to_client.len() < 32 {
+            let _ = host.to_client.send(frame_message("flood"));
+        }
+        host.to_client.receiver_count() == 0
+    })
+    .await;
+    let of_d = |name: &str| -> Vec<String> {
+        records(&logs, name)
+            .into_iter()
+            .filter(|line| line.contains("terminal_id=terminal-d"))
+            .collect()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let driver = async {
+        host.expect_attaches(2).await;
+        // The restored source is installed when the recovery applies; give it
+        // the drain deadline, then let the assertions below judge the record.
+        let _ = timeout(DRAIN_DEADLINE, async {
+            while of_d("frame_recovery_completed").is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+    let started = of_d("frame_recovery_started");
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert_recovery_context(&started[0], "terminal-d", "host_reconnect", "lag");
+    assert!(started[0].contains("attachment_id="), "{}", started[0]);
+    assert!(of_d("frame_recovery_gave_up").is_empty());
+    let completed = of_d("frame_recovery_completed");
+    assert_eq!(completed.len(), 1, "{completed:?}");
+    assert!(
+        completed[0].contains("transport=\"direct\""),
+        "{}",
+        completed[0]
+    );
+    assert!(completed[0].contains("elapsed_ms="), "{}", completed[0]);
+    assert_eq!(
+        host.attaches(),
+        2,
+        "the lagged pane reconnected to its host"
+    );
+
     drop(guard);
     let timed_out = records(&logs, "direct_attach_timed_out");
     assert_eq!(timed_out.len(), 1, "{timed_out:?}");

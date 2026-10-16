@@ -142,6 +142,15 @@ impl Workspace<LiveDaemon> {
         started
     }
 
+    /// A host reconnect that restored the stream closes the attempt
+    /// `begin_host_frame_recovery` opened.
+    pub(in crate::app) fn host_recovery_completed(&self, pane_id: PaneId, started: Instant) {
+        if let Some(mut record) = self.pane_record(pane_id, Some("host_reconnect")) {
+            record.started = started;
+            record.completed(Transport::Direct);
+        }
+    }
+
     /// Applies one recovery step, returning the next when there is one.
     pub(in crate::app) fn apply_frame_recovery(
         &mut self,
