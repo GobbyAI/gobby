@@ -37,8 +37,10 @@ Decision record:
   an observer: it may connect, authenticate, validate the epoch, and report health, but it may
   not spawn, restart, drain, rotate the token, or reconcile rows. Python remains the sole
   supervisor. In `Native`, Rust is the sole supervisor and Python terminal wiring does not
-  construct `TerminalHostManager`, `TerminalLeaseRegistry`, or `WriteCoordinator`. This avoids
-  a second supervisor and adds no terminal-specific mode knob.
+  construct `TerminalHostManager` or `WriteCoordinator`, and owns no terminal lease. Its one
+  `TerminalLeaseRegistry` only sequences workspace events for the Python websocket server and
+  claims no attachment (2.10). This avoids a second supervisor and adds no terminal-specific mode
+  knob.
 - **Restart semantics — restraint rung 1 (remove a contradictory option):** ordinary stop or
   restart closes daemon clients and leaves the gterm host and its terminals alive. Remove the
   `terminals.stop_host_on_shutdown` override because it contradicts the required invariant.
@@ -1957,6 +1959,7 @@ Targets:
 - `src/gobby/agents/spawn_executor_runtime.py::_runtime_spawn`
 - `src/gobby/agents/lifecycle_reconciliation.py::LifecycleReconciliation.reap_stale_pending`
 - `src/gobby/terminals/web_spawn.py::spawn_web_terminal`
+- `src/gobby/runner_init/servers.py::init_servers`
 - `tests/terminals/test_runtime_client.py`
 - `tests/terminals/test_workspace_ops.py::*` — scope-reason: prove the Native workspace spawn writes no Python terminal rows and binds the pane only after Rust settles
 
@@ -2001,13 +2004,54 @@ Research context:
   `runner.terminal_services = TerminalServices(TerminalManager(db), <Native runtime registry>,
   coordinator=<write client>)` in `Native` and sets the agent runner's terminal fields from the
   same objects, so the monitor builds no fallback.
-- **Granularity:** four acceptance items over two lifecycle owners, spawn settlement and pane
-  binding, plus the terminal services they share. They close together because pane binding reads
-  the terminal id Rust settlement returns, and both resolve the runtime through the services this
-  section wires.
+- Workspace event registry (found gap, 2026-10-16): in `Native`, `init_terminal_wiring` sets
+  `runner.lease_registry = None` (terminal_wiring.py:70), and `init_servers` hands the websocket
+  server that value (servers.py:190 and 330). The workspace family stays Python, so once 2.13
+  lifts the gate:
+  - `WebSocketServer.start` calls `self.lease_registry.start_lifecycle_publication()`
+    (server.py:709), and its stop paths await `shutdown_lifecycle_publication()` (723 and 783),
+    so the Python websocket server cannot start.
+  - Shutdown awaits `websocket_server.lease_registry.finalize_shutdown_attachments()`
+    (runner_lifecycle_shutdown.py:455).
+  - `workspace_ws.py` reads `_leases().lifecycle_snapshot()` for its attach key and snapshot
+    watermark (248, 290, 307), and `broadcast.py:449` publishes each `workspace_event` through
+    `lease_registry.publish_lifecycle`. gclient applies a workspace event only when its
+    `daemon_epoch` and `seq` follow the snapshot's watermark
+    (`crates/gclient/src/app/workspace_ops.rs:49-51`), so the watermark and the events must come
+    from one sequencer.
+- Decision (restraint rung 2): in `Native`, `init_terminal_wiring` builds one
+  `TerminalLeaseRegistry` as the workspace event sequencer and stores it as
+  `runner.workspace_event_registry`. It claims no attachment and owns no terminal lease, because
+  Rust owns every lease (A1). `init_servers` hands the websocket server `runner.lease_registry`
+  when it is set and `runner.workspace_event_registry` otherwise. `services.lease_registry` stays
+  `None`, so the guard at servers.py:366-375 leaves `setup_terminal_lifecycle_broadcasting`
+  unwired and Python publishes no `terminal_lifecycle` message; Rust's registry stays the only
+  terminal lifecycle sequencer (2.3, 2.14). The class is reused because `publish_lifecycle` and
+  `lifecycle_snapshot` already implement the sequence, and 2.15 extends it with the Native viewport
+  read.
+  - Python's terminal WS handlers (`terminal_ws.py`, `terminal_ws_control.py`,
+    `terminal_ws_write.py`, `terminal_sizing.py`, `proxy_relay.py`) and `routes/terminals.py` now
+    find a registry, but none is reachable in `Native`: 2.13 claims every terminal WS message type
+    and `/api/terminals` for Rust (2.13.1, 2.13.2).
+  - `orchestration.py:804` passes `runner.lease_registry.daemon_epoch` to `CommunicationsManager`,
+    which falls back to a fresh uuid for `None` (responder.py:193), so it needs no change.
+- **Granularity:** five acceptance items over two lifecycle owners, spawn settlement and pane
+  binding, plus the terminal services they share and the workspace event registry the Python
+  websocket server needs in `Native`. They close together because pane binding reads the terminal
+  id Rust settlement returns, both resolve the runtime through the services this section wires,
+  and without the registry `Native` cannot serve workspaces at all.
 
 Consumers unchanged:
-- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature.
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature, and `CommunicationsManager` falls back to a fresh uuid when `runner.lease_registry` is `None`.
+- `src/gobby/servers/websocket/server.py` — no-edit-reason: Its start and stop calls run against the workspace event registry that `init_servers` hands it in `Native`.
+- `src/gobby/runner_lifecycle_shutdown.py` — no-edit-reason: `finalize_shutdown_attachments` on the workspace event registry finds no attachment and returns.
+- `src/gobby/servers/websocket/broadcast.py` — no-edit-reason: It publishes workspace events through the websocket server's registry, which is the workspace event registry in `Native`.
+- `src/gobby/runner_broadcasting.py` — no-edit-reason: `setup_terminal_lifecycle_broadcasting` stays unwired in `Native` because `services.lease_registry` is `None`.
+- `src/gobby/runner.py` — no-edit-reason: It calls `init_servers` through the unchanged signature.
+- `src/gobby/runner_init/__init__.py` — no-edit-reason: It re-exports `init_servers` by name.
+- `tests/config/test_restart_config_consumers.py` — no-edit-reason: It runs outside `Native`, where `init_servers` hands the websocket server `runner.lease_registry` as before.
+- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: Same reason as `test_restart_config_consumers.py`.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: Same reason as `test_restart_config_consumers.py`.
 - `tests/agents/test_spawn_native_only.py` — no-edit-reason: It runs outside `Native` route mode, where `resolve_terminal_services` is unchanged.
 - `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: It runs outside `Native` route mode, where `_runtime_spawn` is unchanged.
 - `tests/servers/test_terminal_ws_attach_honesty.py` — no-edit-reason: It runs outside `Native` route mode, where `_runtime_spawn` is unchanged.
@@ -2037,6 +2081,11 @@ Consumers unchanged:
   client, `AgentLifecycleMonitor` builds no fallback coordinator, and a committed spawn records an
   empty composer for its terminal. test:
   `tests/terminals/test_runtime_client.py::test_native_terminal_services_use_the_rust_clients`.
+- 2.10.5 - In `Native`, the Python websocket server starts and stops on the workspace event
+  registry; a workspace snapshot carries that registry's watermark; a workspace mutation
+  publishes a `workspace_event` above it in the same `daemon_epoch`; shutdown finalizes no
+  attachment; and Python publishes no `terminal_lifecycle` message. test:
+  `tests/terminals/test_runtime_client.py::test_native_websocket_server_sequences_workspace_events_only`.
 
 ### 2.14 Terminal inventory reads and HTTP handlers [category: code] (depends: 2.1, 2.10, 1.10)
 
