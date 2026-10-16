@@ -168,3 +168,40 @@ async def test_acp_attach_session_requires_resolved_model_before_session_request
 
     client.create_session.assert_not_awaited()
     client.load_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input", "derived"),
+    [
+        ("Bash", {"command": "echo hi > a.py"}, {}),
+        (
+            "mcp__gobby-tasks__close_task",
+            {"task_id": "#42"},
+            {"mcp_server": "gobby-tasks", "mcp_tool": "close_task"},
+        ),
+    ],
+)
+async def test_post_tool_lifecycle_adds_only_mcp_display_fields(
+    tool_name: str, tool_input: dict[str, object], derived: dict[str, str]
+) -> None:
+    """The shared post-tool payload takes only mcp_server/mcp_tool from normalization."""
+    payloads: list[dict[str, object]] = []
+
+    async def record_post_tool(payload: dict[str, object]) -> None:
+        payloads.append(payload)
+
+    session = GrokManagedChatSession(conversation_id="conv-grok")
+    session._on_post_tool = record_post_tool
+
+    await session._apply_post_tool_lifecycle(tool_name, dict(tool_input), "ok", is_error=False)
+
+    assert payloads == [
+        {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "tool_response": "ok",
+            "is_error": False,
+            **derived,
+        }
+    ]
