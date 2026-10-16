@@ -43,8 +43,10 @@ _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
     re.IGNORECASE,
 )
-_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
-_RTK_FAILURE_HEADER_RE = re.compile(r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>\S+)\s*$")
+_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_+\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s+_+\s*$")
+_RTK_FAILURE_HEADER_RE = re.compile(
+    r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s*$"
+)
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):(?P<line>\d+):"
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
@@ -63,7 +65,7 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"^(?:_+\s+\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
     r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"

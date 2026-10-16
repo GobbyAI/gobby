@@ -398,6 +398,7 @@ and activated interactive sessions. Each step can define:
 | `name` | Step identifier |
 | `description` | Human-readable summary |
 | `status_message` | Step-specific guidance shown to the session |
+| `idle` | Marks a standing seat's idle step: native `set_variable` must meet the step's `allowed_tools` there, the step also admits `set_variable(name="seat_idle", value=true)` on the caller's own session, and the seat may then stop without a wait ([stop attempt counting](./workflow-rules.md#stop-attempt-counting)) |
 | `allowed_tools` / `blocked_tools` | Native tool restrictions |
 | `allowed_mcp_tools` / `blocked_mcp_tools` | MCP tool restrictions such as `gobby-tasks:claim_task` |
 | `on_enter` / `on_exit` | Actions around step boundaries |

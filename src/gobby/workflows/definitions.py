@@ -566,6 +566,8 @@ class WorkflowStep(BaseModel):
     name: str
     description: str | None = None
     status_message: str | None = None
+    # A standing seat's idle step: the seat may stop here once it declares seat_idle.
+    idle: bool = False
 
     on_enter: list[dict[str, Any]] = Field(default_factory=list)
 

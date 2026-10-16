@@ -22,6 +22,7 @@ ROLE_NAMES = {
     "researcher": "researcher",
     "lane-manager": "lane manager",
 }
+IDLE_STEPS = {"developer": "claim", "code-reviewer": "await", "researcher": "serve"}
 
 
 @pytest.mark.parametrize("override", [False, True])
@@ -345,7 +346,12 @@ def test_team_lane_renders_operator_inputs(
     assert ".gobby/" not in args["prompt"]
     assert "installed agent definition" in args["prompt"]
     assert 'target="session", target_id="gobby#14972"' in args["prompt"]
-    assert 'owner_session="gobby#14972"' in args["prompt"]
+    if seat in IDLE_STEPS:
+        # An idle-step seat goes idle instead of re-arming an expiring wait (#24405).
+        assert f"go idle as your {IDLE_STEPS[seat]} step directs" in args["prompt"]
+        assert "wait_for_coordination" not in args["prompt"]
+    else:
+        assert 'owner_session="gobby#14972"' in args["prompt"]
     inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
 

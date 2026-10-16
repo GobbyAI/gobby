@@ -41,6 +41,7 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
 )
+from gobby.utils.daemon_client import MCP_TOOL_CALL_TIMEOUT_SECONDS
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
 
@@ -384,7 +385,7 @@ class DaemonProxy:
 
         tool_timeouts = await self._get_tool_timeouts()
 
-        timeout = 30.0
+        timeout = MCP_TOOL_CALL_TIMEOUT_SECONDS
         if tool_timeouts and tool_name in tool_timeouts:
             timeout = tool_timeouts[tool_name]
         elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
