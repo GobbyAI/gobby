@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest.mock import MagicMock
@@ -11,7 +12,8 @@ import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub._ambient import ambient_transaction
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.postgres_pool import _PostgresTransaction
+from gobby.storage.hub.protocol import Cursor, HubDatabase
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
@@ -838,3 +840,61 @@ def test_apply_rejects_undeclared_cross_plan_task(
 
     assert tasks.list_tasks(parent_task_id=declared_root.id) == []
     assert tasks.list_tasks(parent_task_id=parent.id) == []
+
+
+def test_apply_locks_declared_ancestor_root_after_expansion_root(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared phase root above the expansion root locks once, after the root.
+
+    Row locks are compared up to the first task creation, where the lock-order
+    section of apply ends. The create guard there re-locks the new phase epic's
+    parent, a row apply already holds.
+    """
+    service = _service(temp_db)
+    tasks = service.task_manager
+    grandparent = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Program epic",
+        task_type="epic",
+        validation_criteria="Program completion is observable.",
+    )
+    parent = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+        parent_task_id=grandparent.id,
+        validation_criteria="Test task completion is observable.",
+    )
+    hub_task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Hub contract from another plan",
+        validation_criteria="Hub contract exists.",
+    )
+    spec = _cross_plan_spec(parent.id, f"#{grandparent.seq_num}", f"#{hub_task.seq_num}")
+    run = _save_run(service, parent, sample_project, spec)
+
+    execute = _PostgresTransaction.execute
+    watched = {parent.id, grandparent.id}
+    locked: list[str] = []
+    creating = False
+
+    def record_lock(
+        transaction: _PostgresTransaction,
+        query: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Cursor:
+        nonlocal creating
+        creating = creating or "SELECT seq_num, closed_at FROM tasks" in query
+        if not creating and "FOR UPDATE" in query and isinstance(params, tuple):
+            locked.extend(param for param in params[:1] if param in watched)
+        return execute(transaction, query, params)
+
+    monkeypatch.setattr(_PostgresTransaction, "execute", record_lock)
+
+    applied = service.apply_run(run.id, session_id=None)
+
+    assert creating
+    assert locked == [parent.id, grandparent.id]
+    rooted_epic = tasks.get_task((applied.checkpoints or {})["phase_parent_map"]["phase-p1"])
+    assert rooted_epic is not None and rooted_epic.parent_task_id == grandparent.id
