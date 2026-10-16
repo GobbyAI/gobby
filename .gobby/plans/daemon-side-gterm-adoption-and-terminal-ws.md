@@ -2867,3 +2867,10 @@ Executors run focused verification after each leaf and the complete matrix befor
     - In `Native`, every team-lane launch would refuse for lack of gclient viewports; the new 2.15
       reads them from the Rust lease registry.
     - `FrontDoor::handle` line references follow #23880.
+- 2026-10-16: V1 consensus. Adversary gobby#16983 re-reviewed `21fedf047b` and found F1-F6
+  resolved, LOW-1 and LOW-2 wired, and the new or reshaped 1.7, 1.10, 2.10.5, 2.11, 2.14, 2.15,
+  2.2, 2.3, 2.12, and 2.13 sound, with no blocking finding or unresolved decision; its independent
+  base validation exited 0 with no warnings. Orchestrator gobby#15977 confirmed all four
+  cross-plan edge directions as written, with the 2.6 edge to #23880 kept and already satisfied
+  by its landing at `9da990c47b`, and accepted 2.10.5, 2.14, and 2.15. The Adversary derives M1
+  from this revision.
