@@ -539,9 +539,18 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
         if len(step) != 2 or step[0] != "cd":
             return None
         location = posixpath.normpath(posixpath.join(location, step[1]))
-    directory = _drop_neutral_uv_options(_core_words(parsed.segments[-1]))[1].get(
-        "--directory", "."
+    env_directories: list[str] = []
+    core = parse_validation_shell(
+        normalize_validation_evidence_command(
+            shlex.join(parsed.segments[-1]), directories=env_directories
+        )
     )
+    for env_directory in env_directories:
+        location = posixpath.normpath(posixpath.join(location, env_directory))
+    words = list(core.segments[0]) if len(core.segments) == 1 else list(parsed.segments[-1])
+    if words and posixpath.basename(words[0]) == "env":
+        return None  # An unproven env invocation cannot attribute repository coverage.
+    directory = _drop_neutral_uv_options(words)[1].get("--directory", ".")
     return posixpath.normpath(posixpath.join(location, directory))
 
 
