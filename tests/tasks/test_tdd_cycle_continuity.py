@@ -436,7 +436,12 @@ async def test_legacy_owner_history_requires_current_claim_transcript_edit(
         *_pair(
             4, "Write", {"file_path": str(edit_root / "src/feature.py"), "content": "code"}, "ok"
         ),
-        *_pair(5, "Bash", {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root}, "1 passed"),
+        *_pair(
+            5,
+            "Bash",
+            {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root},
+            "1 passed in 0.01s\n",
+        ),
     ]
     if proof == "later_edit":
         records.extend(
