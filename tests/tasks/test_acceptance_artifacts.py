@@ -23,6 +23,7 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.acceptance_python import MAX_HELPER_DEPTH
 from gobby.tasks.tdd_evidence import (
     TddEvidenceResult,
     evaluate_tdd_evidence,
@@ -1041,7 +1042,7 @@ def test_feature() -> None:
     assert value or True
 """
     monkeypatch.setattr(
-        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
     )
 
     result = evaluate_acceptance_artifacts(
@@ -1169,6 +1170,182 @@ def test_unresolved_and_cyclic_assert_helpers_are_flagged(tmp_path: Path, source
     assert result.findings == (NO_ASSERTION,)
 
 
+_ASSERTING_SUPPORT = """
+def assert_matches(receipt, expected):
+    assert receipt == expected
+"""
+
+
+_NOOP_SUPPORT = """
+def assert_matches(receipt, expected):
+    pass
+"""
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            def unused():
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            async def unused():
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            class Unused:
+                def check(self):
+                    assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_matches(receipt, expected):
+            assert receipt == expected
+
+        def _assert_ok(receipt):
+            check = lambda: _assert_matches(receipt, "ok")
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            def unused():
+                assert make_receipt() == "ok"
+        """,
+    ],
+    ids=["nested_def", "nested_async_def", "nested_class", "lambda_call", "test_body_nested_def"],
+)
+def test_uncalled_nested_assert_helper_is_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_receiver_decoy_is_flagged(tmp_path: Path) -> None:
+    source = """
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+
+    def test_feature(receipt):
+        receipt._assert_ok()
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "test_function",
+    [
+        """
+        def test_feature(_assert_ok):
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            _assert_ok = lambda receipt: None
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            for _assert_ok in (print,):
+                _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            from tests.support.noop import assert_matches as _assert_ok
+            _assert_ok(make_receipt(), "ok")
+        """,
+    ],
+    ids=["parameter", "local_noop_rebinding", "loop_target", "local_import"],
+)
+def test_assert_helper_lexical_shadow_is_flagged(tmp_path: Path, test_function: str) -> None:
+    source = textwrap.dedent(
+        """
+        def _assert_ok(receipt, expected="ok"):
+            assert receipt == expected
+        """
+    ) + textwrap.dedent(test_function)
+    result = _committed_python_result(tmp_path, source, {"tests/support/noop.py": _NOOP_SUPPORT})
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_nested_scope_import_is_flagged(tmp_path: Path) -> None:
+    source = """
+    from tests.support.noop import assert_matches as _assert_ok
+
+    def _unrelated():
+        from tests.support.receipts import assert_matches as _assert_ok
+
+    def test_feature():
+        _assert_ok(make_receipt(), "ok")
+    """
+    result = _committed_python_result(
+        tmp_path,
+        source,
+        {"tests/support/noop.py": _NOOP_SUPPORT, "tests/support/receipts.py": _ASSERTING_SUPPORT},
+    )
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize("dots", ["...", ".."], ids=["three_levels", "two_levels"])
+def test_assert_helper_overdeep_relative_import_is_flagged(tmp_path: Path, dots: str) -> None:
+    source = f"""
+    from {dots}support import _assert_ok
+
+    def test_feature():
+        _assert_ok(make_receipt())
+    """
+    decoy = """
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+    """
+    result = _committed_python_result(tmp_path, source, {"support.py": decoy})
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def _helper_chain(length: int) -> str:
+    helpers = [
+        f"def _assert_{index}(receipt):\n    _assert_{index + 1}(receipt)\n"
+        for index in range(length - 1)
+    ]
+    helpers.append(f'def _assert_{length - 1}(receipt):\n    assert receipt == "ok"\n')
+    return "\n".join([*helpers, "def test_feature():\n    _assert_0(make_receipt())\n"])
+
+
+@pytest.mark.parametrize(
+    ("length", "passed"),
+    [(MAX_HELPER_DEPTH, True), (MAX_HELPER_DEPTH + 1, False)],
+    ids=["at_limit", "beyond_limit"],
+)
+def test_assert_helper_depth_limit(tmp_path: Path, length: int, passed: bool) -> None:
+    result = _committed_python_result(tmp_path, _helper_chain(length))
+
+    assert result.passed is passed, result.findings
+    assert result.findings == (() if passed else (NO_ASSERTION,))
+
+
 @pytest.mark.parametrize(
     ("source", "extra"),
     [
@@ -1242,7 +1419,7 @@ fn protocol_frame_roundtrip() {
 }
 """
     monkeypatch.setattr(
-        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
     )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("frame_protocol",))
@@ -1300,7 +1477,7 @@ def test_test_named_helper_call_is_not_delegation(
     body: str,
 ) -> None:
     monkeypatch.setattr(
-        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
     )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
@@ -1362,7 +1539,7 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     finding: str,
 ) -> None:
     monkeypatch.setattr(
-        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
     )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))

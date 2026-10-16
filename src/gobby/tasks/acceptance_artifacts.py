@@ -102,8 +102,8 @@ class AcceptanceTest:
     helpers: tuple[str, ...] = ()
     rust_module: tuple[str, ...] | None = None
     rust_target: tuple[str, str | None] | None = None
-    # Python assert-named calls whose resolved helper body holds an assertion.
-    assertion_calls: frozenset[str] = frozenset()
+    # Python: a call in the test's own body binds to a helper proven to assert.
+    helper_asserts: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +282,7 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
-            body, helpers, assertion_calls = await _resolve_test_body(
+            body, helpers, helper_asserts = await _resolve_test_body(
                 path, symbol, repo_path, candidate, source_cache=source_cache
             )
             rust_module = (
@@ -309,7 +309,7 @@ async def resolve_acceptance_tests_async(
                 helpers,
                 rust_module,
                 rust_target,
-                assertion_calls=assertion_calls,
+                helper_asserts=helper_asserts,
             )
         )
     return tuple(tests), tuple(findings)
@@ -500,7 +500,7 @@ async def _resolve_test_body(
     commit_sha: str,
     *,
     source_cache: dict[str, str] | None = None,
-) -> tuple[str, tuple[str, ...], frozenset[str]]:
+) -> tuple[str, tuple[str, ...], bool]:
     source = source_cache.get(path) if source_cache is not None else None
     if source is None:
         source = await _read_test_file_from_commit(path, commit_sha, repo_path)
@@ -512,10 +512,10 @@ async def _resolve_test_body(
         async def read(module_path: str) -> str:
             return await _read_test_file_from_commit(module_path, commit_sha, repo_path)
 
-        helpers, assertion_calls = await resolve_assertion_helpers(source, path, body, read)
-        return body, helpers, assertion_calls
+        helpers, helper_asserts = await resolve_assertion_helpers(source, path, symbol, read)
+        return body, helpers, helper_asserts
     body = _extract_braced_test_body(source, symbol, path)
-    return body, _same_file_helper_bodies(source, path, symbol, body), frozenset()
+    return body, _same_file_helper_bodies(source, path, symbol, body), False
 
 
 def _is_rust(path: str) -> bool:
@@ -651,7 +651,7 @@ def _matching_brace_end(source: str, opening: int, path: str) -> int:
 def _test_body_findings(test: AcceptanceTest) -> list[str]:
     suffix = Path(test.path).suffix.casefold()
     if suffix == ".py":
-        return python_test_findings(test.reference, test.body, test.assertion_calls)
+        return python_test_findings(test.reference, test.body, test.helper_asserts)
     if suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
         return _javascript_test_findings(test)
     return _text_test_findings(test)
