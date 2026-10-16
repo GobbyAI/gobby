@@ -172,6 +172,7 @@ def _post_set_handoff(
     envelope_id: str,
     *,
     machine_id: str | None = TEST_MACHINE_ID,
+    expected_status: int = 200,
 ) -> dict[str, Any]:
     """One real PreToolUse delivery for gobby-sessions:set_handoff."""
     input_data: dict[str, Any] = {
@@ -201,7 +202,7 @@ def _post_set_handoff(
             "input_data": input_data,
         },
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == expected_status, response.text
     body = response.json()
     assert isinstance(body, dict)
     return body
@@ -215,12 +216,10 @@ def test_route_rejects_missing_envelope_machine_id(
         "missing-machine-id",
         f"n-{uuid4()}",
         machine_id=None,
+        expected_status=403,
     )
 
-    assert _blocked(body), body
-    assert body["hookSpecificOutput"]["permissionDecisionReason"] == (
-        "Hook envelope is missing required machine_id"
-    )
+    assert body == {"code": "hook_machine_mismatch"}
 
 
 def _blocked(body: dict[str, Any]) -> bool:

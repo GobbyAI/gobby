@@ -27,6 +27,7 @@ from gobby.servers.routes.mcp import hooks as hooks_route
 from gobby.storage.hook_receipts import prepare_receipt
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -48,7 +49,7 @@ def _envelope() -> dict[str, Any]:
         "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "hook_type": "BeforeAgent",
         "source": "claude",
-        "input_data": {"prompt": "continue"},
+        "input_data": {"prompt": "continue", "machine_id": get_machine_id()},
     }
 
 

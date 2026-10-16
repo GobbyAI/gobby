@@ -516,6 +516,26 @@ class _AgentRunQueryMixin:
             lifecycle_projection=True,
         )
 
+    def list_active_child_session_ids_for_machine(
+        self: _AgentRunQueryHost, machine_id: str, limit: int = 100, offset: int = 0
+    ) -> list[str]:
+        """Page the child sessions of one machine's active runs.
+
+        Pollers that only need to know which sessions a run owns read this column
+        alone, without the live-stat selector's joins and run blobs (#23359).
+        """
+        rows = self.db.fetchall(
+            """
+            SELECT child_session_id FROM agent_runs
+            WHERE status IN ('queued', 'running', 'pending') AND machine_id = %s
+              AND child_session_id IS NOT NULL
+            ORDER BY started_at ASC, id ASC
+            LIMIT %s OFFSET %s
+            """,
+            (machine_id, limit, max(0, offset)),
+        )
+        return [str(row["child_session_id"]) for row in rows]
+
     def list_active_global(
         self: _AgentRunQueryHost,
         limit: int = 100,

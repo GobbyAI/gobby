@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.event_handlers._session_start.terminal_runtime import _terminal_context_reused
+from gobby.hooks.session_binding import bound_session
 from gobby.hooks.terminal_context import hook_sandbox_enabled
 from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
@@ -91,17 +92,23 @@ def resolve_session_start_identity(
     session = None
     drifted_project = False
     try:
-        session = handler._session_manager.find_by_external_id(
-            external_id,
-            project_id,
-            cli_source,
-            session_type="terminal",
-        )
-        if session is None:
-            session = handler._session_manager.find_by_external_id_any_project(
+        session = bound_session(
+            handler._session_manager.find_by_external_id(
                 external_id,
+                project_id,
                 cli_source,
                 session_type="terminal",
+            ),
+            machine_id,
+        )
+        if session is None:
+            session = bound_session(
+                handler._session_manager.find_by_external_id_any_project(
+                    external_id,
+                    cli_source,
+                    session_type="terminal",
+                ),
+                machine_id,
             )
             drifted_project = session is not None
     except Exception as e:
@@ -161,9 +168,9 @@ def resolve_session_start_identity(
                 "Compact restart terminal identity matches multiple persisted sessions."
             ),
         )
-    if candidate_resolution.session is not None:
+    candidate = bound_session(candidate_resolution.session, machine_id)
+    if candidate is not None:
         compact_candidate_resolved = True
-        candidate = candidate_resolution.session
         if session is None or session.id != candidate.id:
             handler.logger.info(
                 "Canonicalized compact provider identity for session %s",

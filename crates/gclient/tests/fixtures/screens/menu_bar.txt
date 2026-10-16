@@ -14,7 +14,7 @@
 05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*71 accent/panel_bg*1
 06 |│                  │   Pin sidebar             │                                                                       │|
 06 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*71 accent/panel_bg*1
-07 |│                  │ ✓ Show all machines       │                                                                       │|
+07 |│                  │   Show all machines       │                                                                       │|
 07 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*71 accent/panel_bg*1
 08 |│                  │ ✓ Show all projects       │                                                                       │|
 08 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*71 accent/panel_bg*1

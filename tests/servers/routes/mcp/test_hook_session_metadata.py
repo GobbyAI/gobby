@@ -21,6 +21,7 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -52,6 +53,7 @@ def _post_claude_hook(temp_db: HubDatabase, payload: dict, headers: dict | None 
             "input_data": {},
             **payload,
         }
+        envelope["input_data"] = {**envelope["input_data"], "machine_id": get_machine_id()}
         response = client.post("/api/hooks/execute", json=envelope, headers=headers or {})
 
     assert response.status_code == 200
@@ -109,7 +111,7 @@ def test_envelope_id_marks_processed_and_skips_duplicate(
         "critical": False,
         "hook_type": "session-start",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
 
     with (
@@ -165,7 +167,7 @@ def test_envelope_id_active_processing_duplicate_returns_conflict(
         "critical": False,
         "hook_type": "session-start",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
 
     with (
@@ -219,7 +221,7 @@ def test_envelope_id_malformed_marker_returns_clear_conflict(
         "critical": False,
         "hook_type": "session-start",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
 
     with (
@@ -262,7 +264,7 @@ def test_envelope_id_replays_terminal_denial(
         "critical": True,
         "hook_type": "PreToolUse",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
     terminal_response = {"continue": False, "decision": "block", "reason": "commit required"}
 
@@ -319,7 +321,7 @@ def test_aged_stop_block_is_reevaluated_instead_of_replayed(
         "critical": True,
         "hook_type": "Stop",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
     terminal_response = {
         "continue": True,
@@ -389,7 +391,7 @@ def test_envelope_id_processed_marker_without_response_returns_conflict(
         "critical": False,
         "hook_type": "session-start",
         "source": "claude",
-        "input_data": {},
+        "input_data": {"machine_id": get_machine_id()},
     }
 
     with (
@@ -484,7 +486,7 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
                 "critical": True,
                 "hook_type": hook_type,
                 "source": "codex",
-                "input_data": {},
+                "input_data": {"machine_id": get_machine_id()},
             },
         )
 

@@ -48,7 +48,7 @@ def e2e_pre_daemon_setup(postgres_db: HubDatabase) -> None:
     users.update_password(TEST_USER_ID, hash_password(TEST_PASSWORD))
 
 
-def _hook_payload() -> dict[str, object]:
+def _hook_payload(machine_id: str) -> dict[str, object]:
     return {
         "schema_version": 1,
         "enqueued_at": "2026-07-10T12:00:00Z",
@@ -58,7 +58,7 @@ def _hook_payload() -> dict[str, object]:
         "source": "claude",
         "input_data": {
             "session_id": f"auth-e2e-hook-{uuid4()}",
-            "machine_id": "auth-e2e-machine",
+            "machine_id": machine_id,
         },
     }
 
@@ -89,11 +89,15 @@ def _register_session(client: httpx.Client, project_dir: Path) -> str:
     return session_id
 
 
-def _protected_requests(session_id: str) -> list[tuple[str, str, dict[str, object] | None]]:
+def _protected_requests(
+    session_id: str, instance: DaemonInstance
+) -> list[tuple[str, str, dict[str, object] | None]]:
+    # A hook names the daemon's own machine, as its ghook stamps it.
+    machine_id = (instance.gobby_home / "machine_id").read_text(encoding="utf-8").strip()
     return [
         ("GET", "/api/admin/config", None),
         ("GET", f"/api/sessions/{session_id}", None),
-        ("POST", "/api/hooks/execute", _hook_payload()),
+        ("POST", "/api/hooks/execute", _hook_payload(machine_id)),
         ("POST", "/mcp", _MCP_INITIALIZE),
         ("POST", "/memory/dream", {"dry_run": True, "wait": True}),
     ]
@@ -118,7 +122,7 @@ def _assert_authenticated_http_matrix(
     instance: DaemonInstance,
 ) -> None:
     session_id = _register_session(client, instance.project_dir)
-    for method, path, payload in _protected_requests(session_id):
+    for method, path, payload in _protected_requests(session_id, instance):
         response = _request(client, method, path, payload)
         if path == "/memory/dream":
             assert response.status_code == 400
@@ -243,7 +247,7 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
     ) as client:
         assert client.get("/api/health").status_code == 200
         assert client.post("/mcp", json=_MCP_INITIALIZE).status_code == 401
-        for method, path, payload in _protected_requests(unauthenticated_session):
+        for method, path, payload in _protected_requests(unauthenticated_session, daemon_instance):
             assert _request(client, method, path, payload).status_code == 401
 
         invalid = client.get(

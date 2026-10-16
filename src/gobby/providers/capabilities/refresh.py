@@ -32,6 +32,8 @@ CAPABILITY_RECOLLECT_COOLDOWN_SECONDS = 60.0
 class CapabilityStore(Protocol):
     """Storage operations required by the capability service."""
 
+    def prune_unsupported_providers(self) -> int: ...
+
     def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None: ...
 
     def get_all_snapshots(self) -> tuple[ProviderSnapshot, ...]: ...
@@ -96,6 +98,7 @@ class CapabilityRefreshCoordinator:
 
     def prepare(self) -> None:
         """Install bundled fallback rows before HTTP starts serving."""
+        self.store.prune_unsupported_providers()
         apply_seed(cast(ProviderCapabilityStore, self.store))
         if self._coverage_auditor is not None:
             try:

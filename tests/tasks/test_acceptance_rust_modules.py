@@ -1,5 +1,7 @@
 """Resolved Rust module scopes bind validation credit to the exact test."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from gobby.tasks.acceptance_artifacts import (
@@ -9,6 +11,107 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_names_test,
 )
 from gobby.tasks.acceptance_rust_modules import resolve_rust_module, resolve_rust_target
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
+from gobby.tasks.transcript_outcomes import EvidenceOutcome
+
+
+@pytest.mark.parametrize("binary", [None, "root"])
+@pytest.mark.parametrize("names_only", [True, False])
+@pytest.mark.parametrize(
+    "manifest,expected",
+    [
+        ("--manifest-path crates/example/Cargo.toml", True),
+        ("--manifest-path=./crates/example/Cargo.toml", True),
+        ("-p actual-package --manifest-path /abs/repo/crates/example/Cargo.toml", True),
+        ("-p actual-package --manifest-path Cargo.toml", True),
+        ("--manifest-path crates/other/Cargo.toml", False),
+        ("--manifest-path Cargo.toml", False),
+        ("--manifest-path crates/example/Cargo.toml -p other", False),
+        ("--manifest-path crates/example/Cargo.toml --workspace", False),
+    ],
+)
+def test_manifest_path_binds_root_acceptance_target(
+    binary: str | None, names_only: bool, manifest: str, expected: bool
+) -> None:
+    path = "crates/example/tests/root.rs" if binary else "crates/example/src/lib.rs"
+    test = AcceptanceTest(
+        reference=f"{path}::root_test",
+        path=path,
+        symbol="root_test",
+        body="fn root_test() { assert!(true); }",
+        rust_module=(),
+        rust_target=("actual-package", binary),
+    )
+    selector = f"--test {binary}" if binary else "--lib"
+    command = f"cargo test {manifest} {selector} root_test"
+    validate = validation_run_names_test if names_only else validation_run_covers_test
+
+    assert validate(command, "test root_test ... ok", test) is expected
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_manifest_path_acceptance_requires_passing_run(outcome: EvidenceOutcome) -> None:
+    started = datetime(2026, 10, 15, tzinfo=UTC)
+    path = "crates/example/src/lib.rs"
+    test = AcceptanceTest(
+        reference=f"{path}::root_test",
+        path=path,
+        symbol="root_test",
+        body="fn root_test() { assert!(feature()); }",
+        rust_module=(),
+        rust_target=("actual-package", None),
+    )
+    command = "cargo test --manifest-path crates/example/Cargo.toml --lib root_test"
+    run_rows: tuple[tuple[int, str, EvidenceOutcome, str], ...] = (
+        (
+            2,
+            "cargo test -p actual-package --lib root_test",
+            "failure",
+            "test root_test ... FAILED\nthread 'root_test' panicked at 'assertion failed'",
+        ),
+        (4, command, outcome, "test root_test ... ok"),
+    )
+    runs = tuple(
+        TranscriptValidationRun(
+            session_id="session",
+            source="codex",
+            command=run_command,
+            categories=("test",),
+            matcher_id="cargo-test",
+            label="cargo test",
+            outcome=run_outcome,
+            started_at=started + timedelta(seconds=order),
+            completed_at=started + timedelta(seconds=order + 1),
+            order=order,
+            exit_code=0 if run_outcome == "success" else 1,
+            output=output,
+        )
+        for order, run_command, run_outcome, output in run_rows
+    )
+    evidence = TranscriptEvidence(
+        edits=tuple(
+            TranscriptEdit(
+                session_id="session",
+                source="codex",
+                path=edit_path,
+                timestamp=started + timedelta(seconds=order),
+                order=order,
+                tool_name="apply_patch",
+            )
+            for order, edit_path in ((1, path), (3, "crates/example/src/feature.rs"))
+        ),
+        validation_runs=runs,
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is (outcome == "success")
+    assert result.green_runs == ((command,) if outcome == "success" else ())
 
 
 @pytest.mark.parametrize(

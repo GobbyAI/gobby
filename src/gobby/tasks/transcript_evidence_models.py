@@ -35,6 +35,19 @@ class TranscriptValidationSegment:
 
 
 @dataclass(frozen=True)
+class OutputDelivery:
+    """One delivery of a run's output into the transcript: its launch or a recovery."""
+
+    delivered_at: datetime
+    #: The recovered file; None for the launch output itself.
+    source: str | None
+    text: str | None
+    truncated: bool
+    #: A Monitor event extends the delivered output; a launch, Read or tail replaces it.
+    appends: bool
+
+
+@dataclass(frozen=True)
 class TranscriptValidationRun:
     """One shell outcome, with empty categories for review-only commands."""
 
@@ -59,6 +72,9 @@ class TranscriptValidationRun:
     background_output_path: str | None = None
     background_monitor_id: str | None = None
     background_description: str | None = None
+    #: A recovered job's launch output then each recovery, oldest first. ``output`` and
+    #: ``output_recovered_*`` replay all of them; gate 12 replays those before its edit.
+    output_deliveries: tuple[OutputDelivery, ...] = field(default=(), compare=False)
     #: The shell tool call's absolute working directory, when the provider recorded one.
     workdir: str | None = None
     #: Why a diagnostic-only observation was removed from task credit.

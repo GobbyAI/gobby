@@ -7856,6 +7856,165 @@ async fn daemon_tab_drag_reorders_and_reattaches_in_that_order() {
     mock.shutdown().await;
 }
 
+/// "Sort tabs A–Z" from the tab menu sends one `tab.reorder` in natural,
+/// case-insensitive title order with untitled tabs last; the order survives a
+/// reattach and no pane changes tab or terminal.
+#[tokio::test]
+async fn sort_tabs_menu_reorders_by_title_and_reattaches_in_that_order() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-b", "terminal-c"]),
+        );
+    }
+    let seeded = mock.seed_workspace(
+        "project-1",
+        &[
+            (&["terminal-a"], "terminal-a"),
+            (&["terminal-b"], "terminal-b"),
+            (&["terminal-c"], "terminal-c"),
+        ],
+    );
+    for (tab, title) in [(&seeded[0].0, "Lane 10"), (&seeded[2].0, "lane 2")] {
+        mock.apply_workspace_op(json!({"op": "tab.rename", "tab": tab, "title": title}));
+    }
+    let bindings = |workspace: &Workspace<LiveDaemon>| {
+        let mut panes: Vec<_> = workspace
+            .workspace_model()
+            .expect("workspace snapshot")
+            .panes()
+            .map(|pane| {
+                (
+                    pane.tab_id.clone(),
+                    pane.id.clone(),
+                    pane.terminal_id.clone(),
+                )
+            })
+            .collect();
+        panes.sort();
+        panes
+    };
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attach workspace");
+    let before = bindings(&workspace);
+    let mut probe = Chrome::dark();
+    sync_live_chrome(&mut workspace, &mut probe);
+    let area = Rect::new(0, 0, 120, 40);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw tab hits");
+    probe.view.apply_hits(hits.expect("probe frame"));
+    let tab_cell = probe
+        .view
+        .tab_hit_areas
+        .iter()
+        .find(|(tab, _)| *tab == 0)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("tab hit area");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // The second pass finds the tabs sorted and sends nothing.
+        for _ in 0..2 {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(MouseButton::Right),
+                tab_cell.0,
+                tab_cell.1,
+                KeyModifiers::NONE,
+            )
+            .await;
+            // New tab, Rename tab, Arrange ▸, then Sort tabs A–Z.
+            for _ in 0..3 {
+                send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
+            }
+            send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+            settle_live_event().await;
+        }
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits");
+    let order = [
+        seeded[2].0.as_str(),
+        seeded[0].0.as_str(),
+        seeded[1].0.as_str(),
+    ];
+    let ops: Vec<_> = websocket_requests(&mock, "workspace_op")
+        .into_iter()
+        .filter(|op| op["op"] == "tab.reorder" || op["op"] == "tab.move")
+        .collect();
+    assert_eq!(
+        ops.len(),
+        1,
+        "one atomic reorder, no per-tab moves: {ops:?}"
+    );
+    assert_eq!(ops[0]["op"], "tab.reorder");
+    let model = workspace.workspace_model().expect("workspace snapshot");
+    assert_eq!(ops[0]["workspace"], json!(model.workspace.id));
+    assert_eq!(ops[0]["order"], json!(order));
+    let visible: Vec<_> = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(visible, order, "the live tab bar follows the sorted order");
+    let toast = chrome.alert_log.last().expect("already-sorted notice");
+    assert_eq!(toast.title, "Tabs are already sorted");
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("reattach daemon");
+    let mut reattached = Workspace::live(daemon);
+    reattached.select_project("project-1");
+    reattached
+        .reconcile_subscribe_first()
+        .await
+        .expect("reattach workspace");
+    let restored: Vec<_> = reattached
+        .workspace_model()
+        .expect("reattached snapshot")
+        .tabs_for_project("project-1")
+        .iter()
+        .map(|tab| tab.id.as_str())
+        .collect();
+    assert_eq!(restored, order);
+    assert_eq!(
+        bindings(&reattached),
+        before,
+        "sorting moves no pane between tabs or terminals"
+    );
+    mock.shutdown().await;
+}
+
 /// 4.2.7: dragging a split border applies the ratio locally on every move
 /// and sends exactly one `pane.resize` when the button is released.
 #[tokio::test]
@@ -8272,10 +8431,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         press(MouseButton::Left, item_cell(bare_cell, 6)).await;
         settle_live_event().await;
 
-        // The tab's menu: `close tab` (its fourth row) runs the confirm-close path.
+        // The tab's menu: `close tab` (its fifth row) runs the confirm-close path.
         press(MouseButton::Right, tab_cell).await;
-        hover(item_cell(tab_cell, 3)).await;
-        press(MouseButton::Left, item_cell(tab_cell, 3)).await;
+        hover(item_cell(tab_cell, 4)).await;
+        press(MouseButton::Left, item_cell(tab_cell, 4)).await;
         settle_live_event().await;
         drop(input_tx);
         (initial, other)

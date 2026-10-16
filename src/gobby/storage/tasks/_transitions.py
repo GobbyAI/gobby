@@ -244,11 +244,16 @@ def claim_task(
             "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
         ).fetchone()
         cursor = conn.execute(sql, params)
+        prior_owner = prior["claimed_by_session_id"] if prior is not None else None
         if cursor.rowcount == 1:
             from gobby.storage.session_tasks import record_claim
 
-            record_claim(conn, session_id, task_id)
-        prior_owner = prior["claimed_by_session_id"] if prior is not None else None
+            record_claim(
+                conn,
+                session_id,
+                task_id,
+                new_claim=prior_owner is None or str(prior_owner) != session_id,
+            )
         if cursor.rowcount == 1:
             from gobby.workflows.state_manager import SessionVariableManager
             from gobby.workflows.task_tool_bindings import TaskToolBindings

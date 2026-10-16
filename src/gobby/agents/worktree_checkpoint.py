@@ -393,10 +393,19 @@ async def checkpoint_agent_worktree(
         )
         dirty_paths = {item.path for item in ownership}
         task_ref = f"#{task.seq_num}"
+        recovery_sessions = {caller_session_id, run.child_session_id}
+        # Untasked dirt held by the recovery boundary's own sessions is not foreign:
+        # task attribution below decides whether it is authorized or unattributed.
         foreign_paths = sorted(
             item.path
             for item in ownership
-            if any(owner.task_ref != task_ref for owner in item.owners)
+            if any(
+                owner.task_ref != task_ref
+                and not (
+                    owner.owner_task_id is None and owner.owner_session_id in recovery_sessions
+                )
+                for owner in item.owners
+            )
         )
         outside_allowed_paths = sorted(dirty_paths - set(allowed_paths or ()))
         if allowed_paths is not None and outside_allowed_paths:
@@ -416,7 +425,7 @@ async def checkpoint_agent_worktree(
                 db,
                 task_id=task.id,
                 checkout_root=checkout_root,
-                session_ids={caller_session_id, run.child_session_id},
+                session_ids=recovery_sessions,
                 legacy_child_session_id=run.child_session_id if task_owner is None else None,
                 legacy_dirty_paths=dirty_paths,
                 legacy_started_at=getattr(run, "started_at", None),

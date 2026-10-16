@@ -11,7 +11,7 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 # The general exit-preserving normalizer strips the `rtk` executable itself.
-_RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})")
+_RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})(?: --full)?")
 
 
 def _retained_output(

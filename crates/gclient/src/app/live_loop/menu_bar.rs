@@ -6,7 +6,8 @@ use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
     appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
-    sidebar_items, theme_row_label, toggle, ArrangeTarget, MenuAction, MenuItem, Submenu,
+    sidebar_items, sort_tabs_item, theme_row_label, toggle, ArrangeTarget, MenuAction, MenuItem,
+    Submenu,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -32,6 +33,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
                 act("Rename tab", Action::RenameTab),
                 chrome.focused_pane().is_some(),
             ),
+            sort_tabs_item(chrome),
             enabled_if(
                 act("Close tab", Action::CloseTab),
                 chrome.focused_pane().is_some(),

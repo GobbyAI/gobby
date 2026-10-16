@@ -88,7 +88,7 @@ async def test_native_row_is_snapshotted_through_the_native_runtime(
         registry=runtime_registry(tmux_runtime, native_runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert native_runtime.snapshot_calls == [15]
     # FakeRuntime ignores Terminal.backend, so the wrong runtime staying untouched
@@ -138,7 +138,7 @@ async def test_native_session_without_a_tmux_pane_still_gets_attention(
         registry=runtime_registry(native_runtime),
     )
 
-    await monitor._check_attention_panes(active_runs=[])
+    await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert native_runtime.snapshot_calls == [15]
     assert attention_manager.transition_async.await_count == 1

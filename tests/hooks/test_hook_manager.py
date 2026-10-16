@@ -451,6 +451,7 @@ class TestHandleSessionStart:
             source=SessionSource.CODEX,
             data={"session_id": "codex-session", "cwd": "/"},
         )
+        session.machine_id = event.machine_id
         event.metadata["_platform_session_id"] = "platform-session"
         manager._handle_internal(event)
 
@@ -2374,7 +2375,7 @@ class TestHookCheckoutIngress:
         machine_id = _pin_hook_machine(temp_db, monkeypatch)
         project = LocalProjectManager(temp_db).create(name="hook-non-cwd")
         write_project_marker(tmp_path, project_id=project.id, name="stale-non-cwd")
-        session = SimpleNamespace(id="sess-1", project_id=project.id)
+        session = SimpleNamespace(id="sess-1", project_id=project.id, machine_id=machine_id)
         sessions = MagicMock()
         sessions.db = temp_db
         sessions.get.return_value = session
@@ -2383,6 +2384,7 @@ class TestHookCheckoutIngress:
         sessions.recover_session.return_value = None
         resolver = ProjectIdResolver(session_manager=sessions)
         event = _cwd_hook_event(str(tmp_path))
+        event.machine_id = machine_id
         if source == "explicit":
             event.project_id = project.id
         elif source == "session":

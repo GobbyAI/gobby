@@ -10,8 +10,9 @@ pub mod standby;
 
 use anyhow::{Result, bail};
 use deadpool_postgres::ClientWrapper;
-use gobby_core::postgres_pool::{Pool, PoolSettings};
+use gobby_core::postgres_pool::Pool;
 use rand::RngCore;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -56,7 +57,7 @@ impl Drop for LossOnDrop {
 /// Owns the dedicated lock session. Dropping it closes that session, never
 /// returning it to the connection pool. Release invalidates authority first.
 pub struct ActiveDaemonLease {
-    pool: Pool,
+    pool: Arc<Pool>,
     application_name: String,
     deployment_token: String,
     authority: Option<Authority>,
@@ -65,7 +66,7 @@ pub struct ActiveDaemonLease {
 
 impl ActiveDaemonLease {
     pub fn new(
-        database_url: &str,
+        pool: Arc<Pool>,
         machine_id: &str,
         deployment_token: &str,
         mode: LeaseMode,
@@ -88,14 +89,6 @@ impl ActiveDaemonLease {
         if application_name.len() > 63 {
             bail!("lease application identity exceeds PostgreSQL's 63-byte limit");
         }
-        let pool = Pool::build(
-            database_url,
-            PoolSettings {
-                max_size: 2,
-                application_name: "gobby-gdaemon-lease-connect".into(),
-                acquire_timeout: OPERATION_TIMEOUT,
-            },
-        )?;
         let (state, _) = watch::channel(LeaseState::Standby);
         Ok(Self {
             pool,

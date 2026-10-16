@@ -97,25 +97,27 @@ ON CONFLICT (provider, source_key) DO UPDATE SET
     last_error = EXCLUDED.last_error
 """
 
+# JSON columns as text: the pool's jsonb loader would decode and re-dump them, and
+# _model_capability decodes them again (#23359).
 _SELECT_CAPABILITIES_SQL = """
 SELECT
     provider,
     canonical_model,
     display_name,
-    aliases,
+    aliases::text AS aliases,
     available,
     hidden,
     is_default,
     context_length,
     max_output_tokens,
     reasoning,
-    supported_efforts,
+    supported_efforts::text AS supported_efforts,
     default_effort,
     latency_class,
-    input_modalities,
+    input_modalities::text AS input_modalities,
     supports_tools,
     generation,
-    provenance
+    provenance::text AS provenance
 FROM provider_model_capabilities
 WHERE (%s::text IS NULL OR provider = %s)
 ORDER BY provider, is_default DESC, display_name, canonical_model
@@ -192,10 +194,7 @@ class ProviderCapabilityStore:
     def get_all_snapshots(self) -> tuple[ProviderSnapshot, ...]:
         """Load all provider snapshots in canonical provider display order."""
         with self._db.transaction() as transaction:
-            removed = self._prune_unsupported_providers(transaction)
             snapshots = self._load_snapshots(transaction, None)
-        if removed:
-            logger.info("Pruned %d unsupported provider capability rows", removed)
         display_order = {
             metadata.provider: index for index, metadata in enumerate(provider_metadata())
         }
@@ -262,6 +261,14 @@ class ProviderCapabilityStore:
             (provider,),
         )
         return bool(row and row["has_rows"])
+
+    def prune_unsupported_providers(self) -> int:
+        """Remove retired provider rows during startup, before coverage auditing."""
+        with self._db.transaction() as transaction:
+            removed = self._prune_unsupported_providers(transaction)
+        if removed:
+            logger.info("Pruned %d unsupported provider capability rows", removed)
+        return removed
 
     @staticmethod
     def _prune_unsupported_providers(transaction: Transaction) -> int:
@@ -339,6 +346,8 @@ class ProviderCapabilityStore:
         generations: dict[str, int] = {}
         for row in capability_rows:
             row_provider = str(row["provider"])
+            if not _supported_provider(row_provider):
+                continue
             models_by_provider[row_provider].append(_model_capability(row))
             generations[row_provider] = max(
                 generations.get(row_provider, 0),
@@ -348,6 +357,8 @@ class ProviderCapabilityStore:
         sources_by_provider: dict[str, list[SourceHealth]] = defaultdict(list)
         for row in source_rows:
             row_provider = str(row["provider"])
+            if not _supported_provider(row_provider):
+                continue
             sources_by_provider[row_provider].append(_source_health(row))
             generations[row_provider] = max(
                 generations.get(row_provider, 0),

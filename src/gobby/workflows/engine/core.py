@@ -694,6 +694,14 @@ class RuleEngine(
                         event,
                         blocking_deadline=blocking_deadline,
                     )
+                    if isinstance(proxy_changed, HookResponse):
+                        return await self._finalize_block_response(
+                            proxy_changed,
+                            evaluation,
+                            span,
+                            source="proxy-hook",
+                            rule_name="rtk-pipeline",
+                        )
                     if proxy_changed:
                         tool_input = event.data.get("tool_input")
                         command = (

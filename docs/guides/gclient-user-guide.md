@@ -84,7 +84,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | Menu | Items |
 | --- | --- |
 | Gobby | Settings, Reload config, Quit |
-| File | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| File | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
@@ -114,7 +114,7 @@ Monochrome** toggles monochrome (below). View also holds:
 | --- | --- |
 | Show sidebar | toggles the sidebar |
 | Pin sidebar | pins it beside the content, or unpins it to an overlay |
-| Show all machines | checked by default; unchecked limits rows to the local machine |
+| Show all machines | unchecked by default, so a new window lists this machine's rows; checked lists every machine on the hub |
 | Show all projects | checked by default; unchecked limits projects and agents to the current project |
 | Group agents by project | groups agents under project headings; disabled while Show all projects is unchecked |
 
@@ -487,6 +487,7 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+n` / `prefix+p` | Next / previous tab | `next_tab` / `previous_tab` |
 | `prefix+1` … `prefix+9` | Switch to tab 1–9 | `switch_tab` |
 | `prefix+shift+left` / `prefix+shift+right` | Move the active tab one position left / right | `move_tab_left` / `move_tab_right` |
+| *unset* | Sort the workspace's tabs by title, ignoring case and reading numbers by value (Lane 2 before Lane 10); untitled tabs go last | `sort_tabs` |
 | `prefix+shift+t` | Rename the active tab | `rename_tab` |
 | `prefix+shift+x` | Close the active tab | `close_tab` |
 
@@ -875,13 +876,13 @@ close.
 | Target | Items |
 | --- | --- |
 | Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
-| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Close tab |
+| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
 | Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
 | Empty tab bar or empty sidebar | New terminal, New tab, New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
-| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals…, Detach |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |

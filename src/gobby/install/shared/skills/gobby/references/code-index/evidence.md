@@ -58,7 +58,9 @@ gcode evidence --request-json '{"schema_version":1,"operation":"graph","graph":{
 Unbound source bytes come from the working tree and must match the indexed content
 hash, so indexed uncommitted edits are citable; a mismatch fails as
 `stale_range` or `fact_mismatch`. The binding's `commit_oid` and `tree_oid`
-record HEAD as provenance only when `binding` is omitted from the request.
+record HEAD as provenance only when `binding` is omitted from the request. A
+`binding_dirty` warning names each returned path whose working-tree bytes are
+not the bytes at that commit; cite those excerpts as working-tree bytes.
 `commit_metadata` reads Git. Community items orient; cite `read` items from
 their members. `--allow-stale` is rejected.
 

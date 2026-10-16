@@ -11,6 +11,7 @@ from typing import Any
 import psycopg
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.storage.session_models import Session
 
@@ -135,7 +136,7 @@ def resolve_hook_project_context(
         return HookProjectResolution(explicit_project_id, source="explicit")
 
     for source, session_id in _candidate_session_ids(event):
-        project_id = _project_id_from_session(session_manager, session_id, logger)
+        project_id = _project_id_from_session(session_manager, session_id, event.machine_id, logger)
         if project_id:
             apply_project_id_to_event(event, project_id)
             return HookProjectResolution(project_id, source=source)
@@ -192,6 +193,7 @@ def _candidate_session_ids(event: HookEvent) -> list[tuple[str, str]]:
 def _project_id_from_session(
     session_manager: HookSessionManager | None,
     session_id: str,
+    event_machine_id: str | None,
     logger: logging.Logger | None,
 ) -> str | None:
     if session_manager is None:
@@ -202,7 +204,12 @@ def _project_id_from_session(
         if logger:
             logger.debug("Failed to resolve hook session %s: %s", session_id, exc)
         return None
-    return _as_nonempty_str(getattr(session, "project_id", None))
+    return _bound_project_id(session, event_machine_id)
+
+
+def _bound_project_id(session: Session | None, event_machine_id: str | None) -> str | None:
+    """Return a row's project only when the event may bind that row."""
+    return _as_nonempty_str(getattr(bound_session(session, event_machine_id), "project_id", None))
 
 
 def _cached_session(
@@ -213,7 +220,7 @@ def _cached_session(
     if session_manager is None or not event.session_id:
         return None
     try:
-        return session_manager.get_cached_session(
+        session = session_manager.get_cached_session(
             event.session_id,
             event.source.value,
             project_id=event.project_id,
@@ -222,6 +229,7 @@ def _cached_session(
         if logger:
             logger.debug("Failed to read hook session cache for %s: %s", event.session_id, exc)
         return None
+    return bound_session(session, event.machine_id)
 
 
 def _project_id_from_existing_session(
@@ -240,7 +248,7 @@ def _project_id_from_existing_session(
             if logger:
                 logger.debug("Failed active hook session lookup for %s: %s", event.session_id, exc)
         else:
-            project_id = _as_nonempty_str(getattr(session, "project_id", None))
+            project_id = _bound_project_id(session, event.machine_id)
             if project_id:
                 return project_id
 
@@ -254,7 +262,9 @@ def _project_id_from_existing_session(
         if logger:
             logger.debug("Failed hook session recovery for %s: %s", event.session_id, exc)
         return None
-    return _as_nonempty_str(getattr(recovered, "project_id", None))
+    # recover_session may have cached a foreign mapping; every later read of it
+    # goes through _cached_session or SessionLookupService.resolve, which refuse it.
+    return _bound_project_id(recovered, event.machine_id)
 
 
 def _project_id_from_current_context() -> str | None:

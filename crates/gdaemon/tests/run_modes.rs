@@ -61,7 +61,7 @@ fn node_prepare_takes_only_the_claim() {
     );
 
     let home = tempfile::tempdir().expect("runtime node home");
-    let error = RuntimeState::prepare(&node, home.path(), "secret")
+    let error = RuntimeState::prepare(&node, home.path(), "secret", None)
         .err()
         .expect("native node refusal");
     assert_eq!(
@@ -78,7 +78,7 @@ fn node_prepare_takes_only_the_claim() {
         "datastore_mode: local\nhub: true\n",
     ] {
         let home = tempfile::tempdir().expect("native home");
-        let error = RuntimeState::prepare(&bootstrap(text), home.path(), "secret")
+        let error = RuntimeState::prepare(&bootstrap(text), home.path(), "secret", None)
             .err()
             .expect("missing database refusal");
         assert_eq!(

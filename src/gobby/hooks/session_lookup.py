@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from gobby.hooks.codex_seat import codex_seat_available
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
+from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
@@ -164,6 +165,15 @@ class SessionLookupService:
             return None
 
         platform_session_id = self._resolve_session_id(external_id, event, cached_session)
+        if platform_session_id:
+            # Neither the cached mapping nor the id lookups are machine-scoped.
+            resolved = (
+                cached_session
+                if cached_session is not None and cached_session.id == platform_session_id
+                else self._session_manager.get(platform_session_id)
+            )
+            if bound_session(resolved, event.machine_id) is None:
+                platform_session_id = None
 
         # Resolve active task for this session
         if platform_session_id:
@@ -271,6 +281,14 @@ class SessionLookupService:
             event.metadata.pop("_platform_session_id", None)
             return None, None
 
+        if bound_session(session, event.machine_id) is None:
+            self._logger.debug(
+                "Ignoring platform session metadata %s owned by another machine",
+                platform_session_id,
+            )
+            event.metadata.pop("_platform_session_id", None)
+            return None, None
+
         return platform_session_id, session
 
     def _accept_explicit_platform_session(self, event: HookEvent, session: Session) -> bool:
@@ -288,7 +306,7 @@ class SessionLookupService:
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id
+            terminal_context, cwd, external_id=event.session_id, machine_id=event.machine_id
         )
         if terminal_process_contexts_match(
             getattr(session, "terminal_context", None),
@@ -322,6 +340,7 @@ class SessionLookupService:
             terminal_context,
             hook_cwd(event.data, event.cwd),
             external_id=event.session_id,
+            machine_id=event.machine_id,
         )
         if not terminal_context:
             return current
@@ -401,7 +420,7 @@ class SessionLookupService:
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id
+            terminal_context, cwd, external_id=event.session_id, machine_id=event.machine_id
         )
         owner = self._session_manager.find_live_interactive_pane_owner(
             terminal_context,
@@ -607,6 +626,7 @@ class SessionLookupService:
                 if event.source.value == "codex" and machine_id
                 else None
             ),
+            machine_id=machine_id,
         )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,
@@ -651,10 +671,10 @@ class SessionLookupService:
             )
             return True, None
 
-        if compact_resolution.session is None:
+        canonical = bound_session(compact_resolution.session, event.machine_id)
+        if canonical is None:
             return False, None
 
-        canonical = compact_resolution.session
         activity = reconcile_compact_session_activity(
             self._session_manager,
             canonical.id,

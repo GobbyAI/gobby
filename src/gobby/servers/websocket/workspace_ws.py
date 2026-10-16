@@ -40,6 +40,7 @@ _OP_ENVELOPE: Final = _ENVELOPE | {"op"}
 class _Field:
     types: tuple[type, ...]
     required: bool
+    items: type | None = None
 
 
 def _fields(method: Callable[..., Any]) -> dict[str, _Field]:
@@ -51,12 +52,14 @@ def _fields(method: Callable[..., Any]) -> dict[str, _Field]:
         hint = hints[name]
         types = get_args(hint) if isinstance(hint, UnionType) else (hint,)
         # A JSON object with untyped values checks completely as a dict; whoever
-        # reads it validates the contents.
-        types = tuple(dict if option == dict[str, object] else option for option in types)
+        # reads it validates the contents. A list of strings checks item by item.
+        items = str if list[str] in types else None
+        containers = {dict[str, object]: dict, list[str]: list}
+        types = tuple(containers.get(option, option) for option in types)
         # Only plain classes check with isinstance; fail at import, not per message.
         if not all(isinstance(option, type) for option in types):
             raise TypeError(f"WorkspaceOps.{method.__name__}.{name}: unsupported type {hint}")
-        fields[name] = _Field(types, param.default is param.empty)
+        fields[name] = _Field(types, param.default is param.empty, items)
     return fields
 
 
@@ -71,9 +74,11 @@ _SIGNATURES: Final[dict[str, dict[str, _Field]]] = {
 }
 
 
-def _fits(option: type, value: object) -> bool:
+def _fits(option: type, value: object, items: type | None = None) -> bool:
     if isinstance(value, bool):
         return option is bool
+    if option is list and items is not None:
+        return isinstance(value, list) and all(_fits(items, item) for item in value)
     return isinstance(value, int | float) if option is float else isinstance(value, option)
 
 
@@ -88,9 +93,14 @@ def _arguments(method: str, data: Mapping[str, Any], envelope: frozenset[str]) -
             if field.required:
                 raise WorkspaceOpError("invalid_op", f"Missing field: {name}")
             continue
-        if not any(_fits(option, data[name]) for option in field.types):
+        if not any(_fits(option, data[name], field.items) for option in field.types):
             expected = " or ".join(
-                "null" if option is NoneType else option.__name__ for option in field.types
+                "null"
+                if option is NoneType
+                else f"list of {field.items.__name__}"
+                if option is list and field.items is not None
+                else option.__name__
+                for option in field.types
             )
             raise WorkspaceOpError("invalid_op", f"Field {name} must be {expected}")
         arguments[name] = data[name]

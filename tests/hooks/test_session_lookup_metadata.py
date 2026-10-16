@@ -23,6 +23,7 @@ from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -80,7 +81,7 @@ def test_session_lookup_requires_envelope_machine_id() -> None:
 def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
@@ -110,7 +111,7 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
 def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     updated_session = SimpleNamespace(
         id="platform-session",
@@ -145,7 +146,7 @@ def test_revival_judges_the_seat_recorded_from_this_hook() -> None:
     """A resumed CLI's new process is recorded before revival checks the seat."""
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
@@ -165,7 +166,7 @@ def test_revival_judges_the_seat_recorded_from_this_hook() -> None:
 def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
@@ -187,7 +188,9 @@ def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None
 
 def test_root_cwd_terminal_context_session_sets_project_before_lookup() -> None:
     session_manager = MagicMock()
-    terminal_session = SimpleNamespace(id="terminal-session", project_id="project-1")
+    terminal_session = SimpleNamespace(
+        id="terminal-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
+    )
     session_manager.get.return_value = terminal_session
     session_manager.get_session_id.return_value = "mapped-platform-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
@@ -212,7 +215,8 @@ def test_root_cwd_terminal_context_session_sets_project_before_lookup() -> None:
 
 def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> None:
     session_manager = MagicMock()
-    session_manager.get.return_value = None
+    mapped = SimpleNamespace(id="mapped-platform-session", machine_id=_REAL_MACHINE_ID)
+    session_manager.get.side_effect = lambda ref: mapped if ref == mapped.id else None
     session_manager.get_session_id.return_value = "mapped-platform-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
@@ -237,6 +241,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     recovered_session = SimpleNamespace(
         id="tmux-capable-session",
         project_id="project-1",
+        machine_id=_REAL_MACHINE_ID,
         source="claude",
         status="active",
         title="Existing terminal",
@@ -245,6 +250,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
     session_manager.recover_session.return_value = recovered_session
+    session_manager.get.return_value = recovered_session
     session_manager.backfill_terminal_context.return_value = (recovered_session, False)
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
@@ -305,6 +311,7 @@ def test_resolve_uncached_marks_only_the_create_branch() -> None:
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = "existing-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
+    session_manager.get.return_value.machine_id = _REAL_MACHINE_ID
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
     service = _service(
@@ -333,6 +340,7 @@ def _uncached_service() -> tuple[MagicMock, MagicMock, SessionLookupService]:
     session_manager.recover_session.return_value = None
     session_manager.find_live_interactive_pane_owner.return_value = None
     session_manager.backfill_terminal_context.return_value = (None, False)
+    session_manager.get.return_value.machine_id = _REAL_MACHINE_ID
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
     service = _service(
@@ -348,13 +356,14 @@ def _pane_event(
     *,
     session_id: str = "01a04561-child",
     source: SessionSource = SessionSource.GROK,
+    machine_id: str = _REAL_MACHINE_ID,
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id=session_id,
         source=source,
         timestamp=datetime.now(UTC),
-        machine_id=_REAL_MACHINE_ID,
+        machine_id=machine_id,
         data={
             "terminal_context": {
                 "tmux_pane": "%90",
@@ -447,8 +456,11 @@ def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> 
     # the child hook must name a process that exists: this test's own.
     payload["terminal_context"]["parent_pid"] = os.getpid()
     session_manager, _, service = _uncached_service()
+    local_machine = require_machine_id()
+    session_manager.get.return_value.machine_id = local_machine
     parent = SimpleNamespace(
         id="parent-live",
+        machine_id=local_machine,
         status="active",
         agent_run_id=None,
         agent_depth=0,
@@ -460,7 +472,9 @@ def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> 
     )
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = None
-    event = _pane_event(HookEventType.BEFORE_TOOL, session_id=payload["sessionId"])
+    event = _pane_event(
+        HookEventType.BEFORE_TOOL, session_id=payload["sessionId"], machine_id=local_machine
+    )
     event.data["terminal_context"] = payload["terminal_context"]
 
     result = service.resolve(event)
@@ -477,6 +491,7 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
     parent = SimpleNamespace(
         id="parent-stale",
         external_id="01a0b000-stale-owner",
+        machine_id=_REAL_MACHINE_ID,
         project_id="project-1",
         status="active",
         agent_run_id=None,
@@ -514,9 +529,11 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
     """
     session_manager, session_task_manager, service = _uncached_service()
     parent_context = _live_grok_terminal_context()
+    local_machine = require_machine_id()
     parent = SimpleNamespace(
         id="1040f8b8-parent-session",
         external_id="01a0c9b7-8671-7d60-a15c-e25ed5209883",
+        machine_id=local_machine,
         project_id="project-1",
         status="active",
         session_type="terminal",
@@ -551,14 +568,16 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
         "01a0c9bd-8c02-7242-94ce-fdf9b83b402a",
     )
     for child_id in child_ids:
-        child_event = _pane_event(HookEventType.BEFORE_TOOL, session_id=child_id)
+        child_event = _pane_event(
+            HookEventType.BEFORE_TOOL, session_id=child_id, machine_id=local_machine
+        )
         child_event.data["terminal_context"] = dict(parent_context)
         child_event.metadata["_platform_session_id"] = parent.id
 
         assert service.resolve(child_event) == parent.id
         assert child_event.metadata["_native_subagent_binding"] is True
 
-    child_stop = _pane_event(HookEventType.STOP, session_id=child_ids[0])
+    child_stop = _pane_event(HookEventType.STOP, session_id=child_ids[0], machine_id=local_machine)
     child_stop.data["terminal_context"] = dict(parent_context)
     child_stop.metadata["_platform_session_id"] = parent.id
     assert service.resolve(child_stop) == parent.id
@@ -570,7 +589,9 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
     end_turn.assert_not_called()
     retire.assert_not_called()
 
-    child_end = _pane_event(HookEventType.SESSION_END, session_id=child_ids[0])
+    child_end = _pane_event(
+        HookEventType.SESSION_END, session_id=child_ids[0], machine_id=local_machine
+    )
     child_end.data["terminal_context"] = dict(parent_context)
     child_end.metadata["_platform_session_id"] = parent.id
     assert service.resolve(child_end) == parent.id
@@ -580,7 +601,9 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
     session_manager.update_status_if_non_terminal.assert_not_called()
     terminal_manager.mark_exited.assert_not_called()
 
-    parent_end = _pane_event(HookEventType.SESSION_END, session_id=parent.external_id)
+    parent_end = _pane_event(
+        HookEventType.SESSION_END, session_id=parent.external_id, machine_id=local_machine
+    )
     parent_end.data["terminal_context"] = dict(parent_context)
     parent_end.metadata["_platform_session_id"] = parent.id
     assert service.resolve(parent_end) == parent.id
@@ -623,6 +646,7 @@ def test_materialized_row_uses_normalized_deferred_identity() -> None:
     session_manager.recover_session.return_value = None
     session_manager.register_session.return_value = "created-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
+    session_manager.get.return_value.machine_id = _REAL_MACHINE_ID
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
     service = _service(
@@ -672,6 +696,7 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
     session_manager.recover_session.return_value = None
+    session_manager.get.return_value = canonical
     session_manager.backfill_terminal_context.return_value = (canonical, False)
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
@@ -699,7 +724,7 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
 def test_task_context_uses_stage_native_state() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
@@ -730,7 +755,7 @@ def test_task_context_uses_stage_native_state() -> None:
 def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1"
+        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     explicit_task = SimpleNamespace(
@@ -772,6 +797,7 @@ def _recovery_case(
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
     session_manager.recover_session.return_value = recovered
+    session_manager.get.return_value = recovered
     session_manager.backfill_terminal_context.return_value = (recovered, False)
     session_task_manager = MagicMock()
     session_task_manager.get_worked_on_task.return_value = None
@@ -799,6 +825,7 @@ def test_same_source_recovery_of_a_retired_row_names_status_not_source() -> None
     logger = MagicMock()
     recovered = SimpleNamespace(
         id="retired-session",
+        machine_id=_REAL_MACHINE_ID,
         project_id="project-1",
         source="claude",
         status="expired",
@@ -822,6 +849,7 @@ def test_cross_source_recovery_still_warns_about_the_source() -> None:
     logger = MagicMock()
     recovered = SimpleNamespace(
         id="foreign-session",
+        machine_id=_REAL_MACHINE_ID,
         project_id="project-1",
         source="codex",
         status="active",
@@ -844,6 +872,7 @@ def test_same_source_recovery_of_a_live_row_does_not_claim_a_mismatch() -> None:
     logger = MagicMock()
     recovered = SimpleNamespace(
         id="live-session",
+        machine_id=_REAL_MACHINE_ID,
         project_id="project-1",
         source="claude",
         status="active",

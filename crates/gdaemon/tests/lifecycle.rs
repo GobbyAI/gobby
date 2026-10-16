@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, ensure};
 use futures_util::FutureExt;
+use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_daemon::lifecycle::shutdown_intent::{Intent, IntentMarker};
 use gobby_daemon::{
     lease::{ActiveDaemonLease, LeaseMode},
@@ -15,6 +16,7 @@ use serde_json::json;
 use std::fs;
 use std::{
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -33,7 +35,15 @@ struct TestDb {
 
 impl TestDb {
     fn lease(&self, machine: &str) -> Result<ActiveDaemonLease> {
-        ActiveDaemonLease::new(&self.url, machine, "lifecycle-test", LeaseMode::Hub)
+        let pool = Pool::build(
+            &self.url,
+            PoolSettings {
+                max_size: 2,
+                application_name: "gobby-gdaemon-lifecycle-test".into(),
+                acquire_timeout: Duration::from_secs(5),
+            },
+        )?;
+        ActiveDaemonLease::new(Arc::new(pool), machine, "lifecycle-test", LeaseMode::Hub)
     }
 
     async fn supervisor(&self, home: &Path, script: &str) -> Result<BackendSupervisor> {

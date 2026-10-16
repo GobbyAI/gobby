@@ -25,7 +25,7 @@ _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
 _EVIDENCE_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # env followed directly by an assignment; option forms such as `env -u` stay unstripped.
 _EVIDENCE_ENV_COMMAND_PREFIX = re.compile(r"(?:\S*/)?env\s+(?=[A-Za-z_][A-Za-z0-9_]*=)")
-_EVIDENCE_RTK_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+")
+_EVIDENCE_RTK_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+(?:(?:proxy|bypass)\s+)?(?:--\s+)?")
 # Every entry consumes the token after it, so an option missing here is read as
 # the command and the run goes uncredited. List both forms of a spelling pair;
 # `-C` is uv's `--config-setting`, and `--directory` has no short form. uv's
@@ -164,7 +164,7 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
             ["uv run"],
             strip_options_with_values=_UV_RUN_OPTIONS_WITH_VALUES,
         ),
-        _wrapper_rule("rtk", "rtk", "prefix", ["rtk"]),
+        _wrapper_rule("rtk", "rtk", "prefix", ["rtk proxy", "rtk bypass", "rtk"]),
         _wrapper_rule("poetry-run", "poetry run", "prefix", ["poetry run"]),
         _wrapper_rule("pdm-run", "pdm run", "prefix", ["pdm run"]),
         _wrapper_rule("pipenv-run", "pipenv run", "prefix", ["pipenv run"]),
