@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import signal
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -3727,8 +3727,24 @@ async def test_attempt_started_at_survives_unrelated_updates_and_restart() -> No
     assert row.state == "pending"
 
 
+@pytest.fixture
+def group_proofs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any] | None]:
+    """Record group proofs instead of signalling the recorded pgid on the host."""
+    proofs: list[dict[str, Any] | None] = []
+
+    def proven_dead(process: Mapping[str, Any] | None, *, grace_seconds: float) -> bool:
+        del grace_seconds
+        proofs.append(None if process is None else dict(process))
+        return True
+
+    monkeypatch.setattr("gobby.agents.spawn_executor.reap_recorded_group_proven_dead", proven_dead)
+    return proofs
+
+
 @pytest.mark.asyncio
-async def test_reaper_terminates_by_backend_identity() -> None:
+async def test_reaper_terminates_by_backend_identity(
+    group_proofs: list[dict[str, Any] | None],
+) -> None:
     from gobby.agents.spawn_executor import reap_stale_pending_terminals
 
     manager = MemoryTerminalStore()
@@ -3751,10 +3767,13 @@ async def test_reaper_terminates_by_backend_identity() -> None:
     assert native_runtime.terminated_host_ids == [("ht-old", "epoch-a")]
     assert tmux_runtime.killed == [tmux.spawn_key]
     assert missing.state == "exited"
+    assert sorted(group_proofs, key=repr) == [None, {"host_terminal_id": "ht-old", "pgid": 100}]
 
 
 @pytest.mark.asyncio
-async def test_reaper_leaves_unreachable_native_row_pending() -> None:
+async def test_reaper_leaves_unreachable_native_row_pending(
+    group_proofs: list[dict[str, Any] | None],
+) -> None:
     from gobby.agents.spawn_executor import reap_stale_pending_terminals
     from gobby.terminals.host_client import HostUnavailableError
 
@@ -3779,6 +3798,7 @@ async def test_reaper_leaves_unreachable_native_row_pending() -> None:
         cast(TerminalManager, manager), registry, in_doubt_seconds=0
     ) == [pending.id]
     assert pending.state == "exited"
+    assert group_proofs == [{"host_terminal_id": "ht-old", "pgid": 100}]
 
 
 @pytest.mark.asyncio
