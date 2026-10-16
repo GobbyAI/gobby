@@ -132,6 +132,13 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
     ctx = _context([_link(IMPLEMENTER, "claimed", start.isoformat())], sessions)
     ctx.session_var_manager.get_variables.return_value = {
         "task_edited_file_checkouts": {"task": {str(root): [_TEST]}},
+        "task_edited_checkout_times": {
+            "task": {
+                str(root): {
+                    _TEST: (start + timedelta(seconds=40 if case == "stale" else 5)).timestamp()
+                }
+            }
+        },
         "task_selection_history": [
             {"epoch": start.isoformat(), "task_id": "task"},
             {"epoch": (start + timedelta(seconds=20)).isoformat(), "task_id": "later-task"},
@@ -157,6 +164,8 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         )
     # Gate 12's shared evidence still excludes the run made under the later claim.
     assert all(run.command != command for run in evidence.validation_runs)
+    if case == "stale":
+        assert any(edit.timestamp == start + timedelta(seconds=40) for edit in evidence.edits)
     if case == "unknown":
         assert any(run.outcome == "unknown" for run in evidence.off_task_author_runs)
     source_only = case == "author-source-only"
