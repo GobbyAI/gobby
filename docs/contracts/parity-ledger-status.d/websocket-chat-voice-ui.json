@@ -249,22 +249,26 @@
   },
   "WS message workspace_attach": {
     "status": "proxied",
-    "note": "Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:129`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:140`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
   },
   "WS message workspace_op": {
     "status": "proxied",
-    "note": "Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:189`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:201`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
   },
   "WS message workspace_snapshot": {
     "status": "proxied",
-    "note": "Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:175`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:187`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
   },
   "WS transport /ws": {
     "status": "proxied",
-    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:76`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:77`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
   },
   "WS transport /ws/{path:path}": {
     "status": "proxied",
-    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:49`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:50`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  },
+  "WS transport /_gobby/ws/bridge": {
+    "status": "proxied",
+    "note": "Python handler `mount_native_bridge.<locals>.native_bridge` at `src/gobby/servers/websocket/native_bridge.py:176`: gdaemon's private leg into the Python application handlers, refused to anything but a loopback peer with the pair secret and current generation. Retires with #21574 when the handlers move to gdaemon."
   }
 }

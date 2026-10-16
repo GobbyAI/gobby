@@ -18,6 +18,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _load_live_session_variables,
     _session_meta_payload,
 )
+from gobby.servers.websocket.native_bridge import add_server_subscriptions
 from gobby.sessions.context_usage import (
     effective_context_window_for_session,
     resolve_context_window_overrides,
@@ -165,11 +166,12 @@ async def handle_attach_to_session(
     messages: list[dict[str, Any]] = []
     total_count = 0
 
-    # Auto-subscribe to session-scoped events
-    if not hasattr(websocket, "subscriptions") or websocket.subscriptions is None:
-        websocket.subscriptions = set()
-    websocket.subscriptions.add(f"session_message:session_id={session_id}")
-    websocket.subscriptions.add(f"hook_event:session_id={session.external_id}")
+    # Auto-subscribe to session-scoped events; a native leg's broker has them before the reply.
+    await add_server_subscriptions(
+        websocket,
+        f"session_message:session_id={session_id}",
+        f"hook_event:session_id={session.external_id}",
+    )
 
     # Track attached session on websocket metadata
     client_metadata["attached_session_id"] = session_id
