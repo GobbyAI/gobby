@@ -292,6 +292,27 @@ async def derive_close_transcript_evidence(
             and (start := _evidence_epoch(effective_window)) is not None
         ):
             scoped_pairs = task_checkout_paths_in_window(variables, task_id, owner_pairs, start)
+            # Older clean-path reconciliation discarded per-path timestamps.
+            # Recover only actual edits in this claim, proving each checkout
+            # separately so another root's same-named file cannot qualify it.
+            unproved_pairs = task_checkout_paths - scoped_pairs
+            for root in sorted({root for root, _ in unproved_pairs}):
+                root_pairs = frozenset(pair for pair in unproved_pairs if pair[0] == root)
+                observed = await _derive_session_evidence_at_sync_point(
+                    session,
+                    effective_window,
+                    detection,
+                    {path for _, path in root_pairs},
+                    repo_path,
+                    root_pairs,
+                    archive_dir=archive_dir,
+                )
+                edited_paths = {
+                    edit.path
+                    for edit in observed.edits
+                    if edit.session_id == owner_session_id and edit.timestamp.timestamp() >= start
+                }
+                scoped_pairs |= frozenset(pair for pair in root_pairs if pair[1] in edited_paths)
             owner_pairs_outside_window = not task_checkout_paths.issubset(scoped_pairs)
             task_checkout_paths &= scoped_pairs
         task_links: list[dict[str, Any]] | None = None
