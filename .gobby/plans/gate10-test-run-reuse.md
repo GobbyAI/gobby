@@ -75,8 +75,12 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
    at approval.
 5. **Slot limit.** A constant of 3 concurrent test-hub runs, the upper bound of
    Josh's 18:45 ruling. Josh revisits it after this tool lands, with a load check.
-   Admission follows the 19:05 ruling: `ruff`, `mypy`, `gobby test-types audit`,
-   `mkdir`, `tar`, `git` and `cp` run without a slot; every other command takes one.
+   Admission follows the 19:05 ruling (memory 72d676b6): only `mkdir`, `tar`,
+   `git archive`, `cp` into a scratchpad, `ruff` and `gobby test-types audit` run
+   without a slot. Every other command takes one, including pytest, every cargo
+   command (fmt and clippy too), `mypy`, e2e suites, benchmarks, bare `git` and any
+   other `cp`. A scratchpad destination is one under the user's temporary
+   directory, where every provider's scratchpad lives.
    The bound covers queue wait plus run time.
 6. **Exit codes.** Child's exit code on completion, or 128+N when signal N kills the
    child, recorded as `failed`; 124 when the bound ends the run;
@@ -250,8 +254,10 @@ Create `validation_run_records`:
   (`CHECK (reusable = (not_reusable_reason IS NULL))`).
 - Index `(project_id, completed_at DESC)`.
 
-Run the shipped schema checks after writing the migration: `cargo test -p gobby-core
---test schema_contract` and `cargo test -p gobby-daemon --test cli_contract`. Bump the
+Run the shipped schema checks after writing the migration through nextest, which
+applies the `serial-db` group from `.config/nextest.toml`: `cargo nextest run -p
+gobby-core --test schema_contract` and `cargo nextest run -p gobby-daemon --test
+cli_contract`. Bump the
 patch version of each listed binary crate and `gobby-core`, and update `Cargo.lock`.
 
 **Acceptance:**
@@ -366,8 +372,11 @@ must lie under `repo_root`, and `repo_root` must equal a registered checkout or
 worktree root exactly, so a planted nested `.git` gitfile cannot become the root.
 
 Admission: classify the core executable after stripping `env`, `rtk`, `uv run` and
-`nice` prefixes. `ruff`, `mypy`, `gobby test-types audit`, `mkdir`, `tar`, `git` and
-`cp` run immediately. Everything else waits for one of 3 slots held in one
+`nice` prefixes. Only `mkdir`, `tar`, `git archive` (the first non-option `git`
+argument is `archive`), `ruff`, `gobby test-types audit`, and `cp` whose destination
+(its last argument, resolved against `cwd` with symlinks resolved) lies under the
+canonicalized `std::env::temp_dir()` run immediately (Decision Record item 5).
+Everything else waits for one of 3 slots held in one
 `tokio::sync::Semaphore`. The bound clock starts at request arrival, so queue wait
 counts against it; a run whose bound ends while queued is recorded as `timed_out`
 without spawning.
@@ -432,8 +441,9 @@ the first failure:
 The record also stores `python_version` and `gdaemon_identity`, read by gdaemon at
 run start.
 
-Focused checks: `cargo test -p gobby-daemon --test bounded_run`,
-`cargo test -p gobby-daemon --test lifecycle`, `cargo clippy -p gobby-daemon
+Focused checks: `cargo nextest run -p gobby-daemon --test bounded_run`,
+`cargo nextest run -p gobby-daemon --test lifecycle` (the `gdaemon-lease` group),
+`cargo nextest run -p gobby-daemon --lib lifecycle::group`, `cargo clippy -p gobby-daemon
 --all-targets -- -D warnings`.
 
 **Acceptance:**
@@ -443,7 +453,7 @@ Focused checks: `cargo test -p gobby-daemon --test bounded_run`,
 - 2.2.3 - A token minted by Python's `issue_agent_api_token` verifies in gdaemon. test: `crates/gdaemon/tests/bounded_run.rs::verifies_python_minted_capability`.
 - 2.2.4 - An SRT-enforced run's child argv starts with the persisted wrap prefix, and a sandbox-disabled run's argv is unwrapped. test: `crates/gdaemon/tests/bounded_run.rs::wraps_child_in_caller_srt_policy`.
 - 2.2.5 - A cwd outside the token project's checkouts and worktrees is refused, and so is a discovered `repo_root` that is not exactly a registered checkout or worktree root. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
-- 2.2.6 - A fourth slot-taking run waits until a slot frees, a trivial command runs without a slot, and a run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_three_slots_and_bounds_queue_wait`.
+- 2.2.6 - A fourth slot-taking run waits until a slot frees. `ruff`, `git archive` and a `cp` into the temporary directory run without a slot, while `mypy`, `cargo clippy`, bare `git status` and a `cp` into the checkout each take one. A run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_three_slots_and_bounds_queue_wait`.
 - 2.2.7 - At the bound a TERM-ignoring group is TERMed, then KILLed after the grace window and reaped; nothing outside the group is signalled; the outcome is `timed_out`. test: `crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group`.
 - 2.2.8 - The snapshot captures uncommitted and untracked-unignored changes, leaves the real index and HEAD unchanged, runs its git argv behind the run's wrap prefix with an absolute daemon-resolved git, explicit `--git-dir` and `--work-tree`, and `core.fsmonitor=false`. A request env carrying `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG_*`, a `PATH`-shadowed `git`, and a repository `core.worktree` pointing elsewhere change neither tree id; the last refuses the run. A mid-run edit makes `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
 - 2.2.9 - Records carry identity from the verified token, the argv, outcome and exit code (128+N for a signal death), `executable`, `python_version` and `gdaemon_identity`. Each reusability rule above, including the environment denylist, interpreter resolution and targets escaping `repo_root`, refuses with its reason. Insert prunes rows older than 14 days. test: `crates/gdaemon/tests/bounded_run.rs::records_outcome_identity_and_reusability`.
@@ -846,7 +856,10 @@ commands come from transcripts and that a later task edit makes a clean run stal
 add the reuse exception, its conservative rules (including that any committed
 non-`.py` change voids reuse), criterion pytest commands satisfied by reuse, and
 the `reused_test_credit` details. `docs/guides/cli-commands.md` documents gdaemon subcommands; add
-`gdaemon run` with its exit codes, admission classes and the 3-slot limit.
+`gdaemon run` with its exit codes, the 3-slot limit, and the slot-free list
+(`mkdir`, `tar`, `git archive`, `cp` into a scratchpad, `ruff`,
+`gobby test-types audit`), with everything else, `mypy` and cargo included,
+taking a slot.
 `docs/guides/sandboxing.md` gains that bounded runs execute inside the caller's own
 SRT policy, provider-native callers are refused, and a descendant that calls
 `setsid` escapes the process group on macOS.
@@ -854,7 +867,7 @@ SRT policy, provider-native callers are refused, and a descendant that calls
 **Acceptance:**
 
 - 4.1.1 - The tasks guide states when a daemon record keeps Gate 10 credit, the refusal rules and where reused passes are shown. behavior: "reused_test_credit" in `docs/guides/tasks.md`.
-- 4.1.2 - The CLI guide documents `gdaemon run` syntax, exit codes 124 and 125, admission classes and the slot limit. behavior: "gdaemon run" in `docs/guides/cli-commands.md`.
+- 4.1.2 - The CLI guide documents `gdaemon run` syntax, exit codes 124 and 125, the slot limit, and the slot-free list with `mypy` and cargo taking a slot. behavior: "gdaemon run" in `docs/guides/cli-commands.md`.
 - 4.1.3 - The sandboxing guide states the caller-policy wrap, the provider-native refusal and the `setsid` limit. behavior: "gdaemon run" in `docs/guides/sandboxing.md`.
 
 ## E1 End-to-end verification
@@ -866,8 +879,12 @@ closes.
 
 Scoped suites must pass, Python against the isolated test hub:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_spawn_executor_support.py tests/tasks/test_transcript_outcomes.py tests/config/test_validation_detection.py tests/tasks/test_tdd_retained_output.py tests/workflows/test_proxy_hooks.py tests/tasks/test_validation_reuse_classifier.py tests/tasks/test_validation_reuse.py tests/tasks/test_validation_confinement.py tests/tasks/test_close_checklist.py -q`.
-Rust: `cargo test -p gobby-core --test schema_contract`, `cargo test -p gobby-daemon`,
-`cargo clippy --workspace --all-targets -- -D warnings`. Then `uv run ruff format src/`,
+Rust, through nextest so the `serial-db` and `gdaemon-lease` groups in
+`.config/nextest.toml` apply (plain cargo test bypasses them):
+`cargo nextest run -p gobby-core --test schema_contract`,
+`cargo nextest run -p gobby-daemon`, and
+`cargo clippy --workspace --all-targets -- -D warnings`. No deliverable adds
+doctests, so no doctest run is required. Then `uv run ruff format src/`,
 `uv run ruff check src/ tests/`, `uv run mypy src/`, and the test-type audit over the
 changed tests must all pass.
 
@@ -908,3 +925,9 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   `importlib.resources` became a site; and the criterion helper moved into
   `validation_reuse.py`. Round 3 added the exact registered-root check for the
   discovered `repo_root`. No disagreement went to the Orchestrator.
+- 2026-10-15: Orchestrator review of the stamped plan made two corrections, and
+  M1 was withdrawn for re-derivation. First, the slot-free list now matches Josh's
+  19:05 ruling exactly in Decision Record item 5, 2.2, 2.2.6 and 4.1: `mkdir`,
+  `tar`, `git archive`, `cp` into a scratchpad, `ruff` and `gobby test-types audit`.
+  `mypy`, cargo and bare `git` take a slot. Second, the Rust test commands run
+  through nextest so the `serial-db` and `gdaemon-lease` groups apply.
