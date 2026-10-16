@@ -216,6 +216,9 @@ def _recover_monitor_receipt(
         # Non-POSIX lexing keeps quotes on their words, so only the unquoted pipe
         # lexes as ``|`` and any other separator or redirection breaks the shape.
         argv = _shell_words(pending.arguments.get("command"), posix=False)
+        if argv is not None and argv.count("|") == 1:
+            pipe = argv.index("|")
+            argv = _reader_command(argv[:pipe]) + ["|"] + _reader_command(argv[pipe + 1 :])
         if (
             argv is None
             or len(argv) != 10
@@ -313,6 +316,9 @@ def _read_path(pending: PendingTool) -> str | None:
     argv = _shell_words(pending.arguments.get("command"), posix=True)
     if argv is None:
         return None
+    if argv[:2] == ["rtk", "read"]:
+        return _rtk_read_path(argv[2:])
+    argv = _reader_command(argv)
     if len(argv) == 2 and argv[0] == "cat":
         return argv[1]
     if argv[:1] == ["tail"]:
@@ -326,6 +332,57 @@ def _read_path(pending: PendingTool) -> str | None:
     ):
         return argv[3]
     return None
+
+
+def _reader_command(argv: list[str]) -> list[str]:
+    """Strip only RTK's direct execution prefixes from one reader command.
+
+    Keep lexing and the reader's strict argument grammar in charge of shell safety.
+    Proxy (0.x) and bypass (1.x) execute the same reader without output filtering.
+    """
+    if argv[:1] != ["rtk"]:
+        return argv
+    argv = argv[1:]
+    if argv[:1] in (["proxy"], ["bypass"]):
+        argv = argv[1:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    return argv
+
+
+def _rtk_read_path(args: list[str]) -> str | None:
+    """RTK read's raw single-file mode, optionally keeping its final N lines.
+
+    Head windows and every structural/filtering/numbering option stay unsupported.
+    A bare shell ``read`` or a bypass-wrapped ``read`` is never this RTK subcommand.
+    """
+    path: str | None = None
+    seen: set[str] = set()
+    index = 0
+    while index < len(args):
+        token = args[index]
+        option, equals, value = token.partition("=")
+        if option in {"--tail-lines", "--level", "-l"}:
+            key = "--level" if option == "-l" else option
+            if key in seen:
+                return None
+            seen.add(key)
+            if not equals:
+                index += 1
+                if index >= len(args):
+                    return None
+                value = args[index]
+            if key == "--level":
+                if value != "none":
+                    return None
+            elif re.fullmatch(r"[0-9]+", value) is None:
+                return None
+        elif token.startswith("-") or path is not None:
+            return None
+        else:
+            path = token
+        index += 1
+    return path
 
 
 def _tail_path(args: list[str]) -> str | None:
