@@ -8,10 +8,12 @@ import pytest
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.tasks.transcript_background import (
     _notification,
+    _read_path,
     pending_background_run,
     recover_background_receipt,
 )
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
+from gobby.tasks.transcript_evidence_snapshots import PendingTool
 
 pytestmark = pytest.mark.unit
 
@@ -237,3 +239,68 @@ def test_plain_notification_yields_its_fields() -> None:
 )
 def test_notification_with_a_declaration_is_rejected(content: str) -> None:
     assert _notification(_message(content)) is None
+
+
+def _bash(command: str) -> PendingTool:
+    return PendingTool(
+        name="Bash",
+        arguments={"command": command},
+        timestamp=datetime(2026, 10, 3, tzinfo=UTC),
+        order=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail /tmp/job-1.output",
+        "tail -3 /tmp/job-1.output",
+        "tail -n 3 /tmp/job-1.output",
+        "tail -n3 /tmp/job-1.output",
+        "tail -n +1 /tmp/job-1.output",
+        "tail -n+1 /tmp/job-1.output",
+        "tail -c 400 /tmp/job-1.output",
+        "tail -c400 /tmp/job-1.output",
+        "tail -q -n 5 /tmp/job-1.output",
+        "cat /tmp/job-1.output",
+        "grep passed /tmp/job-1.output",
+        "grep -E 'passed|failed' /tmp/job-1.output",
+        "grep -F passed /tmp/job-1.output",
+    ],
+)
+def test_plain_reads_name_their_one_file(command: str) -> None:
+    assert _read_path(_bash(command)) == "/tmp/job-1.output"
+
+
+def test_read_tool_names_its_file() -> None:
+    pending = PendingTool(
+        name="Read",
+        arguments={"file_path": "/tmp/job-1.output"},
+        timestamp=datetime(2026, 10, 3, tzinfo=UTC),
+        order=1,
+    )
+    assert _read_path(pending) == "/tmp/job-1.output"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail -f /tmp/job-1.output",
+        "tail -F /tmp/job-1.output",
+        "tail -n 3 -f /tmp/job-1.output",
+        "tail -3 /tmp/job-1.output /tmp/job-2.output",
+        "tail -3 /tmp/job-1.output | head -1",
+        "tail -3 /tmp/job-1.output; echo done",
+        "tail -3 /tmp/job-1.output && echo done",
+        "tail -3 /tmp/job-1.output > /tmp/copy",
+        "cat /tmp/job-1.output | tail -3",
+        "tail -n /tmp/job-1.output",
+        "tail -n x /tmp/job-1.output",
+        "tail --lines=3 /tmp/job-1.output",
+        "tail -3",
+        "tail",
+        "tail -3 '|'",
+    ],
+)
+def test_following_multi_file_and_operator_tails_name_no_file(command: str) -> None:
+    assert _read_path(_bash(command)) is None

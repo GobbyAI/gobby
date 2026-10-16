@@ -10,7 +10,7 @@ import pytest
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
-from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
 from gobby.tasks.command_equivalence import command_covers, pytest_targets
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
@@ -364,3 +364,93 @@ def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: 
     bare = operational_actions_from_command(command)
     assert bare
     assert operational_actions_from_command(_wrapped(command, form)) == bare
+
+
+BACKGROUND_PYTEST = f"uv run rtk pytest {TEST} -q"
+
+
+def _background_gate(tmp_path: Path, read: str, output: str, *, code: int = 0) -> CloseGateResult:
+    """Gate 10 over a hook-rewritten background pytest, its exit notice, then ``read``."""
+    output_path = tmp_path / "tasks" / "job.output"
+    status, summary = (
+        ("completed", "completed (exit code 0)")
+        if code == 0
+        else ("failed", f"failed with exit code {code}")
+    )
+    notice = {
+        "type": "user",
+        "timestamp": (START + timedelta(seconds=3)).isoformat(),
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification><task-id>job</task-id><tool-use-id>call-0</tool-use-id>"
+                f"<output-file>{output_path}</output-file><status>{status}</status>"
+                f'<summary>Background command "feature tests" {summary}</summary>'
+                "</task-notification>"
+            ),
+        },
+    }
+    audit = (
+        f"uv run gobby test-types audit {TEST} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    evidence = _derive(
+        tmp_path,
+        _pair(
+            0,
+            "Bash",
+            {
+                "command": BACKGROUND_PYTEST,
+                "run_in_background": True,
+                "description": "feature tests",
+            },
+            "Command running in background with ID: job. Output is being written to: "
+            f"{output_path}. You will be notified when it completes.",
+        )
+        + [notice]
+        + _pair(5, "Bash", {"command": read.format(path=output_path)}, output)
+        + _pair(8, "Bash", {"command": audit}, "0 new type findings"),
+    )
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=(TEST,),
+        close_root=str(tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    "read", ["tail -3 {path}", "tail -c 400 {path}", "tail -n3 {path}", "tail {path}"]
+)
+def test_gate10_credits_background_pass_read_with_plain_tail(tmp_path: Path, read: str) -> None:
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s\n\n[exited with code 0]")
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+def test_gate10_refuses_failing_background_run_read_with_tail(tmp_path: Path) -> None:
+    gate = _background_gate(
+        tmp_path,
+        "tail -3 {path}",
+        f"FAILED {TEST}::test_feature - assert 1 == 2\n1 failed in 0.02s\n\n[exited with code 1]",
+        code=1,
+    )
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+def test_gate10_names_background_pass_whose_output_was_never_read(tmp_path: Path) -> None:
+    output_path = tmp_path / "tasks" / "job.output"
+    gate = _background_gate(
+        tmp_path, "cat {path} | tail -3", "Pytest: 1 passed in 0.01s\n\n[exited with code 0]"
+    )
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert gate.details["pytest_unread_background_runs"] == [
+        {"command": BACKGROUND_PYTEST, "output_path": str(output_path)}
+    ]
+    assert f"`{BACKGROUND_PYTEST}` (output `{output_path}`)" in gate.message
+    assert "never read in a recognized form" in gate.message

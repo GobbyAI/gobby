@@ -23,6 +23,10 @@ _BACKGROUND = re.compile(
 _MAX_RECOVERED_CHARS = 64_000
 # The Read tool renders each line behind its number and a tab.
 _READ_LINE_NUMBER = re.compile(r"(?m)^ *\d+\t")
+_TAIL_COUNT = re.compile(r"\+?\d+")
+_TAIL_OPTION = re.compile(r"-(?:\d+|[nc]\+?\d+|q)")
+# shlex's punctuation_chars set: a token made only of these is a shell operator.
+_SHELL_OPERATOR_CHARS = frozenset("();<>|&")
 
 
 def output_as_of(run: TranscriptValidationRun, before: datetime) -> TranscriptValidationRun:
@@ -267,10 +271,33 @@ def _read_path(pending: PendingTool) -> str | None:
         return None
     if len(argv) == 2 and argv[0] == "cat":
         return argv[1]
-    if len(argv) == 4 and argv[:2] == ["tail", "-n"] and argv[2].isdigit():
-        return argv[3]
+    if argv[:1] == ["tail"]:
+        return _tail_path(argv[1:])
     if len(argv) == 3 and argv[0] == "grep" and not argv[1].startswith("-"):
         return argv[2]
     if len(argv) == 4 and argv[:2] in (["grep", "-E"], ["grep", "-F"]):
         return argv[3]
     return None
+
+
+def _tail_path(args: list[str]) -> str | None:
+    """The one file a plain ``tail [-N | -n N | -nN | -c N | -cN | -q]... P`` prints.
+
+    Following (``-f``/``-F``), several files, unknown options and shell operators
+    are refused.
+    """
+    index = 0
+    while index < len(args) - 1:
+        option = args[index]
+        if option in ("-n", "-c") and _TAIL_COUNT.fullmatch(args[index + 1]):
+            index += 2
+        elif _TAIL_OPTION.fullmatch(option):
+            index += 1
+        else:
+            return None
+    if index != len(args) - 1:
+        return None
+    path = args[index]
+    if path.startswith("-") or set(path) <= _SHELL_OPERATOR_CHARS:
+        return None
+    return path
