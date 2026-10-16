@@ -29,6 +29,7 @@ from gobby.tasks.tdd_python_evidence import (
     _retains_python_red_source,
 )
 from gobby.tasks.tdd_retained_output import retained_red_output
+from gobby.tasks.tdd_stub_revert import has_stub_revert_proof
 from gobby.tasks.transcript_background import output_as_of
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -349,6 +350,7 @@ def _find_red_run(
                 require_not_implemented,
                 parse_cache,
                 binding_cache,
+                first_non_test_edit,
             )
             retained = (
                 retained_red_output(run, production_at)
@@ -364,6 +366,7 @@ def _find_red_run(
                     require_not_implemented,
                     parse_cache,
                     binding_cache,
+                    first_non_test_edit,
                 )
                 cached = proof if proof[0] else cached
             if red_cache is not None:
@@ -385,6 +388,7 @@ def _red_run_proof(
     require_not_implemented: bool,
     parse_cache: PythonModuleCache | None,
     binding_cache: PythonBindingCache | None,
+    closing_edit: TranscriptEdit | None,
 ) -> tuple[bool, str | None]:
     source_failure = _has_original_source_failure(test, evidence, run, parse_cache=parse_cache)
     if not source_failure and not validation_run_names_test(core_command, run.output, test):
@@ -399,6 +403,7 @@ def _red_run_proof(
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
             or _test_tightening_proof(test, evidence, run, parse_cache)
+            or has_stub_revert_proof(evidence, run, closing_edit)
         ):
             return True, None
         else:
