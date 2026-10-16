@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import textwrap
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1039,7 +1040,9 @@ def test_feature() -> None:
     test_other()
     assert value or True
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
@@ -1052,41 +1055,180 @@ def test_feature() -> None:
     assert all("test_feature" in finding for finding in result.findings)
 
 
-def _python_helper_result(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
+NO_ASSERTION = "tests/test_feature.py::test_feature: contains no executable assertion"
+
+
+def _committed_python_result(
+    tmp_path: Path, source: str, extra: dict[str, str] | None = None
 ) -> AcceptanceArtifactResult:
-    body = f"""
-def test_feature(receipt) -> None:
-    {helper}(receipt, expected="ok")
-"""
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    """Gate 11 over a committed test file, so helper resolution reads real source."""
+    repo = _init_repo(tmp_path)
+    for relative, text in {"tests/test_feature.py": source, **(extra or {})}.items():
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_text(textwrap.dedent(text), encoding="utf-8")
     return evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
-        repo_path=str(tmp_path),
-        commit_shas=["linked"],
+        repo_path=str(repo),
+        commit_shas=[_commit(repo, "python acceptance test")],
     )
 
 
 @pytest.mark.parametrize("helper", ["_assert_ok", "__assert_ok"])
-def test_underscore_prefixed_assert_helper_counts_as_assertion(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
-) -> None:
-    result = _python_helper_result(monkeypatch, tmp_path, helper)
+def test_underscore_prefixed_assert_helper_counts_as_assertion(tmp_path: Path, helper: str) -> None:
+    source = f"""
+    def {helper}(receipt, expected):
+        assert receipt == expected
+
+    def test_feature():
+        {helper}(make_receipt(), expected="ok")
+    """
+    result = _committed_python_result(tmp_path, source)
 
     assert result.passed is True, result.findings
     assert result.findings == ()
 
 
 @pytest.mark.parametrize("helper", ["_check_ok", "_ok_assert"])
-def test_non_assert_private_helper_still_flagged(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
-) -> None:
-    result = _python_helper_result(monkeypatch, tmp_path, helper)
+def test_non_assert_private_helper_still_flagged(tmp_path: Path, helper: str) -> None:
+    source = f"""
+    def {helper}(receipt):
+        assert receipt == "ok"
+
+    def test_feature():
+        {helper}(make_receipt())
+    """
+    result = _committed_python_result(tmp_path, source)
 
     assert result.passed is False
-    assert result.findings == (
-        "tests/test_feature.py::test_feature: contains no executable assertion",
-    )
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize("helper", ["assert_ok", "_assert_ok"])
+@pytest.mark.parametrize(
+    "helper_body",
+    ["pass", 'return receipt == "ok"', "assert True", 'assert receipt == "ok" or True'],
+    ids=["noop", "placebo_return", "constant_assert", "tautological_assert"],
+)
+def test_noop_and_placebo_assert_helpers_are_flagged(
+    tmp_path: Path, helper: str, helper_body: str
+) -> None:
+    source = f"""
+    def {helper}(receipt):
+        {helper_body}
+
+    def test_feature():
+        {helper}(make_receipt())
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature(receipt):
+            receipt.assert_ok()
+        """,
+        """
+        from tests.missing_support import assert_ok
+
+        def test_feature():
+            assert_ok(make_receipt())
+        """,
+        """
+        def _assert_first(receipt):
+            _assert_second(receipt)
+
+        def _assert_second(receipt):
+            _assert_first(receipt)
+
+        def test_feature():
+            _assert_first(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        class Other:
+            def _assert_ok(self, receipt):
+                pass
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+    ],
+    ids=["attribute_without_definition", "unresolvable_import", "cycle", "ambiguous_name"],
+)
+def test_unresolved_and_cyclic_assert_helpers_are_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    ("source", "extra"),
+    [
+        (
+            """
+            def _assert_matches(receipt, expected):
+                assert receipt == expected
+
+            def _assert_ok(receipt):
+                _assert_matches(receipt, "ok")
+
+            def test_feature():
+                _assert_ok(make_receipt())
+            """,
+            {},
+        ),
+        (
+            """
+            from tests.support.receipts import assert_matches as _assert_matches
+
+            def _assert_ok(receipt):
+                _assert_matches(receipt, "ok")
+
+            def test_feature():
+                _assert_ok(make_receipt())
+            """,
+            {
+                "tests/support/receipts.py": """
+                def assert_matches(receipt, expected):
+                    assert receipt == expected
+                """
+            },
+        ),
+        (
+            """
+            import pytest
+
+            def _assert_rejected(receipt):
+                with pytest.raises(ValueError):
+                    receipt.validate()
+
+            class TestFeature:
+                def _assert_ok(self, receipt):
+                    _assert_rejected(receipt)
+
+                def test_feature(self):
+                    self._assert_ok(make_receipt())
+            """,
+            {},
+        ),
+    ],
+    ids=["same_file", "imported_module", "method_to_raises"],
+)
+def test_delegating_assert_helper_counts_as_assertion(
+    tmp_path: Path, source: str, extra: dict[str, str]
+) -> None:
+    result = _committed_python_result(tmp_path, source, extra)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
 
 
 def test_rust_format_constant_placebo_is_rejected(
@@ -1099,7 +1241,9 @@ fn protocol_frame_roundtrip() {
     assert_eq!(format!("{}", 256), "256");
 }
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("frame_protocol",))
     )
@@ -1155,7 +1299,9 @@ def test_test_named_helper_call_is_not_delegation(
     symbol: str,
     body: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
     )
@@ -1215,7 +1361,9 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     body: str,
     finding: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), frozenset()))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
     )
