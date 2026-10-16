@@ -1,8 +1,9 @@
 # RTK close-gate contracts
 
 `pytest-assertion-raw.txt` is deterministic pytest-shaped input, not a recorded
-execution of the sample test. `pytest-assertion-0.51.0.txt` is the unedited output
-of the installed RTK 0.51.0 filter:
+execution of the sample test. `pytest-assertion-0.51.0.txt` records output
+of the installed RTK 0.51.0 filter, with a trailing newline added by the repository's
+end-of-file fixer:
 
 ```sh
 rtk pipe -f pytest < pytest-assertion-raw.txt > pytest-assertion-0.51.0.txt

@@ -8,8 +8,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from rich.text import Text
-
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
@@ -26,6 +24,8 @@ from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine._offload import offload
 
 logger = logging.getLogger(__name__)
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 _DEFAULT_PROXY_TIMEOUT_SECONDS = 2.0
 _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
@@ -341,7 +341,7 @@ class ProxyHooksMixin:
         if code == 2 and stdout.strip():
             # RTK pipeline denials carry a message; an empty exit 2 delegates
             # the original command to the host's existing permission rules.
-            message = Text.from_ansi(stdout[:4096].decode("utf-8", errors="replace")).plain
+            message = _ANSI_ESCAPE_RE.sub("", stdout[:4096].decode("utf-8", errors="replace"))
             reason = "".join(c for c in message if c.isprintable() or c in "\n\t").strip()
             return HookResponse(decision="block", reason=reason or "RTK pipeline denied command.")
         if code not in {0, 3}:

@@ -695,7 +695,6 @@ class RuleEngine(
                         blocking_deadline=blocking_deadline,
                     )
                     if isinstance(proxy_changed, HookResponse):
-                        variables.pop("_rewrite_input", None)
                         return await self._finalize_block_response(
                             proxy_changed,
                             evaluation,
