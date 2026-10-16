@@ -671,7 +671,7 @@ def _expired_recall_result(
         "test_post_production_proof_rejects_unattributable_red[other_node_changed]",
     ],
 )
-def test_expired_recall_attributes_original_multinode_compacted_red(
+def test_expired_recall_rejects_original_multinode_output_without_node_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symbol: str
 ) -> None:
     # Original author CommandExecution, 2026-10-14T21:11:33.811Z, exit 1.
@@ -681,8 +681,7 @@ def test_expired_recall_attributes_original_multinode_compacted_red(
     ).read_text()
     path = "tests/tasks/test_tdd_test_tightening.py"
     result = _expired_recall_result(tmp_path, output, path, (symbol,))
-    assert result.passed, result.findings
-    assert result.red_runs == (f"uv run rtk pytest {path} -q",)
+    assert_uncredited(result)
 
 
 @pytest.mark.parametrize(
@@ -690,8 +689,9 @@ def test_expired_recall_attributes_original_multinode_compacted_red(
     [
         ">       assert feature() == 2\nE       assert 1 == 2",
         ">       feature()\nE       ValueError: wrong",
+        "E       AssertionError: wrong",
     ],
-    ids=["assertion", "exception"],
+    ids=["assertion", "exception", "primary-without-source-frame"],
 )
 def test_expired_recall_credits_compacted_node_failure_detail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detail: str
@@ -702,7 +702,7 @@ def test_expired_recall_credits_compacted_node_failure_detail(
     assert result.passed, result.findings
 
 
-def test_expired_recall_attributes_both_original_named_tests(
+def test_expired_recall_rejects_both_original_named_tests_without_node_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _recall_store(tmp_path / "home", monkeypatch, None)
@@ -718,15 +718,24 @@ def test_expired_recall_attributes_both_original_named_tests(
             "test_post_production_proof_rejects_unattributable_red",
         ),
     )
-    assert result.passed, result.findings
-    assert len(result.red_runs) == 1
-    assert len(result.green_runs) == 2
+    assert_uncredited(result)
 
 
 @pytest.mark.parametrize(
     "output",
     [
         f"FAILED {PY_TEST}::test_feature\n1 failed\n[full output: rtk recall {RECALL}]",
+        f">       raise ValueError('inner')\nE       ValueError: inner\n"
+        "During handling of the above exception, another exception occurred:\n"
+        f">       raise RuntimeError('outer')\nE       RuntimeError: outer\n"
+        f"FAILED {PY_TEST}::test_other\nFAILED {PY_TEST}::test_feature\n"
+        f"2 failed\n[full output: rtk recall {RECALL}]",
+        f">       assert feature()\nE       assert False\n"
+        f"FAILED {PY_TEST}::test_feature - [XPASS(strict)] known bug\n"
+        f"1 failed\n[full output: rtk recall {RECALL}]",
+        f">       assert other()\nE       assert False\nERROR {PY_TEST}::test_other\n"
+        f"FAILED {PY_TEST}::test_feature\n1 failed, 1 error\n"
+        f"[full output: rtk recall {RECALL}]",
         f"test_feature: 1 failed\n[full output: rtk recall {RECALL}]",
         f">       feature()\nFAILED {PY_TEST}::test_feature\n1 failed\n[full output: rtk recall {RECALL}]",
         f">       assert other()\nE       assert False\nFAILED {PY_TEST}::test_other\n"
@@ -736,6 +745,14 @@ def test_expired_recall_attributes_both_original_named_tests(
         f">       feature()\n>       assert other()\nE       assert False\n"
         f"FAILED {PY_TEST}::test_feature\nFAILED {PY_TEST}::test_other\n"
         f"2 failed\n[full output: rtk recall {RECALL}]",
+        f">       outer_call()\n>       assert other() == 2\nE       assert 1 == 2\n"
+        f"FAILED {PY_TEST}::test_other\nFAILED {PY_TEST}::test_feature\n"
+        f"2 failed in 0.5s\n[full output: rtk recall {RECALL}]",
+        f">       assert other() == 2\nE       assert 1 == 2\n>       outer_call()\n"
+        f"FAILED {PY_TEST}::test_feature\nFAILED {PY_TEST}::test_other\n"
+        f"2 failed in 0.5s\n[full output: rtk recall {RECALL}]",
+        f'>       assert feature()\nE        + where value = AssertionError("assert False")\n'
+        f"FAILED {PY_TEST}::test_feature\n1 failed\n[full output: rtk recall {RECALL}]",
         f">       assert other()\nE       assert False\nFAILED tests/test_other.py::test_feature\n"
         f"1 failed\n[full output: rtk recall {RECALL}]",
         f">       assert feature()\nE       assert False\nFAILED {PY_TEST}::test_feature\n"
@@ -743,11 +760,17 @@ def test_expired_recall_attributes_both_original_named_tests(
     ],
     ids=[
         "summary-only",
+        "chained-sibling-target-second",
+        "xpass-strict",
+        "error-node",
         "count-only",
         "no-detail",
         "sibling-only",
         "detail-after-summary",
         "sibling-detail-in-complete-list",
+        "stacked-frames-target-second",
+        "missing-first-body",
+        "context-only",
         "other-path",
         "incomplete-list",
     ],

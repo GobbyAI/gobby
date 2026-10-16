@@ -629,12 +629,14 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
 
 
 def _has_compacted_pytest_failure(output: str, test: AcceptanceTest) -> bool:
-    """Pair RTK's retained assertion bodies with its ordered FAILED node list."""
+    """Credit a primary diagnostic only when a compacted run has one failed node."""
     if not test.path.endswith(".py") or not re.search(
         r"(?m)^\[full output: rtk recall [0-9a-f]{12,64}\]$", output
     ):
         return False
     lines = output.splitlines()
+    if re.search(r"(?m)^ERROR\s|\b[1-9]\d* errors?\b|\[XPASS\(strict\)\]", output):
+        return False
     if any(
         _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
         for line in lines
@@ -645,32 +647,29 @@ def _has_compacted_pytest_failure(output: str, test: AcceptanceTest) -> bool:
         for index, line in enumerate(lines)
         if (match := re.fullmatch(r"FAILED (\S+\.py)::(\S+)(?:\s+-\s+.*)?", line))
     ]
-    if not failed:
+    if len(failed) != 1:
         return False
     summary = re.search(r"(?m)^[= ]*(\d+) failed\b", output)
     if summary is None or int(summary[1]) != len(failed):
         return False
-    # A missing body cannot shift a sibling's assertion onto the next node.
-    body = lines[: failed[0][0]]
-    starts = [index for index, line in enumerate(body) if re.match(r"^>\s+", line)]
-    if len(starts) != len(failed):
-        return False
-    ends = [*starts[1:], len(body)]
+    # Multiple traceback frames can belong to one sibling, so their order/count
+    # cannot bind diagnostics to multiple FAILED nodes. Other parsers own reports
+    # with explicit node headers or locations proven against the run's source.
+    index, node = failed[0]
     expected = test.symbol.replace("::", ".")
-    for (_, node), start, end in zip(failed, starts, ends, strict=True):
-        reported = node[2].replace("::", ".")
-        if "[" not in expected:
-            reported = reported.split("[", maxsplit=1)[0]
-        if (
-            _path_matches_artifact(node[1], test)
-            and reported == expected
-            and any(
-                re.match(r"^\s*E\s+(?!\+)", line) and _section_has_failure_detail(line)
-                for line in body[start:end]
-            )
-        ):
-            return True
-    return False
+    reported = node[2].replace("::", ".")
+    if "[" not in expected:
+        reported = reported.split("[", maxsplit=1)[0]
+    return (
+        _path_matches_artifact(node[1], test)
+        and reported == expected
+        and any(
+            re.match(r"^[ \t]*E[ \t]+assert(?:[ \t]|$)", line)
+            or _PYTHON_EXCEPTION_DETAIL_RE.match(line)
+            or _PYTEST_FAIL_DETAIL_RE.match(line)
+            for line in lines[:index]
+        )
+    )
 
 
 def _has_pytest_body_failure(
