@@ -1,8 +1,10 @@
 """Structurally redacted watchdog signals from Claude Code JSONL transcripts."""
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from typing import ClassVar
 
 from gobby.agents.watchdog._scan import ResumableScanner, ResumableScanState, ScanVerdict
 from gobby.agents.watchdog.models import (
@@ -133,6 +135,8 @@ def _terminal_api_error_reason(data: dict[str, object]) -> str | None:
 
 @dataclass
 class _ClaudeScanState(ResumableScanState):
+    turn_start_marker: ClassVar[re.Pattern[bytes]] = re.compile(rb'"type"\s*:\s*"user"')
+
     turn_started_event: TranscriptEventSummary | None = None
     latest_turn_event: TranscriptEventSummary | None = None
     latest_turn_kind: TurnEventKind | None = None
@@ -183,14 +187,17 @@ class _ClaudeScanState(ResumableScanState):
             )
             if block_types is None:
                 return ScanVerdict.MALFORMED
+            is_turn_start = "tool_result" not in block_types
+            if is_turn_start:
+                self.begin_turn()
             summary = TranscriptEventSummary(
                 line_num=line_num,
                 timestamp=timestamp,
                 event_type="user",
-                payload_type="tool_result" if "tool_result" in block_types else "message",
+                payload_type="message" if is_turn_start else "tool_result",
             )
             self.tail.append(summary)
-            if "tool_result" not in block_types:
+            if is_turn_start:
                 self.turn_started_event = summary
                 self.latest_turn_event = summary
                 self.latest_turn_kind = "started"

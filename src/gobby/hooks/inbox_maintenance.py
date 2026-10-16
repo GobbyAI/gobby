@@ -16,11 +16,8 @@ from gobby.hooks.envelope_dedupe import (
     prune_directory_by_age,
     prune_processed_envelope_markers,
 )
-from gobby.hooks.inbox import (
-    _RECEIPT_CLAIM_SUFFIX,
-    drain_hook_inbox_once,
-)
-from gobby.hooks.inbox_envelopes import get_hook_inbox_dir
+from gobby.hooks.inbox import drain_hook_inbox_once
+from gobby.hooks.inbox_envelopes import INBOX_CLAIM_SUFFIX, get_hook_inbox_dir
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
@@ -54,7 +51,7 @@ def _is_orphaned_temp_name(name: str) -> bool:
     A claim holds an ack nobody has acknowledged yet; deleting it would lose the
     delivery, so a stranded claim is restored instead.
     """
-    return name.endswith(".tmp") and not name.endswith(_RECEIPT_CLAIM_SUFFIX)
+    return name.endswith(".tmp") and not name.endswith(INBOX_CLAIM_SUFFIX)
 
 
 def prune_orphaned_inbox_temp_files(

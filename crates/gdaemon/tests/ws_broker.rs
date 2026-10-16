@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures_util::Sink;
 use gobby_daemon::websocket::broker::{
-    Batch, BroadcastBroker, ConnectionId, MAX_QUEUED_BATCHES, MAX_QUEUED_BYTES,
+    Batch, BroadcastBroker, ConnectionId, MAX_QUEUED_BATCHES, MAX_QUEUED_BYTES, Registration,
 };
 use gobby_daemon::websocket::subscriptions::EntryMode;
 use serde_json::{Value, json};
@@ -70,7 +70,7 @@ impl Sink<Message> for FakeSink {
 }
 
 struct Client {
-    id: ConnectionId,
+    registration: Registration,
     rx: UnboundedReceiver<Message>,
     cleanups: Arc<AtomicUsize>,
 }
@@ -95,18 +95,21 @@ fn connect(broker: &BroadcastBroker, id: u64, entry: EntryMode, stall: bool) -> 
     let (tx, rx) = unbounded_channel();
     let cleanups = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&cleanups);
-    let id = ConnectionId::new(id);
     let sink = FakeSink {
         tx,
         stall,
         stalled: false,
     };
-    broker
-        .register(id, entry, sink, move || {
+    let registration = broker
+        .register(ConnectionId::new(id), entry, sink, move || {
             counter.fetch_add(1, Ordering::SeqCst);
         })
         .expect("register a fresh connection");
-    Client { id, rx, cleanups }
+    Client {
+        registration,
+        rx,
+        cleanups,
+    }
 }
 
 fn batch(frames: &[&str]) -> Batch {
@@ -186,7 +189,7 @@ async fn fanout_preserves_selection_and_frame_order() {
                 Some("send") => {
                     let sender = step["client"].as_str().expect("send client");
                     let text = step["text"].as_str().expect("send text");
-                    let forwarded = broker.receive(clients[sender].id, text);
+                    let forwarded = broker.receive(&clients[sender].registration, text);
                     assert_eq!(forwarded, None, "{context}: control was forwarded");
                     let replies = step["replies"].as_array().expect("send replies");
                     for (label, client) in &mut clients {
@@ -254,14 +257,14 @@ async fn acknowledgement_precedes_newly_selected_events() {
     // Absent subscriptions filter the first publication.
     broker.publish(&event, &batch(&[frame]));
     let subscribe = r#"{"type": "subscribe", "events": ["session_message"]}"#;
-    assert_eq!(broker.receive(client.id, subscribe), None);
+    assert_eq!(broker.receive(&client.registration, subscribe), None);
     broker.publish(&event, &batch(&[frame]));
 
     let ack = r#"{"type": "subscribe_success", "events": ["session_message"]}"#;
     assert_eq!(texts(&client.drain().await), vec![ack, frame]);
 
     let unsubscribe = r#"{"type": "unsubscribe", "events": ["session_message"]}"#;
-    assert_eq!(broker.receive(client.id, unsubscribe), None);
+    assert_eq!(broker.receive(&client.registration, unsubscribe), None);
     broker.publish(&event, &batch(&[frame]));
     let ack = r#"{"type": "unsubscribe_success", "events": []}"#;
     assert_eq!(texts(&client.drain().await), vec![ack]);
@@ -342,19 +345,21 @@ async fn retirement_is_once_and_reconnect_is_fresh() {
     for _ in 0..=MAX_QUEUED_BATCHES {
         broker.publish(&event, &one);
     }
-    broker.disconnect(failing.id);
-    broker.disconnect(failing.id);
+    broker.disconnect(&failing.registration);
+    broker.disconnect(&failing.registration);
     advance(Duration::from_secs(4)).await;
     assert_closed_1011(&failing.drain().await, "overflow before disconnect");
     assert_eq!(failing.cleanups(), 1);
 
-    // A peer that went away fails its send while the caller disconnects it.
+    // A peer that went away fails its send, which retires it before the
+    // caller's own disconnect arrives.
     let mut gone = connect(&broker, 2, EntryMode::Browser, false);
     gone.rx.close();
     broker.publish(&event, &one);
-    broker.disconnect(gone.id);
-    advance(Duration::from_secs(4)).await;
     assert!(gone.drain().await.is_empty());
+    assert_eq!(gone.cleanups(), 1, "send failure retires the peer");
+    broker.disconnect(&gone.registration);
+    advance(Duration::from_secs(4)).await;
     assert_eq!(gone.cleanups(), 1);
 
     // A live handle cannot be registered twice.
@@ -367,18 +372,23 @@ async fn retirement_is_once_and_reconnect_is_fresh() {
     };
     assert!(
         broker
-            .register(direct.id, EntryMode::Direct, duplicate, || {})
+            .register(
+                direct.registration.id(),
+                EntryMode::Direct,
+                duplicate,
+                || {}
+            )
             .is_err()
     );
 
     let wildcard = r#"{"type": "subscribe", "events": ["*"]}"#;
     let session = r#"{"type": "subscribe", "events": ["session_message"]}"#;
-    assert_eq!(broker.receive(direct.id, wildcard), None);
-    assert_eq!(broker.receive(browser.id, session), None);
+    assert_eq!(broker.receive(&direct.registration, wildcard), None);
+    assert_eq!(broker.receive(&browser.registration, session), None);
     assert_eq!(direct.drain().await.len(), 1);
     assert_eq!(browser.drain().await.len(), 1);
-    broker.disconnect(direct.id);
-    broker.disconnect(browser.id);
+    broker.disconnect(&direct.registration);
+    broker.disconnect(&browser.registration);
     let missed = json!({"type": "session_message", "session_id": "s-1"});
     let missed_frame = r#"{"type": "session_message", "session_id": "s-1"}"#;
     broker.publish(&missed, &batch(&[missed_frame]));
@@ -387,12 +397,30 @@ async fn retirement_is_once_and_reconnect_is_fresh() {
 
     // The same handles reconnect with their entry mode's initial state and no
     // replay: direct starts absent, browser starts initialized and empty.
+    let stale = direct.registration;
     let mut direct = connect(&broker, 10, EntryMode::Direct, false);
     let mut browser = connect(&broker, 11, EntryMode::Browser, false);
     broker.publish(&missed, &batch(&[missed_frame]));
     broker.publish(&event, &one);
     assert!(direct.drain().await.is_empty());
     assert_eq!(texts(&browser.drain().await), vec![CONFIG_EVENT]);
+
+    // The retired registration cannot subscribe, reply to or retire the
+    // connection that now holds its handle.
+    assert_eq!(broker.receive(&stale, wildcard), None);
+    broker.reply(&stale, batch(&[missed_frame]));
+    broker.disconnect(&stale);
+    assert!(
+        direct.drain().await.is_empty(),
+        "stale registration reached the reconnected handle"
+    );
+    assert_eq!(
+        direct.cleanups(),
+        0,
+        "stale registration retired the reconnected handle"
+    );
+    broker.reply(&direct.registration, batch(&[CONFIG_EVENT]));
+    assert_eq!(texts(&direct.drain().await), vec![CONFIG_EVENT]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -405,8 +433,8 @@ async fn direct_reply_bypasses_event_filter() {
     let reply = r#"{"type": "session_message", "request_id": "r-1"}"#;
 
     broker.publish(&event, &batch(&[CONFIG_EVENT]));
-    broker.reply(direct.id, batch(&[reply]));
-    broker.reply(browser.id, batch(&[reply]));
+    broker.reply(&direct.registration, batch(&[reply]));
+    broker.reply(&browser.registration, batch(&[reply]));
     broker.publish(&event, &batch(&[CONFIG_EVENT]));
     assert_eq!(texts(&direct.drain().await), vec![reply]);
     assert_eq!(
@@ -417,8 +445,11 @@ async fn direct_reply_bypasses_event_filter() {
     // A rejected control is answered on the same writer; an application
     // frame is handed back unchanged and answers nothing.
     let invalid = r#"{"type": "error", "code": "ERROR", "message": "Invalid JSON format"}"#;
-    assert_eq!(broker.receive(direct.id, "{not json"), None);
+    assert_eq!(broker.receive(&direct.registration, "{not json"), None);
     let application = r#"{"type":"chat_message","content":"hi"}"#;
-    assert_eq!(broker.receive(direct.id, application), Some(application));
+    assert_eq!(
+        broker.receive(&direct.registration, application),
+        Some(application)
+    );
     assert_eq!(texts(&direct.drain().await), vec![invalid]);
 }

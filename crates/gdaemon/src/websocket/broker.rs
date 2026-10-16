@@ -81,6 +81,29 @@ impl Batch {
 #[derive(Debug, PartialEq, Eq)]
 pub struct AlreadyRegistered;
 
+/// One registration of a connection handle. The caller drives that
+/// connection through it, and it never reaches a later registration that
+/// reuses the handle.
+#[derive(Clone)]
+pub struct Registration {
+    id: ConnectionId,
+    link: Arc<Link>,
+}
+
+impl Registration {
+    pub fn id(&self) -> ConnectionId {
+        self.id
+    }
+}
+
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registration")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Retirement {
     Overflow,
@@ -172,13 +195,18 @@ fn retire(entries: &mut Entries, id: ConnectionId, reason: Retirement) {
     }
 }
 
+/// The registry entry `registration` still owns. A retired registration owns
+/// none, even when a fresh connection has since reused its handle.
+fn owned<'a>(entries: &'a mut Entries, registration: &Registration) -> Option<&'a mut Entry> {
+    entries
+        .get_mut(&registration.id)
+        .filter(|entry| Arc::ptr_eq(&entry.link, &registration.link))
+}
+
 /// Queues `batch` for one connection, retiring it when the batch does not fit.
-fn deliver(entries: &mut Entries, id: ConnectionId, batch: &Batch) {
-    if entries
-        .get(&id)
-        .is_some_and(|entry| !entry.link.push(batch))
-    {
-        retire(entries, id, Retirement::Overflow);
+fn deliver(entries: &mut Entries, registration: &Registration, batch: &Batch) {
+    if owned(entries, registration).is_some_and(|entry| !entry.link.push(batch)) {
+        retire(entries, registration.id, Retirement::Overflow);
     }
 }
 
@@ -202,37 +230,40 @@ impl BroadcastBroker {
         entry: EntryMode,
         sink: S,
         cleanup: impl FnOnce() + Send + 'static,
-    ) -> Result<(), AlreadyRegistered>
+    ) -> Result<Registration, AlreadyRegistered>
     where
         S: Sink<Message> + Send + 'static,
     {
-        let link = Arc::new(Link::default());
+        let registration = Registration {
+            id,
+            link: Arc::new(Link::default()),
+        };
         match self.entries().entry(id) {
             hash_map::Entry::Occupied(_) => return Err(AlreadyRegistered),
             hash_map::Entry::Vacant(vacant) => {
                 vacant.insert(Entry {
                     state: SubscriptionState::new(entry),
-                    link: Arc::clone(&link),
+                    link: Arc::clone(&registration.link),
                 });
             }
         }
-        tokio::spawn(write(self.clone(), id, link, sink, cleanup));
-        Ok(())
+        tokio::spawn(write(self.clone(), registration.clone(), sink, cleanup));
+        Ok(registration)
     }
 
     /// Resolves one inbound text frame. A subscription control is answered
     /// on the connection's writer in the same critical section as its state
     /// change, and `None` is returned; an application frame is returned
     /// unchanged. A retired connection's frames are dropped.
-    pub fn receive<'a>(&self, id: ConnectionId, text: &'a str) -> Option<&'a str> {
+    pub fn receive<'a>(&self, registration: &Registration, text: &'a str) -> Option<&'a str> {
         let mut entries = self.entries();
-        let entry = entries.get_mut(&id)?;
+        let entry = owned(&mut entries, registration)?;
         let reply = match entry.state.apply_subscription_request(text) {
             Inbound::Application(frame) => return Some(frame),
             Inbound::Ack(ack) => Utf8Bytes::from(ack),
             Inbound::Rejected(error) => Utf8Bytes::from_static(error),
         };
-        deliver(&mut entries, id, &Batch::single(reply));
+        deliver(&mut entries, registration, &Batch::single(reply));
         None
     }
 
@@ -253,47 +284,44 @@ impl BroadcastBroker {
 
     /// Queues a direct reply on the connection's writer, bypassing the
     /// subscription filter.
-    pub fn reply(&self, id: ConnectionId, batch: Batch) {
-        deliver(&mut self.entries(), id, &batch);
+    pub fn reply(&self, registration: &Registration, batch: Batch) {
+        deliver(&mut self.entries(), registration, &batch);
     }
 
     /// Retires a connection whose peer has gone; it gets no close frame.
-    pub fn disconnect(&self, id: ConnectionId) {
-        retire(&mut self.entries(), id, Retirement::Disconnected);
+    pub fn disconnect(&self, registration: &Registration) {
+        self.retire_registration(registration, Retirement::Disconnected);
     }
 
-    /// Retirement detected by a connection's own writer. The registry entry
-    /// is removed only while it still belongs to this writer, so a fresh
-    /// connection reusing the handle is untouched.
-    fn retire_link(&self, id: ConnectionId, link: &Arc<Link>, reason: Retirement) -> Retirement {
+    /// Retires `registration` and returns the first recorded reason. The
+    /// registry entry is removed only while this registration still owns it,
+    /// so a fresh connection reusing the handle is untouched.
+    fn retire_registration(&self, registration: &Registration, reason: Retirement) -> Retirement {
         let mut entries = self.entries();
-        if entries
-            .get(&id)
-            .is_some_and(|entry| Arc::ptr_eq(&entry.link, link))
-        {
-            entries.remove(&id);
+        if owned(&mut entries, registration).is_some() {
+            entries.remove(&registration.id);
         }
         drop(entries);
-        link.retire(reason)
+        registration.link.retire(reason)
     }
 }
 
 async fn write<S>(
     broker: BroadcastBroker,
-    id: ConnectionId,
-    link: Arc<Link>,
+    registration: Registration,
     sink: S,
     cleanup: impl FnOnce(),
 ) where
     S: Sink<Message>,
 {
+    let link = &registration.link;
     let mut sink = pin!(sink);
     let retirement = loop {
         match link.pop() {
             Err(retirement) => break retirement,
             Ok(Some(batch)) => {
                 if let Some(retirement) =
-                    send_batch(&broker, id, &link, sink.as_mut(), &batch).await
+                    send_batch(&broker, &registration, sink.as_mut(), &batch).await
                 {
                     break retirement;
                 }
@@ -321,8 +349,7 @@ async fn write<S>(
 /// `pop`.
 async fn send_batch<S>(
     broker: &BroadcastBroker,
-    id: ConnectionId,
-    link: &Arc<Link>,
+    registration: &Registration,
     mut sink: Pin<&mut S>,
     batch: &Batch,
 ) -> Option<Retirement>
@@ -332,7 +359,7 @@ where
     for frame in batch.frames.iter() {
         let sent = tokio::select! {
             biased;
-            () = link.retired.notified() => return None,
+            () = registration.link.retired.notified() => return None,
             sent = timeout(SEND_TIMEOUT, sink.send(Message::Text(frame.clone()))) => sent,
         };
         let failure = match sent {
@@ -340,7 +367,7 @@ where
             Ok(Err(_)) => Retirement::Disconnected,
             Err(_) => Retirement::SendTimeout,
         };
-        return Some(broker.retire_link(id, link, failure));
+        return Some(broker.retire_registration(registration, failure));
     }
     None
 }

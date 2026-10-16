@@ -68,6 +68,8 @@ class ShellExecution:
     # known; a script file without one stays opaque.
     script_word: str | None = None
     pipeline_subshell: bool = False
+    # Under -n (noexec) a non-interactive shell parses its program and runs none of it.
+    parse_only: bool = False
 
 
 def preserves_directory(words: list[str]) -> bool:
@@ -209,6 +211,8 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
     )
     index = 1
     stdin_program = False
+    noexec = False
+    interactive = False
     while index < len(words):
         arg = words[index]
         if arg == "--":
@@ -218,14 +222,21 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
             return ShellExecution(script_file=True)
         if not arg.startswith(("-", "+")):
             break
+        short = not arg.startswith(("--", "++"))
+        if short and "o" in arg:
+            noexec = _noexec_after_option(arg[0], words[index + 1 : index + 2], noexec)
         if arg in {"-o", "+o", "--rcfile", "--init-file"} or (bash_options and arg in {"-O", "+O"}):
             if arg == "-O" and words[index + 1 : index + 2] == ["lastpipe"]:
                 pipeline_subshell = False
             index += 2
             continue
+        if short:
+            # The last -n or +n wins; an interactive shell ignores -n.
+            noexec = arg[0] == "-" if "n" in arg else noexec
+            interactive |= arg[0] == "-" and "i" in arg
         if arg.startswith("-") and not arg.startswith("--"):
             stdin_program = stdin_program or "s" in arg
-        if not arg.startswith(("--", "++")) and ("o" in arg or (bash_options and "O" in arg)):
+        if short and ("o" in arg or (bash_options and "O" in arg)):
             if arg.startswith("-") and "O" in arg and words[index + 1 : index + 2] == ["lastpipe"]:
                 pipeline_subshell = False
             index += 2
@@ -236,7 +247,11 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
                 if program[:1] == ["--"]:
                     program = program[1:]
                 return (
-                    ShellExecution(command=program[0], pipeline_subshell=pipeline_subshell)
+                    ShellExecution(
+                        command=program[0],
+                        pipeline_subshell=pipeline_subshell,
+                        parse_only=noexec and not interactive,
+                    )
                     if program
                     else ShellExecution()
                 )
@@ -246,4 +261,15 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         script_file=stdin_program or index < len(words) or stdin,
         script_word=words[index] if operand else None,
         pipeline_subshell=pipeline_subshell,
+        parse_only=noexec and not interactive and operand,
     )
+
+
+def _noexec_after_option(sign: str, value: list[str], noexec: bool) -> bool:
+    """Apply ``-o``/``+o <name>`` to noexec; zsh spells it ``no_exec`` or unsets ``exec``."""
+    name = value[0].lower().replace("_", "") if value else ""
+    if name == "noexec":
+        return sign == "-"
+    if name == "exec":
+        return sign == "+"
+    return noexec

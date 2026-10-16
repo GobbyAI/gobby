@@ -17,7 +17,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks import inbox_maintenance
+from gobby.hooks import inbox_envelopes, inbox_maintenance
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     ENVELOPE_REPLAY_GRACE_SECONDS,
@@ -1642,7 +1642,7 @@ def test_claim_stranded_by_a_crash_is_acknowledged_by_the_next_daemon(
     assert stranded.exists()
 
     with (
-        patch("gobby.hooks.inbox._RECEIPT_CLAIM_OWNER", "next-daemon"),
+        patch("gobby.hooks.inbox_envelopes.INBOX_CLAIM_OWNER", "next-daemon"),
         patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
         patch("gobby.storage.hook_receipts.acknowledge_receipt") as acknowledge,
         patch("gobby.hooks.receipt_effects.apply_acknowledged_receipt"),
@@ -1668,6 +1668,8 @@ def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) 
 
     path = tmp_path / "ack.json"
     path.write_text("{}", encoding="utf-8")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     message_manager = MagicMock()
@@ -1697,6 +1699,7 @@ def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) 
             path,
             "env-1",
             processed_dir=processed_dir,
+            expected_signature=signature,
         )
 
     message_manager.mark_delivered_batch.assert_called_once_with(
@@ -1711,6 +1714,8 @@ def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) ->
 
     path = tmp_path / "ack.json"
     path.write_text("{}", encoding="utf-8")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     message_manager = MagicMock()
@@ -1728,6 +1733,7 @@ def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) ->
             path,
             "env-1",
             processed_dir=processed_dir,
+            expected_signature=signature,
         )
 
     message_manager.mark_delivered_batch.assert_not_called()
@@ -1855,6 +1861,8 @@ def test_consume_delivery_receipt_marks_original_and_current_envelopes(tmp_path:
 
     path = tmp_path / "ack.json"
     path.write_text("{}", encoding="utf-8")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     app = FastAPI()
@@ -1873,6 +1881,7 @@ def test_consume_delivery_receipt_marks_original_and_current_envelopes(tmp_path:
             path,
             "env-ack",
             processed_dir=processed_dir,
+            expected_signature=signature,
         )
 
     assert is_envelope_processed("env-original", processed_dir=processed_dir)
@@ -1888,6 +1897,8 @@ def test_consume_delivery_receipt_duplicate_ack_marks_nothing_else(tmp_path: Pat
 
     path = tmp_path / "ack.json"
     path.write_text("{}", encoding="utf-8")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     app = FastAPI()
@@ -1901,6 +1912,7 @@ def test_consume_delivery_receipt_duplicate_ack_marks_nothing_else(tmp_path: Pat
             path,
             "env-dup-ack",
             processed_dir=processed_dir,
+            expected_signature=signature,
         )
 
     assert not is_envelope_processed(envelope["original_envelope_id"], processed_dir=processed_dir)

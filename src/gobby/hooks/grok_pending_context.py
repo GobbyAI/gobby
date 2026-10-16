@@ -737,6 +737,7 @@ def handle_ack_pending_inbox_envelope(
     path: Path,
     *,
     remove_marker: Callable[[str], object],
+    remove_file: Callable[[], None] | None = None,
 ) -> bool:
     """Apply the file effects of the shared hub pending-delivery decision."""
     try:
@@ -747,6 +748,9 @@ def handle_ack_pending_inbox_envelope(
         handler, envelope_id, envelope, age_seconds=age_seconds
     )
     if decision == "requeued":
-        path.unlink(missing_ok=True)
+        if remove_file is None:
+            path.unlink(missing_ok=True)
+        else:
+            remove_file()
         remove_marker(envelope_id)
     return decision is not None

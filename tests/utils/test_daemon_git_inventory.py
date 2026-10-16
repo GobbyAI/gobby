@@ -332,6 +332,11 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Close validation calls evaluate_validation_commands on a worker. Its
     # initial empty-evidence check returns before candidate-tree access.
     ("src/gobby/tasks/close_test_coverage.py", "_candidate_blobs"),
+    # Rooted close validation reaches tracked-script checks only through its
+    # asyncio.to_thread gate; the empty loop-thread probe has no criteria/root.
+    # test_close_task_flow.test_close_tracked_script_git_runs_off_the_event_loop
+    # proves the actual Git boundary runs without an event loop.
+    ("src/gobby/tasks/transcript_outcomes.py", "_tracked_script"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
     # offline validation remains synchronous (test_expansion_service_compile).
     ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),

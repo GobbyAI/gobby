@@ -144,7 +144,10 @@ async def test_owner_history_is_scoped_to_current_claim(
     observed: list[set[str]] = []
 
     async def parse(*args: Any, **kwargs: Any) -> TranscriptEvidence:
-        observed.append({path for _, path in args[5]})
+        # A legacy proof probe may inspect the old path, but only the final
+        # owner projection (including the live new path) may credit pairs.
+        if new_path in args[3]:
+            observed.append({path for _, path in args[5]})
         return TranscriptEvidence()
 
     with (
@@ -409,6 +412,122 @@ async def test_cycle_credited_across_claim_continuity_chain(tmp_path: Path) -> N
     assert result.passed, result.findings
     assert result.red_runs == (f"uv run pytest {TEST_PATH} -q",)
     assert {run.session_id for run in evidence.validation_runs} == {"earlier", "closing"}
+
+
+@pytest.mark.parametrize(
+    "proof", ["current_claim", "later_edit", "earlier_claim", "foreign_checkout", "other_task"]
+)
+async def test_legacy_owner_history_requires_current_claim_transcript_edit(
+    tmp_path: Path, proof: str
+) -> None:
+    root = str(tmp_path.resolve())
+    paths = {TEST_PATH, "src/feature.py"}
+    edit_root = tmp_path / "foreign" if proof == "foreign_checkout" else tmp_path
+    records = [
+        *_pair(2, "Write", {"file_path": str(edit_root / TEST_PATH), "content": "test"}, "ok"),
+        *_pair(
+            3,
+            "Bash",
+            {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root},
+            "________________ test_feature ________________\nE   assert 1 == 2\n"
+            "tests/test_feature.py:4: AssertionError\n"
+            "FAILED tests/test_feature.py::test_feature - assert 1 == 2\n",
+        ),
+        *_pair(
+            4, "Write", {"file_path": str(edit_root / "src/feature.py"), "content": "code"}, "ok"
+        ),
+        *_pair(5, "Bash", {"command": f"uv run pytest {TEST_PATH} -q", "cwd": root}, "1 passed"),
+    ]
+    if proof == "later_edit":
+        records.extend(
+            _pair(
+                6,
+                "Write",
+                {"file_path": str(tmp_path / "src/feature.py"), "content": "later"},
+                "ok",
+            )
+        )
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n", encoding="utf-8")
+    for path in paths:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+    session = Session(
+        id="owner",
+        external_id="legacy-owner",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=START,
+        updated_at=START,
+    )
+    variables: dict[str, Any] = {
+        "task_edited_file_checkouts_history": {"task": {root: sorted(paths)}},
+        "task_edited_file_checkouts_history_started_at": START.timestamp(),
+    }
+    if proof == "later_edit":
+        variables["task_edited_file_checkouts_history"]["task"][str(tmp_path / "other")] = sorted(
+            paths
+        )
+        variables["task_edited_file_times"] = {
+            "task": {path: (START + timedelta(seconds=6)).timestamp() for path in paths}
+        }
+    if proof == "other_task":
+        variables["task_edited_file_checkouts"] = {"other": {root: sorted(paths)}}
+    window = START + timedelta(seconds=20) if proof == "earlier_claim" else START
+    ctx = MagicMock()
+    ctx.config = None
+    ctx.session_manager.get.return_value = session
+    ctx.session_var_manager.get_variables.return_value = variables
+    ctx.session_task_manager.get_task_sessions.return_value = []
+    ctx.session_task_manager.get_session_tasks.return_value = [
+        {
+            "task": SimpleNamespace(id="task", closed_at=None),
+            "action": "claimed",
+            "link_created_at": window.isoformat(),
+        }
+    ]
+    with (
+        patch(f"{SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id="owner",
+            closing_session_id="owner",
+            owner_window_start=window.isoformat(),
+            task_edited_files=set(),
+            repo_path=root,
+        )
+    assert {edit.path for edit in evidence.edits} == (
+        paths if proof in {"current_claim", "later_edit"} else set()
+    )
+    if proof == "current_claim":
+        result = evaluate_tdd_evidence((_test(),), evidence)
+        assert result.passed, result.findings
+    if proof in {"current_claim", "later_edit"}:
+        from gobby.tasks.close_checklist import evaluate_validation_commands
+
+        gate = evaluate_validation_commands(
+            task_category="code",
+            evidence=evidence,
+            has_attributed_edits=True,
+            changed_paths=("src/feature.py",),
+            close_root=root,
+        )
+        assert gate.passed is (proof == "current_claim"), gate.message
+        if proof == "later_edit":
+            assert any(edit.timestamp == START + timedelta(seconds=6) for edit in evidence.edits)
+            assert gate.details["latest_runs"] == []
 
 
 @pytest.mark.parametrize("exclusion", [None, "other_task", "foreign_checkout"])

@@ -26,12 +26,12 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.hooks._provider_shell_syntax import _prepare
-from gobby.hooks._python_pipeline_classifier import (
+from gobby.hooks._python_mutation_targets import (
     _PYTHON_PROCESS_CALLS,
     _call_name,
     _imported_bindings,
-    _inline_interpreter_parts,
 )
+from gobby.hooks._python_pipeline_classifier import _inline_interpreter_parts
 from gobby.hooks._sed_arguments import _sed_file_operands
 from gobby.hooks._sed_program import sed_execution
 from gobby.hooks._shell_execution_words import _unwrap

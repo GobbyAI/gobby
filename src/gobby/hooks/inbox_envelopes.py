@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +15,55 @@ from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
+INBOX_CLAIM_SUFFIX = ".claimed.tmp"
+INBOX_CLAIM_OWNER = uuid.uuid4().hex
+type FileSignature = tuple[int, int, int]
+
+
+def file_signature(path: Path) -> FileSignature | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+
+def original_inbox_name(path: Path) -> str:
+    if path.name.endswith(INBOX_CLAIM_SUFFIX):
+        return path.name.removesuffix(INBOX_CLAIM_SUFFIX).rpartition(".")[0]
+    return path.name
+
+
+def restore_inbox_claim(claimed: Path, path: Path) -> None:
+    """Restore without overwriting a newer receipt at the public path."""
+    try:
+        path.hardlink_to(claimed)
+    except (FileExistsError, FileNotFoundError):
+        pass
+    claimed.unlink(missing_ok=True)
+
+
+@contextmanager
+def claim_inbox_file(path: Path, expected: FileSignature) -> Iterator[Path | None]:
+    """Claim only for removal, then verify we claimed the file that was read."""
+    claimed = path.with_name(
+        f"{path.name}.{INBOX_CLAIM_OWNER}-drain-{uuid.uuid4().hex}{INBOX_CLAIM_SUFFIX}"
+    )
+    try:
+        path.rename(claimed)
+    except FileNotFoundError:
+        yield None
+        return
+    try:
+        yield claimed if file_signature(claimed) == expected else None
+    finally:
+        restore_inbox_claim(claimed, path)
+
+
+def unlink_envelope(path: Path, expected: FileSignature) -> None:
+    with claim_inbox_file(path, expected) as claimed:
+        if claimed is not None:
+            claimed.unlink(missing_ok=True)
 
 
 def get_hook_inbox_dir() -> Path:
@@ -25,11 +77,19 @@ def get_hook_quarantine_dir(inbox_dir: Path | None = None) -> Path:
     return root / "quarantine"
 
 
-def quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
-    """Move an unreadable or invalid inbox file into quarantine with metadata."""
+def quarantine_file(
+    path: Path, *, reason: str, detail: str, expected_signature: FileSignature | None = None
+) -> bool | None:
+    """Quarantine invalid input; return None if its public path was replaced or removed."""
+    if expected_signature is not None:
+        with claim_inbox_file(path, expected_signature) as claimed:
+            if claimed is None:
+                return None
+            return quarantine_file(claimed, reason=reason, detail=detail)
     quarantine_dir = get_hook_quarantine_dir(path.parent)
-    target = quarantine_dir / path.name
-    meta_path = quarantine_dir / f"{path.name}.meta.json"
+    name = original_inbox_name(path)
+    target = quarantine_dir / name
+    meta_path = quarantine_dir / f"{name}.meta.json"
 
     try:
         quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -66,9 +126,14 @@ def quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
     return True
 
 
-def quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
+def quarantine_or_warn(
+    path: Path, *, reason: str, detail: str, expected_signature: FileSignature | None = None
+) -> None:
     """Best-effort quarantine with a warning when quarantine itself fails."""
-    if not quarantine_file(path, reason=reason, detail=detail):
+    if (
+        quarantine_file(path, reason=reason, detail=detail, expected_signature=expected_signature)
+        is False
+    ):
         logger.warning(
             "Skipping hook inbox file %s after quarantine failed (reason=%s)",
             path,
@@ -78,20 +143,31 @@ def quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
 
 def load_envelope(path: Path) -> dict[str, Any] | None:
     """Load and minimally validate a replay envelope from disk."""
+    signature = file_signature(path)
+    if signature is None:
+        return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        quarantine_or_warn(path, reason="invalid_json", detail=str(exc))
+        quarantine_or_warn(
+            path, reason="invalid_json", detail=str(exc), expected_signature=signature
+        )
         return None
 
     if not isinstance(raw, dict):
-        quarantine_or_warn(path, reason="invalid_envelope", detail="Envelope must be a JSON object")
+        quarantine_or_warn(
+            path,
+            reason="invalid_envelope",
+            detail="Envelope must be a JSON object",
+            expected_signature=signature,
+        )
         return None
 
     if raw.get("schema_version") != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
         quarantine_or_warn(
             path,
             reason="invalid_envelope",
+            expected_signature=signature,
             detail=(
                 "Unsupported schema_version: "
                 f"{raw.get('schema_version')}. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
@@ -106,6 +182,7 @@ def load_envelope(path: Path) -> dict[str, Any] | None:
             quarantine_or_warn(
                 path,
                 reason="invalid_envelope",
+                expected_signature=signature,
                 detail="Delivery receipt must include receipt_id",
             )
             return None
@@ -113,6 +190,7 @@ def load_envelope(path: Path) -> dict[str, Any] | None:
             quarantine_or_warn(
                 path,
                 reason="invalid_envelope",
+                expected_signature=signature,
                 detail="Delivery receipt must include a positive delivery_generation",
             )
             return None
@@ -122,6 +200,7 @@ def load_envelope(path: Path) -> dict[str, Any] | None:
         quarantine_or_warn(
             path,
             reason="invalid_envelope",
+            expected_signature=signature,
             detail="Envelope must include hook_type and source",
         )
         return None
