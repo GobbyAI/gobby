@@ -1,7 +1,9 @@
-"""A `bash -n <script>` read a privacy prompt blocks no longer wedges its session (#24505).
+"""A `bash <script>` read a privacy prompt blocks no longer wedges its session (#24505).
 
-This file uses only names that predate the fix, so the same test runs against the
-unfixed tree, where the first hook times out holding the session's admission.
+The incident ran `bash -n`, which #23884 classifies as parse-only without reading the
+script, so an executing `bash` reaches the same script-body read here. This file uses
+only names that predate the fix, so the same test runs against the unfixed tree, where
+the first hook times out holding the session's admission.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 # Longer than the script-read bound, so a bounded read fails closed inside it.
 _ADAPTER_TIMEOUT = 5.0
-_ENVELOPES = ("env-bash-n", "env-next")
+_ENVELOPES = ("env-bash", "env-next")
 
 
 @pytest.mark.asyncio
@@ -48,7 +50,7 @@ async def test_blocked_script_body_read_in_normalization_leaves_session_admittin
     monkeypatch.setattr(Path, "open", open_behind_prompt)
     hook_manager = MagicMock()
     hook_manager.handle.return_value = HookResponse(decision="allow")
-    command = f"chmod +x {script} && bash -n {script}"
+    command = f"chmod +x {script} && bash {script}"
     try:
         for envelope_id in _ENVELOPES:
             payload = {
