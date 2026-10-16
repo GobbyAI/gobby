@@ -112,6 +112,16 @@ impl FrontDoor {
             #[cfg(unix)]
             Door::Node { node, ws_listener } => {
                 if request.method() == axum::http::Method::POST
+                    && request.uri().path() == "/api/hooks/execute"
+                {
+                    return crate::nodes::hooks::ingress::execute(
+                        node.clone(),
+                        node.hook_ledger.clone(),
+                        request,
+                    )
+                    .await;
+                }
+                if request.method() == axum::http::Method::POST
                     && request.uri().path() == "/api/runtime/handshake/challenge"
                 {
                     request = match challenge::answer(&node.bootstrap_path, request).await {

@@ -25,6 +25,7 @@ use tokio::sync::{Mutex, watch};
 pub struct NodeServices {
     pub bootstrap_path: PathBuf,
     pub relay: HubRelay,
+    pub hook_ledger: crate::nodes::hooks::ledger::Ledger,
 }
 
 impl NodeServices {
@@ -66,6 +67,7 @@ impl NodeServices {
             Arc::new(Self {
                 bootstrap_path: path.to_owned(),
                 relay,
+                hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
             }),
             claim,
         )))

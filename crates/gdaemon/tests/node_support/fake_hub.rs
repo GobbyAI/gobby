@@ -11,7 +11,7 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
 #[derive(Clone, Debug)]
 pub struct RecordedRequest {
@@ -25,6 +25,12 @@ pub struct RecordedRequest {
 struct HubState {
     requests: Vec<RecordedRequest>,
     scripts: HashMap<String, VecDeque<(StatusCode, Value)>>,
+    barriers: HashMap<String, ReplyBarrier>,
+}
+
+struct ReplyBarrier {
+    entered: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 pub struct FakeHub {
@@ -57,6 +63,20 @@ impl FakeHub {
             .insert(path.to_owned(), replies.into());
     }
 
+    /// Record the next request before waiting for the test to release its response.
+    pub fn pause_next(&self, path: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered, observed) = oneshot::channel();
+        let (release, wait) = oneshot::channel();
+        self.state.lock().unwrap().barriers.insert(
+            path.to_owned(),
+            ReplyBarrier {
+                entered,
+                release: wait,
+            },
+        );
+        (observed, release)
+    }
+
     pub fn requests(&self) -> Vec<RecordedRequest> {
         self.state.lock().unwrap().requests.clone()
     }
@@ -69,21 +89,29 @@ impl FakeHub {
 
 async fn record(State(state): State<Arc<Mutex<HubState>>>, request: Request) -> Response {
     let (parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
+    // Admit oversized hook fixtures so ingress, rather than this fake, rejects them.
+    let bytes = axum::body::to_bytes(body, 32 * 1024 * 1024).await.unwrap();
     let body = serde_json::from_slice(&bytes).unwrap();
     let path = parts.uri.path().to_owned();
-    let mut state = state.lock().unwrap();
-    state.requests.push(RecordedRequest {
-        method: parts.method,
-        path: path.clone(),
-        headers: parts.headers,
-        body,
-    });
-    let (status, body) = state
-        .scripts
-        .get_mut(&path)
-        .and_then(VecDeque::pop_front)
-        .unwrap_or((StatusCode::NOT_FOUND, Value::Null));
+    let (status, body, barrier) = {
+        let mut state = state.lock().unwrap();
+        state.requests.push(RecordedRequest {
+            method: parts.method,
+            path: path.clone(),
+            headers: parts.headers,
+            body,
+        });
+        let (status, body) = state
+            .scripts
+            .get_mut(&path)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or((StatusCode::NOT_FOUND, Value::Null));
+        (status, body, state.barriers.remove(&path))
+    };
+    if let Some(barrier) = barrier {
+        let _ = barrier.entered.send(());
+        let _ = barrier.release.await;
+    }
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
