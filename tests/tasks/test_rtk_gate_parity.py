@@ -384,15 +384,26 @@ def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: 
 
 
 BACKGROUND_PYTEST = f"uv run rtk pytest {TEST} -q"
+READER_REWRITES: dict[str, Any] = json.loads((FIXTURES / "reader-rewrites.json").read_text())
+
+
+def _reader_wrapped(reader: str, path: str, form: str, release: str) -> str:
+    capture = READER_REWRITES[release][reader]
+    assert capture["exit_code"] == 3
+    assert capture["stderr"] == ""
+    if form == "hook":
+        return str(capture["stdout"]).format(path=path)
+    return _wrapped(str(capture["command"]).format(path=path), form)
 
 
 @pytest.mark.parametrize("form", ["bare", "hook", "explicit", "proxy", "bypass"])
-@pytest.mark.parametrize("reader", ["cat", "tail -n 40", "grep -E 'passed|failed'"])
+@pytest.mark.parametrize("reader", ["cat", "tail", "grep"])
+@pytest.mark.parametrize("release", ["0.51.0", "1.0.1"])
 @pytest.mark.parametrize("code", [0, 1])
 def test_background_read_launcher_gate10_parity(
-    tmp_path: Path, form: str, reader: str, code: int
+    tmp_path: Path, form: str, reader: str, release: str, code: int
 ) -> None:
-    read = _wrapped(f"{reader} {{path}}", form)
+    read = _reader_wrapped(reader, "{path}", form, release)
     output = "Pytest: 1 passed" if code == 0 else "Pytest: 0 passed, 1 failed"
     gate = _background_gate(tmp_path, read, output, code=code)
     assert gate.passed is (code == 0), gate.to_dict()
@@ -402,8 +413,11 @@ def test_background_read_launcher_gate10_parity(
 
 
 @pytest.mark.parametrize("form", ["bare", "hook", "explicit", "proxy", "bypass"])
-@pytest.mark.parametrize("reader", ["cat", "tail -n 40", "grep -E 'passed|failed'"])
-def test_background_read_launcher_red_green_parity(tmp_path: Path, form: str, reader: str) -> None:
+@pytest.mark.parametrize("reader", ["cat", "tail", "grep"])
+@pytest.mark.parametrize("release", ["0.51.0", "1.0.1"])
+def test_background_read_launcher_red_green_parity(
+    tmp_path: Path, form: str, reader: str, release: str
+) -> None:
     body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
     records = _pair(0, "Write", {"file_path": str(tmp_path / TEST), "content": body}, "written")
     command = f"uv run rtk pytest {TEST}::test_feature -q"
@@ -427,7 +441,9 @@ def test_background_read_launcher_red_green_parity(tmp_path: Path, form: str, re
                 "</task-notification>",
             )
         )
-        records += _pair(at + 4, "Bash", {"command": _wrapped(f"{reader} {path}", form)}, output)
+        records += _pair(
+            at + 4, "Bash", {"command": _reader_wrapped(reader, str(path), form, release)}, output
+        )
         if code:
             records += _pair(12, "Write", {"file_path": str(tmp_path / SOURCE)}, "written")
     records += _pair(
@@ -468,8 +484,8 @@ def test_background_read_launcher_red_green_parity(tmp_path: Path, form: str, re
     assert gate.passed, gate.to_dict()
 
 
-@pytest.mark.parametrize("tail_form", ["bare", "hook", "explicit", "proxy", "bypass"])
-@pytest.mark.parametrize("grep_form", ["bare", "hook", "explicit", "proxy", "bypass"])
+@pytest.mark.parametrize("tail_form", ["bare", "explicit", "proxy", "bypass"])
+@pytest.mark.parametrize("grep_form", ["bare", "explicit", "proxy", "bypass"])
 def test_background_monitor_launcher_parity(tmp_path: Path, tail_form: str, grep_form: str) -> None:
     read = (
         _wrapped("tail -n +1 -f {path}", tail_form)
@@ -479,6 +495,15 @@ def test_background_monitor_launcher_parity(tmp_path: Path, tail_form: str, grep
     gate = _background_gate(tmp_path, read, "Pytest: 1 passed", monitor=True)
     assert gate.passed, gate.to_dict()
     assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize("release", ["0.51.0", "1.0.1"])
+@pytest.mark.parametrize("code", [0, 1])
+def test_background_monitor_captured_hook_parity(tmp_path: Path, release: str, code: int) -> None:
+    read = _reader_wrapped("monitor", "{path}", "hook", release)
+    output = "Pytest: 1 passed" if code == 0 else "Pytest: 0 passed, 1 failed"
+    gate = _background_gate(tmp_path, read, output, code=code, monitor=True)
+    assert gate.passed is (code == 0), gate.to_dict()
 
 
 def _user_text(at: int, content: str) -> dict[str, Any]:
