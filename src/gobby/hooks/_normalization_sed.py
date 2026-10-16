@@ -74,7 +74,9 @@ def _classify_sed_operands(
         cwd,
     )
     line_count = (
-        None if operands.unresolved or operands.script_files else sed_line_count(parts, positional)
+        None
+        if operands.unresolved or operands.script_files or operands.expanded
+        else sed_line_count(parts, positional)
     )
     navigation = (
         {}
@@ -108,6 +110,8 @@ def _classify_sed_operands(
         destinations, unknown = sed_write_paths(program, bsd=bsd)
         writes.extend(destinations)
         unresolved |= unknown
+    # Write commands that arrive through an expansion keep no trusted scope.
+    unresolved |= operands.expanded and bool(writes)
     inplace = operands.inplace
     if inplace:
         writes = [item for item in operands.inputs if _looks_path_target(item)] + writes

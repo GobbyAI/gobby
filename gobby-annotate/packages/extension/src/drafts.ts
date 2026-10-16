@@ -6,11 +6,19 @@ import {
   type Bundle,
 } from "@gobby/annotate-core";
 
+/** One delivered ZIP. `staged` marks a copy in the iPhone App Group. */
+export type ExportRecord = { id: string; at: string; staged: boolean };
 export type Batch = {
   id: string;
   title: string;
   updatedAt: string;
   annotations: Annotation[];
+  exports?: ExportRecord[];
+};
+/** Exported means the last delivered ZIP holds every change to the batch. */
+export const isExported = (batch: Batch) => {
+  const last = batch.exports?.at(-1);
+  return !!last && last.at >= batch.updatedAt;
 };
 const request = <T>(req: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -159,6 +167,32 @@ export class Drafts {
       },
       assets,
     };
+  }
+  async get(batchId: string): Promise<Batch | undefined> {
+    const tx = (await this.db).transaction("batches", "readonly");
+    return request(tx.objectStore("batches").get(batchId));
+  }
+  /** Appends a delivered export without touching updatedAt, so later edits read as unexported. */
+  async recordExport(batchId: string, record: ExportRecord): Promise<void> {
+    const tx = (await this.db).transaction("batches", "readwrite");
+    const done = completed(tx);
+    const batches = tx.objectStore("batches");
+    const batch: Batch | undefined = await request(batches.get(batchId));
+    if (batch) {
+      batch.exports = [...(batch.exports ?? []), record];
+      batches.put(batch);
+    }
+    await done;
+  }
+  /** Deletes the batch and every image stored under its key prefix, orphans included. */
+  async remove(batchId: string): Promise<void> {
+    const tx = (await this.db).transaction(["batches", "images"], "readwrite");
+    const done = completed(tx);
+    tx.objectStore("batches").delete(batchId);
+    tx.objectStore("images").delete(
+      IDBKeyRange.bound(batchId + "/", batchId + "/￿"),
+    );
+    await done;
   }
   async image(batchId: string, path: string): Promise<Blob | undefined> {
     return request(

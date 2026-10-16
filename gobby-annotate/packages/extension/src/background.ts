@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { annotationSchema, id, pngDimensions } from "@gobby/annotate-core";
-import { Drafts } from "./drafts";
+import { Drafts, isExported } from "./drafts";
 import { sameCapture, base64, type Fingerprint } from "./screenshots";
-import { exportSnapshot, stageSafari } from "./export";
+import { deleteBatches, exportSnapshot, stageSafari } from "./export";
 
 const drafts = new Drafts();
 let captureQueue: Promise<unknown> = Promise.resolve();
@@ -43,6 +43,8 @@ const commands = z.discriminatedUnion("type", [
     path: z.string().regex(/^screenshots\/[\w-]+\.png$/),
   }),
   z.object({ type: z.literal("export"), batchId: id }),
+  z.object({ type: z.literal("remove"), batchId: id }),
+  z.object({ type: z.literal("clearExported") }),
   z.object({
     type: z.literal("capture"),
     expected: z.custom<Fingerprint>(
@@ -115,21 +117,37 @@ async function dispatch(
         base64(new Uint8Array(await blob.arrayBuffer()))
       );
     }
-    case "export":
-      return exportSnapshot(
-        await drafts.snapshot(command.batchId),
-        async (bytes, name) => {
-          if (!chrome.downloads?.download) return stageSafari(bytes, name);
-          const downloadId = await chrome.downloads.download({
-            url: "data:application/zip;base64," + base64(bytes),
-            filename: name,
-            saveAs: true,
-          });
-          if (downloadId === undefined)
-            throw new Error("Export cancelled; drafts are retained");
-          return "Download started. Drafts retained.";
-        },
+    case "export": {
+      const bundle = await drafts.snapshot(command.batchId),
+        staged = !chrome.downloads?.download;
+      const message = await exportSnapshot(bundle, async (bytes, name) => {
+        if (staged) return stageSafari(bytes, name);
+        const downloadId = await chrome.downloads.download({
+          url: "data:application/zip;base64," + base64(bytes),
+          filename: name,
+          saveAs: true,
+        });
+        if (downloadId === undefined)
+          throw new Error("Export cancelled; drafts are retained");
+        return "Download started. Drafts retained.";
+      });
+      await drafts.recordExport(command.batchId, {
+        id: bundle.manifest.exportId,
+        at: bundle.manifest.exportedAt,
+        staged,
+      });
+      return message;
+    }
+    case "remove":
+      await deleteBatches(drafts, [command.batchId]);
+      return drafts.list();
+    case "clearExported":
+      await deleteBatches(
+        drafts,
+        (await drafts.list()).map((b) => b.id),
+        { when: isExported },
       );
+      return drafts.list();
     case "capture": {
       const tabId = sender.tab.id,
         windowId = sender.tab.windowId,

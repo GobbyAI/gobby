@@ -6,6 +6,9 @@
 //! records the bytes each recipient receives, so this harness takes frame text
 //! from `deliveries`, ties it back to `message`/`frames` by parsed value, and
 //! checks that exactly the clients the native filter selects receive it.
+//! Byte identity of delivered broadcast frames is checked where native code
+//! moves them: `ws_broker.rs` publishes these `deliveries` strings through
+//! `BroadcastBroker` and compares each client's frames byte-for-byte.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

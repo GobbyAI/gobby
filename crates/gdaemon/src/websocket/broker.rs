@@ -1,0 +1,346 @@
+//! Bounded broadcast fanout to authenticated logical connections.
+//!
+//! Each registered connection owns its subscription state and a FIFO of
+//! batches drained by its own writer task. Subscription updates and
+//! publication selection share one short state lock that is released before
+//! any socket I/O, so a client's acknowledgement is queued ahead of every
+//! publication its new state selects. Publishing only enqueues: each selected
+//! connection either queues the batch or is retired, and a stalled socket
+//! never delays another. Retirement happens once and runs the caller's
+//! cleanup once; nothing is replayed to a later connection.
+
+use std::collections::VecDeque;
+use std::collections::hash_map::{self, HashMap};
+use std::pin::{Pin, pin};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
+
+use futures_util::{Sink, SinkExt};
+use serde_json::Value;
+use tokio::sync::Notify;
+use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+
+use super::subscriptions::{EntryMode, Inbound, SubscriptionState};
+
+/// Pending batches one connection may hold behind its in-flight batch.
+pub const MAX_QUEUED_BATCHES: usize = 16;
+/// Frame bytes one connection may hold queued, and the largest batch. Matches
+/// gclient's aggregate assembly bound.
+pub const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
+/// Longest one frame send may stall before its client is retired.
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+/// Longest the 1011 close of a retired client may take.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// One authenticated logical connection, named by the admitting caller. The
+/// broker never discovers principals or admits clients itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// Immutable frames delivered together, in order. Clones share the frame
+/// bytes, so every recipient of a publication holds the same copy.
+#[derive(Debug, Clone)]
+pub struct Batch {
+    frames: Arc<[Utf8Bytes]>,
+    bytes: usize,
+}
+
+/// The batch is larger than a whole connection queue, so it could never fit.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BatchTooLarge;
+
+impl Batch {
+    pub fn new(frames: Vec<String>) -> Result<Self, BatchTooLarge> {
+        let bytes = frames.iter().map(String::len).sum();
+        if bytes > MAX_QUEUED_BYTES {
+            return Err(BatchTooLarge);
+        }
+        let frames = frames.into_iter().map(Utf8Bytes::from).collect();
+        Ok(Self { frames, bytes })
+    }
+
+    fn single(frame: Utf8Bytes) -> Self {
+        let bytes = frame.len();
+        Self {
+            frames: Arc::from([frame]),
+            bytes,
+        }
+    }
+}
+
+/// The connection handle is already registered and live.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AlreadyRegistered;
+
+#[derive(Debug, Clone, Copy)]
+enum Retirement {
+    Overflow,
+    SendTimeout,
+    Disconnected,
+}
+
+impl Retirement {
+    /// Close reason for a peer that may still read it; a disconnected peer
+    /// gets none.
+    fn close_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Overflow => Some("Broadcast queue overflow"),
+            Self::SendTimeout => Some("Broadcast send timed out"),
+            Self::Disconnected => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct Queue {
+    batches: VecDeque<Batch>,
+    bytes: usize,
+    retirement: Option<Retirement>,
+}
+
+/// Shared by one connection's registry entry and its writer task.
+#[derive(Default)]
+struct Link {
+    queue: Mutex<Queue>,
+    ready: Notify,
+    retired: Notify,
+}
+
+impl Link {
+    fn lock(&self) -> MutexGuard<'_, Queue> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Queues `batch` unless it would cross either queue limit.
+    fn push(&self, batch: &Batch) -> bool {
+        let mut queue = self.lock();
+        if queue.batches.len() >= MAX_QUEUED_BATCHES || queue.bytes + batch.bytes > MAX_QUEUED_BYTES
+        {
+            return false;
+        }
+        queue.bytes += batch.bytes;
+        queue.batches.push_back(batch.clone());
+        drop(queue);
+        self.ready.notify_one();
+        true
+    }
+
+    fn pop(&self) -> Result<Option<Batch>, Retirement> {
+        let mut queue = self.lock();
+        if let Some(retirement) = queue.retirement {
+            return Err(retirement);
+        }
+        let batch = queue.batches.pop_front();
+        if let Some(batch) = &batch {
+            queue.bytes -= batch.bytes;
+        }
+        Ok(batch)
+    }
+
+    /// Records the first retirement and returns it; later calls only observe.
+    fn retire(&self, reason: Retirement) -> Retirement {
+        let mut queue = self.lock();
+        let first = *queue.retirement.get_or_insert(reason);
+        queue.batches.clear();
+        queue.bytes = 0;
+        drop(queue);
+        self.retired.notify_one();
+        first
+    }
+}
+
+struct Entry {
+    state: SubscriptionState,
+    link: Arc<Link>,
+}
+
+type Entries = HashMap<ConnectionId, Entry>;
+
+/// Retires a registered connection; an absent one is already retired.
+fn retire(entries: &mut Entries, id: ConnectionId, reason: Retirement) {
+    if let Some(entry) = entries.remove(&id) {
+        entry.link.retire(reason);
+    }
+}
+
+/// Queues `batch` for one connection, retiring it when the batch does not fit.
+fn deliver(entries: &mut Entries, id: ConnectionId, batch: &Batch) {
+    if entries
+        .get(&id)
+        .is_some_and(|entry| !entry.link.push(batch))
+    {
+        retire(entries, id, Retirement::Overflow);
+    }
+}
+
+/// Fanout to every registered connection, shared by both public entries.
+#[derive(Clone, Default)]
+pub struct BroadcastBroker {
+    entries: Arc<Mutex<Entries>>,
+}
+
+impl BroadcastBroker {
+    fn entries(&self) -> MutexGuard<'_, Entries> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Registers an authenticated connection in its entry mode's initial
+    /// state and starts its writer, which must run inside a Tokio runtime.
+    /// `cleanup` runs once, after the connection is retired.
+    pub fn register<S>(
+        &self,
+        id: ConnectionId,
+        entry: EntryMode,
+        sink: S,
+        cleanup: impl FnOnce() + Send + 'static,
+    ) -> Result<(), AlreadyRegistered>
+    where
+        S: Sink<Message> + Send + 'static,
+    {
+        let link = Arc::new(Link::default());
+        match self.entries().entry(id) {
+            hash_map::Entry::Occupied(_) => return Err(AlreadyRegistered),
+            hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(Entry {
+                    state: SubscriptionState::new(entry),
+                    link: Arc::clone(&link),
+                });
+            }
+        }
+        tokio::spawn(write(self.clone(), id, link, sink, cleanup));
+        Ok(())
+    }
+
+    /// Resolves one inbound text frame. A subscription control is answered
+    /// on the connection's writer in the same critical section as its state
+    /// change, and `None` is returned; an application frame is returned
+    /// unchanged. A retired connection's frames are dropped.
+    pub fn receive<'a>(&self, id: ConnectionId, text: &'a str) -> Option<&'a str> {
+        let mut entries = self.entries();
+        let entry = entries.get_mut(&id)?;
+        let reply = match entry.state.apply_subscription_request(text) {
+            Inbound::Application(frame) => return Some(frame),
+            Inbound::Ack(ack) => Utf8Bytes::from(ack),
+            Inbound::Rejected(error) => Utf8Bytes::from_static(error),
+        };
+        deliver(&mut entries, id, &Batch::single(reply));
+        None
+    }
+
+    /// Queues `batch` for every connection whose subscriptions select
+    /// `filter`, the original message even when the frames are fragments.
+    /// Returns once each selected connection has queued it or been retired.
+    pub fn publish(&self, filter: &Value, batch: &Batch) {
+        let mut entries = self.entries();
+        let overflowed: Vec<ConnectionId> = entries
+            .iter()
+            .filter(|(_, entry)| entry.state.matches_broadcast(filter) && !entry.link.push(batch))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in overflowed {
+            retire(&mut entries, id, Retirement::Overflow);
+        }
+    }
+
+    /// Queues a direct reply on the connection's writer, bypassing the
+    /// subscription filter.
+    pub fn reply(&self, id: ConnectionId, batch: Batch) {
+        deliver(&mut self.entries(), id, &batch);
+    }
+
+    /// Retires a connection whose peer has gone; it gets no close frame.
+    pub fn disconnect(&self, id: ConnectionId) {
+        retire(&mut self.entries(), id, Retirement::Disconnected);
+    }
+
+    /// Retirement detected by a connection's own writer. The registry entry
+    /// is removed only while it still belongs to this writer, so a fresh
+    /// connection reusing the handle is untouched.
+    fn retire_link(&self, id: ConnectionId, link: &Arc<Link>, reason: Retirement) -> Retirement {
+        let mut entries = self.entries();
+        if entries
+            .get(&id)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.link, link))
+        {
+            entries.remove(&id);
+        }
+        drop(entries);
+        link.retire(reason)
+    }
+}
+
+async fn write<S>(
+    broker: BroadcastBroker,
+    id: ConnectionId,
+    link: Arc<Link>,
+    sink: S,
+    cleanup: impl FnOnce(),
+) where
+    S: Sink<Message>,
+{
+    let mut sink = pin!(sink);
+    let retirement = loop {
+        match link.pop() {
+            Err(retirement) => break retirement,
+            Ok(Some(batch)) => {
+                if let Some(retirement) =
+                    send_batch(&broker, id, &link, sink.as_mut(), &batch).await
+                {
+                    break retirement;
+                }
+            }
+            Ok(None) => {
+                tokio::select! {
+                    () = link.ready.notified() => {}
+                    () = link.retired.notified() => {}
+                }
+            }
+        }
+    };
+    if let Some(reason) = retirement.close_reason() {
+        let frame = CloseFrame {
+            code: CloseCode::Error,
+            reason: Utf8Bytes::from_static(reason),
+        };
+        let _ = timeout(CLOSE_TIMEOUT, sink.send(Message::Close(Some(frame)))).await;
+    }
+    cleanup();
+}
+
+/// Sends one batch in order and returns the retirement this writer caused.
+/// A retirement from elsewhere abandons the batch and surfaces at the next
+/// `pop`.
+async fn send_batch<S>(
+    broker: &BroadcastBroker,
+    id: ConnectionId,
+    link: &Arc<Link>,
+    mut sink: Pin<&mut S>,
+    batch: &Batch,
+) -> Option<Retirement>
+where
+    S: Sink<Message>,
+{
+    for frame in batch.frames.iter() {
+        let sent = tokio::select! {
+            biased;
+            () = link.retired.notified() => return None,
+            sent = timeout(SEND_TIMEOUT, sink.send(Message::Text(frame.clone()))) => sent,
+        };
+        let failure = match sent {
+            Ok(Ok(())) => continue,
+            Ok(Err(_)) => Retirement::Disconnected,
+            Err(_) => Retirement::SendTimeout,
+        };
+        return Some(broker.retire_link(id, link, failure));
+    }
+    None
+}

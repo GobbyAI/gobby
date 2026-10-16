@@ -75,6 +75,65 @@ final class ExportStoreTests: XCTestCase {
           offset: nil, data: nil)))
     XCTAssertEqual(try store.completed(), [])
   }
+
+  @objc func testDeleteRemovesOnlyTheNamedExportAndKeepsUnfinishedTransfers() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ExportStore(root: root)
+    let kept = UUID().uuidString
+    let removed = UUID().uuidString
+    try stage(store, exportId: kept)
+    try stage(store, exportId: removed)
+    let partial = UUID().uuidString
+    try store.handle(
+      ExportRequest(
+        action: "begin", transferId: partial, name: "gobby-annotate-\(UUID().uuidString).zip",
+        size: 20, offset: nil, data: nil))
+    try store.delete(root.appendingPathComponent("gobby-annotate-\(removed).zip"))
+    XCTAssertEqual(
+      try store.completed().map(\.lastPathComponent), ["gobby-annotate-\(kept).zip"])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(partial).path))
+    // The extension can repeat a delete for an export the app already removed.
+    try store.handle(
+      ExportRequest(
+        action: "delete", transferId: removed, name: nil, size: nil, offset: nil, data: nil))
+    XCTAssertEqual(
+      try store.completed().map(\.lastPathComponent), ["gobby-annotate-\(kept).zip"])
+    try store.deleteCompleted()
+    XCTAssertEqual(try store.completed(), [])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(partial).path))
+  }
+
+  @objc func testDeleteRejectsIdsThatAreNotExportIds() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ExportStore(root: root)
+    let exportId = UUID().uuidString
+    try stage(store, exportId: exportId)
+    XCTAssertThrowsError(
+      try store.handle(
+        ExportRequest(
+          action: "delete", transferId: "../\(exportId)", name: nil, size: nil, offset: nil,
+          data: nil)))
+    XCTAssertEqual(
+      try store.completed().map(\.lastPathComponent), ["gobby-annotate-\(exportId).zip"])
+  }
+
+  private func stage(_ store: ExportStore, exportId: String) throws {
+    let bytes = Data([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])
+    let transferId = UUID().uuidString
+    try store.handle(
+      ExportRequest(
+        action: "begin", transferId: transferId, name: "gobby-annotate-\(exportId).zip",
+        size: bytes.count, offset: nil, data: nil))
+    try store.handle(
+      ExportRequest(
+        action: "chunk", transferId: transferId, name: nil, size: nil, offset: 0,
+        data: bytes.base64EncodedString()))
+    try store.handle(
+      ExportRequest(
+        action: "finish", transferId: transferId, name: nil, size: nil, offset: nil, data: nil))
+  }
 }
 
 @main

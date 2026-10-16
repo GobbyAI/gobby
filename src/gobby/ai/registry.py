@@ -41,6 +41,7 @@ class AICapability(StrEnum):
     TOOL_CHAT = "tool_chat"
     AGENT_SPAWN = "agent_spawn"
     WEB_CHAT = "web_chat"
+    DECIDE = "decide"
 
 
 CANONICAL_AI_CAPABILITIES: tuple[AICapability, ...] = tuple(AICapability)

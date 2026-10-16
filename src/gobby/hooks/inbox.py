@@ -7,11 +7,11 @@ import json
 import logging
 import threading
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 import httpx
 
@@ -37,13 +37,6 @@ logger = logging.getLogger(__name__)
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
 _SETTLE_LISTENERS_STATE_KEY = "_gobby_hook_inbox_settle_listeners"
 
-# A consumer claims a delivery-receipt ack by renaming it to
-# ``<ack>.<owner>.claimed.tmp``. Only the daemon consumes acks, and the owner
-# token is fresh per process, so a claim under another token belongs to a dead
-# daemon and is handed back to the inbox instead of being lost.
-_RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
-_RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
-
 # The per-hook receipt sweep skips files it already decoded as some other kind
 # instead of decoding them again on every hook (#23359). An entry holds the file's
 # stat signature: ghook settles a delivered envelope by atomically replacing it
@@ -51,14 +44,6 @@ _RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
 # sweep read it again. Each sweep keeps only paths still listed.
 _NON_RECEIPT_FILES: dict[Path, tuple[int, int, int]] = {}
 _NON_RECEIPT_FILES_LOCK = threading.Lock()
-
-
-def _file_signature(path: Path) -> tuple[int, int, int] | None:
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
 
 def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
@@ -79,6 +64,7 @@ def _consume_inbox_delivery_receipt(
     envelope_id: str | None,
     *,
     processed_dir: Path,
+    expected_signature: inbox_envelopes.FileSignature,
 ) -> bool:
     """Claim the ack, CAS the receipt without re-executing the hook, then drop it.
 
@@ -89,10 +75,16 @@ def _consume_inbox_delivery_receipt(
     stranded before the CAS (``_restore_orphaned_receipt_claims``).
     """
 
-    claimed = path.with_name(f"{path.name}.{_RECEIPT_CLAIM_OWNER}{_RECEIPT_CLAIM_SUFFIX}")
+    claimed = path.with_name(
+        f"{path.name}.{inbox_envelopes.INBOX_CLAIM_OWNER}{inbox_envelopes.INBOX_CLAIM_SUFFIX}"
+    )
     try:
         path.rename(claimed)
     except FileNotFoundError:
+        return False
+
+    if inbox_envelopes.file_signature(claimed) != expected_signature:
+        inbox_envelopes.restore_inbox_claim(claimed, path)
         return False
 
     receipt_id = envelope.get("receipt_id")
@@ -156,12 +148,14 @@ def _restore_orphaned_receipt_claims(inbox_dir: Path) -> int:
     on meanwhile, the CAS records the usual stale no-op.
     """
     restored = 0
-    for claimed in inbox_dir.glob(f"*{_RECEIPT_CLAIM_SUFFIX}"):
-        ack_name, _, owner = claimed.name.removesuffix(_RECEIPT_CLAIM_SUFFIX).rpartition(".")
-        if not ack_name or owner == _RECEIPT_CLAIM_OWNER:
+    for claimed in inbox_dir.glob(f"*{inbox_envelopes.INBOX_CLAIM_SUFFIX}"):
+        ack_name, _, owner = claimed.name.removesuffix(
+            inbox_envelopes.INBOX_CLAIM_SUFFIX
+        ).rpartition(".")
+        if not ack_name or owner.removesuffix("-drain") == inbox_envelopes.INBOX_CLAIM_OWNER:
             continue
         try:
-            claimed.rename(claimed.with_name(ack_name))
+            inbox_envelopes.restore_inbox_claim(claimed, claimed.with_name(ack_name))
         except FileNotFoundError:
             continue  # A concurrent sweep restored it first.
         except OSError as exc:
@@ -199,7 +193,7 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
         known_non_receipts = dict(_NON_RECEIPT_FILES)
     for path in paths:
         # Taken before the read, so a replacement after it changes the signature.
-        signature = _file_signature(path)
+        signature = inbox_envelopes.file_signature(path)
         if signature is None or known_non_receipts.get(path) == signature:
             continue
         try:
@@ -224,6 +218,7 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
             path,
             envelope_id_from_inbox_path(path),
             processed_dir=processed_dir,
+            expected_signature=signature,
         ):
             consumed += 1
     return consumed
@@ -396,6 +391,9 @@ async def _drain_hook_inbox_once_locked(
         if replay_stopping(app):
             break
         envelope_id = envelope_id_from_inbox_path(path)
+        signature = await asyncio.to_thread(inbox_envelopes.file_signature, path)
+        if signature is None:
+            continue
         # Reading, parsing and any quarantine move are disk work; keep them off
         # the event loop.
         envelope = await asyncio.to_thread(inbox_envelopes.load_envelope, path)
@@ -412,6 +410,7 @@ async def _drain_hook_inbox_once_locked(
                 path,
                 envelope_id,
                 processed_dir=processed_dir,
+                expected_signature=signature,
             ):
                 replayed += 1
             continue
@@ -441,19 +440,20 @@ async def _drain_hook_inbox_once_locked(
         if decision.disposition == "retain":
             continue
         if decision.disposition == "requeued":
-            path.unlink(missing_ok=True)
+            inbox_envelopes.unlink_envelope(path, signature)
             if envelope_id:
                 remove_envelope_marker(envelope_id, processed_dir=processed_dir)
             continue
         if decision.disposition == "unlink":
             logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
-            path.unlink(missing_ok=True)
+            inbox_envelopes.unlink_envelope(path, signature)
             continue
         if decision.disposition == "archived":
             if await asyncio.to_thread(
                 inbox_envelopes.quarantine_file,
                 path,
                 reason="superseded_hook",
+                expected_signature=signature,
                 detail=decision.detail,
             ):
                 hook_settled()
@@ -464,6 +464,7 @@ async def _drain_hook_inbox_once_locked(
             inbox_envelopes.quarantine_or_warn(
                 path,
                 reason="below_floor_response_capability",
+                expected_signature=signature,
                 detail=decision.detail,
             )
             hook_settled()
@@ -498,6 +499,7 @@ async def _drain_hook_inbox_once_locked(
                 inbox_envelopes.quarantine_or_warn(
                     path,
                     reason="missing_envelope_id",
+                    expected_signature=signature,
                     detail="Replay succeeded but the file name carries no envelope ID",
                 )
                 hook_settled()
@@ -509,6 +511,7 @@ async def _drain_hook_inbox_once_locked(
                 envelope_id,
                 envelope,
                 path,
+                remove_file=partial(inbox_envelopes.unlink_envelope, path, signature),
                 remove_marker=lambda current_id: remove_envelope_marker(
                     current_id,
                     processed_dir=processed_dir,
@@ -516,7 +519,7 @@ async def _drain_hook_inbox_once_locked(
             ):
                 hook_settled()
                 continue
-            path.unlink(missing_ok=True)
+            inbox_envelopes.unlink_envelope(path, signature)
             hook_settled()
             continue
 
@@ -532,6 +535,7 @@ async def _drain_hook_inbox_once_locked(
                 inbox_envelopes.quarantine_file,
                 path,
                 reason="replay_auth_rejected",
+                expected_signature=signature,
                 detail="Hook replay returned HTTP 401",
             )
             if quarantined:
@@ -555,6 +559,7 @@ async def _drain_hook_inbox_once_locked(
                 inbox_envelopes.quarantine_file,
                 path,
                 reason="hook_machine_mismatch",
+                expected_signature=signature,
                 detail="Hook replay returned HTTP 403",
             )
             if quarantined:
