@@ -1,5 +1,7 @@
 """Tests for commit linking and diff functionality."""
 
+import os
+import shlex
 import subprocess
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -10,6 +12,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks import commits
 from gobby.tasks.commits import (
     AutoLinkResult,
     auto_link_commits,
@@ -938,24 +941,137 @@ class TestUnlinkedTaskTaggedCommits:
 
     @pytest.fixture
     def git_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-07-02T00:00:00+00:00")
-        monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-07-02T00:00:00+00:00")
+        safe_env = self._git_environment()
+        for key in tuple(os.environ):
+            if key.startswith("GIT_"):
+                monkeypatch.delenv(key)
+        for key, value in safe_env.items():
+            if key.startswith("GIT_"):
+                monkeypatch.setenv(key, value)
         repo = tmp_path / "repo"
         repo.mkdir()
         self._git(repo, "init", "-b", "main")
-        self._git(repo, "config", "user.email", "tests@example.com")
-        self._git(repo, "config", "user.name", "Tests")
         return repo
 
     @staticmethod
-    def _git(repo: Path, *args: str) -> str:
+    def _git_environment() -> dict[str, str]:
+        return {
+            **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TEMPLATE_DIR": "",
+            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": os.devnull,
+            "GIT_CONFIG_KEY_1": "commit.gpgSign",
+            "GIT_CONFIG_VALUE_1": "false",
+            "GIT_CONFIG_KEY_2": "tag.gpgSign",
+            "GIT_CONFIG_VALUE_2": "false",
+            "GIT_AUTHOR_NAME": "Tests",
+            "GIT_AUTHOR_EMAIL": "tests@example.com",
+            "GIT_COMMITTER_NAME": "Tests",
+            "GIT_COMMITTER_EMAIL": "tests@example.com",
+            "GIT_AUTHOR_DATE": "2026-07-02T00:00:00+00:00",
+            "GIT_COMMITTER_DATE": "2026-07-02T00:00:00+00:00",
+        }
+
+    @staticmethod
+    def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
         return subprocess.run(
-            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+            ["git", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         ).stdout.strip()
+
+    @pytest.mark.parametrize("redirect_repository", [False, True], ids=["config", "foreign-repo"])
+    def test_git_fixture_ignores_hostile_environment(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+        redirect_repository: bool,
+    ) -> None:
+        safe_env = self._git_environment()
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        self._git(foreign, "init", "-b", "main", env=safe_env)
+        self._git(foreign, "config", "user.name", "Foreign Owner", env=safe_env)
+        self._git(foreign, "commit", "--allow-empty", "-m", "foreign seed", env=safe_env)
+        original_config = (foreign / ".git" / "config").read_bytes()
+        original_refs = self._git(foreign, "show-ref", env=safe_env)
+        marker = tmp_path / "hook-invoked"
+        hooks = tmp_path / "hostile-hooks"
+        hooks.mkdir()
+        hook = hooks / "pre-commit"
+        hook.write_text(f"#!/bin/sh\nprintf invoked > {shlex.quote(str(marker))}\n")
+        hook.chmod(0o755)
+        templates = tmp_path / "hostile-templates"
+        (templates / "hooks").mkdir(parents=True)
+        template_hook = templates / "hooks" / "pre-commit"
+        template_hook.write_bytes(hook.read_bytes())
+        template_hook.chmod(0o755)
+        config = tmp_path / "hostile.gitconfig"
+        config.write_text(
+            f'[core]\n\thooksPath = "{hooks.as_posix()}"\n'
+            f'[init]\n\ttemplateDir = "{templates.as_posix()}"\n'
+            "[commit]\n\tgpgSign = true\n"
+            f'[gpg]\n\tprogram = "{hook.as_posix()}"\n',
+            encoding="utf-8",
+        )
+        for key in tuple(os.environ):
+            if key.startswith("GIT_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(config))
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
+        if redirect_repository:
+            for key, value in {
+                "GIT_DIR": str(foreign / ".git"),
+                "GIT_COMMON_DIR": str(foreign / ".git"),
+                "GIT_WORK_TREE": str(foreign),
+                "GIT_INDEX_FILE": str(foreign / ".git" / "index"),
+                "GIT_OBJECT_DIRECTORY": str(foreign / ".git" / "objects"),
+                "GIT_CONFIG": str(foreign / ".git" / "config"),
+            }.items():
+                monkeypatch.setenv(key, value)
+
+        repo = cast(Path, request.getfixturevalue("git_repo"))
+        assert (foreign / ".git" / "config").read_bytes() == original_config
+        self._git(repo, "commit", "--allow-empty", "-m", "[gobby-#42] isolated")
+        sha = self._git(repo, "rev-parse", "--short", "HEAD")
+        manager = MagicMock()
+        manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+        result = unlinked_task_tagged_commits(
+            manager,
+            task_id="task-uuid",
+            since=self.SINCE,
+            cwd=repo,
+            project_name="gobby",
+            project_id=None,
+            linked=[],
+        )
+
+        assert result == ([sha], [])
+        assert self._git(foreign, "show-ref", env=safe_env) == original_refs
+        assert (foreign / ".git" / "config").read_bytes() == original_config
+        assert not marker.exists()
+        assert not (repo / ".git" / "hooks" / "pre-commit").exists()
 
     def test_splits_missing_tagged_commits_by_reachability(self, git_repo: Path) -> None:
         manager = MagicMock()
         manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+        old_env = {
+            **os.environ,
+            "GIT_AUTHOR_DATE": "2026-06-30T00:00:00+00:00",
+            "GIT_COMMITTER_DATE": "2026-06-30T00:00:00+00:00",
+        }
+        self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#42] old", env=old_env)
+        old_sha = self._git(git_repo, "rev-parse", "--short", "HEAD")
         self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#42] linked")
         linked_sha = self._git(git_repo, "rev-parse", "HEAD")
         self._git(git_repo, "checkout", "-b", "other")
@@ -966,17 +1082,22 @@ class TestUnlinkedTaskTaggedCommits:
         head_sha = self._git(git_repo, "rev-parse", "--short", "HEAD")
         self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#43] unrelated")
 
-        result = unlinked_task_tagged_commits(
-            manager,
-            task_id="task-uuid",
-            since=self.SINCE,
-            cwd=git_repo,
-            project_name="gobby",
-            project_id=None,
-            linked=[linked_sha],
-        )
+        with patch(
+            "gobby.tasks.commits._resolve_branch_for_task", wraps=commits._resolve_branch_for_task
+        ) as branch_resolver:
+            result = unlinked_task_tagged_commits(
+                manager,
+                task_id="task-uuid",
+                since=self.SINCE,
+                cwd=git_repo,
+                project_name="gobby",
+                project_id=None,
+                linked=[linked_sha],
+            )
 
         assert result == ([head_sha], [other_sha])
+        assert old_sha not in result[0] + result[1]
+        branch_resolver.assert_not_called()
 
     def test_failed_scan_raises_instead_of_reporting_no_divergence(self, git_repo: Path) -> None:
         manager = MagicMock()
