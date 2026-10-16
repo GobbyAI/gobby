@@ -18,6 +18,93 @@ const RECEIPTS: &str = "/api/nodes/receipts";
 const ACK_ID: &str = "n-1730000000000-ack-envelope";
 
 #[tokio::test]
+async fn ingress_body_overflow_is_rejected_before_forwarding() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({
+            "tool_output":"x".repeat(16 * 1024 * 1024)
+        }))?))?;
+    let response = call_hook(node.node.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(hub.requests().is_empty(), "oversized input must stay local");
+    assert!(!node.node.hook_ledger.inbox.exists());
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_body_stall_is_rejected_before_forwarding() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let stream = futures_util::stream::pending::<Result<axum::body::Bytes, std::io::Error>>();
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .body(axum::body::Body::from_stream(stream))?;
+    tokio::time::pause();
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(11),
+        call_hook(node.node.clone(), request),
+    )
+    .await;
+    tokio::time::resume();
+    assert!(
+        response.is_ok(),
+        "ingress must terminate a stalled body read"
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::REQUEST_TIMEOUT);
+    assert!(hub.requests().is_empty(), "stalled input must stay local");
+    assert!(!node.node.hook_ledger.inbox.exists());
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_body_large_tool_output_preserves_delivered_receipt() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    let node = NodeHome::new(&hub)?;
+    let payload = json!({
+        "hook_type":"post_tool_use", "response_capability":"hook-response.v1",
+        "input_data":{"tool_name":"Bash", "tool_response":"x".repeat(1024 * 1024)}
+    });
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("x-gobby-envelope-id", "large-delivered")
+        .body(axum::body::Body::from(serde_json::to_vec(&payload)?))?;
+    let response = call_hook(node.node.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (release_entered, _release) = hub.pause_next(RECEIPTS);
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await?;
+    assert_eq!(serde_json::from_slice::<Value>(&bytes)?, reply);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), release_entered)
+            .await
+            .is_err(),
+        "a fully consumed response must retain its delivery receipt"
+    );
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body, payload);
+    assert_eq!(
+        node.node
+            .hook_ledger
+            .marker("large-delivered")
+            .await?
+            .unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn ingress_forwards_and_finalizes() -> anyhow::Result<()> {
     use axum::{body::Body, http::Request};
     use gobby_daemon::front_door::FrontDoor;

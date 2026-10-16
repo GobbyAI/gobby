@@ -10,12 +10,17 @@ use futures_util::Stream;
 use serde_json::{Value, json};
 use std::{
     convert::Infallible,
+    error::Error as _,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 use tokio::{sync::oneshot, task::JoinHandle};
+
+// Hook envelopes include tool output. Bound pre-auth allocation and upload time.
+const MAX_HOOK_BODY_BYTES: usize = 16 * 1024 * 1024;
+const HOOK_BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Buffered bytes for HTTP ingress or the spool drain. Only HTTP releases receipts.
 pub struct HubOutcome {
@@ -52,10 +57,24 @@ pub async fn execute(
     request: Request<Body>,
 ) -> Response<Body> {
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, usize::MAX).await {
-        Ok(body) => body,
-        Err(error) => return failure(StatusCode::BAD_REQUEST, error).map(Body::from),
-    };
+    let body =
+        match tokio::time::timeout(HOOK_BODY_READ_TIMEOUT, to_bytes(body, MAX_HOOK_BODY_BYTES))
+            .await
+        {
+            Ok(Ok(body)) => body,
+            Ok(Err(error)) => {
+                let status = if error
+                    .source()
+                    .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
+                {
+                    StatusCode::PAYLOAD_TOO_LARGE
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
+                return failure(status, error).map(Body::from);
+            }
+            Err(error) => return failure(StatusCode::REQUEST_TIMEOUT, error).map(Body::from),
+        };
     let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
     let id = parts
         .headers
@@ -110,7 +129,7 @@ async fn forward(
     let _renewal = Renewal::start(ledger.clone(), envelope_id.to_owned(), token.clone());
     let result = async {
         let (parts, body) = request.into_parts();
-        let body = to_bytes(body, usize::MAX).await?;
+        let body = to_bytes(body, MAX_HOOK_BODY_BYTES).await?;
         let payload: Value = serde_json::from_slice(&body)?;
         receipts::sweep_receipts(node, ledger).await?;
         let (parts, body) = tokio::time::timeout(Duration::from_secs(120), async {

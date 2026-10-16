@@ -89,7 +89,8 @@ impl FakeHub {
 
 async fn record(State(state): State<Arc<Mutex<HubState>>>, request: Request) -> Response {
     let (parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
+    // Admit oversized hook fixtures so ingress, rather than this fake, rejects them.
+    let bytes = axum::body::to_bytes(body, 32 * 1024 * 1024).await.unwrap();
     let body = serde_json::from_slice(&bytes).unwrap();
     let path = parts.uri.path().to_owned();
     let (status, body, barrier) = {
