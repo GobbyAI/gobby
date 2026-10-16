@@ -455,6 +455,9 @@ step_workflow:
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
         the commit moves you to submit. Close only from submit, after your Lane
         Manager releases the task.
+        If the assigned task needs no changes, close it here with reason
+        already_implemented and evidence in changes_summary; the ordinary close
+        checklist still applies. No candidate or manual step-variable write is needed.
         For an Orchestrator-directed handoff, use escalate_task with a reason
         starting exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
@@ -469,7 +472,14 @@ step_workflow:
       on_mcp_before:
         - *assigned_handoff_guard
         - *handoff_de_escalate_guard
-        - *handoff_close_guard
+        - <<: *handoff_close_guard
+          when: >-
+            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
+            and not (
+              tool_input.get('reason') == 'already_implemented'
+              and tool_input.get('task_id') is not None
+              and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            )
       on_mcp_success:
         - *record_land_handoff
         - *release_handoff_binding
