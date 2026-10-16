@@ -764,9 +764,10 @@ async def prepare_sandbox_launch(
             and (is_glob or not allowed.is_relative_to(own_root))
         ):
             raise SrtRuntimeError("Sandbox grants cannot expose another managed execution")
-    if config.backend == "srt" and sys.platform == "linux":
-        # bwrap masks denied temp roots before executing SRT's seccomp helper.
-        # Re-expose the pinned runtime when isolated GOBBY_HOME lives under one.
+    if config.backend == "srt":
+        # Credential roots deny the SRT tree; re-expose only the pinned version,
+        # read-only. bwrap masks denied temp roots before running SRT's seccomp
+        # helper, and seat-run e2e tests verify the operator install.
         paths.read_paths.append(str(srt_install_root().resolve()))
     # TODO(#22407): workaround for an upstream Droid defect. Seatbelt denies exec of
     # setuid /bin/ps, so Droid's supervisor reads its failed probe as owner death and
