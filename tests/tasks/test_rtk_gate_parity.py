@@ -11,6 +11,7 @@ from gobby.config.validation_detection import default_validation_detection_confi
 from gobby.storage.session_models import Session
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.command_equivalence import command_covers, pytest_targets
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import _derive_transcript_path_evidence
@@ -100,6 +101,72 @@ def _derive(tmp_path: Path, records: list[dict[str, Any]]) -> TranscriptEvidence
         resume=None,
     )
     return evidence
+
+
+@pytest.mark.parametrize("launcher", ["uv run --python 3.13 rtk", "uv run --python=3.13 rtk"])
+@pytest.mark.parametrize("runner,target", [("pytest", TEST), ("mypy", SOURCE)])
+def test_uv_interpreter_rtk_preserves_explicit_path_scope(
+    launcher: str, runner: str, target: str
+) -> None:
+    command = f"{launcher} {runner} {target}"
+    assert command_covers(command, f"uv run {runner} {target}")
+    if runner == "pytest":
+        assert pytest_targets(command) == (target,)
+
+
+@pytest.mark.parametrize(
+    "count,summary", [(1, "Pytest: 1 passed in 0.01s"), (10, "Pytest: 192 passed in 16.20s")]
+)
+def test_gate10_uv_interpreter_rtk_compact_pass_covers_targets(
+    tmp_path: Path, count: int, summary: str
+) -> None:
+    paths = tuple(f"tests/test_feature_{index}.py" for index in range(count))
+    targets = " ".join(paths)
+    command = f"uv run --python 3.13 rtk pytest {targets} -q --no-cov"
+    audit = (
+        f"uv run gobby test-types audit {targets} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    evidence = _derive(
+        tmp_path,
+        _pair(0, "Bash", {"command": command}, summary)
+        + _pair(2, "Bash", {"command": audit}, "0 new type findings"),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=paths,
+        close_root=str(tmp_path),
+    )
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"uv run --python 3.13 --with plugin rtk pytest {TEST}",
+        f"uv run --python 3.13 rtk pytest {TEST} -k selected",
+        f"uv run --python 3.13 rtk pytest {TEST} && true",
+    ],
+)
+def test_uv_interpreter_rtk_does_not_widen_selected_scope(command: str) -> None:
+    assert not command_covers(command, f"uv run pytest {TEST}")
+
+
+def test_gate10_uv_interpreter_rtk_requires_clean_pass_summary(tmp_path: Path) -> None:
+    command = f"uv run --python 3.13 rtk pytest {TEST}"
+    evidence = _derive(tmp_path, _pair(0, "Bash", {"command": command}, "collected 1 item"))
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=(TEST,),
+        close_root=str(tmp_path),
+    )
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
 
 
 @pytest.mark.parametrize("form", FORMS)

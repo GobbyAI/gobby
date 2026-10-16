@@ -299,7 +299,7 @@ def _run(order: int, *, red: bool, output: str | None = None) -> TranscriptValid
             "tests/test_feature.py:4: AssertionError\n"
             "FAILED tests/test_feature.py::test_feature - assert 1 == 2\n"
             if red
-            else "1 passed"
+            else "1 passed in 0.01s"
         ),
     )
 
