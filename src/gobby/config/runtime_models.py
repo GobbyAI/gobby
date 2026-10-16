@@ -140,6 +140,14 @@ class ConfigSnapshot:
     def active_overrides(self) -> Mapping[str, object]:
         return MappingProxyType(deepcopy(dict(self._active_overrides)))
 
+    @property
+    def desired_bindings(self) -> Mapping[str, RuntimeSecretBinding]:
+        return self._desired_bindings
+
+    @property
+    def active_bindings(self) -> Mapping[str, RuntimeSecretBinding]:
+        return self._active_bindings
+
     def _read_active_values(self) -> Mapping[str, object]:
         return self._active_values
 
