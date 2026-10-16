@@ -89,11 +89,12 @@ async def test_rest_call_resolves_arguments_session_id_before_dispatch() -> None
     server.session_manager.resolve_session_reference.assert_any_call("#3", "proj-1")
     assert server.session_manager.resolve_session_reference.call_count >= 1
     assert server.session_manager.resolve_session_reference.call_args is not None
+    # The body session_id is the tool's target argument, never the caller's identity.
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         tool_name="get_session",
         arguments={"session_id": SESSION_UUID_3},
-        session_id=SESSION_UUID_3,
+        session_id=None,
         timeout=30.0,
     )
     assert mcp_manager.call_tool.await_count == 1
