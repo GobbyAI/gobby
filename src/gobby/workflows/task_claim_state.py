@@ -11,6 +11,7 @@ import os
 import posixpath
 from collections.abc import Collection
 from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -437,6 +438,38 @@ def task_edited_checkout_history_paths(
         .items()
         for path in files
     )
+
+
+def task_checkout_paths_in_window(
+    variables: dict[str, Any],
+    task_id: str,
+    pairs: frozenset[tuple[str, str]],
+    window_start: float,
+) -> frozenset[tuple[str, str]]:
+    """Keep only pairs with edit-time proof inside the current owner claim."""
+    raw = variables.get("task_edited_checkout_times")
+    raw_task = raw.get(task_id) if isinstance(raw, dict) else None
+    checkout_times = raw_task if isinstance(raw_task, dict) else {}
+    path_times = task_edited_file_times(variables, task_id)
+    roots_by_path: dict[str, set[str]] = {}
+    for root, path in pairs:
+        roots_by_path.setdefault(path, set()).add(root)
+    kept: set[tuple[str, str]] = set()
+    for root, path in pairs:
+        raw_root = checkout_times.get(root)
+        stamp = raw_root.get(path) if isinstance(raw_root, dict) else None
+        if stamp is None and len(roots_by_path[path]) == 1:
+            # Existing path timestamps are exact checkout proof only when the
+            # path has never been attributed to another checkout for this task.
+            stamp = path_times.get(path)
+        if (
+            not isinstance(stamp, bool)
+            and isinstance(stamp, (int, float))
+            and isfinite(stamp)
+            and stamp >= window_start
+        ):
+            kept.add((root, path))
+    return frozenset(kept)
 
 
 def other_task_edited_checkout_paths(

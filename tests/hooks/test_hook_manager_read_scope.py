@@ -44,7 +44,7 @@ def row_reads(session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch) 
     fetchone: Callable[..., Any] = session_manager.db.fetchone
 
     def counting_fetchone(sql: str, params: Any = ()) -> Any:
-        if sql.startswith("SELECT * FROM sessions LEFT JOIN"):
+        if "FROM sessions LEFT JOIN" in sql and "WHERE id = %s" in sql:
             reads.append(sql)
         return fetchone(sql, params)
 

@@ -9,6 +9,7 @@ use gobby_core::schema::{
     SchemaIdentityContract, SchemaRunner, VerificationReport,
     sweep_test_schemas as sweep_orphaned_test_schemas,
 };
+use gobby_daemon::front_door::compare;
 use time::OffsetDateTime;
 
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
@@ -28,6 +29,13 @@ enum Command {
     },
     /// Own the public HTTP and WS ports and proxy to the Python backend.
     Serve,
+    /// Summarize the front-door compare log; exits 1 on any diff, native_error or
+    /// mismatch, and on an empty window.
+    CompareReport {
+        /// Count only records at or after this Unix time in seconds.
+        #[arg(long)]
+        since: Option<i64>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -76,6 +84,7 @@ fn main() -> Result<()> {
             command: SchemaCommand::SweepTestSchemas { age_hours },
         } => sweep_test_schemas(age_hours),
         Command::Serve => gobby_daemon::serve::run(),
+        Command::CompareReport { since } => compare_report(since),
     };
     if let Err(error) = &result
         && verifying
@@ -85,6 +94,16 @@ fn main() -> Result<()> {
         std::process::exit(75);
     }
     result
+}
+
+fn compare_report(since: Option<i64>) -> Result<()> {
+    let path = compare::log_path(&gobby_core::gobby_home()?);
+    let report = compare::report(&path, since)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.passes() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn transient_schema_failure(error: &anyhow::Error) -> bool {

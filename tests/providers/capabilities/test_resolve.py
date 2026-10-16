@@ -488,3 +488,26 @@ def test_openrouter_pin_validation_handles_null_empty_mandatory_and_none() -> No
         ),
         "none",
     ) == (ReasoningStatus.VERIFIED, "none")
+
+
+def test_find_models_reads_the_provider_snapshot_once() -> None:
+    # Each snapshot read loads every model the provider lists (#23359).
+    snapshot = _snapshot()
+    reads: list[str] = []
+
+    class _CountingStore(_CapabilityStore):
+        def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+            reads.append(provider)
+            return super().get_provider_snapshot(provider)
+
+    resolver = CapabilityResolver(_CountingStore(snapshot), _ModelMetadataStore(None))
+
+    found = resolver.find_models("provider", ("model", "model-latest", "missing"))
+
+    assert reads == ["provider"]
+    assert found == {
+        "model": snapshot.models[0],
+        "model-latest": snapshot.models[0],
+        "missing": None,
+    }
+    assert resolver.find_models("absent", ("model",)) == {"model": None}

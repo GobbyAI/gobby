@@ -28,6 +28,7 @@ use tokio_rustls::rustls::ServerConfig;
 use crate::front_door::auth::AuthState;
 #[cfg(unix)]
 use crate::front_door::auth::{KeyResolver, PostgresKeyResolver};
+use crate::front_door::compare::CompareLog;
 use crate::front_door::health::BackendState;
 use crate::front_door::routes::{FAMILIES, RouteTable};
 #[cfg(unix)]
@@ -226,6 +227,12 @@ pub fn run() -> Result<()> {
         } else {
             NativeRoutes::Standalone(Some(pool))
         };
+        let compare_log = Arc::new(CompareLog::open(home).with_context(|| {
+            format!(
+                "cannot open the front-door compare log under {}",
+                home.display()
+            )
+        })?);
         let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
         listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);
         let (stop, shutdown) = tokio::sync::watch::channel(false);
@@ -244,8 +251,11 @@ pub fn run() -> Result<()> {
             &bootstrap.front_door.routes,
             tls.map(|loaded| loaded.config),
             auth,
-            Some(state),
-            native_routes,
+            ListenerShared {
+                runtime: Some(state),
+                native: native_routes,
+                compare_log: Some(compare_log),
+            },
             async {
                 tokio::select! {
                     () = shutdown_signal() => {},
@@ -389,12 +399,19 @@ pub async fn serve(
         routes,
         tls,
         auth,
-        #[cfg(unix)]
-        None,
-        NativeRoutes::default(),
+        ListenerShared::default(),
         shutdown,
     )
     .await
+}
+
+/// What `run` adds to every listener's [`FrontDoorState`]; `serve` adds nothing.
+#[derive(Default)]
+struct ListenerShared {
+    #[cfg(unix)]
+    runtime: Option<Arc<crate::state::RuntimeState>>,
+    native: NativeRoutes,
+    compare_log: Option<Arc<CompareLog>>,
 }
 
 async fn serve_with_runtime(
@@ -402,18 +419,17 @@ async fn serve_with_runtime(
     routes: &BTreeMap<String, RouteBackend>,
     tls: Option<Arc<ServerConfig>>,
     auth: Arc<AuthState>,
-    #[cfg(unix)] runtime: Option<Arc<crate::state::RuntimeState>>,
-    native: NativeRoutes,
+    shared: ListenerShared,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut doors = Vec::with_capacity(listeners.len());
     for PublicListener { listener, backend } in listeners {
-        let mut state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
-        state.native = native.clone();
-        #[cfg(unix)]
         let state = FrontDoorState {
-            runtime: runtime.clone(),
-            ..state
+            #[cfg(unix)]
+            runtime: shared.runtime.clone(),
+            native: shared.native.clone(),
+            compare_log: shared.compare_log.clone(),
+            ..FrontDoorState::new(backend, BackendState::Down, auth.clone())
         };
         let table = RouteTable::new(FAMILIES, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));

@@ -12,6 +12,7 @@ import type { Annotation } from "@gobby/annotate-core";
 import type { Batch } from "./drafts";
 import { Toolbar } from "./Toolbar";
 import { CapturePanel, SaveStatus } from "./CapturePanel";
+import { Batches } from "./Batches";
 import { assertSelectionCurrent, select, type Mode } from "./selection";
 import {
   captureHidden,
@@ -78,6 +79,24 @@ function App({
   function assign(value: Batch) {
     current.current = value;
     setBatch(value);
+  }
+  /**
+   * Shows a fresh batch list and the stored copy of the open batch, so a new
+   * export record reaches its row; moves off the open batch when it was
+   * deleted. Callers require saved edits first.
+   */
+  async function showBatches(list: Batch[]) {
+    const stored = list.find((b) => b.id === current.current?.id);
+    if (stored) assign(stored);
+    else {
+      assign(
+        [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ??
+          (await rpc<Batch>({ type: "create" })),
+      );
+      setEditing(null);
+      if (!list.length) list = await rpc<Batch[]>({ type: "list" });
+    }
+    setBatches(list);
   }
   function report(e: unknown) {
     setError(e instanceof Error ? e.message : String(e));
@@ -392,6 +411,7 @@ function App({
           {(pendingEdit.current || pendingTitle.current !== null) && (
             <Button
               variant="destructive"
+              className="annotate-danger"
               onClick={() =>
                 queue(async () => {
                   const list = await rpc<Batch[]>({ type: "list" });
@@ -506,6 +526,7 @@ function App({
           />
           <Button
             variant="primary"
+            className="annotate-primary"
             disabled={!batch || busy}
             onClick={() =>
               queue(async () => {
@@ -519,6 +540,7 @@ function App({
                       batchId: current.current.id,
                     }),
                   );
+                  await showBatches(await rpc<Batch[]>({ type: "list" }));
                 } finally {
                   setBusy(false);
                 }
@@ -540,26 +562,38 @@ function App({
           >
             New batch
           </Button>
-          <details>
-            <summary>Reopen batch</summary>
-            {batches.map((b) => (
-              <Button
-                key={b.id}
-                className="annotate-list-row"
-                onClick={() =>
-                  queue(async () => {
-                    requireSaved();
-                    const latest = await rpc<Batch[]>({ type: "list" });
-                    const found = latest.find((a) => a.id === b.id);
-                    if (found) assign(found);
-                    setEditing(null);
-                  })
-                }
-              >
-                {b.title}
-              </Button>
-            ))}
-          </details>
+          <Batches
+            batches={batches.map((b) => (b.id === batch?.id ? batch : b))}
+            current={batch?.id}
+            onOpen={(batchId) =>
+              queue(async () => {
+                requireSaved();
+                const latest = await rpc<Batch[]>({ type: "list" });
+                const found = latest.find((a) => a.id === batchId);
+                if (found) assign(found);
+                setBatches(latest);
+                setEditing(null);
+              })
+            }
+            onRemove={(batchId) =>
+              queue(async () => {
+                requireSaved();
+                await showBatches(
+                  await rpc<Batch[]>({ type: "remove", batchId }),
+                );
+                setStatus("Batch deleted");
+              })
+            }
+            onClearExported={() =>
+              queue(async () => {
+                requireSaved();
+                await showBatches(
+                  await rpc<Batch[]>({ type: "clearExported" }),
+                );
+                setStatus("Exported batches deleted");
+              })
+            }
+          />
           <Button onClick={() => dock(false)}>Dock left</Button>
           <Button onClick={() => dock(true)}>Dock right</Button>
           <Button
@@ -593,6 +627,9 @@ function App({
         onMenu={() => {
           if (!changeMode("browse")) return;
           setPanel(panel === "menu" ? "none" : "menu");
+          // Other tabs may have exported, renamed or deleted batches since.
+          if (panel !== "menu")
+            queue(async () => setBatches(await rpc<Batch[]>({ type: "list" })));
         }}
         onCollapse={() => {
           if (!changeMode("browse")) return;

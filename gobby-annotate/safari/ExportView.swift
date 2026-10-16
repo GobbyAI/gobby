@@ -24,6 +24,8 @@ struct ExportView: View {
   @State private var name = "capture.zip"
   @State private var saving = false
   @State private var status = ""
+  @State private var pendingDelete: URL?
+  @State private var confirmingDeleteAll = false
   var body: some View {
     NavigationStack {
       List {
@@ -49,12 +51,21 @@ struct ExportView: View {
                   } catch { self.error = error.localizedDescription }
                 }
                 ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
+                Button("Delete", systemImage: "trash") { pendingDelete = file }
+                  .tint(Color("Destructive"))
+                  .accessibilityLabel("Delete \(file.lastPathComponent)")
               }.buttonStyle(.bordered)
             }.padding(.vertical, 4)
           }
         }
         Section {
           Button("Refresh exports", systemImage: "arrow.clockwise") { refresh() }
+          if !files.isEmpty {
+            Button("Delete all staged exports", systemImage: "trash") {
+              confirmingDeleteAll = true
+            }
+            .foregroundStyle(Color("Destructive"))
+          }
           Button("Clear interrupted transfers") {
             do {
               try ExportStore.shared().clearInterrupted()
@@ -65,8 +76,40 @@ struct ExportView: View {
         }
       }
       .navigationTitle("Gobby Annotate")
-      .tint(Color(red: 0.43, green: 0.55, blue: 0.13))
+      .tint(Color.accentColor)
       .task { refresh() }
+      .confirmationDialog(
+        "Delete this staged export?",
+        isPresented: Binding(
+          get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+        titleVisibility: .visible, presenting: pendingDelete
+      ) { file in
+        Button("Delete export", role: .destructive) {
+          remove("Export deleted from this iPhone.") { try $0.delete(file) }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: { file in
+        Text(
+          "\(file.lastPathComponent) is removed from this iPhone. Delete the batch in Safari to remove its notes there too."
+        )
+      }
+      .confirmationDialog(
+        files.count == 1 ? "Delete the staged export?" : "Delete all \(files.count) staged exports?",
+        isPresented: $confirmingDeleteAll, titleVisibility: .visible
+      ) {
+        Button(
+          files.count == 1 ? "Delete 1 export" : "Delete \(files.count) exports", role: .destructive
+        ) {
+          remove("Staged exports deleted. Unfinished transfers retained.") {
+            try $0.deleteCompleted()
+          }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "This removes the ZIP files from this iPhone. Batches still open in Safari are not affected."
+        )
+      }
       .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
       .fileExporter(
         isPresented: $saving, document: document, contentType: .zip, defaultFilename: name
@@ -86,6 +129,13 @@ struct ExportView: View {
       }
     }
     .frame(minWidth: 280, minHeight: 300)
+  }
+  private func remove(_ done: String, _ work: (ExportStore) throws -> Void) {
+    do {
+      try work(ExportStore.shared())
+      status = done
+    } catch { self.error = error.localizedDescription }
+    refresh()
   }
   private func refresh() {
     do { files = try ExportStore.shared().completed() } catch {

@@ -8,14 +8,61 @@
 @source "../../../../web/src/components/ui/controlStyles.ts";
 @source "./";
 
+/* Annotate ramp and tinted buttons (#23729 board v3; .impeccable.md, Gobby
+   Annotate). Neutrals stay at hue 125, chroma 0.004-0.008; only buttons
+   carry chroma. Every pair is measured to WCAG 2.2 AA on the board. */
 :host {
   color-scheme: dark;
   font-family: var(--font-sans);
   font-size: 14px;
   color: var(--text-primary);
+  --annotate-panel: oklch(20% 0.006 125);
+  --annotate-raised: oklch(24% 0.007 125);
+  --annotate-control: oklch(27% 0.008 125);
+  --annotate-frame: oklch(34% 0.008 125);
+  --annotate-edge: oklch(55% 0.008 125);
+  --annotate-text: oklch(92% 0.004 125);
+  --annotate-text-2: oklch(70% 0.005 125);
+  --annotate-error: oklch(70% 0.18 350);
+  --annotate-accent: oklch(82% 0.2 125);
+  --annotate-accent-hover: oklch(75% 0.22 125);
+  --annotate-accent-pressed: oklch(70% 0.2 125);
+  --annotate-accent-ink: oklch(15% 0 0);
+  --annotate-btn: oklch(31% 0.05 125);
+  --annotate-btn-hover: oklch(35% 0.065 125);
+  --annotate-btn-pressed: oklch(27% 0.045 125);
+  --annotate-btn-edge: oklch(60% 0.11 125);
+  --annotate-danger: oklch(30% 0.06 350);
+  --annotate-danger-hover: oklch(34% 0.08 350);
+  --annotate-danger-pressed: oklch(26% 0.055 350);
+  --annotate-danger-edge: oklch(62% 0.15 350);
+  --annotate-danger-ink: oklch(80% 0.12 350);
+  --annotate-shadow: oklch(10% 0.005 125 / 0.28);
 }
 :host([data-theme="light"]) {
   color-scheme: light;
+  --annotate-panel: oklch(93% 0.008 125);
+  --annotate-raised: oklch(97% 0.006 125);
+  --annotate-control: oklch(98.5% 0.004 125);
+  --annotate-frame: oklch(80% 0.008 125);
+  --annotate-edge: oklch(58% 0.008 125);
+  --annotate-text: oklch(20% 0.005 125);
+  --annotate-text-2: oklch(40% 0.005 125);
+  --annotate-error: oklch(44% 0.22 350);
+  --annotate-accent: oklch(43% 0.18 125);
+  --annotate-accent-hover: oklch(38% 0.18 125);
+  --annotate-accent-pressed: oklch(35% 0.16 125);
+  --annotate-accent-ink: oklch(99% 0 0);
+  --annotate-btn: oklch(88% 0.06 125);
+  --annotate-btn-hover: oklch(85% 0.075 125);
+  --annotate-btn-pressed: oklch(82% 0.08 125);
+  --annotate-btn-edge: oklch(52% 0.11 125);
+  --annotate-danger: oklch(91% 0.04 350);
+  --annotate-danger-hover: oklch(88% 0.055 350);
+  --annotate-danger-pressed: oklch(85% 0.065 350);
+  --annotate-danger-edge: oklch(52% 0.18 350);
+  --annotate-danger-ink: oklch(42% 0.2 350);
+  --annotate-shadow: oklch(10% 0.005 125 / 0.18);
 }
 .annotate-shell {
   font-family: var(--font-sans);
@@ -36,12 +83,12 @@
 .annotate-toolbar {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--annotate-frame);
   border-radius: 8px;
-  background: var(--bg-primary);
-  box-shadow: 0 4px 16px oklch(10% 0.005 125 / 0.25);
+  background: var(--annotate-panel);
+  box-shadow: 0 4px 16px var(--annotate-shadow);
 }
 .annotate-collapsed,
 .annotate-toolbar > button {
@@ -60,13 +107,111 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
+  background: var(--annotate-panel);
+  color: var(--annotate-text);
+  border: 1px solid var(--annotate-frame);
   border-radius: 8px;
+  box-shadow: 0 8px 24px var(--annotate-shadow);
 }
 .annotate-panel button {
   min-height: 44px;
+}
+/* Unlayered rules outrank Tailwind's layered utilities, so these restyle the
+   shared Button inside Annotate without touching buttonVariants.ts. Every
+   button is a tinted secondary unless marked primary or danger. */
+.annotate-shell button {
+  border-color: var(--annotate-btn-edge);
+  background: var(--annotate-btn);
+  color: var(--annotate-text);
+}
+.annotate-shell button:hover {
+  background: var(--annotate-btn-hover);
+  color: var(--annotate-text);
+}
+.annotate-shell button:active {
+  background: var(--annotate-btn-pressed);
+}
+.annotate-shell .annotate-primary {
+  border-color: transparent;
+  background: var(--annotate-accent);
+  color: var(--annotate-accent-ink);
+}
+.annotate-shell .annotate-primary:hover {
+  background: var(--annotate-accent-hover);
+  color: var(--annotate-accent-ink);
+}
+.annotate-shell .annotate-primary:active {
+  background: var(--annotate-accent-pressed);
+}
+.annotate-shell .annotate-danger {
+  border-color: var(--annotate-danger-edge);
+  background: var(--annotate-danger);
+  color: var(--annotate-danger-ink);
+}
+.annotate-shell .annotate-danger:hover {
+  background: var(--annotate-danger-hover);
+  color: var(--annotate-danger-ink);
+}
+.annotate-shell .annotate-danger:active {
+  background: var(--annotate-danger-pressed);
+}
+.annotate-shell button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--annotate-panel),
+    0 0 0 4px var(--annotate-accent);
+}
+.annotate-shell input,
+.annotate-shell textarea {
+  border-color: var(--annotate-edge);
+  background: var(--annotate-control);
+  color: var(--annotate-text);
+}
+.annotate-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--annotate-raised);
+}
+.annotate-batches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.annotate-batch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.annotate-batch > .annotate-list-row {
+  flex: 1;
+  min-width: 0;
+}
+.annotate-batch-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--annotate-text-2);
+}
+.annotate-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--annotate-danger-edge);
+  border-radius: 8px;
+  background: var(--annotate-panel);
+}
+.annotate-confirm p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .annotate-heading {
   display: flex;
@@ -90,14 +235,24 @@
   cursor: pointer;
   padding-block: 12px;
 }
-.annotate-list-row {
+/* List rows are choices, not commands: the neutral field surface. */
+.annotate-shell .annotate-list-row {
   white-space: normal;
   text-align: left;
   overflow-wrap: anywhere;
   justify-content: flex-start;
+  border-color: var(--annotate-edge);
+  background: var(--annotate-control);
+}
+.annotate-shell .annotate-list-row:hover,
+.annotate-shell .annotate-list-row:active {
+  background: var(--annotate-raised);
+}
+.annotate-shell .annotate-list-row[aria-current="true"] {
+  border-color: var(--annotate-accent);
 }
 [role="alert"] {
-  border-color: var(--destructive);
+  border-color: var(--annotate-error);
 }
 @media (max-width: 767px), (max-height: 500px) {
   .annotate-panel {
