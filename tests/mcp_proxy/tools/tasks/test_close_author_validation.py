@@ -38,6 +38,12 @@ _SOURCE = "src/gobby/component.py"
         "different-bytes",
         "different-source-bytes",
         "stale",
+        "shared-stale",
+        "shared-source-stale",
+        "shared-before-run",
+        "reclaimed-shared-stale",
+        "reclaimed-shared-source-stale",
+        "reclaimed-shared-before-run",
         "unrelated",
         "broad",
         "failed",
@@ -112,6 +118,28 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         edit["timestamp"] = (start + timedelta(seconds=40)).isoformat()
         edit["message"]["content"][0]["id"] = "later-edit"
         records.append(edit)
+    reclaimed = case.startswith("reclaimed-")
+    shared = case.startswith(("shared-", "reclaimed-shared-"))
+    shared_path = "settings.toml" if case.endswith("shared-source-stale") else _TEST
+    shared_edit_seconds = 25 if case.endswith("shared-before-run") else 40
+    if shared:
+        edit = json.loads(json.dumps(records[0]))
+        edit["timestamp"] = (start + timedelta(seconds=shared_edit_seconds)).isoformat()
+        edit["message"]["content"][0]["id"] = "shared-away-edit"
+        edit["message"]["content"][0]["input"]["file_path"] = str(root / shared_path)
+        records.append(edit)
+        records.sort(key=lambda record: record["timestamp"])
+        (root / shared_path).write_text("# post-edit candidate bytes\n", encoding="utf-8")
+        subprocess.run(["git", "add", shared_path], cwd=root, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "away edit"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        candidate = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
     transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
     if case == "different-bytes":
         owned.write_text("def test_owned():\n    assert 1 + 1 == 3\n", encoding="utf-8")
@@ -129,9 +157,13 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         sessions["other-owner"] = _claude_edit_session(
             tmp_path / "owner.jsonl", "other-owner", root / "unrelated.txt", start
         )
-    ctx = _context([_link(IMPLEMENTER, "claimed", start.isoformat())], sessions)
+    claim_start = start + timedelta(seconds=60) if reclaimed else start
+    ctx = _context([_link(IMPLEMENTER, "claimed", claim_start.isoformat())], sessions)
     ctx.session_var_manager.get_variables.return_value = {
-        "task_edited_file_checkouts": {"task": {str(root): [_TEST]}},
+        "task_edited_file_checkouts": {
+            "task": {str(root): list(dict.fromkeys((_TEST, shared_path)))},
+            **({"later-task": {str(root): [shared_path]}} if shared else {}),
+        },
         "task_edited_checkout_times": {
             "task": {
                 str(root): {
@@ -142,6 +174,7 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         "task_selection_history": [
             {"epoch": start.isoformat(), "task_id": "task"},
             {"epoch": (start + timedelta(seconds=20)).isoformat(), "task_id": "later-task"},
+            *([{"epoch": claim_start.isoformat(), "task_id": "task"}] if reclaimed else []),
         ],
     }
     ctx.session_task_manager.get_session_tasks.return_value = []
@@ -158,14 +191,27 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
             task_id="task",
             owner_session_id="other-owner" if case == "foreign" else IMPLEMENTER,
             closing_session_id=IMPLEMENTER,
-            owner_window_start=start.isoformat(),
+            owner_window_start=claim_start.isoformat(),
             task_edited_files={_TEST},
             repo_path=str(root),
         )
     # Gate 12's shared evidence still excludes the run made under the later claim.
     assert all(run.command != command for run in evidence.validation_runs)
+    if reclaimed:
+        # Reclaim must retain the earlier away run and its freshness veto pool.
+        assert any(run.command == command for run in evidence.off_task_author_runs)
+        assert any(
+            edit.timestamp == start + timedelta(seconds=shared_edit_seconds)
+            for edit in evidence.off_task_author_edits
+        )
     if case == "stale":
         assert any(edit.timestamp == start + timedelta(seconds=40) for edit in evidence.edits)
+    if shared:
+        # Gate 12 must still exclude the later claim's shared-path edits.
+        assert all(
+            edit.timestamp != start + timedelta(seconds=shared_edit_seconds)
+            for edit in evidence.edits
+        )
     if case == "unknown":
         assert any(run.outcome == "unknown" for run in evidence.off_task_author_runs)
     source_only = case == "author-source-only"
@@ -181,7 +227,14 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
             close_root=str(close_root),
             candidate_commit_sha=None if case == "no-candidate" else candidate,
         )
-    expected = case in {"author", "author-copy", "author-source-only", "author-later-failure"}
+    expected = case in {
+        "author",
+        "author-copy",
+        "author-source-only",
+        "author-later-failure",
+        "shared-before-run",
+        "reclaimed-shared-before-run",
+    }
     assert gate.passed is expected, gate.message
     if source_only:
         assert gate.details["python_source_uncovered_tests"] == {}

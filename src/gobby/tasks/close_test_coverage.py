@@ -482,6 +482,17 @@ def credit_off_task_author_runs(
         if not targets or any(not target.endswith(".py") for target in targets):
             continue
         proven = candidate_pytest_paths(run, required_tests, changed_paths, candidate)
+        # Shared paths lose away edits from Gate 12's attribution. Those edits
+        # still invalidate a run on older bytes, even if today's tree matches
+        # the candidate. Use timestamps because this pool has session-local order.
+        validated_paths = {*changed_paths, *proven}
+        if any(
+            edit.session_id == run.session_id
+            and edit.path in validated_paths
+            and edit.timestamp >= run.started_at
+            for edit in evidence.off_task_author_edits
+        ):
+            continue
         covered = set(required_tests).difference(
             uncovered_pytest_paths(
                 (run,),
