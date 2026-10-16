@@ -369,27 +369,50 @@ def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: 
 BACKGROUND_PYTEST = f"uv run rtk pytest {TEST} -q"
 
 
-def _background_gate(tmp_path: Path, read: str, output: str, *, code: int = 0) -> CloseGateResult:
-    """Gate 10 over a hook-rewritten background pytest, its exit notice, then ``read``."""
+def _user_text(at: int, content: str) -> dict[str, Any]:
+    return {
+        "type": "user",
+        "timestamp": (START + timedelta(seconds=at)).isoformat(),
+        "message": {"role": "user", "content": content},
+    }
+
+
+def _background_gate(
+    tmp_path: Path, read: str, output: str, *, code: int = 0, monitor: bool = False
+) -> CloseGateResult:
+    """Gate 10 over a hook-rewritten background pytest, its exit notice, then ``read``.
+
+    With ``monitor``, ``read`` is a Monitor command and ``output`` arrives as its event.
+    """
     output_path = tmp_path / "tasks" / "job.output"
     status, summary = (
         ("completed", "completed (exit code 0)")
         if code == 0
         else ("failed", f"failed with exit code {code}")
     )
-    notice = {
-        "type": "user",
-        "timestamp": (START + timedelta(seconds=3)).isoformat(),
-        "message": {
-            "role": "user",
-            "content": (
-                "<task-notification><task-id>job</task-id><tool-use-id>call-0</tool-use-id>"
-                f"<output-file>{output_path}</output-file><status>{status}</status>"
-                f'<summary>Background command "feature tests" {summary}</summary>'
-                "</task-notification>"
-            ),
-        },
-    }
+    notice = _user_text(
+        3,
+        "<task-notification><task-id>job</task-id><tool-use-id>call-0</tool-use-id>"
+        f"<output-file>{output_path}</output-file><status>{status}</status>"
+        f'<summary>Background command "feature tests" {summary}</summary>'
+        "</task-notification>",
+    )
+    if monitor:
+        reader = _pair(
+            5,
+            "Monitor",
+            {"command": read.format(path=output_path)},
+            "Monitor started (task monitor, expires in 30m unless the source ends first).",
+        ) + [
+            _user_text(
+                7,
+                "<task-notification><task-id>monitor</task-id>"
+                f'<summary>Monitor event: "tests"</summary><event>{output}</event>'
+                "</task-notification>",
+            )
+        ]
+    else:
+        reader = _pair(5, "Bash", {"command": read.format(path=output_path)}, output)
     audit = (
         f"uv run gobby test-types audit {TEST} "
         "--baseline .gobby/test-types-baseline.json --fail-on-new"
@@ -408,7 +431,7 @@ def _background_gate(tmp_path: Path, read: str, output: str, *, code: int = 0) -
             f"{output_path}. You will be notified when it completes.",
         )
         + [notice]
-        + _pair(5, "Bash", {"command": read.format(path=output_path)}, output)
+        + reader
         + _pair(8, "Bash", {"command": audit}, "0 new type findings"),
     )
     return evaluate_validation_commands(
@@ -462,3 +485,24 @@ def test_gate10_names_background_pass_whose_output_was_never_read(
     ]
     assert f"`{BACKGROUND_PYTEST}` (output `{output_path}`)" in gate.message
     assert "never read in a recognized form" in gate.message
+
+
+@pytest.mark.parametrize(
+    ("read", "credited"),
+    [
+        ('tail -n +1 -f {path} | grep -E --line-buffered "passed|failed"', True),
+        # A shell program that waits in a loop and re-reads through a variable is ambiguous.
+        (
+            'f={path}; until grep -q "exited with code" "$f"; do sleep 2; done; '
+            'grep -E "passed|failed" "$f" | head -20',
+            False,
+        ),
+    ],
+    ids=["follow", "shell-program"],
+)
+def test_gate10_credits_only_a_bound_monitor_follow_of_background_output(
+    tmp_path: Path, read: str, credited: bool
+) -> None:
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s", monitor=True)
+    assert gate.passed is credited, gate.to_dict()
+    assert ("pytest_unread_background_runs" in gate.details) is not credited
