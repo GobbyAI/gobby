@@ -92,7 +92,7 @@ def mask_quoted_spans(command: str) -> str:
     """Blank shell string data so command patterns see only code.
 
     Single-quoted spans are always data. A double-quoted span stays visible
-    when it contains ``$(`` or a backtick, because command substitution inside
+    when it contains an unescaped ``$(`` or backtick, because command substitution inside
     it still executes — the coarse check fails toward a false positive, never
     toward letting an invocation hide. Quote characters themselves are kept so
     the code structure around the span survives; masked characters become
@@ -563,11 +563,12 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
                     out[j] = " "
             i = end + 1
         elif ch == '"':
-            j = i + 1
+            j, live = i + 1, False
             while j < n and command[j] != '"':
+                # An escaped backtick or `$(` is literal, so only a bare one runs.
+                live = live or command[j] == "`" or command.startswith("$(", j)
                 j = min(j + (2 if command[j] == "\\" else 1), n)
-            span = command[i + 1 : j]
-            if "$(" not in span and "`" not in span:
+            if not live:
                 for k in range(i + 1, j):
                     if chars is None or command[k] in chars:
                         out[k] = " "
