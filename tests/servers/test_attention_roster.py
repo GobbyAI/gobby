@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
@@ -502,11 +502,12 @@ def test_roster_spells_the_model_as_its_provider_prints_it(
     )
     catalog = {("codex", "gpt-5"): "GPT-5", ("claude", "sonnet"): "Claude Sonnet 4.5"}
     resolver = SimpleNamespace(
-        find_model=lambda provider, model: (
-            None
+        find_models=lambda provider, models: {
+            model: None
             if (provider, model) not in catalog
             else SimpleNamespace(display_name=catalog[(provider, model)])
-        )
+            for model in models
+        }
     )
 
     with _client(_server(temp_db, manager, [session], resolver)) as client:
@@ -535,31 +536,32 @@ def test_roster_resolves_each_model_name_once_off_the_event_loop(
             status="running",
             task_id=None,
             provider="claude",
-            model="sonnet",
+            model=model,
             terminal_id=None,
             pid=None,
             updated_at=datetime(2026, 9, 23, tzinfo=UTC),
         )
-        for index in range(3)
+        for index, model in enumerate(("sonnet", "opus", "sonnet"))
     ]
     monkeypatch.setattr(
         manager,
         "load_roster_rows",
         lambda *_args, **_kwargs: [_roster_run(run) for run in runs],
     )
-    lookups: list[tuple[str, str, bool]] = []
+    lookups: list[tuple[str, list[str], bool]] = []
 
-    def find_model(provider: str, model: str) -> SimpleNamespace:
-        # The live catalog lookup opens a database transaction per call.
+    def find_models(provider: str, models: Iterable[str]) -> dict[str, SimpleNamespace]:
+        # The live catalog lookup loads the provider's whole snapshot per call.
         try:
             asyncio.get_running_loop()
             on_event_loop = True
         except RuntimeError:
             on_event_loop = False
-        lookups.append((provider, model, on_event_loop))
-        return SimpleNamespace(display_name="Claude Sonnet 4.5")
+        requested = sorted(models)
+        lookups.append((provider, requested, on_event_loop))
+        return {model: SimpleNamespace(display_name=f"Claude {model}") for model in requested}
 
-    server = _server(temp_db, manager, capability_resolver=SimpleNamespace(find_model=find_model))
+    server = _server(temp_db, manager, capability_resolver=SimpleNamespace(find_models=find_models))
     server.services.run_db = asyncio.to_thread
 
     with _client(server) as client:
@@ -567,8 +569,8 @@ def test_roster_resolves_each_model_name_once_off_the_event_loop(
 
     assert response.status_code == 200
     names = {entry["model_display_name"] for entry in response.json()["entries"]}
-    assert names == {"Claude Sonnet 4.5"}
-    assert lookups == [("claude", "sonnet", False)]
+    assert names == {"Claude sonnet", "Claude opus"}
+    assert lookups == [("claude", ["opus", "sonnet"], False)]
 
 
 def test_roster_terminal_block(temp_db: HubDatabase) -> None:

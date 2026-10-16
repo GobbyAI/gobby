@@ -36,6 +36,8 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.tasks.transcript_tool_arguments import match_task_file
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import task_checkout_paths_in_window
 
 START = datetime(2026, 10, 14, tzinfo=UTC)
 TEST_PATH = "tests/test_feature.py"
@@ -83,6 +85,99 @@ def test_owner_window_survives_in_session_claim_restamp(
         assert datetime.fromisoformat(current) > START
     else:
         assert current == original
+
+
+@pytest.mark.parametrize("reclaim", [False, True], ids=["same_claim", "released_and_reclaimed"])
+async def test_owner_history_is_scoped_to_current_claim(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    reclaim: bool,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    links = SessionTaskManager(temp_db)
+    variables = SessionVariableManager(temp_db)
+    session = session_manager.register(
+        external_id="owner-history-window",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Scope owner history to its claim",
+        validation_criteria="Earlier claim paths are excluded after release and reclaim.",
+    )
+    tasks.claim_task(task.id, session.id)
+    temp_db.execute(
+        "UPDATE session_tasks SET created_at = %s WHERE session_id = %s AND task_id = %s "
+        "AND action = 'claimed'",
+        (START, session.id, task.id),
+    )
+    root = str(tmp_path.resolve())
+    old_path, new_path = "tests/old_claim.py", "tests/current_claim.py"
+    for path in (old_path, new_path):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+    variables.record_edited_files(
+        session.id, [old_path], checkout_root=root, edited_at=START.timestamp() + 1
+    )
+    if reclaim:
+        tasks.release_task_claim(task.id)
+        tasks.claim_task(task.id, session.id)
+    ctx = MagicMock()
+    ctx.config = None
+    ctx.session_manager = session_manager
+    ctx.session_task_manager = links
+    ctx.session_var_manager = variables
+    window = claimed_session_window_start(ctx, tasks.get_task(task.id), task.id)
+    assert window is not None
+    variables.record_edited_files(
+        session.id,
+        [new_path],
+        checkout_root=root,
+        edited_at=datetime.fromisoformat(window).timestamp() + 2,
+    )
+    expected = {new_path} if reclaim else {old_path, new_path}
+    observed: list[set[str]] = []
+
+    async def parse(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        observed.append({path for _, path in args[5]})
+        return TranscriptEvidence()
+
+    with (
+        patch(f"{SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{SUPPORT}._derive_session_evidence_at_sync_point", side_effect=parse),
+        patch(f"{SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        await derive_close_transcript_evidence(
+            ctx,
+            task_id=task.id,
+            owner_session_id=session.id,
+            closing_session_id=session.id,
+            owner_window_start=window,
+            task_edited_files={new_path},
+            repo_path=root,
+        )
+    assert observed == [expected]
+
+
+@pytest.mark.parametrize("proof", ["exact_pair", "path_only", "missing", "old", "nonfinite"])
+def test_owner_history_window_requires_checkout_specific_proof(proof: str) -> None:
+    path = "tests/shared.py"
+    pairs = frozenset({("/old-checkout", path), ("/current-checkout", path)})
+    variables: dict[str, Any] = {"task_edited_file_times": {"task": {path: 200.0}}}
+    if proof != "path_only":
+        stamp = {"exact_pair": 200.0, "missing": None, "old": 50.0, "nonfinite": float("inf")}[
+            proof
+        ]
+        variables["task_edited_checkout_times"] = {"task": {"/current-checkout": {path: stamp}}}
+    assert task_checkout_paths_in_window(variables, "task", pairs, 100.0) == (
+        frozenset({("/current-checkout", path)}) if proof == "exact_pair" else frozenset()
+    )
 
 
 @pytest.mark.parametrize(
@@ -333,6 +428,9 @@ async def test_owner_history_paths_survive_live_projection_reset(
         "task_edited_file_checkouts": {"task": {root: [recent]}},
         "task_edited_file_checkouts_history": {"task": {history_root: sorted(paths)}},
         "task_edited_file_checkouts_history_started_at": START.isoformat(),
+        "task_edited_file_times": {
+            "task": {path: START.timestamp() + 1 for path in paths | {recent}}
+        },
     }
     if exclusion == "other_task":
         variables["task_edited_file_checkouts"]["other"] = {root: sorted(paths)}

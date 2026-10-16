@@ -41,6 +41,37 @@ pub fn client() -> ProxyClient {
 /// Forward `request` to the listener's backend. Bodies stream in both directions;
 /// a refused connection yields the typed 503, any other failure a 502.
 pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response<Body> {
+    match try_forward(state, request).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(state),
+    }
+}
+
+/// Why the backend gave no answer.
+#[derive(Debug)]
+pub enum ForwardError {
+    /// The backend refused the connection.
+    Unavailable,
+    /// The request could not be sent or the backend answered malformed.
+    BadGateway(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl ForwardError {
+    /// The typed 503 for a refused connection, else the 502.
+    pub fn into_response(self, state: &FrontDoorState) -> Response<Body> {
+        match self {
+            Self::Unavailable => unavailable(state.target, state.backend_state),
+            Self::BadGateway(error) => bad_gateway(state.target, &*error),
+        }
+    }
+}
+
+/// Forwards `request` to the backend, returning the connect or upstream error
+/// instead of building the 503 or 502.
+pub async fn try_forward(
+    state: &FrontDoorState,
+    request: Request<Body>,
+) -> Result<Response<Body>, ForwardError> {
     let target = state.target;
     let (mut parts, body) = request.into_parts();
     let removed = strip_hop_by_hop(&mut parts.headers);
@@ -56,14 +87,14 @@ pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response
         .build()
     {
         Ok(uri) => uri,
-        Err(error) => return bad_gateway(target, error),
+        Err(error) => return Err(ForwardError::BadGateway(error.into())),
     };
     parts.version = Version::HTTP_11;
 
     match state.client.request(Request::from_parts(parts, body)).await {
-        Ok(response) => filter_response(response),
-        Err(error) if error.is_connect() => unavailable(target, state.backend_state),
-        Err(error) => bad_gateway(target, error),
+        Ok(response) => Ok(filter_response(response)),
+        Err(error) if error.is_connect() => Err(ForwardError::Unavailable),
+        Err(error) => Err(ForwardError::BadGateway(error.into())),
     }
 }
 

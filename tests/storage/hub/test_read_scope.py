@@ -15,8 +15,6 @@ from gobby.utils.machine_id import get_machine_id
 
 pytestmark = pytest.mark.unit
 
-SESSION_ROW_SELECT = "SELECT * FROM sessions LEFT JOIN"
-
 
 def _register(session_manager: SessionManager, project_id: str) -> Session:
     return session_manager.register(
@@ -29,12 +27,12 @@ def _register(session_manager: SessionManager, project_id: str) -> Session:
 
 @pytest.fixture
 def row_reads(session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Record every full session-row SELECT issued through the hub adapter."""
+    """Record every by-id session-row SELECT issued through the hub adapter."""
     reads: list[str] = []
     fetchone: Callable[..., Any] = session_manager.db.fetchone
 
     def counting_fetchone(sql: str, params: Any = ()) -> Any:
-        if sql.startswith(SESSION_ROW_SELECT):
+        if "FROM sessions LEFT JOIN" in sql and "WHERE id = %s" in sql:
             reads.append(sql)
         return fetchone(sql, params)
 
