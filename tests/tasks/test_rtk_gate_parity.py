@@ -170,8 +170,20 @@ def test_gate10_uv_interpreter_rtk_requires_clean_pass_summary(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("form", FORMS)
-@pytest.mark.parametrize("code", [0, 1])
-def test_gate10_pytest_audit_and_criteria_parity(tmp_path: Path, form: str, code: int) -> None:
+@pytest.mark.parametrize(
+    "code,summary",
+    [
+        (0, "Pytest: 1 passed"),
+        (0, "Pytest: 14 passed, 0 failed, 1 skipped"),
+        (0, "Pytest: 87 passed, 0 failed, 1 skipped in 81.29s"),
+        (0, "Pytest: 14 passed, 1 skipped, 2 deselected, 1 xfailed, 1 xpassed, 2 warnings"),
+        (1, "Pytest: 0 passed, 1 failed"),
+        (1, "Pytest: 14 passed, 1 failed, 1 skipped in 1.0s"),
+    ],
+)
+def test_gate10_pytest_audit_and_criteria_parity(
+    tmp_path: Path, form: str, code: int, summary: str
+) -> None:
     pytest_command = f"uv run pytest {TEST} -q"
     audit = (
         f"uv run gobby test-types audit {TEST} "
@@ -181,7 +193,7 @@ def test_gate10_pytest_audit_and_criteria_parity(tmp_path: Path, form: str, code
         0,
         "Bash",
         {"command": _wrapped(pytest_command, form)},
-        "Pytest: 1 passed" if code == 0 else "Pytest: 0 passed, 1 failed",
+        summary,
         code,
     )
     records += _pair(2, "Bash", {"command": _wrapped(audit, form)}, "0 new type findings")

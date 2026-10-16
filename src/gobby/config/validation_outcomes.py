@@ -25,7 +25,8 @@ _RUNNER_SUCCESS_PATTERNS = (
         r"[ \t]+in[ \t]+\d+(?:\.\d+)?s(?:[ \t]+\([\d:]+\))?[ \t=]*\r?\n"
     ),
     re.compile(
-        r"(?m)^Pytest:[ \t]*[1-9]\d* passed(?:,[ \t]*0 failed)?"
+        r"(?m)^Pytest:[ \t]*[1-9]\d* passed"
+        r"(?:,[ \t]*(?:0 failed|\d+ (?:skipped|deselected|xfailed|xpassed|warnings?)))*"
         r"(?:[ \t]+in[ \t]+\d+(?:\.\d+)?s)?[ \t]*\r?\n"
     ),
 )
