@@ -226,12 +226,16 @@ impl<T> ActionGate<T> {
         Ok(())
     }
 
-    /// Clears the admitted effect on proof that it can do nothing further.
-    pub fn prove(&mut self, proof: Proof) -> Option<Resolution> {
-        self.in_flight.take().map(|f| Resolution {
-            effect: f.effect,
-            proof,
-        })
+    /// Clears the admitted effect on proof that it can do nothing further. A
+    /// proof for any other effect changes nothing.
+    pub fn prove(&mut self, effect: EffectId, proof: Proof) -> Result<Resolution, HoldError> {
+        self.in_flight
+            .take_if(|f| f.effect == effect)
+            .map(|f| Resolution {
+                effect: f.effect,
+                proof,
+            })
+            .ok_or(HoldError::StaleEffect)
     }
 
     pub fn uncertainty(&self) -> Option<(EffectId, UncertainCause)> {

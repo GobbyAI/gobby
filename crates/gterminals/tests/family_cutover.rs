@@ -235,8 +235,8 @@ fn uncertain_hold_admits_nothing_before_proof() {
     assert_eq!(gate.acquire(t0 + HOLD_TTL), Err(HoldError::Busy));
     assert_eq!(gate.next(later), None);
     assert_eq!(
-        gate.prove(Proof::HostEpochChanged),
-        Some(Resolution {
+        gate.prove(write, Proof::HostEpochChanged),
+        Ok(Resolution {
             effect: write,
             proof: Proof::HostEpochChanged
         })
@@ -269,7 +269,7 @@ fn uncertain_hold_admits_nothing_before_proof() {
         gate.uncertain(write, cause).unwrap();
         assert_eq!(gate.uncertainty(), Some((write, cause)));
         assert_eq!(gate.next(later), None);
-        assert_eq!(gate.prove(proof).map(|r| r.effect), Some(write));
+        assert_eq!(gate.prove(write, proof).map(|r| r.effect), Ok(write));
         assert_eq!(gate.next(later).map(|a| a.op), Some("next"));
     }
 
@@ -282,4 +282,21 @@ fn uncertain_hold_admits_nothing_before_proof() {
     gate.finish(write, t0).unwrap();
     assert_eq!(gate.uncertainty(), None);
     assert_eq!(gate.next(t0).map(|a| a.op), Some("after completion"));
+
+    // A late proof for an already resolved effect leaves the newer one blocking.
+    let mut gate = ActionGate::new();
+    let hold = gate.acquire(t0).unwrap();
+    let old = gate.begin(hold, t0).unwrap();
+    gate.uncertain(old, UncertainCause::Timeout).unwrap();
+    gate.prove(old, Proof::HostExited).unwrap();
+    let hold = gate.acquire(t0).unwrap();
+    let newer = gate.begin(hold, t0).unwrap();
+    gate.submit("behind newer", 1, t0).unwrap();
+    assert_eq!(
+        gate.prove(old, Proof::OperatorClose),
+        Err(HoldError::StaleEffect)
+    );
+    assert_eq!(gate.next(later), None);
+    gate.finish(newer, later).unwrap();
+    assert_eq!(gate.next(later).map(|a| a.op), Some("behind newer"));
 }
