@@ -22,7 +22,20 @@ async fn main() -> anyhow::Result<()> {
             && std::env::var("GOBBY_TEST_PROTECT").as_deref() == Ok("1"),
         "isolated peer only"
     );
-    let mut lease = ActiveDaemonLease::new(&url, "process-peer", "lifecycle-test", LeaseMode::Hub)?;
+    let pool = gobby_core::postgres_pool::Pool::build(
+        &url,
+        gobby_core::postgres_pool::PoolSettings {
+            max_size: 2,
+            application_name: "gobby-gdaemon-lifecycle-peer".into(),
+            acquire_timeout: std::time::Duration::from_secs(5),
+        },
+    )?;
+    let mut lease = ActiveDaemonLease::new(
+        std::sync::Arc::new(pool),
+        "process-peer",
+        "lifecycle-test",
+        LeaseMode::Hub,
+    )?;
     ensure!(lease.try_acquire().await?);
     let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?.context("claim")?;
     let config = BackendConfig::from_environment(&home)?;

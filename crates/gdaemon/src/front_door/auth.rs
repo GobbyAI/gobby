@@ -11,7 +11,7 @@ use anyhow::Result;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use gobby_core::api_key_format;
-use gobby_core::postgres_pool::{Pool, PoolError, PoolSettings};
+use gobby_core::postgres_pool::Pool;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyIdentity {
@@ -28,21 +28,14 @@ pub trait KeyResolver: Send + Sync {
 }
 
 pub struct PostgresKeyResolver {
-    pool: Result<Pool, PoolError>,
+    pool: Arc<Pool>,
     last_touch: Mutex<HashMap<String, Instant>>,
 }
 
 impl PostgresKeyResolver {
-    pub fn new(database_url: &str) -> Self {
+    pub fn new(pool: Arc<Pool>) -> Self {
         Self {
-            pool: Pool::build(
-                database_url,
-                PoolSettings {
-                    max_size: 2,
-                    application_name: "gobby-gdaemon-key-resolver".into(),
-                    acquire_timeout: Duration::from_secs(5),
-                },
-            ),
+            pool,
             last_touch: Mutex::new(HashMap::new()),
         }
     }
@@ -51,11 +44,7 @@ impl PostgresKeyResolver {
 impl KeyResolver for PostgresKeyResolver {
     fn resolve<'a>(&'a self, key_hash: &'a str) -> ResolveFuture<'a> {
         Box::pin(async move {
-            let pool = self
-                .pool
-                .as_ref()
-                .map_err(|error| anyhow::anyhow!("{error}"))?;
-            let client = pool.get().await?;
+            let client = self.pool.get().await?;
             let row = tokio::time::timeout(
                 Duration::from_secs(5),
                 client.query_opt(
