@@ -2874,3 +2874,975 @@ Executors run focused verification after each leaf and the complete matrix befor
   cross-plan edge directions as written, with the 2.6 edge to #23880 kept and already satisfied
   by its landing at `9da990c47b`, and accepted 2.10.5, 2.14, and 2.15. The Adversary derives M1
   from this revision.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Workspace-private terminal crate and unchanged host-wire clients
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `gobby-terminals` is a workspace member, is `publish
+    = false`, inherits workspace version/edition/lints, exports the terminal family
+    API, and is linked by gdaemon. file: `crates/gterminals/Cargo.toml`.
+
+    1.1.2: The control client round-trips hello, ping, inventory, spawn prepare/commit/abort,
+    terminate, write, resize, observer reservation, and event subscription over the
+    existing newline JSON contract without changing gterm. test: `crates/gterminals/tests/protocol_contract.rs::control_json_lines_match_gterm`.
+
+    1.1.3: The event client rejects a changed epoch or non-monotonic sequence, resumes
+    from the last committed cursor, and reports an unreplayable cursor as a reconcile
+    requirement rather than silently skipping events. test: `crates/gterminals/tests/protocol_contract.rs::event_epoch_and_cursor_are_fail_closed`.
+
+    1.1.4: The frame client enforces the existing length/queue ceilings and reproduces
+    bincode attach, input, output, history, lifecycle, and close frames byte-for-byte.
+    test: `crates/gterminals/tests/protocol_contract.rs::frame_bytes_match_gterm`.
+
+    1.1.5: The implementation diff contains no change under `crates/gterminal/`, no
+    production/runtime change under `crates/gclient/src/`, and no protocol or fixture-byte
+    change. The only allowed gclient edit in the whole plan is the named `crates/gclient/tests/client_loop.rs`
+    backend-visibility contract update. behavior: `gterm-gclient-protocol-scope-guard`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.1:1.1.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.1:1.1.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.1:1.1.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.1:1.1.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Epoch adoption, single-owner supervision, and restart preservation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.6'
+  validation_criteria: '1.2.1: Same-epoch startup adopts the existing gterm pid and
+    epoch without spawning, rotating credentials, or rewriting sockets; two concurrent
+    callers share one adoption/spawn attempt. test: `crates/gterminals/tests/host_lifecycle.rs::same_epoch_adopts_singleflight`.
+
+    1.2.2: Only a reachable, authenticated, protocol-compatible, pid-verified host
+    whose coherent epoch the durable adoption matrix explicitly rejects yields `epoch_refused`;
+    it stays alive, health retry remains armed, and no second host is spawned or killed.
+    test: `crates/gterminals/tests/host_lifecycle.rs::semantic_epoch_refusal_is_non_destructive`.
+
+    1.2.3: An exhaustive subtype matrix proves token mismatch, pid mismatch, protocol
+    mismatch, authentication failure, pre-adoption I/O, and post-adoption I/O never
+    map to `epoch_refused`; confirmed absence alone may launch once, a missing executable
+    yields `gterm_missing`, and the 2.5-second ready deadline yields `host_start_timeout`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::adoption_result_subtypes_are_exhaustive`.
+
+    1.2.4: In `Proxy` and `Compare`, Rust performs observation only and Python is
+    the active supervisor; in `Native`, Rust is the active supervisor and Python constructs
+    none of its host, lease, or write owners. test: `crates/gterminals/tests/host_lifecycle.rs::route_mode_has_exactly_one_supervisor`.
+
+    1.2.5: Ordinary gdaemon stop/start/restart preserves the host pid, epoch, terminal
+    id, and bidirectional terminal I/O; `TerminalConfig` has no `stop_host_on_shutdown`,
+    config containing it is rejected as unknown, and no ordinary config can request
+    a drain. test: `crates/gterminals/tests/host_lifecycle.rs::daemon_restart_preserves_live_terminal`.
+
+    1.2.6: Only the explicit terminals-drain shutdown intent terminates the host and
+    its native terminals; the next start creates a fresh epoch. test: `tests/terminals/test_host_shutdown_preservation.py::test_explicit_terminal_drain_is_the_only_host_shutdown_path`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Terminal repository and epoch reconciliation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: Row decoding/encoding preserves backend, machine/project/session/run
+    identity, host_epoch, locator, dimensions, lifecycle state, pending identity,
+    and post-#22722 unresolved write/quarantine fields. test: `crates/gterminals/tests/reconcile.rs::terminal_row_round_trips_all_runtime_fields`.
+
+    1.3.2: Inventory entries matching durable id and spawn key promote pending rows
+    to live in the observed epoch; replaying the same inventory is idempotent. test:
+    `crates/gterminals/tests/reconcile.rs::matching_inventory_promotes_once`.
+
+    1.3.3: Missing inventory settles stale pending attempts and marks only same-machine,
+    same-epoch live rows exited/orphaned according to the existing evidence rules;
+    it never mutates another machine or a row rebound to a new epoch. test: `crates/gterminals/tests/reconcile.rs::absence_is_scoped_to_observed_machine_and_epoch`.
+
+    1.3.4: Duplicate/foreign durable identities are killed or rejected exactly as
+    the Python oracle specifies, while a reachable refused-adoption host is not reconciled
+    at all. test: `crates/gterminals/tests/reconcile.rs::identity_conflicts_fail_closed_without_touching_refused_host`.
+
+    1.3.5: Prepared-process settlement and its terminal/run evidence are atomic: injected
+    failure at every former boundary leaves either the complete pre-state or complete
+    post-state, never an untracked child or live row without evidence. test: `crates/gterminals/tests/reconcile.rs::spawn_settlement_is_atomic_across_failure_boundaries`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.3:1.3.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.3:1.3.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.3:1.3.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.3:1.3.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Attachment leases and ordered lifecycle publication
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: Attach/detach/take/release/finalize permits one controller,
+    increments generation, and returns the same deterministic control outcomes as
+    Python. test: `crates/gterminals/tests/leases.rs::control_holder_transitions_are_deterministic`.
+
+    1.4.2: Web wins the sizing tie over gclient, remaining viewers are re-elected
+    on detach, and viewport/scroll offsets are isolated by attachment. test: `crates/gterminals/tests/leases.rs::sizing_and_scroll_are_attachment_scoped`.
+
+    1.4.3: Write admission rejects stale attachment generation, duplicate-conflicting
+    payloads, and non-holder input while replaying an identical completed write idempotently.
+    test: `crates/gterminals/tests/leases.rs::write_admission_is_generation_and_payload_bound`.
+
+    1.4.4: Every lifecycle event carries the current daemon epoch and strictly increasing
+    sequence; restart begins a new epoch and clients can unambiguously discard the
+    old stream. test: `crates/gterminals/tests/leases.rs::lifecycle_order_is_epoch_scoped`.
+
+    1.4.5: A full/failed lifecycle queue leaves the lease state unchanged, closes
+    the affected connection through one fault path, and never drops a holder-loss
+    event silently. test: `crates/gterminals/tests/leases.rs::publication_failure_is_atomic_and_fail_closed`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.4:1.4.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.4:1.4.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.4:1.4.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.4:1.4.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.4:1.4.5
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Post-#22722 fail-closed write coordinator
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '1.4'
+  validation_criteria: '1.5.1: Native and tmux rows dispatch through their own runtime;
+    unavailable/unknown backend fails closed and no global/config default can redirect
+    a row. test: `crates/gterminals/tests/write_coordinator.rs::runtime_is_resolved_from_terminal_row`.
+
+    1.5.2: The coordinator serializes per terminal, revalidates row/lease generation
+    after lock acquisition, and refuses stale controllers before bytes are emitted.
+    test: `crates/gterminals/tests/write_coordinator.rs::stale_lease_never_emits_bytes`.
+
+    1.5.3: Same action key plus same payload replays the recorded outcome; same key
+    plus different payload conflicts; timeout/ambiguous dispatch persists unresolved
+    evidence and does not retry. test: `crates/gterminals/tests/write_coordinator.rs::idempotency_and_uncertainty_are_fail_closed`.
+
+    1.5.4: Successful confirmed writes clear only their matching unresolved item;
+    a new uncertain write replaces/preserves its own evidence atomically; operator
+    input releases automatic quarantine without erasing unrelated evidence; terminal
+    exit clears all terminal-local state. test: `crates/gterminals/tests/write_coordinator.rs::each_evidence_mutation_path_is_explicit`.
+
+    1.5.5: Native wake batches and multi-step sequences preserve #22722''s fail-closed
+    boundaries, stop after the first uncertain/failing step, and report the exact
+    step with its accepted, uncertain, or typed-refusal outcome. test: `crates/gterminals/tests/write_coordinator.rs::batch_and_sequence_stop_at_first_uncertain_step`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.5:1.5.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.5:1.5.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.5:1.5.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.5:1.5.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.5:1.5.5
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Remove backend authoring and make terminal lifetime explicit
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.9'
+  validation_criteria: '1.6.1: `TerminalConfig`, installed config, and the regenerated
+    runtime contract have no `default_backend`; config containing it is rejected as
+    unknown. test: `tests/terminals/test_backend_selection.py::test_default_backend_config_is_removed`.
+
+    1.6.2: Agent-definition create, update, sync/upsert, and legacy resolution all
+    reject a top-level `terminal_backend` with one stable validation error. test:
+    `tests/agents/test_backend_ingress.py::test_every_agent_definition_write_and_read_rejects_backend`.
+
+    1.6.3: MCP, HTTP, CLI, dispatch, and scheduler paths expose no backend selector
+    and forward no backend string; literal legacy MCP/HTTP/dispatch payloads are rejected.
+    test: `tests/agents/test_backend_ingress.py::test_every_public_spawn_ingress_rejects_backend`.
+
+    1.6.4: Every bare/public agent producer shape materializes `SpawnRequest.terminal_lifetime`
+    as literal `run`; omission has the observable run result in the model rather than
+    leaking a public `auto`/backend sentinel. test: `tests/agents/test_backend_ingress.py::test_all_spawn_request_producers_emit_run_lifetime`.
+
+    1.6.5: `WorkspaceOps._fill` reads the durable `WorkspacePane.role` that 1.9 adds:
+    a non-empty role is the only `persistent_role` producer, while an empty or absent
+    role emits `run`. Neither value changes backend selection, and both fail closed
+    alike without a host (1.7). test: `tests/terminals/test_workspace_ops.py::test_role_bound_pane_is_persistent_and_bare_pane_is_run`.
+
+    1.6.6: A post-change literal sweep has no production `terminal_backend` authoring
+    field or `default_backend`; remaining backend occurrences are row/runtime observation
+    or the internal selected result. behavior: `backend-option-consumer-sweep`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.6:1.6.6
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Fail-closed spawn with typed host reasons, durable backend visibility, and
+    automatic recovery
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  - '1.6'
+  - '1.9'
+  validation_criteria: '1.7.1: For each of `host_start_timeout`, semantic `epoch_refused`,
+    and `gterm_missing`, spawn fails closed with a diagnostic code naming that reason;
+    token, pid, protocol, auth, I/O, capacity, prepare/commit, and arbitrary native
+    failures keep their existing codes; a healthy adopted host spawns gterm. test:
+    `tests/agents/test_spawn_executor.py::test_host_unavailable_reasons_fail_closed_with_typed_code`.
+
+    1.7.2: Run-scoped and persistent-role spawns, and `WorkspaceOps._fill` for a role-bound
+    pane, fail with the same typed diagnostic. test: `tests/agents/test_spawn_executor.py::test_every_lifetime_fails_closed_without_host`.
+    test: `tests/terminals/test_workspace_ops.py::test_role_bound_pane_fails_closed_without_host`.
+
+    1.7.3: A fail-closed spawn creates no terminal row, process, tmux session, or
+    project message; `TerminalHostManager` records the typed reason, exposes it in
+    `health_state`, and clears it on adoption, and the spawn path never parses `last_error`.
+    test: `tests/agents/test_spawn_executor.py::test_fail_closed_spawn_has_no_side_effects`.
+    test: `tests/terminals/test_host_manager.py::test_typed_failure_reason_recorded_and_cleared`.
+
+    1.7.4: HTTP list and get and WS `terminal.list` rows carry `backend` read from
+    the stored row. test: `tests/servers/test_terminals_routes.py::test_terminal_inventory_exposes_backend`.
+    test: `tests/servers/test_terminal_ws_list.py::test_terminal_list_exposes_backend`.
+
+    1.7.5: gclient renders each terminal row''s backend by convention: a native row
+    is unmarked and a foreign backend is named (pane chrome, orphan dialog, navigator
+    label); sidebar agent rows need no label because every agent spawn is native-only
+    (#22856). The web terminal session list renders each row''s backend. test: `crates/gclient/tests/client_loop.rs::terminal_inventory_renders_each_backend`.
+    test: `web/src/components/activity/terminal/__tests__/TerminalSessionList.test.tsx::rendersBackendForEverySession`.
+
+    1.7.6: After the health loop re-adopts the host, the next ordinary spawn uses
+    gterm without operator action. test: `tests/agents/test_spawn_executor.py::test_spawn_recovers_after_host_readoption`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.7:1.7.6
+  tdd: true
+  source_section: '1.7'
+  implementation_domain: backend
+- title: Durable pane role column and workspace-op argument
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    with the non-empty and byte-ceiling check, and every schema identity carrier agrees:
+    `cargo test -p gobby-core --lib grant::tests` without features, `cargo test -p
+    gobby-core --features postgres --test schema_contract`, and `cargo test -p gobby-core
+    --features postgres --test catalog_manifest_freshness` run without `UPDATE_GCORE_SCHEMA_MANIFEST`
+    all pass. file: `crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql`.
+
+    1.9.2: `create_tab` and `add_pane` persist a supplied role, every pane read returns
+    it, and an omitted role stores NULL. test: `tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null`.
+
+    1.9.3: A pane with no role serializes with no `role` key on both the snapshot
+    and event paths, and a pane with a role serializes it. test: `tests/storage/test_workspaces.py::test_pane_to_dict_omits_null_role`.
+
+    1.9.4: The `tab.create` and `pane.split` ops accept an optional role, store it
+    on the new pane, and refuse an empty string before storage. test: `tests/terminals/test_workspace_ops.py::test_tab_create_and_pane_split_carry_role`.
+
+    1.9.5: The canonical workspace golden replies replay unchanged. test: `tests/servers/test_terminal_ws_golden.py::test_workspace_emitters_match_golden_replies`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.9:1.9.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.9:1.9.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.9:1.9.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.9:1.9.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.9:1.9.5
+  tdd: true
+  source_section: '1.9'
+  implementation_domain: backend
+- title: Input-grant finalization split and durable handoff record
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '1.10.1: Daemon-shutdown finalization preserves only an already-authorized
+    direct native holder''s input grant; socket loss, release, preemption, proxy and
+    web holders, and host refusal revoke; the adopting daemon revokes a preserved
+    grant not re-bound within #23076''s bounded window. test: `crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant`.
+
+    1.10.2: A grant is preserved only after the handoff record''s compare-and-set
+    succeeds on the full identity; a failed, raising, or cancelled record revokes
+    the grant. test: `crates/gterminals/tests/leases.rs::handoff_preservation_requires_a_durable_identity_cas`.
+
+    1.10.3: Expiry clears only the record it read: a rebind or replacement that lands
+    first wins, and an identity mismatch leaves the newer record. test: `crates/gterminals/tests/leases.rs::handoff_expiry_never_clears_a_rebound_record`.
+
+    1.10.4: A failed expiry revoke keeps the record, and the next reconcile pass retries
+    it. test: `crates/gterminals/tests/leases.rs::failed_handoff_revoke_keeps_the_record_and_retries`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.10:1.10.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.10:1.10.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.10:1.10.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:1.10:1.10.4
+  tdd: true
+  source_section: '1.10'
+  implementation_domain: backend
+- title: Backend-neutral terminal WS codec and canonical golden replay
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '1.5'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.1.1: Every manifest case is discovered and Rust encode/decode
+    output is byte-identical to the canonical fixture; a missing/unread manifest case
+    fails the test. test: `crates/gterminals/tests/ws_golden.rs::canonical_terminal_ws_corpus_replays_byte_identically`.
+
+    2.1.2: Fragmentation/reassembly preserves the canonical wrapped event and rejects
+    excessive, duplicate, missing, expired, or cross-message fragments at the existing
+    limits. test: `crates/gterminals/tests/ws_golden.rs::fragment_limits_and_identity_match_python`.
+
+    2.1.3: Terminal pages preserve stable cursor ordering and backend on every inventory
+    item, enforce safe integers and encoded-page ceiling, and produce the same next
+    cursor as Python. test: `crates/gterminals/tests/ws_golden.rs::inventory_pagination_matches_python`.
+
+    2.1.4: Paste/write/lifecycle queue constants and failure envelopes match the existing
+    backend-neutral WS contract; no gterm/gclient/protocol source or fixture byte
+    changes. behavior: `terminal-ws-wire-scope-guard`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.1:2.1.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.1:2.1.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.1:2.1.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.1:2.1.4
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: 'Native ownership cutover: one supervisor, per-start token, action hold,
+    and activation gate'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  - '1.5'
+  - '1.1'
+  - '1.4'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.4.3: Startup has exactly one supervisor in every mode, and
+    a runtime route-mode change is rejected with restart-required before altering
+    ownership, including a backend respawn that re-reads an edited terminal_ws: the
+    backend refuses a route mode that differs from gdaemon''s latched one. test: `crates/gterminals/tests/family_cutover.rs::cutover_requires_restart_and_has_one_owner`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::route_mode_has_exactly_one_supervisor`.
+
+    2.4.8: Each backend start mints a fresh token and delivers it only as the first
+    line of the supervisor pipe; it never appears in the child''s environment or argv,
+    and it rotates on every start. The TokenSlot admission primitive refuses a missing,
+    wrong or retired token, and the Python holder keeps the token in memory only.
+    test: `crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_supervisor_pipe_token`.
+    test: `tests/test_runner_backend.py::test_write_token_travels_only_over_the_supervisor_pipe`.
+
+    2.4.14: While a hold is active, unheld operations queue in arrival order and flush
+    in order on release; at 128 items, 256 KiB, or a 30 s oldest-item age, new input
+    is refused with an explicit typed error and no queued item is discarded; a reply
+    carrying a superseded hold token neither completes nor releases the newer hold.
+    test: `crates/gterminals/tests/family_cutover.rs::route_hold_queue_is_bounded_and_token_scoped`.
+
+    2.4.15: TTL expiry, timeout, or disconnect during an admitted host write records
+    uncertainty only: the next queued effect is not admitted before completion or
+    proof (pane or terminal destroyed, host epoch changed, host process exited, or
+    an operator close or kill), and a delayed effect that lands after the uncertainty
+    is persisted is not replayed and releases no newer hold. test: `crates/gterminals/tests/family_cutover.rs::uncertain_hold_admits_nothing_before_proof`.
+
+    2.4.17: A startup that selects `Native` while the terminal family is unregistered
+    is refused before any ownership change, and `Proxy` and `Compare` keep the Python
+    host manager, lease registry, and write coordinator. test: `crates/gterminals/tests/family_cutover.rs::native_activation_refuses_without_the_terminal_family`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.4:2.4.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.4:2.4.8
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.4:2.4.14
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.4:2.4.15
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.4:2.4.17
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Rust Native write runtime and the host connection opener
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.5.1: A Native text write with submit sends the text, waits
+    the Enter delay, and sends Enter. An unavailable host or a first-write error refuses
+    with stage none, an Enter-step error refuses with stage partial, a connection
+    loss after send is uncertain, and a row epoch that differs from the hello epoch
+    refuses before any byte. test: `crates/gterminals/tests/write_runtimes.rs::native_write_matches_python_stage_semantics`.
+
+    2.5.2: A Native batch emits the `control_write_batch.json` fixture bytes, returns
+    one result per target, and preserves an uncertain target. test: `crates/gterminals/tests/write_runtimes.rs::native_batch_matches_gterm_write_batch_fixture`.
+
+    2.5.5: `open_control` authenticates a connection beside the supervisor''s without
+    creating or rotating the token file, and the moved adoption code keeps `host_lifecycle.rs`
+    passing. test: `crates/gterminals/tests/write_runtimes.rs::open_control_authenticates_an_independent_connection`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.5:2.5.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.5:2.5.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.5:2.5.5
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Rust tmux write runtime
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.11.1: tmux writes run only on the row''s recorded socket
+    and refuse before sending when `server_pid` or `server_start_time` differs from
+    the locator. test: `crates/gterminals/tests/tmux_write.rs::tmux_write_is_socket_and_generation_scoped`.
+
+    2.11.2: tmux `resize` and `release_size` run the same argv as Python under the
+    same generation check. test: `crates/gterminals/tests/tmux_write.rs::tmux_resize_and_release_size_match_python`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.11:2.11.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.11:2.11.2
+  tdd: true
+  source_section: '2.11'
+  implementation_domain: backend
+- title: Loopback write route over the Rust coordinator
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '2.11'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.6.1: A non-loopback peer gets 403; a missing, wrong, or
+    retired token gets 401; without a backend child or Native route services the route
+    answers 503; a body over `MAX_CONTROL_LINE` plus 64 KiB gets 413; and the token
+    never appears in a log. test: `crates/gdaemon/tests/front_door.rs::terminal_write_route_requires_loopback_and_the_current_token`.
+
+    2.6.2: Each route call returns 1.5''s typed per-step outcome, and a refusal carries
+    its stage. test: `crates/gterminals/tests/write_route.rs::route_calls_return_typed_per_step_outcomes`.
+
+    2.6.3: A held operation is admitted only after the row and lease revalidate; a
+    stale generation, lost lease, or rotated token refuses it. test: `crates/gterminals/tests/write_route.rs::held_action_binds_token_row_and_lease_generation`.
+
+    2.6.4: A token rotation invalidates every old hold, and a lost acquire, step,
+    or release reply or an HTTP disconnect never replays a non-idempotent uncertain
+    write. test: `crates/gterminals/tests/write_route.rs::token_rotation_and_lost_replies_never_replay_writes`.
+
+    2.6.5: The route admits a 1 MiB paste, a 64 KiB input, and plan approval''s two-input
+    `C-r` sequence, each carried base64; it refuses a paste or input one byte over
+    its limit, and an undecodable payload, with stage none before the coordinator
+    runs; and held-queue accounting keeps 2.4''s 256 KiB bound. test: `crates/gterminals/tests/write_route.rs::route_admits_each_operation_maximum_and_refuses_over_limit_steps`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.6:2.6.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.6:2.6.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.6:2.6.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.6:2.6.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.6:2.6.5
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Python write client, Native composer ledger, and Native write wiring
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.7.1: In `Native`, every Python coordinator caller reaches
+    the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s submit
+    regressions pass against it: an unreadable composer draft is never reported as
+    confirmed success (#23188''s contract), and a held verified submit retries without
+    a second write, and `submit_coordinated_text` runs its unchanged ladder inside
+    `logical_action_lock`. test: `tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator`.
+
+    2.7.2: The client overrides every public `WriteCoordinator` method except the
+    inherited `runtime_for` and `set_attention_gate`; sync methods return without
+    blocking the loop and keep per-terminal order; and `logical_action_lock` holds
+    the local lock and the remote hold together. test: `tests/terminals/test_coordinator_client.py::test_client_covers_the_coordinator_surface_without_blocking_the_loop`.
+
+    2.7.3: A missing token, or a request carrying `client_fd`, refuses with stage
+    none before send, and the token never appears in a log. test: `tests/terminals/test_coordinator_client.py::test_client_fails_closed_without_the_supervisor_token`.
+
+    2.7.4: In `Native`, an automatic write never types over an operator draft: every
+    dispatched step reaches the ledger, a partial refusal records the text without
+    submit, and a reply lost after send blocks automatic writes to that terminal with
+    reason gap. test: `tests/terminals/test_coordinator_client.py::test_native_automatic_write_never_types_over_an_operator_draft`.
+
+    2.7.5: The Native ledger restores from `composer_ledger_path()`, persists until
+    shutdown cancels its task, and follows host events from its cursor across a stream
+    error. test: `tests/terminals/test_coordinator_client.py::test_native_ledger_restores_persists_and_follows_host_events`.
+
+    2.7.6: The client sends a 1 MiB paste base64 in one route call; it raises `InputPayloadTooLargeError`
+    for a paste or input one byte over its limit and `TerminalWriteError(stage="none")`
+    for a body over 2.6''s cap, each before send. test: `tests/terminals/test_coordinator_client.py::test_client_enforces_runtime_payload_limits_before_send`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.7:2.7.6
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: backend
+- title: Native reconcile settler and the host exit proof
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  - '1.10'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  validation_criteria: '2.8.1: An integration test shows a host restart (old epoch
+    exited, new epoch observed) settles the old epoch''s absent live rows as orphaned
+    and interrupts their runs. A row on the new epoch and rows on another machine
+    stay untouched. test: `crates/gterminals/tests/settler.rs::host_restart_settles_only_the_dead_epoch`.
+
+    2.8.2: A dead-epoch effect applies only under the epoch lock while the observed
+    epoch is still current and the row''s epoch has exited: an epoch superseded after
+    the snapshot and before apply settles no dead-epoch row, and `observe` takes the
+    same lock. test: `crates/gterminals/tests/reconcile.rs::superseded_epoch_between_snapshot_and_apply_settles_no_dead_epoch_rows`.
+
+    2.8.3: When adoption confirms that no host is running, the prior current epoch
+    is recorded as exited before the spawn, so its live rows settle on the next pass;
+    a live host that is not listening records no exit. test: `crates/gterminals/tests/settler.rs::confirmed_absence_records_the_prior_epoch_exit`.
+
+    2.8.4: Process status matches `recorded_process_group_is_alive` for a missing,
+    non-integer, or non-positive pgid, a recycled pgid, ESRCH, and EPERM. test: `crates/gterminals/tests/settler.rs::process_status_matches_the_python_reap_oracle`.
+
+    2.8.5: Run interruption leaves the same `agent_runs`, sandbox count, and session
+    rows as the Python cancel transition with terminal reason daemon_stop, under the
+    same fence key. test: `crates/gterminals/tests/settler.rs::run_interruption_matches_the_python_cancel_transition`.
+
+    2.8.6: Each settler pass expires input handoff records with the production revoker:
+    after the rebind window a record is revoked with `control_revoke_input.json`''s
+    bytes and cleared, a host `not_found` also clears it, and any other revoke failure
+    keeps it for the next pass. test: `crates/gterminals/tests/settler.rs::settler_expires_input_handoffs_through_the_host_revoke`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.8:2.8.6
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: backend
+- title: Rust runtime route
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.8'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.9.1: A Native spawn prepares, commits, and settles once
+    with the Rust repository as the only settler; a settler pass never settles a held
+    prepared spawn; and a transport failure between prepare and commit settles the
+    attempt as failed. test: `crates/gterminals/tests/runtime_route.rs::spawn_settles_once_with_one_rust_owner`.
+
+    2.9.2: Snapshot, full snapshot, history, liveness, session presence, spawn refusal,
+    and attach locator replies match the Python `NativeTerminalRuntime` contract for
+    native rows, and a tmux row is refused. test: `crates/gterminals/tests/runtime_route.rs::native_reads_match_the_python_runtime_contract`.
+
+    2.9.3: Terminate and resize act only on the row''s current host epoch and refuse
+    a stale one. test: `crates/gterminals/tests/runtime_route.rs::terminate_and_resize_are_epoch_scoped`.
+
+    2.9.4: The runtime route applies the write route''s loopback, token, availability,
+    and body gate. test: `crates/gdaemon/tests/front_door.rs::terminal_runtime_route_shares_the_write_route_gate`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.9:2.9.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.9:2.9.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.9:2.9.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.9:2.9.4
+  tdd: true
+  source_section: '2.9'
+  implementation_domain: backend
+- title: Python runtime client, Native settlement branches, pane binding, and terminal
+    services
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.7'
+  - '2.9'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.10.1: In `Native`, constructing `TerminalHostManager` is
+    refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+    run through `RustNativeRuntimeClient`; tmux rows keep the spawn-less `TmuxTerminalRuntime`.
+    test: `tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client`.
+
+    2.10.2: In `Native`, agent, retry, placed, and web/workspace spawns and a stale-pending
+    reap make zero Python terminal-row writes and the Rust repository settles each
+    row; `Proxy` keeps the Python settlement path unchanged. test: `tests/terminals/test_runtime_client.py::test_native_settlement_has_one_rust_owner`.
+
+    2.10.3: In `Native`, a workspace pane binds only after Rust returns the settled
+    terminal id, with no Python terminal-row write; a Rust settlement failure binds
+    no pane. test: `tests/terminals/test_workspace_ops.py::test_native_pane_binds_after_rust_settlement`.
+    test: `tests/terminals/test_workspace_ops.py::test_native_settlement_failure_binds_no_pane`.
+
+    2.10.4: In `Native`, `runner.terminal_services` carries the Rust runtime client
+    and the write client, `AgentLifecycleMonitor` builds no fallback coordinator,
+    and a committed spawn records an empty composer for its terminal. test: `tests/terminals/test_runtime_client.py::test_native_terminal_services_use_the_rust_clients`.
+
+    2.10.5: In `Native`, the Python websocket server starts and stops on the workspace
+    event registry; a workspace snapshot carries that registry''s watermark; a workspace
+    mutation publishes a `workspace_event` above it in the same `daemon_epoch`; shutdown
+    finalizes no attachment; and Python publishes no `terminal_lifecycle` message.
+    test: `tests/terminals/test_runtime_client.py::test_native_websocket_server_sequences_workspace_events_only`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.10:2.10.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.10:2.10.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.10:2.10.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.10:2.10.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.10:2.10.5
+  tdd: true
+  source_section: '2.10'
+  implementation_domain: backend
+- title: Terminal inventory reads and HTTP handlers
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.10'
+  - '1.10'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  validation_criteria: '2.14.1: `repository::list_page` returns the same rows, order,
+    and `has_more` as `TerminalManager.list_page` for project, machine, state, and
+    backend filters and the `(created_at, id)` cursor. test: `crates/gterminals/tests/inventory.rs::list_page_matches_the_python_query`.
+
+    2.14.2: Each native and tmux row equals Python''s `_row_json` for the same row:
+    the inventory item with its lease holder, `id`, `created_at`, the attach locator
+    (none outside `pending` and `live`), and `command` and `cwd` from the probes,
+    with `command` falling back to the process shell. test: `crates/gterminals/tests/inventory.rs::inventory_rows_match_python_row_json`.
+
+    2.14.3: The `ps`, cwd, and tmux probes each run under the 2 s budget; a failed
+    or slow probe leaves `command` and `cwd` absent for the affected rows without
+    failing the page, and a stale shell pid does not blank other rows. test: `crates/gterminals/tests/inventory.rs::probes_are_bounded_and_never_fail_the_page`.
+
+    2.14.4: The first page carries `Registry::lifecycle_snapshot` (`daemon_epoch`
+    and the last committed `seq`), a cursor page carries none, and a page over the
+    byte ceiling refuses. test: `crates/gterminals/tests/inventory.rs::first_page_carries_the_lifecycle_watermark`.
+
+    2.14.5: The moved shutdown finalizers keep the 1.10 shutdown tests passing unchanged.
+    test: `crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant`.
+
+    2.14.6: The handlers answer with Python''s statuses: 400 for an invalid cursor
+    or id, 404 for a missing or other-machine row, 413 for an over-ceiling page, and
+    `limit` clamps to 1..=500 with default 100. test: `crates/gdaemon/tests/front_door.rs::terminal_inventory_handlers_match_python_statuses`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.14:2.14.6
+  tdd: true
+  source_section: '2.14'
+  implementation_domain: backend
+- title: Native lane viewports from the Rust lease registry
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.9'
+  - '2.10'
+  - '2.14'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.15.1: `Registry::viewports` and the runtime route''s `viewports`
+    operation return the distinct `(rows, cols)` of the terminal''s unfinalized gclient
+    records with a viewport, and exclude web viewers, finalized records, records without
+    a viewport, and other terminals'' records, matching `TerminalLeaseRegistry.viewports`.
+    test: `crates/gterminals/tests/runtime_route.rs::viewports_match_the_python_lease_predicate`.
+
+    2.15.2: In `Native`, `check_runbook_seats_tool` sizes a lane from the Rust-held
+    gclient viewport of each shown pane through `NativeWorkspaceEventRegistry`, and
+    zero or two distinct viewports refuse with `_viewport_refusal`. test: `tests/terminals/test_runtime_client.py::test_native_lane_viewport_reads_rust_gclient_viewports`.
+
+    2.15.3: In `Native`, a route refusal, transport failure, timeout, missing loop,
+    or call on the loop''s own thread raises `ValueError` from `viewports`, and the
+    seat tool returns an unsuccessful result with no resolved launch inputs. test:
+    `tests/terminals/test_runtime_client.py::test_native_lane_viewport_read_fails_closed`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.15:2.15.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.15:2.15.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.15:2.15.3
+  tdd: true
+  source_section: '2.15'
+  implementation_domain: backend
+- title: Native terminal WS connection and operation state machine
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.10'
+  - '1.10'
+  - '2.14'
+  - '2.15'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  validation_criteria: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+    filters, stable cursor, max page bytes, and backend on every item; unauthorized
+    rows are not distinguishable from absent rows. test: `crates/gterminals/tests/ws_operations.rs::list_is_scoped_bounded_and_backend_visible`.
+
+    2.2.2: Attach waits for the settled host decision, validates the row''s live epoch
+    and locator, creates one lease, applies sizing, emits history/live frames, and
+    returns the canonical attach envelope for native and tmux. test: `crates/gterminals/tests/ws_operations.rs::attach_is_epoch_and_backend_neutral`.
+
+    2.2.3: Detach/socket close finalizes each attachment once, re-elects holder/sizing
+    owner, and emits ordered lifecycle events without leaking frame reservations.
+    test: `crates/gterminals/tests/ws_operations.rs::disconnect_finalizes_all_attachment_state_once`.
+
+    2.2.4: Input, paste, scroll, resize, take/release control, and operator write
+    enforce holder, generation, byte/sequence limits, and post-lock revalidation before
+    side effects. test: `crates/gterminals/tests/ws_operations.rs::mutating_operations_revalidate_before_effect`.
+
+    2.2.5: A write fault closes/faults the affected connection through one canonical
+    error path, preserves unresolved evidence, and never retries the write on another
+    backend. test: `crates/gterminals/tests/ws_operations.rs::write_fault_is_fail_closed`.
+
+    2.2.6: `terminal_set_theme` checks socket ownership, native capability, and codec;
+    stores the attachment theme; relays only when the sender holds input or no holder
+    exists; replays the stored theme on take; refuses an observer; and sends a `terminal_error`
+    without `attachment_id` so a pending control reply is untouched. No gclient or
+    wire edit. test: `crates/gterminals/tests/ws_operations.rs::set_theme_is_holder_scoped_and_isolated_from_pending_control`.
+
+    2.2.7: A `Grant` sends the `control_grant_input.json` bytes and then confirms
+    the grant; after an ordinary grant or revoke succeeds, the terminal''s input handoff
+    record is cleared with `clear_input_handoff(.., None)`, and a failed grant or
+    revoke leaves the record. test: `crates/gterminals/tests/ws_operations.rs::ordinary_grant_or_revoke_clears_the_handoff_record`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.6
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.2:2.2.7
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Bounded proxy relay and frame/lifecycle fanout
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.3.1: Native history is emitted completely before live frames
+    for an attachment, and tmux history/frame mapping produces the same backend-neutral
+    envelopes. test: `crates/gterminals/tests/proxy_relay.rs::history_precedes_live_frames_for_each_backend`.
+
+    2.3.2: Frame entry/byte saturation and send timeout close only the affected socket
+    with the canonical reason, while lifecycle reserve still emits holder loss/finalization.
+    test: `crates/gterminals/tests/proxy_relay.rs::frame_backpressure_preserves_lifecycle_lane`.
+
+    2.3.3: Host EOF, socket EOF, explicit detach, pump error, and concurrent close
+    all release the frame reservation and lease exactly once. test: `crates/gterminals/tests/proxy_relay.rs::every_close_race_finalizes_exactly_once`.
+
+    2.3.4: Host frames with stale epoch, unknown attachment, invalid sequence, or
+    oversize payload are rejected before fanout and cannot affect a new attachment
+    reusing a terminal id. test: `crates/gterminals/tests/proxy_relay.rs::stale_or_invalid_host_frames_never_cross_attachment_generation`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.3:2.3.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.3:2.3.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.3:2.3.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.3:2.3.4
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: WS operator input under the route action hold
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '2.3'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.12.1: While a Python action hold is active, Rust WS operator
+    input joins 2.4''s queue in order and flushes in order on release; at the 2.4
+    bound or age limit the operator receives an explicit error frame and no queued
+    frame is discarded. test: `crates/gterminals/tests/family_cutover.rs::operator_input_queues_behind_a_held_python_action`.
+
+    2.12.2: Cancellation before dispatch emits nothing; cancellation after dispatch
+    admits no queued WS frame until the host effect completes or 2.4''s proof arrives.
+    A lost acquire, step, or release reply, a child-token rotation, a lease loss,
+    and TTL expiry during a pending host write never replay a non-idempotent uncertain
+    write. test: `crates/gterminals/tests/family_cutover.rs::action_hold_release_is_effect_safe`.
+
+    2.12.3: The real `submit_coordinated_text`, held-submit retry, and `_attempt_idle_reprompt`
+    paths keep their steps contiguous against concurrent Rust operator input, cancellation,
+    and TTL expiry. test: `tests/terminals/test_coordinator_client.py::test_real_submit_retry_and_reprompt_paths_hold_against_operator_input`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.12:2.12.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.12:2.12.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.12:2.12.3
+  tdd: true
+  source_section: '2.12'
+  implementation_domain: backend
+- title: Terminal family registration, Native activation, and end-to-end parity
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.12'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  - '1.7'
+  - '1.9'
+  - '1.10'
+  validation_criteria: '2.13.1: One terminal-family registration owns terminal HTTP
+    and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals` GETs
+    and the terminal message types from Rust, and no request is split between owners.
+    test: `crates/gdaemon/tests/front_door.rs::terminal_family_routes_as_one_unit`.
+
+    2.13.2: `Compare` never executes input, write, resize, control, spawn, terminate,
+    or drain twice; it compares only canonical serialization of non-mutating captured
+    results. test: `crates/gdaemon/tests/front_door.rs::compare_mode_never_duplicates_terminal_effects`.
+
+    2.13.3: An isolated native-mode run spawns an agent on gterm, preserves pid/epoch/terminal
+    and I/O across ordinary gdaemon restart, and drains only with explicit `--terminals`.
+    test: `tests/terminals/acceptance/test_native_lifecycle.py::test_gdaemon_native_family_restart_preserves_agent_terminal`.
+
+    2.13.4: An isolated `Native` run with the gterm host unavailable fails run-scoped
+    and persistent-role spawns with 1.7''s typed code and creates no terminal row,
+    process, tmux session, or project message; after the host is re-adopted, the next
+    spawn runs on gterm without operator action. test: `tests/terminals/acceptance/test_native_lifecycle.py::test_native_family_host_unavailable_fails_closed_and_recovers`.
+
+    2.13.5: Python and Rust golden replay plus end-to-end gclient attach/render/input
+    all pass with no change to gterm, no production/runtime change under `crates/gclient/src/`,
+    and no protocol or canonical fixture-byte change. The sole allowed gclient edit
+    remains `crates/gclient/tests/client_loop.rs`. behavior: `terminal-family-cutover-parity-gate`.
+
+    2.13.6: The change that registers the terminal family lifts 2.4''s activation
+    gate, and an isolated `Native` run attaches, takes control, writes, and releases
+    through the Rust family end to end. test: `tests/terminals/acceptance/test_native_lifecycle.py::test_native_activation_attach_and_control_smoke`.
+
+    2.13.7: The five tests 2.4 removed are restored from base 17ec46c7. With `GOBBY_TERMINALS_TEST_GDAEMON`
+    and `GOBBY_TERMINALS_TEST_GTERM` set, each passes; with either unset, each names
+    the missing variable and returns before setup instead of erroring. No `#[ignore]`
+    or baseline entry is added. test: `crates/gterminals/tests/host_lifecycle.rs::daemon_restart_preserves_live_terminal`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::explicit_parent_drain_restarts_with_fresh_epoch`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::spawned_identity_survives_health_and_stop_disarms_retry`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::explicit_drain_terminates_token_mismatch_host`.
+    test: `crates/gterminals/tests/host_lifecycle.rs::explicit_drain_terminates_foreign_epoch_host`.'
+  labels:
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.1
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.2
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.3
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.4
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.5
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.6
+  - covers:daemon-side-gterm-adoption-and-terminal-ws:2.13:2.13.7
+  tdd: true
+  source_section: '2.13'
+  implementation_domain: backend
+```
