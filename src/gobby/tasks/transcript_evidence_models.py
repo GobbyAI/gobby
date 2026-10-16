@@ -116,6 +116,9 @@ class TranscriptEdit:
     #: Inert declarations an Edit added around its verbatim-preserved anchor.
     python_added_source: str | None = None
     source_unchanged: bool = False
+    checkout_root: str | None = None
+    #: Off-task owner edits still invalidate GREEN, but cannot prove a TDD cycle.
+    task_attributed: bool = True
 
 
 @dataclass(frozen=True)
