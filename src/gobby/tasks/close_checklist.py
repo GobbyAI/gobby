@@ -19,6 +19,7 @@ from gobby.tasks.close_test_coverage import (
     related_python_source_tests_in_pool,
     uncovered_pytest_paths,
     uncovered_vitest_related_paths,
+    unread_background_runs,
 )
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
@@ -583,11 +584,22 @@ def _evaluate_validation_commands(
         passing_runs, declined, close_root, changed_paths, candidate
     ):
         details["pytest_copy_differing_paths"] = list(differing)
+    if unread := unread_background_runs(
+        passing_runs,
+        declined,
+        close_root=close_root,
+        changed_paths=changed_paths,
+        candidate=candidate,
+    ):
+        details["pytest_unread_background_runs"] = [
+            {"command": run.command, "output_path": run.background_output_path} for run in unread
+        ]
     coverage_failures = coverage_failure_messages(
         uncovered_pytest,
         uncovered_sources,
         uncovered_web,
         differing_paths=differing,
+        unread_runs=unread,
         close_root=close_root,
     )
     unmet.extend(coverage_failures)

@@ -8,10 +8,12 @@ import pytest
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.tasks.transcript_background import (
     _notification,
+    _read_path,
     pending_background_run,
     recover_background_receipt,
 )
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
+from gobby.tasks.transcript_evidence_snapshots import PendingTool
 
 pytestmark = pytest.mark.unit
 
@@ -237,3 +239,185 @@ def test_plain_notification_yields_its_fields() -> None:
 )
 def test_notification_with_a_declaration_is_rejected(content: str) -> None:
     assert _notification(_message(content)) is None
+
+
+_FOLLOW = "tail -n +1 -f /tmp/job-1.out | grep -E --line-buffered"
+
+
+def _monitor_started(command: str) -> tuple[ParsedMessage, PendingTool]:
+    pending = PendingTool(
+        name="Monitor",
+        arguments={"command": command},
+        timestamp=datetime(2026, 10, 3, tzinfo=UTC),
+        order=2,
+    )
+    receipt = replace(
+        _message(""),
+        content_type="tool_result",
+        tool_result={
+            "content": "Monitor started (task monitor-1, expires in 30m unless the source ends "
+            "first).",
+            "is_error": False,
+        },
+    )
+    return receipt, pending
+
+
+def _monitor_event() -> ParsedMessage:
+    return _message(
+        "<task-notification><task-id>monitor-1</task-id>"
+        '<summary>Monitor event: "tests"</summary><event>Pytest: 1 passed in 0.01s</event>'
+        "</task-notification>"
+    )
+
+
+def test_one_line_follow_monitor_delivers_its_events() -> None:
+    runs = [_pending_run()]
+    receipt, pending = _monitor_started(f"{_FOLLOW} 'passed|failed'")
+
+    recover_background_receipt(runs, receipt, pending, order=2)
+    recover_background_receipt(runs, _monitor_event(), pending=None, order=3)
+
+    assert runs[0].background_monitor_id == "monitor-1"
+    assert runs[0].output_recovered_from == "/tmp/job-1.out"
+    assert runs[0].output == "\nPytest: 1 passed in 0.01s"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Bash runs a pattern-less grep, then H as its own command.
+        f"{_FOLLOW}\nH",
+        f"{_FOLLOW} PAT;H",
+        f"{_FOLLOW} PAT&H",
+        f"{_FOLLOW} PAT&&H",
+        f"{_FOLLOW} PAT||H",
+        f"{_FOLLOW} PAT|&H",
+        f"{_FOLLOW} PAT|H",
+        f"{_FOLLOW} PAT>/tmp/copy",
+        f"{_FOLLOW} PAT)",
+        # An operator in the pattern slot leaves grep without a pattern.
+        f"{_FOLLOW} ;",
+        f"{_FOLLOW} &",
+        f"{_FOLLOW} >",
+        f"{_FOLLOW} x&echo",
+        f"{_FOLLOW} x&echo${{IFS}}Pytest:${{IFS}}1${{IFS}}passed",
+        # A quoted pipe is a file name: tail would follow grep's pattern file too.
+        "tail -n +1 -f /tmp/job-1.out '|' grep -E --line-buffered PAT",
+        # Command substitution runs inside even a double-quoted pattern.
+        f"""{_FOLLOW} "$(printf 'Pytest: 1 passed in 0.01s' >&2)passed\"""",
+        # A carriage return stays in the path word.
+        "tail -n +1 -f /tmp/job-1.out\r | grep -E --line-buffered x",
+    ],
+)
+def test_monitor_running_another_command_binds_no_run(command: str) -> None:
+    runs = [_pending_run()]
+    receipt, pending = _monitor_started(command)
+
+    recover_background_receipt(runs, receipt, pending, order=2)
+    recover_background_receipt(runs, _monitor_event(), pending=None, order=3)
+
+    assert runs == [_pending_run()]
+
+
+def _bash(command: str) -> PendingTool:
+    return PendingTool(
+        name="Bash",
+        arguments={"command": command},
+        timestamp=datetime(2026, 10, 3, tzinfo=UTC),
+        order=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail /tmp/job-1.output",
+        "tail -3 /tmp/job-1.output",
+        "tail -n 3 /tmp/job-1.output",
+        "tail -n3 /tmp/job-1.output",
+        "tail -n +1 /tmp/job-1.output",
+        "tail -n+1 /tmp/job-1.output",
+        "tail -c 400 /tmp/job-1.output",
+        "tail -c400 /tmp/job-1.output",
+        "tail -q -n 5 /tmp/job-1.output",
+        "cat /tmp/job-1.output",
+        "grep passed /tmp/job-1.output",
+        "grep -E 'passed|failed' /tmp/job-1.output",
+        "grep -F passed /tmp/job-1.output",
+        "grep -E 'passed.*s' /tmp/job-1.output",
+        'grep -E "[0-9]+ passed" /tmp/job-1.output',
+        "cat /tmp/job-1.output\n",
+    ],
+)
+def test_plain_reads_name_their_one_file(command: str) -> None:
+    assert _read_path(_bash(command)) == "/tmp/job-1.output"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail -3 /tmp/job-1.output\x0c",
+        "cat /tmp/job-1.output\x85",
+        "tail -3 /tmp/job-1.output\r",
+    ],
+)
+def test_control_characters_stay_in_the_path_word(command: str) -> None:
+    assert _read_path(_bash(command)) != "/tmp/job-1.output"
+
+
+@pytest.mark.parametrize("command", ["tail -3 '/tmp/a#b.output'", "cat /tmp/a\\#b.output"])
+def test_quoted_or_escaped_hash_stays_in_the_path(command: str) -> None:
+    assert _read_path(_bash(command)) == "/tmp/a#b.output"
+
+
+def test_read_tool_names_its_file() -> None:
+    pending = PendingTool(
+        name="Read",
+        arguments={"file_path": "/tmp/job-1.output"},
+        timestamp=datetime(2026, 10, 3, tzinfo=UTC),
+        order=1,
+    )
+    assert _read_path(pending) == "/tmp/job-1.output"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail -f /tmp/job-1.output",
+        "tail -F /tmp/job-1.output",
+        "tail -n 3 -f /tmp/job-1.output",
+        "tail -3 /tmp/job-1.output /tmp/job-2.output",
+        "tail -3 /tmp/job-1.output | head -1",
+        "tail -3 /tmp/job-1.output; echo done",
+        "tail -3 /tmp/job-1.output && echo done",
+        "tail -3 /tmp/job-1.output > /tmp/copy",
+        "cat /tmp/job-1.output | tail -3",
+        "tail -n /tmp/job-1.output",
+        "tail -n x /tmp/job-1.output",
+        "tail --lines=3 /tmp/job-1.output",
+        "tail -3",
+        "tail",
+        "tail -3 '|'",
+        # A word-internal ``#`` is literal in Bash, so the trailing command still runs.
+        "tail -3 /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        "cat /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        "grep passed /tmp/job-1.output#missing; printf 'Pytest: 1 passed in 0.01s'",
+        # A real trailing comment is refused rather than parsed.
+        "tail -3 /tmp/job-1.output #comment",
+        # Bash runs a newline-separated word as its own command.
+        "cat\n/tmp/job-1.output",
+        "tail -3 /tmp/job-1.output\nprintf 'Pytest: 1 passed in 0.01s'",
+        # Substitution runs even inside a quoted pattern and can print a summary.
+        """grep -E "$(printf 'Pytest: 1 passed in 0.01s' >&2)rootdir" /tmp/job-1.output""",
+        """grep -E "`printf 'Pytest: 1 passed in 0.01s' >&2`rootdir" /tmp/job-1.output""",
+        # Brace expansion and globs can add files grep reads beside the output.
+        "grep {-h,passed,/tmp/forged} /tmp/job-1.output",
+        "grep pass* /tmp/job-1.output",
+        # An option in the pattern slot makes the output the pattern or pattern file.
+        "grep -E -r /tmp/job-1.output",
+        "grep -F -f /tmp/job-1.output",
+    ],
+)
+def test_following_multi_file_operator_and_comment_reads_name_no_file(command: str) -> None:
+    assert _read_path(_bash(command)) is None

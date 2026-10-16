@@ -10,7 +10,7 @@ import pytest
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
-from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
 from gobby.tasks.command_equivalence import command_covers, pytest_targets
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
@@ -381,3 +381,164 @@ def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: 
     bare = operational_actions_from_command(command)
     assert bare
     assert operational_actions_from_command(_wrapped(command, form)) == bare
+
+
+BACKGROUND_PYTEST = f"uv run rtk pytest {TEST} -q"
+
+
+def _user_text(at: int, content: str) -> dict[str, Any]:
+    return {
+        "type": "user",
+        "timestamp": (START + timedelta(seconds=at)).isoformat(),
+        "message": {"role": "user", "content": content},
+    }
+
+
+def _background_gate(
+    tmp_path: Path, read: str, output: str, *, code: int = 0, monitor: bool = False
+) -> CloseGateResult:
+    """Gate 10 over a hook-rewritten background pytest, its exit notice, then ``read``.
+
+    With ``monitor``, ``read`` is a Monitor command and ``output`` arrives as its event.
+    """
+    output_path = tmp_path / "tasks" / "job.output"
+    status, summary = (
+        ("completed", "completed (exit code 0)")
+        if code == 0
+        else ("failed", f"failed with exit code {code}")
+    )
+    notice = _user_text(
+        3,
+        "<task-notification><task-id>job</task-id><tool-use-id>call-0</tool-use-id>"
+        f"<output-file>{output_path}</output-file><status>{status}</status>"
+        f'<summary>Background command "feature tests" {summary}</summary>'
+        "</task-notification>",
+    )
+    if monitor:
+        reader = _pair(
+            5,
+            "Monitor",
+            {"command": read.format(path=output_path)},
+            "Monitor started (task monitor, expires in 30m unless the source ends first).",
+        ) + [
+            _user_text(
+                7,
+                "<task-notification><task-id>monitor</task-id>"
+                f'<summary>Monitor event: "tests"</summary><event>{output}</event>'
+                "</task-notification>",
+            )
+        ]
+    else:
+        reader = _pair(5, "Bash", {"command": read.format(path=output_path)}, output)
+    audit = (
+        f"uv run gobby test-types audit {TEST} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    evidence = _derive(
+        tmp_path,
+        _pair(
+            0,
+            "Bash",
+            {
+                "command": BACKGROUND_PYTEST,
+                "run_in_background": True,
+                "description": "feature tests",
+            },
+            "Command running in background with ID: job. Output is being written to: "
+            f"{output_path}. You will be notified when it completes.",
+        )
+        + [notice]
+        + reader
+        + _pair(8, "Bash", {"command": audit}, "0 new type findings"),
+    )
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=(TEST,),
+        close_root=str(tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    "read", ["tail -3 {path}", "tail -c 400 {path}", "tail -n3 {path}", "tail {path}"]
+)
+def test_gate10_credits_background_pass_read_with_plain_tail(tmp_path: Path, read: str) -> None:
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s\n\n[exited with code 0]")
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+def test_gate10_refuses_failing_background_run_read_with_tail(tmp_path: Path) -> None:
+    gate = _background_gate(
+        tmp_path,
+        "tail -3 {path}",
+        f"FAILED {TEST}::test_feature - assert 1 == 2\n1 failed in 0.02s\n\n[exited with code 1]",
+        code=1,
+    )
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "cat {path} | tail -3",
+        # Bash tails a missing file, then prints a forged summary under exit 0.
+        "tail -3 {path}#missing; printf 'Pytest: 1 passed in 0.01s'",
+        # The substitution prints a forged summary to stderr before grep reads the file.
+        """grep -E "$(printf 'Pytest: 1 passed in 0.01s' >&2)rootdir" {path}""",
+    ],
+)
+def test_gate10_names_background_pass_whose_output_was_never_read(
+    tmp_path: Path, read: str
+) -> None:
+    output_path = tmp_path / "tasks" / "job.output"
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s\n\n[exited with code 0]")
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert gate.details["pytest_unread_background_runs"] == [
+        {"command": BACKGROUND_PYTEST, "output_path": str(output_path)}
+    ]
+    assert f"`{BACKGROUND_PYTEST}` (output `{output_path}`)" in gate.message
+    assert "never read in a recognized form" in gate.message
+
+
+def test_gate10_credits_a_bound_monitor_follow_of_background_output(tmp_path: Path) -> None:
+    gate = _background_gate(
+        tmp_path,
+        'tail -n +1 -f {path} | grep -E --line-buffered "passed|failed"',
+        "Pytest: 1 passed in 0.01s",
+        monitor=True,
+    )
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        # A shell program that waits in a loop and re-reads through a variable is ambiguous.
+        'f={path}; until grep -q "exited with code" "$f"; do sleep 2; done; '
+        'grep -E "passed|failed" "$f" | head -20',
+        # Bash runs a pattern-less grep, then H prints the synthetic passing event.
+        "tail -n +1 -f {path} | grep -E --line-buffered\nH",
+        # The substitution in the pattern prints the forged event.
+        "tail -n +1 -f {path} | grep -E --line-buffered "
+        """"$(printf 'Pytest: 1 passed in 0.01s' >&2)passed\"""",
+    ],
+    ids=["shell-program", "newline-command", "substitution"],
+)
+def test_gate10_names_background_pass_whose_monitor_runs_another_command(
+    tmp_path: Path, read: str
+) -> None:
+    output_path = tmp_path / "tasks" / "job.output"
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s", monitor=True)
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert gate.details["pytest_unread_background_runs"] == [
+        {"command": BACKGROUND_PYTEST, "output_path": str(output_path)}
+    ]
