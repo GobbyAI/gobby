@@ -65,7 +65,7 @@ async def test_cancel_retry_preserves_caller_cancellation(
 
 
 @pytest.mark.parametrize(
-    "error", [psycopg.OperationalError("connection lost"), PoolTimeout("pool busy")]
+    "error", [psycopg.OperationalError("connection is closed"), PoolTimeout("pool busy")]
 )
 async def test_retry_recovers_from_store_outage(harness: ChannelHarness, error: Exception) -> None:
     harness.fail_initializations(httpx.ConnectError("offline"), count=1)

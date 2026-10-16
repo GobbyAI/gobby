@@ -14,14 +14,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-import psycopg
-from psycopg_pool import PoolTimeout
 
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.inbound_mode import channel_for_adapter_init, should_poll
 from gobby.communications.models import ChannelConfig
 from gobby.communications.polling import RETRY_BASE_SECONDS, RETRY_MAX_SECONDS
 from gobby.communications.redaction import redact_and_bound
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -178,15 +177,9 @@ class AdapterLifecycleOperations:
                 if generation != self._adapter_generations.get(channel.id, 0):
                     return
                 try:
-                    try:
-                        current = await asyncio.to_thread(
-                            self._manager._store.get_channel_by_name, name
-                        )
-                    except (psycopg.OperationalError, PoolTimeout) as error:
-                        if isinstance(error, psycopg.OperationalError) and error.sqlstate:
-                            if not error.sqlstate.startswith(("08", "40", "53", "57P0")):
-                                raise
-                        raise ConnectionError(str(error)) from error
+                    current = await asyncio.to_thread(
+                        self._manager._store.get_channel_by_name, name
+                    )
                     if current is None or current.id != channel.id or not current.enabled:
                         return
                     if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
@@ -195,7 +188,7 @@ class AdapterLifecycleOperations:
                 except _ActivationSuperseded:
                     return
                 except Exception as error:
-                    transient = _transient_init_failure(error)
+                    transient = _transient_init_failure(error) or is_pool_unavailable(error)
                     self._record_init_failure(name, error, operation, emit_log=not transient)
                     if not transient:
                         return

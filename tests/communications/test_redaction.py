@@ -32,6 +32,18 @@ def test_telegram_bot_urls_are_redacted(prefix: str) -> None:
 )
 def test_non_token_bot_text_is_preserved(text: str) -> None:
     assert redact_and_bound(text, 512) == text
+    assert redact_for_attachment(text) == text
+
+
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_attachment_bot_url_is_redacted_before_byte_cap(
+    prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    expected = f"https://api.telegram.org/{prefix}<redacted>/getMe"
+    monkeypatch.setattr("gobby.communications.redaction.MAX_LOG_ATTACHMENT_BYTES", len(expected))
+    assert redact_for_attachment(url) == expected
 
 
 @pytest.mark.parametrize("prefix", ["bot", "file/bot"])
