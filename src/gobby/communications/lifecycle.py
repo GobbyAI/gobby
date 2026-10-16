@@ -20,6 +20,7 @@ from gobby.communications.inbound_mode import channel_for_adapter_init, should_p
 from gobby.communications.models import ChannelConfig
 from gobby.communications.polling import RETRY_BASE_SECONDS, RETRY_MAX_SECONDS
 from gobby.communications.redaction import redact_and_bound
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -187,7 +188,7 @@ class AdapterLifecycleOperations:
                 except _ActivationSuperseded:
                     return
                 except Exception as error:
-                    transient = _transient_init_failure(error)
+                    transient = _transient_init_failure(error) or is_pool_unavailable(error)
                     self._record_init_failure(name, error, operation, emit_log=not transient)
                     if not transient:
                         return
@@ -203,12 +204,23 @@ class AdapterLifecycleOperations:
                 self._retry_state.pop(name, None)
 
     async def _cancel_retry(self, name: str) -> None:
-        task = self._retry_tasks.pop(name, None)
+        task = self._retry_tasks.get(name)
+        interrupted = False
         if task is not None:
             task.cancel()
+            # Drain cleanup without forwarding a second cancellation into the child.
+            while not task.done():
+                try:
+                    await asyncio.wait([task])
+                except asyncio.CancelledError:
+                    interrupted = True
             with suppress(asyncio.CancelledError):
-                await task
+                task.result()
+            if self._retry_tasks.get(name) is task:
+                self._retry_tasks.pop(name, None)
         self._retry_state.pop(name, None)
+        if interrupted:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""

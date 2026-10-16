@@ -11,13 +11,108 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig
+from gobby.communications.polling import RETRY_BASE_SECONDS
 from gobby.config.communications import CommunicationsConfig
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
+
+@pytest.mark.parametrize("cancel_caller", [False, True])
+async def test_cancel_retry_preserves_caller_cancellation(
+    harness: ChannelHarness, cancel_caller: bool
+) -> None:
+    started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def retry_work() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await cleanup_release.wait()
+            cleanup_finished.set()
+
+    retry = asyncio.create_task(retry_work())
+    lifecycle = harness.manager._lifecycle
+    lifecycle._retry_tasks[harness.channel.name] = retry
+    await started.wait()
+    caller = asyncio.create_task(lifecycle._cancel_retry(harness.channel.name))
+    await cleanup_started.wait()
+    if cancel_caller:
+        caller.cancel()
+    cleanup_release.set()
+    try:
+        if cancel_caller:
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+        else:
+            await caller
+        assert cleanup_finished.is_set()
+        assert retry.cancelled()
+        assert lifecycle._retry_tasks == {}
+    finally:
+        cleanup_release.set()
+        await asyncio.gather(caller, retry, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "error", [psycopg.OperationalError("connection is closed"), PoolTimeout("pool busy")]
+)
+async def test_retry_recovers_from_store_outage(harness: ChannelHarness, error: Exception) -> None:
+    harness.fail_initializations(httpx.ConnectError("offline"), count=1)
+    await harness.manager._lifecycle.start()
+    _, release = await harness.clock.next_wait()
+    harness.store.get_channel_by_name.side_effect = [error, harness.channel]
+    retry = harness.manager._lifecycle._retry_tasks[harness.channel.name]
+    next_wait = asyncio.create_task(harness.clock.next_wait())
+    release.set()
+    try:
+        await asyncio.wait([retry, next_wait], return_when=asyncio.FIRST_COMPLETED)
+        assert next_wait.done(), "store outage permanently ended channel retry"
+        delay, release = next_wait.result()
+        assert delay == RETRY_BASE_SECONDS * 2
+        release.set()
+        await asyncio.wait_for(harness.active.wait(), timeout=1)
+        assert harness.manager.get_channel_status(harness.channel.name)["active"] is True
+    finally:
+        next_wait.cancel()
+        await asyncio.gather(next_wait, return_exceptions=True)
+
+
+@pytest.mark.parametrize("condition", ["missing", "disabled", "replaced", "query", "auth"])
+async def test_retry_stops_for_permanent_lookup_condition(
+    harness: ChannelHarness, condition: str
+) -> None:
+    harness.fail_initializations(httpx.ConnectError("offline"), count=1)
+    await harness.manager._lifecycle.start()
+    _, release = await harness.clock.next_wait()
+    if condition == "query":
+        harness.store.get_channel_by_name.side_effect = psycopg.ProgrammingError("invalid query")
+    elif condition == "auth":
+        harness.store.get_channel_by_name.side_effect = psycopg.errors.InvalidPassword("denied")
+    else:
+        current = {
+            "missing": None,
+            "disabled": replace(harness.channel, enabled=False),
+            "replaced": replace(harness.channel, id="replacement"),
+        }[condition]
+        harness.store.get_channel_by_name.side_effect = lambda name: current
+    retry = harness.manager._lifecycle._retry_tasks[harness.channel.name]
+    release.set()
+    await asyncio.wait_for(retry, timeout=1)
+    assert harness.manager._lifecycle._retry_tasks == {}
+    assert harness.manager._lifecycle._retry_state == {}
+    assert len(harness.adapters) == 1
+    harness.polling.assert_not_called()
 
 
 class RetryClock:
@@ -324,7 +419,8 @@ async def test_retry_stops_after_permanent_failure(
 
 
 @pytest.mark.parametrize(
-    "failure", [http_failure(503), httpx.ConnectError("https://a/botSECRET/getMe")]
+    "failure",
+    [http_failure(503), httpx.ConnectError("https://api.telegram.org/bot123:SECRET/getMe")],
 )
 async def test_init_error_and_log_scrub_token_urls(
     harness: ChannelHarness, failure: Exception, caplog: pytest.LogCaptureFixture
