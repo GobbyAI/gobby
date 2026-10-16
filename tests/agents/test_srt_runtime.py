@@ -119,6 +119,64 @@ def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
     assert str((gobby_home / "hooks" / "inbox").resolve()) not in superseded
 
 
+@pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])
+def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None) -> None:
+    from tests.srt_fixture_helpers import upstream_proxy_bytes
+
+    paths = ResolvedSandboxPaths(
+        workspace_path="/workspace",
+        read_paths=["/workspace"],
+        write_paths=["/workspace"],
+        allow_external_network=False,
+        provider=provider,
+    )
+    settings = render_srt_settings(paths)
+    baseline = render_srt_settings(paths.model_copy(update={"provider": None}))
+    expected = baseline | {"allowMachLookup": ["com.apple.windowserver.active"]}
+    assert settings == (expected if provider == "grok" else baseline)
+    assert "allowMachLookup" not in baseline
+
+    # Exercise the pinned generator: the setting must grant precisely this
+    # global-name, while every other Seatbelt rule stays byte-for-byte equal.
+    node = shutil.which("node")
+    assert node is not None
+    script = r"""
+const fs = require('node:fs');
+const {source, settings} = JSON.parse(fs.readFileSync(0, 'utf8'));
+const body = source.match(/^function generateSandboxProfile\([\s\S]*?^}\n/m);
+if (!body) throw new Error('missing pinned profile generator');
+const factory = new Function(
+  'generateReadRules', 'generateWriteRules', 'writeRootEntries', 'resolveReadConfig',
+  'escapePath',
+  `return (${body[0]})`);
+const generate = factory(() => [], () => [], () => [], () => undefined, JSON.stringify);
+const base = {libraryDenyEntries: [], needsNetworkRestriction: true, logTag: 'test-seat'};
+console.log(JSON.stringify([
+  generate(base), generate({...base, allowMachLookup: settings.allowMachLookup}),
+]));
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        input=json.dumps(
+            {"source": upstream_proxy_bytes("macos-sandbox-utils").decode(), "settings": settings}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    original, rendered = json.loads(result.stdout)
+    anchor = "\n\n; POSIX IPC - shared memory"
+    rule = (
+        "\n; User-specified XPC/Mach services"
+        '\n(allow mach-lookup (global-name "com.apple.windowserver.active"))'
+    )
+    assert original.count(anchor) == 1
+    expected_profile = original.replace(anchor, rule + anchor) if provider == "grok" else original
+    assert rendered == expected_profile
+
+
 def test_render_settings_uses_srt_credential_schema() -> None:
     paths = ResolvedSandboxPaths(
         workspace_path="/workspace",
