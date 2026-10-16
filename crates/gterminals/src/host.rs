@@ -1,5 +1,6 @@
 //! Authenticated, single-owner lifecycle for the persistent gterm host.
 mod epochs;
+mod process;
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::control::{ControlClient, ControlError};
+use process::process_is_host;
 
 pub const READY_DEADLINE: Duration = Duration::from_millis(2500);
 
@@ -790,35 +792,6 @@ async fn verify_pid(options: &HostOptions, pid: u32) -> Result<(), HostFailure> 
         return Err(HostFailure::PidMismatch);
     }
     Ok(())
-}
-
-async fn process_is_host(pid: u32) -> Result<bool, HostFailure> {
-    if pid == 0 {
-        return Ok(false);
-    }
-    let output = Command::new("/bin/ps")
-        .args(["-p", &pid.to_string(), "-o", "stat=,comm="])
-        .output()
-        .await
-        .map_err(pre_io)?;
-    let identity = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() {
-        return if epochs::process_exited(pid)? {
-            Ok(false)
-        } else {
-            Err(HostFailure::PreAdoptionIo(format!(
-                "process identity inspection failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )))
-        };
-    }
-    let Some((state, name)) = identity.trim().split_once(char::is_whitespace) else {
-        return Err(HostFailure::PidMismatch);
-    };
-    Ok(!state.starts_with('Z')
-        && std::path::Path::new(name.trim())
-            .file_name()
-            .is_some_and(|name| name == "gterm"))
 }
 
 async fn spawn(inner: &Inner) -> Result<Child, HostFailure> {
