@@ -1,11 +1,11 @@
 header:
   plan_id: daemon-side-gterm-adoption-and-terminal-ws
-  plan_hash: c9f26934d35be7d823414b9777d8833c8dade6e07b80e412c64e1e48ab7b1108
+  plan_hash: ccc080954f31b649e968e5cea577b34847664bcd3c422f764d17aecb470a32d9
   root_task_ref: '21565'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-01T13:12:03Z'
+  generated_at: '2026-10-16T05:36:33Z'
   task_tree_source: db
-  task_tree_source_hash: 261b0ce87d8e0615a25b2ad26bc92fabb7ebbf15bc3b4c61f5a9b9d3448a8c30
+  task_tree_source_hash: 6115db8766729e4973afb248e5d78a7b71974e88f399d0d0dfb5f99108d8a364
   evidence_summary: []
   evidence: []
 rows:
@@ -95,7 +95,7 @@ rows:
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.3
-  plan_node_hash: 865d513de60431a05c4f5e2b4678e1dfef97c99a7637023cb425965d849d2aa2
+  plan_node_hash: 5731ba4a8da1bb9f8d68d8d424bcfe83175a6af818f96b8ac790d308ca70d78f
   status: covered
   leaves:
   - leaf_task_ref: '#23208'
@@ -371,7 +371,7 @@ rows:
   detail: ''
 - section_id: '1.6'
   item_id: 1.6.5
-  plan_node_hash: ed6cadfba951577973983e34494e63331fd27af3621d9820998c5bf69985ef56
+  plan_node_hash: 54d154b79a30d127cd0667666402344c2658c6b80d0632e89679dde7fd57dce0
   status: covered
   leaves:
   - leaf_task_ref: '#23212'
@@ -395,143 +395,83 @@ rows:
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.1
-  plan_node_hash: f39697ee262da152c864d68ffd5b95787bd4572a9a9179a217a76a5ebcf72b34
+  plan_node_hash: 0552ac4101388a28c134a8ee64577ff4cdb885d8dc934737a67df825153fac7c
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
-    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_tmux_fallback_subtype_matrix_is_exhaustive
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_host_unavailable_reasons_fail_closed_with_typed_code
   deferral_target: null
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.2
-  plan_node_hash: e0d9be1043ed2a69ed3c9ba8d0e2f6193ef8a5bc545274bbd137a1a28d05e3d7
+  plan_node_hash: 0a21590a9c04ff44130f65853cdbb61bcb7cea46c338fc43ef3baa4c17731d1e
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
-    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_persistent_role_refuses_tmux_fallback
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_every_lifetime_fails_closed_without_host
   deferral_target: null
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.3
-  plan_node_hash: 59335518708486a2f56a12af48123cc7c288a6c826bb1de04a6254cd44c661e1
+  plan_node_hash: 6b281a79e036d8898462c3527420547eed35eb82bef6374618816f3f046bb907
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
-    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_fallback_announcement_is_attempt_until_activation
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_fail_closed_spawn_has_no_side_effects
   deferral_target: null
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.4
-  plan_node_hash: 70b9de672f1663aa109f8ad6990bfba7b8dfacb83789fd6e4b7e3528f68334ce
+  plan_node_hash: 5b401cda796886f1528f94a6c45b50dc27187e86782f4fe43f04318d39db08b5
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
-    matched_artifact_ref: tests/servers/test_terminals_routes.py::test_terminal_inventory_exposes_backend_and_fallback_reason
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
+    matched_artifact_ref: tests/servers/test_terminals_routes.py::test_terminal_inventory_exposes_backend
   deferral_target: null
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.5
-  plan_node_hash: a054bff47052b0d25002bdf2eb187f85ca75e8f7c58998c7ee79503a689b6b21
+  plan_node_hash: b5535e746f65dc93ecd3a2ef6b494f8797c9f8ffc0bb00ba870f76bb4127e729
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
     matched_artifact_ref: crates/gclient/tests/client_loop.rs::terminal_inventory_renders_each_backend
   deferral_target: null
   detail: ''
 - section_id: '1.7'
   item_id: 1.7.6
-  plan_node_hash: 778c099b5923c898f259770c17862d3d4e1e326c741d6b3519e107b695940501
+  plan_node_hash: 759a2d5daa2accd8fb681e70da3d727caa171d4fef24504bb86bd1cd7f7b771b
   status: covered
   leaves:
   - leaf_task_ref: '#23213'
-    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
-      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
-      may select tmux for `run`; sepa...'
-    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_recovery_is_new_spawn_and_handoff_only
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.1
-  plan_node_hash: 361536e6b01cb86a508c34a0a8124b9265841bcf6aca0ef27f64eb30a561ff37
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
-      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
-      semantics on the row''s o...'
-    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::input_and_write_match_python_on_recorded_socket
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.2
-  plan_node_hash: ea3ecd13ca223e90a06edabf8eafd92adac8d1f996481a0988f22f87f0bae310
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
-      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
-      semantics on the row''s o...'
-    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::resize_and_snapshot_preserve_tmux_history_contract
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.3
-  plan_node_hash: 6d85a7ea85d4d6b0b43f7f2e9ab1a2af89e4d18189812f2b1e8212d70876002d
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
-      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
-      semantics on the row''s o...'
-    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::attach_locator_uses_live_host_generation
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.4
-  plan_node_hash: f394b591959349299e896eb9a43776b0fe874f6298ff9df9bbdd1db8b311c59e
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
-      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
-      semantics on the row''s o...'
-    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::liveness_presence_and_termination_are_socket_scoped
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.5
-  plan_node_hash: 523875b2cb9f113720c0d31bc9da2bd85f0bbd813b002cf347e08cc5cc3067ba
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
-      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
-      semantics on the row''s o...'
-    matched_artifact_ref: native-family-live-tmux-runtime-parity
+    validation_criteria_snippet: '1.7.1: For each of host_start_timeout, semantic
+      epoch_refused and gterm_missing, spawn fails closed with a diagnostic code naming
+      that reason; token, pid, prot...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_spawn_recovers_after_host_readoption
   deferral_target: null
   detail: ''
 - section_id: '1.9'
   item_id: 1.9.1
   plan_node_hash: 4000dfc4165116711fffbfa9cc59bc75d01286c71321566998adaf7d7e427b8f
-  status: covered
+  status: invalid
   leaves:
   - leaf_task_ref: '#23215'
-    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
     matched_artifact_ref: crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql
@@ -543,7 +483,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23215'
-    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
     matched_artifact_ref: tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null
@@ -555,7 +495,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23215'
-    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
     matched_artifact_ref: tests/storage/test_workspaces.py::test_pane_to_dict_omits_null_role
@@ -567,7 +507,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23215'
-    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
     matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_tab_create_and_pane_split_carry_role
@@ -579,10 +519,58 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23215'
-    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+    validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
     matched_artifact_ref: tests/servers/test_terminal_ws_golden.py::test_workspace_emitters_match_golden_replies
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.1
+  plan_node_hash: 0eb9f0c1fb7734e4d3d75032fe429786d97540b0acec2f154feb39416106fa5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23218'
+    validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
+      items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
+      on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.2
+  plan_node_hash: 59d7c2e6d092965d208867b369d46af95227a798ac9a67aeb88d44c3aaa5b1d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23218'
+    validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
+      items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
+      on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_preservation_requires_a_durable_identity_cas
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.3
+  plan_node_hash: 70f8c48485ac29e2032a4dcc6fcee8b42da4f6bce484715f04bbee41034eefff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23218'
+    validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
+      items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
+      on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_expiry_never_clears_a_rebound_record
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.4
+  plan_node_hash: 04421e8996322969b4a0bf3fcf6c9ad84edb70a4edd9cbff1f272c07810cbb1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23218'
+    validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
+      items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
+      on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::failed_handoff_revoke_keeps_the_record_and_retries
   deferral_target: null
   detail: ''
 - section_id: '2.1'
@@ -635,73 +623,37 @@ rows:
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.3
-  plan_node_hash: e2bcb46a781b009ba6d2f8e8964c2c407fd1bb9bedf4fe6bdbd775cc0dbee6c0
+  plan_node_hash: e66e3a6b4642b883e773a5fff7ac5665eb9948baee1e21899abc87d5a1f93c76
   status: covered
   leaves:
   - leaf_task_ref: '#23217'
     validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
       mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
+      altering ownership, including...'
     matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::cutover_requires_restart_and_has_one_owner
   deferral_target: null
   detail: ''
 - section_id: '2.4'
-  item_id: 2.4.7
-  plan_node_hash: 89ff32899a050ebd5e5d3a91058071f6359cf59f266d565048cce8e868c92924
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23217'
-    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
-      mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
-    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator
-  deferral_target: null
-  detail: ''
-- section_id: '2.4'
   item_id: 2.4.8
-  plan_node_hash: 8f2d482652deea88577de6a00314cc2b3917e630809fc4bfb63f50f4842bec94
+  plan_node_hash: c4a750d8aaee3c123e602ce2922ff6069e5e2ed642ed9f5b8b620f6a4fc18919
   status: covered
   leaves:
   - leaf_task_ref: '#23217'
     validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
       mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
-    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_parent_pipe_token
-  deferral_target: null
-  detail: ''
-- section_id: '2.4'
-  item_id: 2.4.12
-  plan_node_hash: d4cd524cb38112cb5e9595002475d5258909733969538d8d8c123f377c5d219e
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23217'
-    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
-      mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
-    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client
-  deferral_target: null
-  detail: ''
-- section_id: '2.4'
-  item_id: 2.4.13
-  plan_node_hash: e2760884e08d68d28b6916627cbc2a4375c70764436365d6a8e0fccfb7f29dd0
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23217'
-    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
-      mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
-    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_settlement_has_one_rust_owner
+      altering ownership, including...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_supervisor_pipe_token
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.14
-  plan_node_hash: a952c8ed50510ecca14d1ff3f7faf4bda50cd8b7a5ec1fd33e2a6b4fb83b1dc0
+  plan_node_hash: f06e711654d2975802c3741a912fb2689ac7286a15ae742059fe6b170885281b
   status: covered
   leaves:
   - leaf_task_ref: '#23217'
     validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
       mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
+      altering ownership, including...'
     matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::route_hold_queue_is_bounded_and_token_scoped
   deferral_target: null
   detail: ''
@@ -713,20 +665,8 @@ rows:
   - leaf_task_ref: '#23217'
     validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
       mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
+      altering ownership, including...'
     matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::uncertain_hold_admits_nothing_before_proof
-  deferral_target: null
-  detail: ''
-- section_id: '2.4'
-  item_id: 2.4.16
-  plan_node_hash: 7ab48524aac74257cc89c7e363c12c7e4ca75b493efeca66f9c4f7ec02738314
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23217'
-    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
-      mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
-    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_native_pane_binds_after_rust_settlement
   deferral_target: null
   detail: ''
 - section_id: '2.4'
@@ -737,168 +677,484 @@ rows:
   - leaf_task_ref: '#23217'
     validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
       mode, and a runtime route-mode change is rejected with restart-required before
-      altering ownership. test: `cr...'
+      altering ownership, including...'
     matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::native_activation_refuses_without_the_terminal_family
   deferral_target: null
   detail: ''
-- section_id: D1
-  item_id: 1.4.6
-  plan_node_hash: 9826e640eeb6dda47a91fcb7853e7fddab52832ac3fb666c56f66e0263e24273
-  status: deferred
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: b36cce927c8834c8bab55349a3179792a2798d39b075a9138e16b023b1c75e00
+  status: missing
   leaves: []
-  deferral_target: '#23218'
-  detail: deferral is valid
-- section_id: D1
-  item_id: 1.4.7
-  plan_node_hash: 29c7153d221bec3e6993f334303580264e588c99d041363982d7c5b618de4674
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: 67fb67880d385e5bc5d79997aedf55ea6a2774d69d7b084f0eeed5a758079b40
+  status: missing
   leaves: []
-  deferral_target: '#23218'
-  detail: deferral is valid
-- section_id: D1
-  item_id: 1.4.8
-  plan_node_hash: fd9d2309863b435f3700c1aa2973019b22dcc66b37d2b0391ffe0e83f4fed2ae
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: e37309091d71c1806d016575e3229e0171eb47dab867499425474da644a58671
+  status: missing
   leaves: []
-  deferral_target: '#23218'
-  detail: deferral is valid
-- section_id: D1
-  item_id: 1.4.9
-  plan_node_hash: 70cf0fa699cc674e282e0d75df646093d17e3d4a8d1529d35dbd77e52985eb3b
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.11'
+  item_id: 2.11.1
+  plan_node_hash: 45fa4bbb57848107463ddec8399bdf15a7ef023cd6d7b1ccab22c493f982b21c
+  status: missing
   leaves: []
-  deferral_target: '#23218'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.11'
+  item_id: 2.11.2
+  plan_node_hash: 8339978eb25e64773122953c091bc3ad34110bed92ad4b1501b3a12fb69df82a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: 16db5224f6b4d033cedd210c787693d6a00cf3931d7284cce64f4217f9b77018
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: 4cc52cb16a7056600dd0b157df0499ab0fa42ba2940378f06b6060fc41d88f4a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: 9d0d6d6e29558619da06e11b094a0e82511bd3c05e21db710ec9092daee53282
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: a57912661e92e6fc5a20a7bf0f4c570e0585b093de98cf23b07aa55b3b353bbf
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: 04c7b7cd9d4bc95b2fe1e542029c1e96dc56c6d08a6ebf251e75b3832d304cda
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.1
+  plan_node_hash: f84ddff9d6e18428ad7251452529fef1349a942953edf422bac586613f7528f0
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.2
+  plan_node_hash: 36f239419111942cd4abc5a702c03069e39190ed4b57f80c6373ab69b2d4714a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.3
+  plan_node_hash: 9e2197cf475d0e9aa8d1106fccac36e025764bff6e51f700524870f0218db2e7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.4
+  plan_node_hash: 297f2842c5c36b59291ad996e5b97a75ec09f7a6d678a4de3e2763d4717ad165
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.5
+  plan_node_hash: 2c8528a6ab58e2d8f748f83dd9884bac36672a6baf7ba29043e24a1788ee18a7
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.6
+  plan_node_hash: 0d581855daa79cc46ddb12c6cbede6f6d37f6d9cd1ba02f700e1ba2b75119f2a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.1
+  plan_node_hash: fea4ba2696ec4a957cc5ff4eb5cdf404f653d8c8cc266403eeaf4a2bef216505
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.2
+  plan_node_hash: d500ff49a4993d8562ac234e8c0d5ca5f3b4309b9bb9b1acf1f67f8c26bd57b8
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.3
+  plan_node_hash: 6e5f70330d41aa46ea23fb69d161430be69101621b7913f792ae11d4735c83b4
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.4
+  plan_node_hash: 23ef14706894aaf3ef9bda6a823c127814f2e93758ec50d6b495819d7f0b7958
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.5
+  plan_node_hash: 5996a5c346df5598b8bbbf1d18ae1c5e758e4b07bfbba866c6c4179ae0371634
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.6
+  plan_node_hash: ab07f4dec0e052419a98c4f03b424b77c516e3b6d200a9a910d5ae57e222af4a
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.1
+  plan_node_hash: 9440087d06fe6154ebaa5f421082b547b2ff52437af13b2fc666eea5e3282952
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.2
+  plan_node_hash: 513629bff63d49c0ff94026f278825946848ed38f9dacfd912d60b98263445d0
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.3
+  plan_node_hash: 5d4a3bf9e8db9fef212f8c15edf757c1163903d1af4ce1a5181b64bb479e0f8c
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.4
+  plan_node_hash: 55b1f65f7bc807c065162bbde40d39d5889584a7117b8ab158dbca8e89c78600
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.1
+  plan_node_hash: a80c512bf9541d5d20300aad763bbe6fab8bc97a7a0f99e3be64ae81c41ea888
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.2
+  plan_node_hash: c6f8935bf72c7e4b776b6a23b0dda20be6a7b893ae379dcc8f2c2399fcbb3afe
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.3
+  plan_node_hash: 60adbbf0fcb6e0a96dd8d707102f97034b6d0de06f0023ee64a1715d3d229f9c
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.4
+  plan_node_hash: 64878433bee76d0eea88231059ce7db3192469bf0167e1964bef8bee0e45c226
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.5
+  plan_node_hash: ab0986a720a2603e2584b825dc2cc8c542f2b0c3c639473bbd36e9af519ea726
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.1
+  plan_node_hash: 2e9a8a2c9376a3d97293908d64cf05d2ad6198355c934aa3c4c3bbf7d59b319e
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.2
+  plan_node_hash: e644c37b2af9345160d0a4cc8755b6ec1d0a0f502e430b911c3cf752993b0290
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.3
+  plan_node_hash: 457b26b92ae087a83034c080a9c854bd6119af7ae597721fc46787deeedb4576
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.4
+  plan_node_hash: cd9153de05f0606ec97a74c370d8beda3ceb79301a92d583dbd48e05d0ca4d99
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.5
+  plan_node_hash: ecd7356dfd80af81b141bdda2fe904a9ff31b19d426267a6cb7d0a830c0dd5be
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.6
+  plan_node_hash: 0022d2c2c6ee73dfdd4e57d6f40db8f892bc3a86ed29e4fee5b24d39b8ba905d
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.1
+  plan_node_hash: 6a65ca8df5d9fe4e514f7609e4b8d3b13f0ef95e175e918adde2a25ffb4e278d
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.2
+  plan_node_hash: b3be8dd996eb7d79b2cfc3fcddcf98a95d00b1476586a980d3c68b66a202da56
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.3
+  plan_node_hash: dd4fa676e9c59e47a071ed0bc6f1120870155adc7918d44162cb098dc4b6df21
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.1
-  plan_node_hash: ce525a3d81e0441af234c23952e69b2ed0745b7fee75b083bdb54d4c9312c201
-  status: deferred
+  plan_node_hash: a31b800c77cebd5b14405aa18baf9d65a3b56ec7e27296dec14d30e2baa140a2
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.2
-  plan_node_hash: 13bf7e1ba97854724cc3ad2eae2a953c409ce0df8039de4e7ea3637fcfdf88f3
-  status: deferred
+  plan_node_hash: 92868229d919179db094fbc0ce7311f12fdb4aa0b8313aecf8e2920f7c0fb0d2
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.3
-  plan_node_hash: 80cc2f5d6563f778f74108d6404cb96f949592e647a361d88d43e5a9f8ca91af
-  status: deferred
+  plan_node_hash: ea1ef5eeb8f7e4a277bd3b50f24dc04a5ef1cdf73cec5c70e45f518769963d06
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.4
-  plan_node_hash: 10a447d726e6ad4a5f209f3a1b991474c1d54dde1eabb80a3ed40e09d7ee49b1
-  status: deferred
+  plan_node_hash: a0736d4def70d1801343d37d7fff986783482e4ccfa62c46d2de396776bb92a0
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.5
-  plan_node_hash: c9c2b628a75f7b40e39aba5bc739d86db7d576c7a2ed1c0bd2706de52a2ac913
-  status: deferred
+  plan_node_hash: af9d15f79574ca8f84d20463336e53325a20e684b1a549d397c980fd7352682d
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
   item_id: 2.2.6
-  plan_node_hash: 322bbe7092bdb6cb27df00687d2326e3c660bbf9b0d5f827e42fb789a060e551
-  status: deferred
+  plan_node_hash: cea9d162e37a1c70a07898ab4a09dcdc0129d5be6f5120dee04481bec6f32785
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 15369b114d9398ab3172b9300a282b5f48ec38959f10b972001d31091741d631
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
   item_id: 2.3.1
-  plan_node_hash: 55bf93c83467834f49b8b629641811fc216395c5e243b2ef411c7613b007aba1
-  status: deferred
+  plan_node_hash: c6811f4ad5802cf336f4e3a1360dd9a85c5401205b32b2192f88c4aaac75be4b
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
   item_id: 2.3.2
-  plan_node_hash: 91dfbac0a6b7e1b203da5ff8990636f3b6292a2bdf6cb4fc6e91d3f59d4e9034
-  status: deferred
+  plan_node_hash: e914d0f2157a28f863530a9a0a00d23c7d1cd51106f6fa979c2122a7812c7d2f
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
   item_id: 2.3.3
-  plan_node_hash: 1fe6a3a51c11f0245e94dd3af865ca7171befb3fbb607ec08f0b3a821d6990f8
-  status: deferred
+  plan_node_hash: 45aa03efae52db99f6926373064be33fd191243e68f9ada83821c5141e0d7d3e
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
   item_id: 2.3.4
-  plan_node_hash: 64903f3a4f52e97ac773de803d9697b0337fdc0b6272250c349a1451c46d36d8
-  status: deferred
+  plan_node_hash: cd2da46d2fbb7d0b533d31df912bec7a7b7cbdc8ab210e46b72d28c15875831f
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.1
-  plan_node_hash: b0aa16820d806b248160f03a43c706eb4644ab302ccac9aded9234808f1a6757
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.1
+  plan_node_hash: c4dae4ac95e32e4aecde4cddab9f52a9189e6370d77c173cbf9eb7f977e17257
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.2
-  plan_node_hash: 3f6c2e75dbb8de96b3c53a4e6c8cdf88f148108642d1d786023f3a8f57c821b9
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.2
+  plan_node_hash: e5b85c280ae6fbe9c3d69bfe837a0eff7aaf67b2d3eadc997210a94c9c9bf31f
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.4
-  plan_node_hash: f844505591bd2d635c04377d5a41842c2d6a370800f81c79bc0b153c4eb4d70f
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.3
+  plan_node_hash: 4580a1be8fa4db8452186de219e7e4cecba01b36ad0afc21a1d20da520f231f3
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.5
-  plan_node_hash: 2bc9443d039df9e8f9792b11cb1f82fd2e528796fa9d03ccb0a78e28ab5b725f
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.1
+  plan_node_hash: b678bfdc7e85f785258023f2784e6ccfbca7bfb4e5950c12796c52c1913a650c
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.6
-  plan_node_hash: 9da0c05ff695d6098bda809379f2e2b03f498f3e83b0de6e53da259f42af89c4
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.2
+  plan_node_hash: c9e7d1ede4d4b5e205c74396298c0bb541848656da00bd42016c698508eb2eac
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.9
-  plan_node_hash: b13bf6ca6064be255b6cc83d7f46bcbae655a2330ef2841c1ee46dd739a70f7a
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.3
+  plan_node_hash: 4c29b65b1d466d6000fcdecf96b8b2511519033dc8416b038316e03d21fffa9e
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.10
-  plan_node_hash: 0a926d47dbdcfa588fecb374dd88208580bb241af1bfd738f02c84049fa871e0
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.4
+  plan_node_hash: c6894eb344ae8844ae255203af5d398bde811e860313888602794d10de2047c9
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.11
-  plan_node_hash: dd5839d6bcf2f9220ec8e654bb261b8765a54a2a6a45547b5a878dad475db391
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.5
+  plan_node_hash: 48d1a2d241ef455354676c1245357450a57c27ef380f7234675880ba327f7b1a
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
-- section_id: D2
-  item_id: 2.4.18
-  plan_node_hash: a6761653261bc6ef990eb75f3a4321092b8928e8f73956af95de85fe335c3418
-  status: deferred
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.6
+  plan_node_hash: 13c073beed892727c6897dbd50a6cc92e6c6448f5a7996f1ff3b934bf3be09c7
+  status: missing
   leaves: []
-  deferral_target: '#23219'
-  detail: deferral is valid
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.7
+  plan_node_hash: b4b779e43a8e42c734eba114947f7d2cb66a0f7e38e646aa7d2738c47dfdf83b
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.1
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: item '1.8.1' is not present in section '1.8'
+    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.1
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.2
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: item '1.8.2' is not present in section '1.8'
+    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.2
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.3
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: item '1.8.3' is not present in section '1.8'
+    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.3
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.4
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: item '1.8.4' is not present in section '1.8'
+    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.4
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.5
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: item '1.8.5' is not present in section '1.8'
+    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.5
+  deferral_target: null
+  detail: ''
