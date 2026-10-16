@@ -466,6 +466,8 @@ Obligations retained for the deferred task:
 
 2026-10-16: Consensus reached between Plan Writer gobby#16490 and Adversary gobby#16983 on the P2 (B1 to B3) narrative reviewed at `a4a702f8b36ec6476bbbf26cce752eff8e282ced` (plan sha256 `86392cb4441b8e97b66e5896ca04a4b3f4baf97faca8ce12870675c81fcb501e`), which is gobby#16915's rev 5. NWS-F1 to NWS-F6 are closed. F1: all 14 P2 decisions are recorded as decided. F2: typed text and binary broker frames on one FIFO. F3: readiness is exactly the first private frame. F4, merged with gobby#16912's L1: generation changes commit under one binding lock, and rev 4 added Security gobby#16011's token recheck inside that lock. F5: the handshake is validated before any bridge. F6: the publisher queue is bounded by decision 14, with drain, failure and stop accounting and B1.8 regression coverage. Lane 8 reviewer gobby#16912 passed rev 3 and rev 5. Security gobby#16011 confirmed rev 4 (receipt `b1d59137`), and rev 5 changed no auth surface. The Adversary derives M1 for B1 to B3 from the commit that adds this entry. Orchestrator review and Josh approval follow before expansion.
 
+2026-10-16: Renewed consensus between Plan Writer gobby#16490 and Adversary gobby#16983 on the unchanged narrative of `d0116de93a23a20f304d90027804706a3175c1fb`. `derive_plan_handoff_manifest` rejected those bytes because the old M1 had no entries for B1, B2 or B3. Following the stale-manifest recovery route (memory `f5577ae0`), the Writer withdrew the entire superseded `## M1 Task Manifest` block, A1 to A3 entries included; its bytes remain in Git history at `d0116de93a`. No narrative section changed. The Adversary derives and applies a fresh M1 for A1 to A3 and B1 to B3 from the commit that adds this entry.
+
 ## E1 Source evidence
 `kind: framing`
 
@@ -551,88 +553,3 @@ Re-anchor 2026-10-16 (gobby#16915) at 0.5.0 `7ba471a18c4d547c18114fda21adb30acb0
 `kind: verification`
 
 Observed: task/parent read, source inspection, consumer literal sweeps and a successful project-aware base validation on the materialized narrative. Command: `uv run gobby plans validate .gobby/tmp/task-21558/native-ws-transport.md -p /Users/josh/.gobby/worktrees/gobby/lane-3-runbooks`; exit 0, one phase. The final frozen bytes are revalidated before sending. No implementation checks, daemon runs, pytest, cargo tests or activation proof have run. Expansion validation is intentionally unrun until Adv4 applies the server-derived M1 and W4 validates it. Josh's approval still precedes expansion. No deterministic result substitutes for Adv2's qualitative pre-audit.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Shared subscribe/unsubscribe/broadcast corpus
-  category: test
-  task_type: chore
-  depends_on: []
-  validation_criteria: 'A1.1: Every declared corpus case replays through the existing
-    Python implementation with the documented single acknowledgement-set normalization.
-    test: `tests/servers/test_ws_envelope_golden.py::test_python_replays_envelope_case`.
-
-    A1.2: Both entry modes and absent/explicit-null/initialized transitions, including
-    unsubscribe-before-subscribe, replay without modifying production behavior. file:
-    `tests/fixtures/ws_envelope_golden/cases.json`.
-
-    A1.3: Broadcast and fragment strings compare byte-identically, and direct responses
-    are distinguished from broadcasts. test: `tests/servers/test_ws_envelope_golden.py::test_frame_bytes_and_direct_delivery`.
-
-    A1.4: Version and case inventory drift fails rather than silently skipping data.
-    test: `tests/servers/test_ws_envelope_golden.py::test_manifest_is_complete`.'
-  labels:
-  - covers:native-ws-transport:A1:A1.1
-  - covers:native-ws-transport:A1:A1.2
-  - covers:native-ws-transport:A1:A1.3
-  - covers:native-ws-transport:A1:A1.4
-  tdd: false
-  source_section: A1
-  assigned_agent: backend-developer
-- title: Native subscription codec and corpus replay
-  category: code
-  task_type: feature
-  depends_on:
-  - A1
-  validation_criteria: 'A2.1: Rust replays every A1 case with identical transition,
-    recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envelope_corpus`.
-
-    A2.2: Both public entry modes, absent/explicit-null/initialized transitions and
-    unsubscribe-before-subscribe retain their distinct outcomes. symbol: `SubscriptionState`
-    in `crates/gdaemon/src/websocket/subscriptions.rs`.
-
-    A2.3: Every non-string member/type class, mixed-member list and invalid JSON/object
-    produces the specified bounded error without partial mutation; native-only negative
-    cases are distinguished from supported-domain parity. test: `crates/gdaemon/tests/ws_envelope_golden.rs::malformed_control_does_not_mutate_state`.
-
-    A2.4: Application frames are not reserialized or interpreted as subscription controls.
-    test: `crates/gdaemon/tests/ws_envelope_golden.rs::application_frames_are_opaque`.'
-  labels:
-  - covers:native-ws-transport:A2:A2.1
-  - covers:native-ws-transport:A2:A2.2
-  - covers:native-ws-transport:A2:A2.3
-  - covers:native-ws-transport:A2:A2.4
-  tdd: true
-  source_section: A2
-  implementation_domain: backend
-- title: Bounded native broadcast fanout
-  category: code
-  task_type: feature
-  depends_on:
-  - A2
-  validation_criteria: 'A3.1: Only matching registered clients receive a batch; fragment
-    bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_preserves_selection_and_frame_order`.
-
-    A3.2: A subscription acknowledgement precedes publications selected by its new
-    state. test: `crates/gdaemon/tests/ws_broker.rs::acknowledgement_precedes_newly_selected_events`.
-
-    A3.3: A stalled/overflowing client cannot block healthy recipients or grow queues
-    beyond both limits. test: `crates/gdaemon/tests/ws_broker.rs::slow_client_isolated_and_bounded`.
-
-    A3.4: Simultaneous disconnect and failure invokes cleanup once, and each entry
-    mode reconnects with its own original initial state. test: `crates/gdaemon/tests/ws_broker.rs::retirement_is_once_and_reconnect_is_fresh`.
-
-    A3.5: Direct replies use the same ordered writer without subscription filtering.
-    test: `crates/gdaemon/tests/ws_broker.rs::direct_reply_bypasses_event_filter`.'
-  labels:
-  - covers:native-ws-transport:A3:A3.1
-  - covers:native-ws-transport:A3:A3.2
-  - covers:native-ws-transport:A3:A3.3
-  - covers:native-ws-transport:A3:A3.4
-  - covers:native-ws-transport:A3:A3.5
-  tdd: true
-  source_section: A3
-  implementation_domain: backend
-```
