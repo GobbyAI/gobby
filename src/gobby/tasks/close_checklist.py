@@ -162,7 +162,11 @@ def evaluate_validation_commands(
     checkout, so it neither credits nor fails this task, unless it ran identical
     copies of the changed tests. A copy must match ``candidate_commit_sha`` when given.
     """
-    from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
+    from gobby.tasks.validation_diagnostics import (
+        excluded_validation_records,
+        gap_covering_records,
+        observed_message,
+    )
 
     paths = tuple(changed_paths)
     changed_tests = _changed_python_test_paths(paths)
@@ -213,8 +217,14 @@ def evaluate_validation_commands(
                     "categories": [],
                 }
             )
+    gap_records = gap_covering_records(records, gate.details)
     records.sort(
-        key=lambda record: (str(record["completed_at"]), int(record["order"])), reverse=True
+        key=lambda record: (
+            id(record) in gap_records,
+            str(record["completed_at"]),
+            int(record["order"]),
+        ),
+        reverse=True,
     )
     relevant = records
     if gaps:
