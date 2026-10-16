@@ -339,7 +339,12 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py
     # test_checkout_approval_git_runs_off_the_event_loop), and event-loop display
     # callers use normalize_tool_display_fields
-    # (test_display_normalization_callers_read_no_canonical_metadata below).
+    # (test_display_normalization_callers_read_no_canonical_metadata below;
+    # chat base.py keeps only mcp_server/mcp_tool, pinned by
+    # tests/servers/websocket/chat/test_provider_backends.py
+    # test_post_tool_lifecycle_adds_only_mcp_display_fields). handle_after_tool
+    # derives shell metadata on the hook worker (tests/adapters/test_adapters_codex.py
+    # test_item_completed_shell_write_marks_had_edits_without_rule_pass).
     ("src/gobby/hooks/_normalization_git.py", "_positional_checkout_is_path"),
     # Sync plan tools run through InternalToolRegistry.call's worker; async plan
     # tools resolve projects inside _run_db_call or their complete review-evidence
@@ -521,6 +526,8 @@ _DISPLAY_NORMALIZATION_MODULES = frozenset(
 def test_display_normalization_callers_read_no_canonical_metadata() -> None:
     # These modules normalize on the event loop without shell metadata, so none of
     # them may read a canonical_* field; HookManager derives those off the loop.
+    # base.py's mcp_server/mcp_tool-only copy is pinned by
+    # test_post_tool_lifecycle_adds_only_mcp_display_fields.
     callers = _modules_referencing("normalize_tool_display_fields")
     assert callers - {"src/gobby/hooks/normalization.py"} <= _DISPLAY_NORMALIZATION_MODULES
     for relative, tree in _source_trees():
