@@ -19,6 +19,7 @@ from gobby.config.validation_detection import (
     is_validation_command,
     normalize_validation_evidence_command,
     resolve_validation_detection_config,
+    unwrap_env_tokens,
     unwrap_validation_launcher_tokens,
 )
 from gobby.config.validation_outcomes import runner_reported_failures
@@ -195,8 +196,14 @@ def unregistered_execution_reason(
         if segment[:1] == ("export",):
             continue
         directories: list[str | None] = []
+        env_directories: list[str] = []
+        core = normalize_validation_evidence_command(
+            shlex.join(segment), directories=env_directories
+        )
+        for env_directory in env_directories:
+            _directory_options(("--chdir", env_directory), directories)
         resolved = _first_executable(
-            parse_validation_shell(_strip_exit_preserving_prefixes(shlex.join(segment))),
+            parse_validation_shell(core),
             directories=directories,
         )
         if resolved is None:
@@ -519,8 +526,17 @@ def _first_executable(
             if directories is not None and executable == "sudo":
                 _directory_options(arguments[: len(arguments) - len(inner)], directories)
             tokens = inner
-        elif executable in {"env", "rtk"}:
-            if executable == "rtk" and arguments[:1] in {("proxy",), ("bypass",)}:
+        elif executable == "env":
+            env_directories: list[str] = []
+            inner_env = unwrap_env_tokens(list(tokens), directories=env_directories)
+            if inner_env is None:
+                return None
+            if directories is not None:
+                for env_directory in env_directories:
+                    _directory_options(("--chdir", env_directory), directories)
+            tokens = tuple(inner_env)
+        elif executable == "rtk":
+            if arguments[:1] in {("proxy",), ("bypass",)}:
                 arguments = arguments[1:]
             if arguments[:1] == ("--",):
                 arguments = arguments[1:]
