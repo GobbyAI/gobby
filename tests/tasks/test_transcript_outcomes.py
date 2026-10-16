@@ -23,18 +23,17 @@ from gobby.tasks.transcript_outcomes import (
 @pytest.mark.parametrize(
     "launcher",
     [
-        "setsid",
+        "setsid -w",
         "setsid --wait",
         "setsid -w --",
         "ionice -c 3 -n 7",
         "ionice --class=2 --classdata=4",
         "ionice -c2 -n4",
         "unbuffer",
-        "unbuffer -p",
         "chronic",
         "arch -arm64",
         "arch -x86_64",
-        "setsid ionice -c 3 arch -arm64",
+        "setsid -w ionice -c 3 arch -arm64",
     ],
 )
 def test_launcher_wrappers_setsid_ionice_unbuffer_chronic_arch_are_credited(
@@ -56,11 +55,16 @@ def test_launcher_wrappers_setsid_ionice_unbuffer_chronic_arch_are_credited(
     "launcher",
     [
         "setsid --unknown",
+        "setsid",
+        "setsid -c",
+        "setsid --",
+        "setsid -w setsid",
         "ionice --unknown",
         "ionice -c",
         "ionice -c bogus",
         "ionice -p 123",
         "unbuffer --unknown",
+        "unbuffer -p",
         "chronic --unknown",
         "arch --unknown",
     ],
@@ -98,17 +102,43 @@ def test_tracked_script_resolves_symlinked_checkout(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("prefix", ["!", "! ", "  ! "])
-def test_leading_bang_is_stripped_before_credit(prefix: str) -> None:
+def test_leading_bang_is_not_credited(prefix: str) -> None:
     bare = "uv run pytest tests/a.py -q"
     command = prefix + bare
     equivalence = classify_validation_command_equivalence(command)
-    assert equivalence.wrapped is False
-    assert equivalence.core_command == bare
-    assert command_covers(command, bare)
-    assert pytest_targets(equivalence.core_command) == ("tests/a.py",)
-    match = classify_validation_command(command)
-    assert match is not None
-    assert "test" in match.categories
+    assert equivalence.wrapped is True
+    assert not command_covers(command, bare)
+    assert command_covers(bare, bare)
+
+
+def test_native_shell_negation_does_not_credit_failed_command() -> None:
+    result = subprocess.run(["/bin/bash", "-c", "! false"], check=True, capture_output=True)
+    assert result.returncode == 0
+    assert not command_covers("! false", "false")
+    assert classify_validation_command_equivalence("! false").wrapped is True
+
+
+@pytest.mark.parametrize("external", [False, True], ids=["internal", "external"])
+def test_tracked_script_rejects_symlink_parent_traversal(tmp_path: Path, external: bool) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True, capture_output=True)
+    (repository / "check.py").write_text("print('tracked')\n")
+    subprocess.run(
+        ["git", "-C", str(repository), "add", "check.py"], check=True, capture_output=True
+    )
+    target = tmp_path / "outside" if external else repository
+    if external:
+        target.mkdir()
+        (target / "check.py").write_text("print('untracked')\n")
+    (target / "deep").mkdir()
+    (repository / "link").symlink_to(target / "deep", target_is_directory=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(repository, target_is_directory=True)
+    assert (
+        unregistered_execution_reason("python link/../check.py", str(alias), workdir=str(alias))
+        is not None
+    )
 
 
 @pytest.mark.parametrize(

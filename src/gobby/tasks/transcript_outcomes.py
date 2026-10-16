@@ -19,7 +19,6 @@ from gobby.config.validation_detection import (
     is_validation_command,
     normalize_validation_evidence_command,
     resolve_validation_detection_config,
-    strip_validation_shell_escape,
     unwrap_validation_launcher_tokens,
 )
 from gobby.config.validation_outcomes import runner_reported_failures
@@ -186,7 +185,7 @@ def unregistered_execution_reason(
     command: str, project_path: str | None = None, *, workdir: str | None = None
 ) -> str | None:
     """Require known validation semantics for interpreter and launcher criteria."""
-    parsed = parse_validation_shell(strip_validation_shell_escape(command))
+    parsed = parse_validation_shell(command)
     initial_directory = workdir or project_path
     directory = Path(initial_directory) if initial_directory is not None else None
     for segment in parsed.segments:
@@ -309,12 +308,21 @@ def _tracked_script(script: str, project_path: str | None, directory: Path | Non
     if not project_path or directory is None or script == "-":
         return False
     try:
-        checkout = Path(os.path.abspath(project_path))
+        checkout = Path(project_path)
+        if not checkout.is_absolute():
+            checkout = Path.cwd() / checkout
         root = checkout.resolve(strict=True)
-        path = Path(os.path.abspath(directory / script))
+        path = directory / script
+        if not path.is_absolute():
+            path = Path.cwd() / path
         # Resolve the checkout alias only; symlinks inside it remain untrusted.
         if path.is_relative_to(checkout):
             path = root / path.relative_to(checkout)
+        cursor = root
+        for component in path.relative_to(root).parts:
+            cursor /= component
+            if cursor.is_symlink() or not cursor.resolve(strict=True).is_relative_to(root):
+                return False
         resolved = path.resolve(strict=True)
         relative = resolved.relative_to(root)
         if not resolved.is_file() or resolved != Path(os.path.abspath(path)):
@@ -398,6 +406,8 @@ def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
     if resolved is None:
         return "ambiguous launcher"
     executable, arguments = resolved
+    if executable.startswith("!"):
+        return "shell negation"
     if executable == "nohup":
         return "nohup wrapper"
     if executable in _SHELL_COMMAND_WRAPPERS:

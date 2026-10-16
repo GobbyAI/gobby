@@ -240,7 +240,7 @@ def _iter_validation_matches(
         return
 
     wrapper_rules = _iter_wrapper_rules(detection_config)
-    parsed = parse_shell_command(strip_validation_shell_escape(command))
+    parsed = parse_shell_command(command)
     for segment_index, segment in enumerate(parsed.segments):
         normalized_segments = _normalize_segments(list(segment), wrapper_rules)
         for nested_index, normalized in enumerate(normalized_segments):
@@ -581,16 +581,6 @@ def _unwrap_env_tokens(tokens: list[str]) -> list[str] | None:
     return tokens[cursor:]
 
 
-def strip_validation_shell_escape(command: str) -> str:
-    """Remove one provider CLI shell-escape prefix, never an inner shell operator."""
-    stripped = command.lstrip()
-    return (
-        stripped[1:].lstrip()
-        if stripped.startswith("!") and not stripped.startswith("!!")
-        else command
-    )
-
-
 def unwrap_validation_launcher_tokens(tokens: list[str]) -> list[str] | None:
     """Unwrap only the supported command-executing grammar of these launchers."""
     if not tokens:
@@ -601,17 +591,20 @@ def unwrap_validation_launcher_tokens(tokens: list[str]) -> list[str] | None:
     flags = {
         "setsid": {"-w", "--wait", "-c", "--ctty"},
         "ionice": {"-t", "--ignore"},
-        "unbuffer": {"-p"},
+        "unbuffer": set(),
         "chronic": {"-v"},
         "arch": {"-arm64", "-arm64e", "-x86_64", "-x86_64h", "-i386"},
     }[executable]
     index = 1
+    waits_for_child = executable != "setsid"
     while index < len(tokens) and tokens[index].startswith("-"):
         token = tokens[index]
         if token == "--":
             index += 1
             break
         if token in flags:
+            if token in {"-w", "--wait"}:
+                waits_for_child = True
             index += 1
             continue
         option, equals, value = token.partition("=")
@@ -635,12 +628,11 @@ def unwrap_validation_launcher_tokens(tokens: list[str]) -> list[str] | None:
         if value not in allowed:
             return None
         index += 1
-    return tokens[index:] or None
+    return (tokens[index:] or None) if waits_for_child else None
 
 
 def normalize_validation_evidence_command(command: str) -> str:
     """Remove exit-preserving prefixes, unwrapping nice and env in any order and nesting."""
-    command = strip_validation_shell_escape(command)
     cursor = _evidence_skip_whitespace(command, 0)
     while True:
         next_cursor = _evidence_consume_cd_prefix(command, cursor)
