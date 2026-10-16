@@ -1,21 +1,26 @@
-"""Perl switch parsing: which file operands a ``perl -i`` command edits in place."""
+"""Perl switch parsing: which file operands an inline ``perl -i`` loop edits in place."""
 
 from string import hexdigits, octdigits
 
 # The value is the rest of the switch cluster, or the next word when the cluster ends.
 _SEPARABLE_VALUE_SWITCHES = frozenset("eEI")
 # The value is the rest of the switch cluster, possibly empty; -i's value is the backup suffix.
-_ATTACHED_VALUE_SWITCHES = frozenset("CdDFimMx")
+_ATTACHED_VALUE_SWITCHES = frozenset("CdDFimMVx")
+_INLINE_PROGRAM_SWITCHES = frozenset("eE")
+# -p and -n loop over the operands; -a and -F imply -n.
+_LOOP_SWITCHES = frozenset("pnaF")
+# Compile-only and terminal modes run no loop; -x changes directory before the program runs.
+_OPAQUE_SWITCHES = frozenset("chvVx")
 
 
 def perl_inplace_operands(words: list[str]) -> list[str] | None:
-    """Return the operands ``perl`` edits in place, or None when it has no ``-i`` switch.
+    """Return the operands an inline ``perl -i`` loop edits, or None when perl stays opaque.
 
-    Switches end at ``--`` or the first non-switch word. Without ``-e``/``-E`` that
-    word is the script and the operands follow it, so a ``-i`` after the script is
-    the script's argument.
+    Only ``-i`` with an implicit ``-p``/``-n`` loop over an inline ``-e``/``-E`` program
+    names its writes. A script file, a bare ``-i``, compile-only and terminal modes and
+    ``-x`` give no writer evidence. Switches end at ``--`` or the first non-switch word.
     """
-    inplace = program = False
+    seen: set[str] = set()
     index = 1
     while index < len(words):
         word = words[index]
@@ -29,23 +34,26 @@ def perl_inplace_operands(words: list[str]) -> list[str] | None:
         while pos < len(cluster):
             switch = cluster[pos]
             pos += 1
+            seen.add(switch)
             if switch in _SEPARABLE_VALUE_SWITCHES:
-                program |= switch != "I"
                 if pos == len(cluster):
                     index += 1
                 break
             if switch in _ATTACHED_VALUE_SWITCHES:
-                inplace |= switch == "i"
                 break
             if switch == "0" and cluster[pos : pos + 1] == "x":
                 pos = _skip(cluster, pos + 1, hexdigits)
             elif switch in "0l":
                 pos = _skip(cluster, pos, octdigits)
         index += 1
-    if not inplace:
-        return None
-    operands = words[index:]
-    return operands if program else operands[1:]
+    if (
+        "i" in seen
+        and seen & _INLINE_PROGRAM_SWITCHES
+        and seen & _LOOP_SWITCHES
+        and not seen & _OPAQUE_SWITCHES
+    ):
+        return words[index:]
+    return None
 
 
 def _skip(cluster: str, pos: int, digits: str) -> int:

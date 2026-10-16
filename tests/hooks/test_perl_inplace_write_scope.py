@@ -1,4 +1,4 @@
-"""Perl in-place edits write their file operands; perl without -i stays a non-write."""
+"""An inline perl -i loop writes its file operands; every other perl run stays opaque."""
 
 from pathlib import Path
 from typing import Any
@@ -31,7 +31,8 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
         ("perl -i -pe 's/a/b/' a.py b.py", ["a.py", "b.py"]),
         ("perl -i -p -e 's/a/b/' -- a.py", ["a.py"]),
         ("perl -I lib -Mstrict -pi -e 's/a/b/' a.py", ["a.py"]),
-        ("perl -i -p fix.pl a.py b.py", ["a.py", "b.py"]),
+        ("perl -i -ne 'print unless /x/' a.py", ["a.py"]),
+        ("perl -i -F: -lae 'print $F[0]' a.py", ["a.py"]),
     ],
 )
 def test_perl_in_place_edit_writes_its_file_operands(
@@ -51,9 +52,18 @@ def test_perl_in_place_edit_writes_its_file_operands(
         "perl -pe 's/a/b/' src/x.py",
         "perl -e 'print \"-i\"' src/x.py",
         "perl fix.pl -i src/x.py",
+        "perl -V:installbin",
+        "perl -V:i",
+        "perl -v",
+        "perl -h",
+        "perl -i -e 's/a/b/' src/x.py",
+        "perl -i fix.pl src/x.py",
+        "perl -pi fix.pl src/x.py",
+        "perl -cpi -e 's/a/b/' src/x.py",
+        "perl -i -p -xsub -e 's/a/b/' src/x.py",
     ],
 )
-def test_perl_without_in_place_switch_is_not_a_write(tmp_path: Path, command: str) -> None:
+def test_perl_outside_an_inline_in_place_loop_is_not_a_write(tmp_path: Path, command: str) -> None:
     data = _metadata(command, tmp_path)
     assert data["canonical_tool_kind"] != "write"
     assert not data.get("canonical_write_file_paths")
