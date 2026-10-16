@@ -26,8 +26,8 @@ The plan delivers three things:
    <command>`. It behaves like coreutils `timeout`: output passes through byte for
    byte, the launcher exits with the child's exit code, and it exits 124 when the time
    limit ends the run. The running gdaemon spawns the child itself, in its own process
-   group, inside the caller's own SRT sandbox policy, admitted against the test-hub
-   slot limit, and records the outcome itself.
+   group, inside the caller's own SRT sandbox policy, admitted against its slot pool
+   (Decision Record item 5), and records the outcome itself.
 2. A run-record store. gdaemon writes one row per bounded run, including the git tree
    the run executed against, captured by the daemon at run start and run end.
 3. Gate 10 reuse. A test module's earlier passing record keeps credit while its reuse
@@ -192,7 +192,7 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   and never signal anything outside the processes they create.
 - **Rollout.** SRT seats spawned before 2.1 deploys have no persisted
   `wrap_prefix`, so 2.2 refuses them with 125 until they are respawned or resumed.
-- **Single admission point.** Slot admission is one in-memory counter inside the
+- **Single admission point.** Slot admission is two in-memory semaphores inside the
   single gdaemon instance (it holds the daemon lease), checked and taken under one
   lock immediately before spawn.
 
@@ -382,12 +382,23 @@ registered project checkout or one of its git worktrees for the token's
 must lie under `repo_root`, and `repo_root` must equal a registered checkout or
 worktree root exactly, so a planted nested `.git` gitfile cannot become the root.
 
-Admission: classify the core executable after stripping `env`, `rtk`, `uv run`,
-`npx` and `nice` prefixes (Decision Record item 5). There are two
-`tokio::sync::Semaphore` pools:
-- **Hub pool, 3 permits:** pytest (`pytest`, `uv run pytest`, `python -m pytest`)
-  and Playwright e2e (`playwright test`).
+Admission: classify the core executable (Decision Record item 5). A run classified
+too narrowly loses its cap, so the classifier covers every launcher form:
+- Match each token by basename, so `.venv/bin/pytest` is `pytest`.
+- Strip, in any order and repetition: leading `NAME=value` assignments; `env`;
+  `nice` with `-n N`; `timeout` or `gtimeout` with their duration and options;
+  `rtk` with an optional `proxy` or `bypass` and an optional `--`; `uv run` or
+  `uvx` with uv's run options, mirroring `_uv_run_arguments` in
+  `src/gobby/tasks/transcript_outcomes.py`; and `npx` with its options.
+- A core of `python`, `python3` or `python3.N` followed by `-m pytest` is pytest.
+- The cargo subcommand is the first argument that starts with neither `-` nor `+`.
+
+There are two `tokio::sync::Semaphore` pools:
+- **Hub pool, 3 permits:** a pytest core and Playwright e2e (`playwright test`).
 - **Heavy pool, 1 permit:** `cargo` with any subcommand other than `fmt`.
+
+The `reusable` pytest-form check below stays strict, because a refusal there is
+safe.
 
 Every other command runs immediately. The bound clock starts at request arrival, so queue wait
 counts against it; a run whose bound ends while queued is recorded as `timed_out`
@@ -465,7 +476,7 @@ Focused checks: `cargo nextest run -p gobby-daemon --test bounded_run`,
 - 2.2.3 - A token minted by Python's `issue_agent_api_token` verifies in gdaemon. test: `crates/gdaemon/tests/bounded_run.rs::verifies_python_minted_capability`.
 - 2.2.4 - An SRT-enforced run's child argv starts with the persisted wrap prefix, and a sandbox-disabled run's argv is unwrapped. test: `crates/gdaemon/tests/bounded_run.rs::wraps_child_in_caller_srt_policy`.
 - 2.2.5 - A cwd outside the token project's checkouts and worktrees is refused, and so is a discovered `repo_root` that is not exactly a registered checkout or worktree root. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
-- 2.2.6 - A fourth concurrent hub run waits until a hub slot frees, whether it is pytest in `uv run pytest`, `python -m pytest` or `rtk pytest` form or `npx playwright test`. A second concurrent `cargo nextest` or `cargo clippy` waits for the single heavy slot without consuming a hub slot. `cargo fmt`, `mypy`, `ruff` and `git status` run without a slot. A run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_hub_and_heavy_pools_and_bounds_queue_wait`.
+- 2.2.6 - A fourth concurrent hub run waits until a hub slot frees, whether it is pytest in `uv run pytest`, `python -m pytest` or `rtk pytest` form or `npx playwright test`. `rtk proxy uv run pytest`, `.venv/bin/pytest` and `uv run --frozen pytest` each take a hub slot. A second concurrent `cargo nextest` or `cargo clippy` waits for the single heavy slot without consuming a hub slot, and `cargo +nightly clippy` takes the heavy slot. `cargo fmt`, `cargo +nightly fmt`, `mypy`, `ruff` and `git status` run without a slot. A run whose bound ends in the queue records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_hub_and_heavy_pools_and_bounds_queue_wait`.
 - 2.2.7 - At the bound a TERM-ignoring group is TERMed, then KILLed after the grace window and reaped; nothing outside the group is signalled; the outcome is `timed_out`. test: `crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group`.
 - 2.2.8 - The snapshot captures uncommitted and untracked-unignored changes, leaves the real index and HEAD unchanged, runs its git argv behind the run's wrap prefix with an absolute daemon-resolved git, explicit `--git-dir` and `--work-tree`, and `core.fsmonitor=false`. A request env carrying `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG_*`, a `PATH`-shadowed `git`, and a repository `core.worktree` pointing elsewhere change neither tree id; the last refuses the run. A mid-run edit makes `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
 - 2.2.9 - Records carry identity from the verified token, the argv, outcome and exit code (128+N for a signal death), `executable`, `python_version` and `gdaemon_identity`. Each reusability rule above, including the environment denylist, interpreter resolution and targets escaping `repo_root`, refuses with its reason. Insert prunes rows older than 14 days. test: `crates/gdaemon/tests/bounded_run.rs::records_outcome_identity_and_reusability`.
@@ -954,3 +965,8 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   to ratify at approval. Playwright web e2e joins pytest in the 3-slot hub pool.
   A separate 1-slot heavy pool holds every cargo subcommand except `fmt`, matching
   the 20:50 CDT fallback. The changes touch 2.2 admission, 2.2.6, 4.1 and 4.1.2.
+- 2026-10-15: The adversary found that slot admission classified launcher forms
+  too narrowly, so `rtk proxy`, path-qualified, uv-option, `python3 -m` and
+  `+toolchain` forms would run unslotted. 2.2 admission now states the full
+  prefix-stripping and basename rules, and 2.2.6 covers those forms. Intro item 1
+  and the single-admission-point line now name both pools.
