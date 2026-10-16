@@ -68,10 +68,12 @@ def _body_edit(order: int, old: str, new: str) -> TranscriptEdit:
     )
 
 
-def _run(order: int, *, red: bool, command: str = COMMAND) -> TranscriptValidationRun:
+def _run(
+    order: int, *, red: bool, command: str = COMMAND, session_id: str = "owner"
+) -> TranscriptValidationRun:
     at = START + timedelta(seconds=order * 10)
     return TranscriptValidationRun(
-        session_id="owner",
+        session_id=session_id,
         source="claude",
         command=command,
         categories=("test",),
@@ -88,20 +90,30 @@ def _run(order: int, *, red: bool, command: str = COMMAND) -> TranscriptValidati
 
 def _stub_revert_cycle(
     *,
+    stub_body: str = STUB_BODY,
     revert_body: str = WORKING_BODY,
+    revert_session: str = "owner",
+    revert_source: str | None = None,
     green_command: str = COMMAND,
+    green_session: str = "owner",
     extra_edit: TranscriptEdit | None = None,
 ) -> TranscriptEvidence:
     """Production, test, stub at 2, RED at 4, revert at 6, GREEN at 8; odd orders interleave."""
+    revert = replace(_body_edit(6, stub_body, revert_body), session_id=revert_session)
+    if revert_source is not None:
+        revert = replace(revert, source_after=revert_source)
     return TranscriptEvidence(
         edits=(
             replace(_write(HANDLERS, 0, WORKING), source_created=True),
             _write(TEST.path, 1, TEST_SOURCE),
-            _body_edit(2, WORKING_BODY, STUB_BODY),
-            _body_edit(6, STUB_BODY, revert_body),
+            _body_edit(2, WORKING_BODY, stub_body),
+            revert,
             *((extra_edit,) if extra_edit is not None else ()),
         ),
-        validation_runs=(_run(4, red=True), _run(8, red=False, command=green_command)),
+        validation_runs=(
+            _run(4, red=True),
+            _run(8, red=False, command=green_command, session_id=green_session),
+        ),
     )
 
 
@@ -135,6 +147,27 @@ def test_stub_revert_credits_a_red_the_test_reaches_only_through_http() -> None:
         pytest.param(
             _stub_revert_cycle(extra_edit=_write("src/feature/other.py", 7, WORKING)),
             id="production-edit-between-revert-and-green",
+        ),
+        pytest.param(
+            _stub_revert_cycle(stub_body="    return 500  # raise NotImplementedError\n"),
+            id="stub-marker-only-in-a-comment",
+        ),
+        pytest.param(
+            _stub_revert_cycle(stub_body='    return "raise NotImplementedError"\n'),
+            id="stub-marker-only-in-a-string",
+        ),
+        pytest.param(
+            _stub_revert_cycle(revert_session="peer"),
+            id="revert-from-a-foreign-session",
+        ),
+        pytest.param(
+            _stub_revert_cycle(green_session="peer"),
+            id="green-from-a-foreign-session",
+        ),
+        pytest.param(
+            # A replace_all revert can rewrite matching text elsewhere in the file.
+            _stub_revert_cycle(revert_source=WORKING + WORKING_BODY),
+            id="revert-leaves-a-different-file",
         ),
     ],
 )
