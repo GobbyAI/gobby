@@ -4,9 +4,14 @@ An ``assert*``-named call proves nothing by its name. It counts only when the
 call itself binds to one committed helper definition, in the caller's lexical
 scope or a module it imports, whose own body asserts directly or through
 another such call. Anything the resolver cannot bind exactly fails closed,
-including a helper something decorates or rebinds by name anywhere in the
-module. An attribute call with no committed definition of its name counts only
-as a Mock assertion method or a ``unittest.TestCase`` instance assertion.
+including a helper that anything other than an unshadowed ``staticmethod`` or
+``classmethod`` decorates, and one the module rebinds anywhere: as an attribute,
+through ``global``/``nonlocal``, or by a string literal a call passes or a
+subscript indexes, where a dotted path counts by its last part. An attribute
+call with no committed definition of its name, in its module or one it imports
+from, counts only as a Mock assertion method or a ``unittest.TestCase`` instance
+assertion. Computed names, ``exec`` and metaclass forms beyond literal keys are
+outside what the resolver can see.
 """
 
 from __future__ import annotations
@@ -52,7 +57,7 @@ class _Module:
     path: str
     source: str
     tree: ast.Module
-    #: Names the module writes as attributes, by literal setattr, or in global/nonlocal.
+    #: Names the module writes as attributes, in global/nonlocal, or by string literal.
     written: frozenset[str]
 
 
@@ -151,7 +156,9 @@ class _HelperResolver:
         name = called_name(target)
         if name in self._root.written or name in caller.module.written:
             return False
-        if isinstance(target, ast.Attribute) and not _defines(caller.module.tree, name):
+        if isinstance(target, ast.Attribute) and not await self._defined_nearby(
+            caller.module, name
+        ):
             return _library_assertion(caller, target)
         helper = await self._resolve(caller, target)
         if helper is None or _decorated(helper):
@@ -237,6 +244,17 @@ class _HelperResolver:
         # A module and a package of one name leave the binding ambiguous.
         return loaded[0] if len(loaded) == 1 else None
 
+    async def _defined_nearby(self, module: _Module, name: str) -> bool:
+        """Whether ``module``, or a module it imports from, defines ``name``."""
+        if _defines(module.tree, name):
+            return True
+        for node in ast.walk(module.tree):
+            if isinstance(node, ast.ImportFrom):
+                imported = await self._imported_module(module.path, node)
+                if imported is not None and _defines(imported.tree, name):
+                    return True
+        return False
+
     async def _load(self, path: str) -> _Module | None:
         try:
             source = await self._read(path)
@@ -260,11 +278,22 @@ def _method(module: _Module, owner: ast.ClassDef, name: str) -> _Function | None
 
 
 def _decorated(function: _Function) -> bool:
-    """Whether a decorator other than staticmethod or classmethod wraps it or its class."""
+    """Whether anything but an unshadowed staticmethod or classmethod wraps it or its class."""
     owner = function.owner.decorator_list if function.owner else []
     return any(
-        not (isinstance(decorator, ast.Name) and decorator.id in {"staticmethod", "classmethod"})
+        not (
+            isinstance(decorator, ast.Name)
+            and decorator.id in {"staticmethod", "classmethod"}
+            and not _shadowed(function.module, decorator.id)
+        )
         for decorator in [*function.node.decorator_list, *owner]
+    )
+
+
+def _shadowed(module: _Module, name: str) -> bool:
+    """Whether anything in ``module``, at any scope, binds or writes ``name``."""
+    return name in module.written or any(
+        bound in {name, "*"} for node in ast.walk(module.tree) for bound in _bound_names(node)
     )
 
 
@@ -276,17 +305,25 @@ def _written_names(tree: ast.Module) -> frozenset[str]:
             written.add(node.attr)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             written.update(node.names)
-        elif isinstance(node, ast.Call) and called_name(node.func) in {
-            "setattr",
-            "delattr",
-            "__setattr__",
-        }:
-            written.update(
-                arg.value
-                for arg in node.args
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-            )
+        for key in _string_keys(node):
+            # A dotted target such as "pkg.module.name" rebinds its last part.
+            written.update({key, key.rsplit(".", 1)[-1]})
     return frozenset(written)
+
+
+def _string_keys(node: ast.AST) -> list[str]:
+    """String literals a call passes or a subscript indexes, any of which can name a binding."""
+    if isinstance(node, ast.Call):
+        values = [*node.args, *(keyword.value for keyword in node.keywords)]
+    elif isinstance(node, ast.Subscript):
+        values = [node.slice]
+    else:
+        return []
+    return [
+        value.value
+        for value in values
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+    ]
 
 
 def _defines(tree: ast.Module, name: str) -> bool:

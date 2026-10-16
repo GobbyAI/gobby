@@ -1478,6 +1478,169 @@ def test_assert_helper_module_rebinding_or_decoration_is_flagged(
     assert result.findings == (NO_ASSERTION,)
 
 
+_NOOP_STATICMETHOD_CLASS = """
+class TestFeature:
+    @staticmethod
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+
+    def test_feature(self):
+        self._assert_ok("bad")
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "extra"),
+    [
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature(monkeypatch):
+                monkeypatch.setattr("tests.test_feature._assert_ok", lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            from unittest.mock import patch
+
+            class TestFeature:
+                def _assert_ok(self, receipt):
+                    assert receipt == "ok"
+
+                @patch.object(TestFeature, "_assert_ok")
+                def test_feature(self, _mock):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            from unittest.mock import patch
+
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                with patch("tests.test_feature._assert_ok"):
+                    _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def setup_module():
+                globals()["_assert_ok"] = lambda receipt: None
+
+            def test_feature():
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            class Meta(type):
+                def __new__(mcs, name, bases, namespace):
+                    namespace["_assert_ok"] = lambda self, receipt: None
+                    return super().__new__(mcs, name, bases, namespace)
+
+            class TestFeature(metaclass=Meta):
+                def _assert_ok(self, receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            "staticmethod = lambda function: (lambda *args, **kwargs: None)\n"
+            + _NOOP_STATICMETHOD_CLASS,
+            {},
+        ),
+        (
+            "from tests.util import noop as staticmethod\n" + _NOOP_STATICMETHOD_CLASS,
+            {"tests/util.py": "def noop(function):\n    return lambda *args, **kwargs: None\n"},
+        ),
+        (
+            """
+            def _noop(function):
+                return lambda *args, **kwargs: None
+
+            class TestFeature:
+                staticmethod = _noop
+
+                @staticmethod
+                def _assert_ok(receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            import unittest
+            from tests.helpers import Checks
+
+            class TestFeature(Checks, unittest.TestCase):
+                def test_feature(self):
+                    self.assertValid("bad")
+            """,
+            {
+                "tests/helpers.py": """
+                class Checks:
+                    def assertValid(self, receipt):
+                        pass
+                """
+            },
+        ),
+        (
+            """
+            from tests.fakes import FakeClient
+
+            def test_feature():
+                client = FakeClient()
+                client.assert_called_once_with(1)
+            """,
+            {
+                "tests/fakes.py": """
+                class FakeClient:
+                    def assert_called_once_with(self, *args):
+                        pass
+                """
+            },
+        ),
+    ],
+    ids=[
+        "monkeypatch_dotted_path",
+        "patch_object",
+        "patch_dotted_path",
+        "globals_subscript",
+        "metaclass_namespace",
+        "module_staticmethod_rebinding",
+        "imported_staticmethod_alias",
+        "class_body_staticmethod",
+        "imported_base_assertion",
+        "imported_mock_lookalike",
+    ],
+)
+def test_assert_helper_string_named_or_shadowed_binding_is_flagged(
+    tmp_path: Path, source: str, extra: dict[str, str]
+) -> None:
+    result = _committed_python_result(tmp_path, source, extra)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -1503,8 +1666,15 @@ def test_assert_helper_module_rebinding_or_decoration_is_flagged(
             async def test_feature(self):
                 self.assertIn("ok", await make_receipts())
         """,
+        """
+        from unittest import TestCase
+
+        class TestFeature(TestCase):
+            def test_feature(self):
+                self.assertTrue(make_receipt())
+        """,
     ],
-    ids=["mock_assertion", "testcase", "async_testcase_alias"],
+    ids=["mock_assertion", "testcase", "async_testcase_alias", "testcase_from_import"],
 )
 def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: str) -> None:
     result = _committed_python_result(tmp_path, source)
@@ -1599,8 +1769,20 @@ def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: st
             """,
             {},
         ),
+        (
+            """
+            class TestFeature:
+                @staticmethod
+                def _assert_ok(receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok(make_receipt())
+            """,
+            {},
+        ),
     ],
-    ids=["same_file", "imported_module", "method_to_raises"],
+    ids=["same_file", "imported_module", "method_to_raises", "staticmethod_helper"],
 )
 def test_delegating_assert_helper_counts_as_assertion(
     tmp_path: Path, source: str, extra: dict[str, str]
