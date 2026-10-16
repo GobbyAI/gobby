@@ -14,6 +14,7 @@ import click
 import httpx
 
 from gobby.cli.runtime import require_cli_database
+from gobby.cli.sessions_dirty_paths import approve_dirty_paths
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.cli.utils_config import get_daemon_url
 from gobby.sessions.machine_scope import (
@@ -203,6 +204,9 @@ def _append_summary_notes(markdown: str, notes: str | None) -> str:
 def sessions() -> None:
     """Manage Gobby sessions."""
     pass
+
+
+sessions.add_command(approve_dirty_paths)
 
 
 @sessions.command("terminate-terminal")
