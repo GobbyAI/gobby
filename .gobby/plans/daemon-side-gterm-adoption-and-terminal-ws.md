@@ -1177,6 +1177,26 @@ startup; a runtime flip is rejected so existing sessions cannot be half-migrated
 
 Consumers unchanged:
 - `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature.
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
@@ -1268,6 +1288,28 @@ Research context:
   it uses. They close together because the runtime reaches the host only through `open_control`,
   and the split that makes room for the opener moves the adoption code it reuses.
 
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
 **Acceptance:**
 
 - 2.5.1 - A Native text write with submit sends the text, waits the Enter delay, and sends Enter.
@@ -1320,6 +1362,28 @@ Research context:
   through the same three files. `lib.rs` declares `pub mod tmux_write`. `crates/gdaemon/Cargo.toml`,
   `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch bump.
 
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
 **Acceptance:**
 
 - 2.11.1 - tmux writes run only on the row's recorded socket and refuse before sending when
@@ -1350,7 +1414,7 @@ Targets:
 
 Research context:
 
-- Placement (restraint rung 2): `FrontDoor::handle` (front_door/mod.rs:95-193) already dispatches
+- Placement (restraint rung 2): `FrontDoor::handle` (front_door/mod.rs:99-197) already dispatches
   native internal routes before proxying, inside `if let Some(runtime) = &state.runtime`:
   `lease::admin_api::is_route` matches exact paths, and `handle(runtime, request)` serves them.
   The write route follows that pattern at `POST /api/internal/terminals/write`, and 2.9 adds
@@ -1358,13 +1422,39 @@ Research context:
   lives in the new gdaemon `front_door/terminal_api.rs`, and `write_api.rs` gains the typed serde
   calls, replies, and dispatch beside 2.4's TokenSlot.
 - Gate, checked in order:
-  - The peer must be loopback (`peer.to_canonical().is_loopback()`, the predicate at
-    serve.rs:352-374), else 403. Loopback peers get plaintext on the daemon port.
+  - The peer must be loopback (`peer.to_canonical().is_loopback()`, the predicate
+    `serve.rs::plaintext_allowed` at serve.rs:363-365), else 403. Loopback peers get plaintext on
+    the daemon port.
   - `X-Gobby-Write-Token` must pass `TokenSlot::authorize` for the current backend child, else
     401. The token is never logged.
   - With no backend child or no Native route services, the route answers 503.
-  - The body is capped at 256 KiB (2.4's queue byte bound), else 413.
+  - The body is capped at `MAX_CONTROL_LINE` (2 MiB, control.rs:14) plus a 64 KiB envelope
+    allowance, else 413. 2.4's 256 KiB is the held-action queue's byte budget and stays separate
+    queue accounting (2.4.14).
   - A serve without a supervised backend has no `RuntimeState`, so it exposes no route.
+- Payload limits — Adversary F3: in process, the runtimes accept a paste up to
+  `MAX_INPUT_PAYLOAD_BYTES` (1 MiB UTF-8) and an input up to `MAX_RAW_INPUT_PAYLOAD_BYTES`
+  (64 KiB) (runtime.py:44-45, enforced at native_runtime.py:583-590 and tmux_runtime.py:266 and
+  295), and a Native text or key step only needs its host control line under `MAX_CONTROL_LINE`
+  (`NativeTerminalRuntime.preflight_line`, native_runtime.py:281-286). The route keeps those
+  limits:
+  - Each step payload travels base64 in the body, as it does on the host control line, so a
+    step's body bytes never exceed what its host line carries. JSON string escaping would inflate
+    control characters up to sixfold. The serde request type in `write_api.rs` decodes each payload
+    into the UTF-8 `Step.payload` (write.rs:117) and refuses an undecodable one with stage none.
+  - `write_api.rs` refuses a paste over 1 MiB, an input over 64 KiB, or a text or key payload
+    whose base64 alone reaches `MAX_CONTROL_LINE` with stage none before the coordinator runs. The
+    exact line check stays where it is: `ControlClient` refuses a line over `MAX_CONTROL_LINE` with
+    `ControlError::LineTooLong` before writing a byte (control.rs:635-640).
+  - The cap admits the largest single step plus the JSON envelope and its companion steps, and
+    every production sequence fits. `run_sequence` callers send at most one text step beside keys
+    and delays: spawn_executor_support.py:488, interactive_capacity.py:191, recovery.py:269 through
+    `_deliver`'s callers at lines 296, 377, and 390, recovery.py:570, and orchestration.py:251
+    through `_deliver_wake_action`. Plan approval (plan_approval.py:404) sends single-character
+    input steps, two of them for `C-r` followed by a literal (plan_keystrokes.py:454). A sequence
+    over the cap is refused whole; no chunking or reassembly mechanism exists.
+  - 2.7's client applies the same limits before send, and 2.9's runtime route shares this gate and
+    cap.
 - Construction: in `Native`, `TerminalFamily` builds `leases::Registry::new(256)` (the port of
   `LIFECYCLE_PUBLICATION_QUEUE_MAXSIZE`) and
   `Coordinator::new(pool, Arc<leases::Registry>, Runtimes { native: NativeWrite, tmux: TmuxWrite })`
@@ -1392,16 +1482,38 @@ Research context:
   - An HTTP disconnect during an admitted write records uncertainty only.
 - `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch
   bump.
-- **Granularity:** four acceptance items over one route: its gate, its typed replies, the
-  held-action binding, and lost-reply recovery. They close together because the binding and the
-  recovery rule are the route's admission rules, and the gate is what makes the route safe to
-  expose.
+- **Granularity:** five acceptance items over one route: its gate, its typed replies, the
+  held-action binding, lost-reply recovery, and its payload limits. They close together because
+  the binding, the recovery rule, and the payload limits are the route's admission rules, and the
+  gate is what makes the route safe to expose.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
 - 2.6.1 - A non-loopback peer gets 403; a missing, wrong, or retired token gets 401; without a
-  backend child or Native route services the route answers 503; a body over 256 KiB gets 413; and
-  the token never appears in a log. test:
+  backend child or Native route services the route answers 503; a body over `MAX_CONTROL_LINE`
+  plus 64 KiB gets 413; and the token never appears in a log. test:
   `crates/gdaemon/tests/front_door.rs::terminal_write_route_requires_loopback_and_the_current_token`.
 - 2.6.2 - Each route call returns 1.5's typed per-step outcome, and a refusal carries its stage.
   test: `crates/gterminals/tests/write_route.rs::route_calls_return_typed_per_step_outcomes`.
@@ -1411,6 +1523,11 @@ Research context:
 - 2.6.4 - A token rotation invalidates every old hold, and a lost acquire, step, or release reply
   or an HTTP disconnect never replays a non-idempotent uncertain write. test:
   `crates/gterminals/tests/write_route.rs::token_rotation_and_lost_replies_never_replay_writes`.
+- 2.6.5 - The route admits a 1 MiB paste, a 64 KiB input, and plan approval's two-input `C-r`
+  sequence, each carried base64; it refuses a paste or input one byte over its limit, and an
+  undecodable payload, with stage none before the coordinator runs; and held-queue accounting
+  keeps 2.4's 256 KiB bound. test:
+  `crates/gterminals/tests/write_route.rs::route_admits_each_operation_maximum_and_refuses_over_limit_steps`.
 
 ### 2.7 Python write client, Native composer ledger, and Native write wiring [category: code] (depends: 2.6)
 
@@ -1453,6 +1570,12 @@ Research context:
   `httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(None, connect=2.5))`. A request
   carrying `client_fd` is refused with stage none; nothing produces one (write_coordinator.py:83).
   The attention gate runs locally before a write is forwarded.
+- Payload limits — Adversary F3: the client encodes each step payload base64 as 2.6 reads it.
+  Before send it raises `InputPayloadTooLargeError` for a paste over `MAX_INPUT_PAYLOAD_BYTES` or
+  an input over `MAX_RAW_INPUT_PAYLOAD_BYTES` (runtime.py:44-45), the exception the in-process
+  runtimes raise, so `workspace_pane_io.py:224`, which catches it, keeps its behavior. It raises
+  `TerminalWriteError(stage="none")` when the serialized body exceeds 2.6's cap of
+  `MAX_CONTROL_LINE` (host_client.py:21) plus 64 KiB.
 - Sync methods: the only production sync caller is `sync_bridge.py:81`, on the loop thread. Sync
   methods enqueue on a per-terminal ordered send chain through `loop.call_soon_threadsafe` and
   return immediately; the async variants await the same chain.
@@ -1509,9 +1632,10 @@ Research context:
   stops both and `persist_ledger` flushes in its finally.
 - Comment fix: `terminal_wiring.py:67-68` says a second hello takes gterm control ownership. The
   host accepts several control connections (2.5), so this section corrects the comment.
-- **Granularity:** five acceptance items over the Python side of one boundary: the write client,
-  the verified-submit move it wraps, and the Native ledger it feeds. They close together because a
-  Native write client without the ledger feed could type over an operator draft.
+- **Granularity:** six acceptance items over the Python side of one boundary: the write client
+  and its payload limits, the verified-submit move it wraps, and the Native ledger it feeds. They
+  close together because a Native write client without the ledger feed could type over an
+  operator draft, and one without the limits would send requests the route refuses.
 
 Consumers unchanged:
 - `src/gobby/runner_init/orchestration.py` — no-edit-reason: It calls `init_terminal_wiring` through the unchanged signature, and its wake batch already runs under `logical_action_lock`.
@@ -1519,6 +1643,7 @@ Consumers unchanged:
 - `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: It reads `coordinator.composer_ledger`, which the client sets.
 - `src/gobby/runner_lifecycle_shutdown.py` — no-edit-reason: It cancels `runner._composer_ledger_task`, which in `Native` runs ledger persistence and the event loop together.
 - `src/gobby/terminals/sync_bridge.py` — no-edit-reason: Its synchronous coordinator call runs on the loop thread, and the client queues it without blocking.
+- `src/gobby/terminals/workspace_pane_io.py` — no-edit-reason: It catches `InputPayloadTooLargeError`, which the client raises before send as the in-process runtimes do.
 - `tests/test_runner_lifecycle_subsystems.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
 - `tests/test_runner_lifecycle.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
 - `tests/test_runner_backlog.py` — no-edit-reason: It reaches `_start_terminal_host` through the re-bound name.
@@ -1546,6 +1671,10 @@ Consumers unchanged:
 - 2.7.5 - The Native ledger restores from `composer_ledger_path()`, persists until shutdown
   cancels its task, and follows host events from its cursor across a stream error. test:
   `tests/terminals/test_coordinator_client.py::test_native_ledger_restores_persists_and_follows_host_events`.
+- 2.7.6 - The client sends a 1 MiB paste base64 in one route call; it raises
+  `InputPayloadTooLargeError` for a paste or input one byte over its limit and
+  `TerminalWriteError(stage="none")` for a body over 2.6's cap, each before send. test:
+  `tests/terminals/test_coordinator_client.py::test_client_enforces_runtime_payload_limits_before_send`.
 
 ### 2.8 Native reconcile settler and the host exit proof [category: code] (depends: 2.6, 1.10)
 
@@ -1555,7 +1684,9 @@ Targets:
 - `crates/gterminals/src/settler.rs`
 - `crates/gterminals/src/process.rs`
 - `crates/gterminals/src/host/connect.rs`
-- `crates/gterminals/src/host/epochs.rs::*` — scope-reason: add record_absent_exit beside record_confirmed_exit
+- `crates/gterminals/src/host/epochs.rs::*` — scope-reason: add record_absent_exit beside record_confirmed_exit, and take the epoch lock in observe through reconcile::lock_host_epochs
+- `crates/gterminals/src/reconcile.rs::*` — scope-reason: add lock_host_epochs and fence each dead-epoch effect on the current epoch
+- `crates/gterminals/src/control.rs::*` — scope-reason: add ControlClient::revoke_input
 - `crates/gterminals/src/family.rs::*` — scope-reason: start the Native settler beside the supervisor
 - `crates/gterminals/src/lib.rs::*` — scope-reason: declare the settler and process modules
 - `crates/gterminals/Cargo.toml`
@@ -1564,6 +1695,7 @@ Targets:
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
 - `crates/gterminals/tests/settler.rs`
+- `crates/gterminals/tests/reconcile.rs::*` — scope-reason: seed host epoch rows for the dead-epoch fence and supersede an epoch between snapshot and apply
 
 Research context:
 
@@ -1575,6 +1707,37 @@ Research context:
   takes that set as a snapshot and applies it only after verifying the observed epoch is still the
   machine's current host epoch. If the epoch changed in between, the pass settles no dead-epoch
   rows."
+- Epoch fence — Adversary F4: the pass's snapshot check (step 3 below) runs before reconcile's
+  per-row transactions, so an epoch observed in between could still be applied as dead.
+  - `reconcile.rs` gains `pub(crate) async fn lock_host_epochs(tx, machine)`, which runs exactly
+    `SELECT pg_advisory_xact_lock(hashtextextended($1, 24210))` with `machine.to_string()` as its
+    text argument. `epochs.rs::observe` calls it in place of its inline statement
+    (epochs.rs:96-102), so both sides take one lock. The helper lives in `reconcile.rs` because
+    `mod epochs` is private under `host.rs`.
+  - In `reconcile::reconcile`, only a row whose `dead_epoch` test passes (reconcile.rs:341-343)
+    takes the lock, inside its per-row transaction after `get_for_update`, and re-reads
+    `terminal_host_epochs`. The dead-epoch effect (`Live` to `Orphaned`, or `Orphaned` to `Exited`,
+    reconcile.rs:367-373) applies only while `inventory.epoch` is still the machine's
+    `is_current` epoch and the row's `host_epoch` has `exited_at` set; otherwise the row is left
+    unchanged. No `Options` field is added.
+  - Lock order is row, then epoch. `observe` takes no row lock, so the two cannot deadlock, and a
+    row without a dead-epoch candidate never serializes against `observe`. Host I/O stays outside
+    the transaction.
+  - The six tests in `tests/reconcile.rs` that put epochs in `dead_host_epochs` (lines 204, 248,
+    295, 386, 423, and 478) also seed the observed epoch as `is_current` and each dead epoch with
+    `exited_at` set, or the fence would refuse their effects.
+- Input handoff expiry — LOW-1, carried from #23219 (Orchestrator, 2026-10-15):
+  `reconcile::expire_input_handoffs` (reconcile.rs:419) has no production caller, and
+  `InputRevoke` (reconcile.rs:409) has no production implementation (1.10).
+  - Each settler pass, after reconcile, calls `expire_input_handoffs(pool, machine, observed
+    epoch, &mut deadlines, Instant::now(), &revoker)`, and the settler carries `HandoffDeadlines`
+    across passes.
+  - The revoker implements `InputRevoke` over the settler's connection through the new
+    `ControlClient::revoke_input`, which emits the bytes of the read-only fixture
+    `crates/gterminal/tests/fixtures/wire_golden/control_revoke_input.json`.
+  - A `ControlError::Host` with code `not_found` maps to `Ok`, so the record clears. Any other
+    failure keeps the record for the next pass. The oracle is `input_grants.py` lines 145-150.
+  - 2.2's input-grant applier reuses `revoke_input`.
 - Pass: `settler.rs` runs one pass after each `HostStatus::Ready` (from
   `HostSupervisor::subscribe`) and on each health interval:
   1. Take `HostSupervisor::epoch_snapshot` (host.rs:392-396).
@@ -1643,10 +1806,34 @@ Research context:
   reports no holds here; 2.9 fills it. `lib.rs` declares `pub mod settler` and `pub mod process`,
   and `family.rs` starts the settler beside the supervisor in `Native`. `crates/gdaemon/Cargo.toml`,
   `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch bump.
-- **Granularity:** five acceptance items over one owner, the Native settler: its pass, the exit
-  proof that feeds it, its process status, and its run interruption. They close together because
-  a settler without the exit proof never settles rows from a host that died while gdaemon was
-  down, and one without run interruption leaves their runs live.
+- **Granularity:** six acceptance items over one owner, the Native settler: its pass and the
+  epoch fence it applies under, the exit proof that feeds it, its process status, its run
+  interruption, and its input handoff expiry. They close together because a settler without the
+  exit proof never settles rows from a host that died while gdaemon was down, one without run
+  interruption leaves their runs live, one without the fence can settle a live epoch's rows, and
+  one without expiry leaves preserved input grants on the host forever.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
@@ -1654,8 +1841,10 @@ Research context:
   the old epoch's absent live rows as orphaned and interrupts their runs. A row on the new epoch
   and rows on another machine stay untouched. test:
   `crates/gterminals/tests/settler.rs::host_restart_settles_only_the_dead_epoch`.
-- 2.8.2 - A stale snapshot (observed epoch superseded before apply) settles no dead-epoch rows.
-  test: `crates/gterminals/tests/settler.rs::stale_snapshot_settles_no_dead_epoch_rows`.
+- 2.8.2 - A dead-epoch effect applies only under the epoch lock while the observed epoch is still
+  current and the row's epoch has exited: an epoch superseded after the snapshot and before apply
+  settles no dead-epoch row, and `observe` takes the same lock. test:
+  `crates/gterminals/tests/reconcile.rs::superseded_epoch_between_snapshot_and_apply_settles_no_dead_epoch_rows`.
 - 2.8.3 - When adoption confirms that no host is running, the prior current epoch is recorded as
   exited before the spawn, so its live rows settle on the next pass; a live host that is not
   listening records no exit. test:
@@ -1666,6 +1855,10 @@ Research context:
 - 2.8.5 - Run interruption leaves the same `agent_runs`, sandbox count, and session rows as the
   Python cancel transition with terminal reason daemon_stop, under the same fence key. test:
   `crates/gterminals/tests/settler.rs::run_interruption_matches_the_python_cancel_transition`.
+- 2.8.6 - Each settler pass expires input handoff records with the production revoker: after the
+  rebind window a record is revoked with `control_revoke_input.json`'s bytes and cleared, a host
+  `not_found` also clears it, and any other revoke failure keeps it for the next pass. test:
+  `crates/gterminals/tests/settler.rs::settler_expires_input_handoffs_through_the_host_revoke`.
 
 ### 2.9 Rust runtime route [category: code] (depends: 2.8)
 
@@ -1688,7 +1881,8 @@ Research context:
 - Runtime seam — PD ruling (gobby#14972, 2026-10-01, Adversary F5): in `Native` Python
   constructs no `TerminalHostManager` (1.2), so spawn, web-workspace, read, and termination
   callers need a non-supervising runtime. `runtime_api.rs` serves
-  `POST /api/internal/terminals/runtime` behind 2.6's gate, for native rows only. tmux rows keep
+  `POST /api/internal/terminals/runtime` behind 2.6's gate, including its `MAX_CONTROL_LINE` plus
+  64 KiB body cap (Adversary F3), for native rows only. tmux rows keep
   Python's spawn-less `TmuxTerminalRuntime`. The oracle is `native_runtime.py::NativeTerminalRuntime`.
 - Operations:
   - `prepare_spawn` inserts the pending row and sends spawn prepare.
@@ -1713,6 +1907,28 @@ Research context:
   the settler's hold report, the family and lib wiring, the gdaemon HTTP glue, and the version
   bump; they close together because the route without the hold report would let the settler
   settle a spawn the route holds.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
@@ -1903,6 +2119,28 @@ Research context:
   that serve them. They close together because the handlers are the only consumer of the row
   builder and both rest on the page query.
 
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
 **Acceptance:**
 
 - 2.14.1 - `repository::list_page` returns the same rows, order, and `has_more` as
@@ -1988,6 +2226,28 @@ Implement one connection state owning its attachments and relay. Authorize proje
 lookup, validate each message before mutation, reserve lifecycle capacity before changing a
 holder, and finalize all connection attachments exactly once on disconnect or send failure.
 
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
 **Acceptance:**
 
 - 2.2.1 - Authenticated `terminal.list` enforces project/machine/state/page filters, stable cursor,
@@ -2055,6 +2315,28 @@ Implement strict byte and entry accounting. Frame overflow/timeout drops that so
 canonical reason; the reserved lifecycle lane remains deliverable. History is emitted before the
 live pump can enqueue output, and finalization is idempotent under simultaneous host/socket close.
 
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
+
 **Acceptance:**
 
 - 2.3.1 - Native history is emitted completely before live frames for an attachment, and tmux
@@ -2101,6 +2383,28 @@ Research context:
 - Ordering: 2.12 follows 2.2 (it edits `ws.rs`) and 2.3 (every WS frame passes the relay).
   `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and `version_pins.py` carry the gdaemon 0.0.1 patch
   bump.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
@@ -2188,6 +2492,28 @@ Research context:
 Register `/api/terminals` and terminal WS messages as one terminal family. `Proxy` keeps Python
 ownership. `Compare` proxies effects and compares only normalized non-mutating output.
 Registering the family lifts 2.4's `Native` activation gate in the same change.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: It reads `MANAGED_BIN_VERSION_PINS` by binary name, and the bump changes only the `gdaemon` value.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: It iterates `MANAGED_BIN_VERSION_PINS` as version floors, and the bump changes only the `gdaemon` value.
+- `src/gobby/install/distribution.py` — no-edit-reason: Same reason as `install_setup_gclient.py`.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: It reads or patches `MANAGED_BIN_VERSION_PINS` by binary name and hard-codes no gdaemon version.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_distribution.py` — no-edit-reason: Same reason as `test_grok_installer.py`.
+- `tests/install/test_version_pins.py` — no-edit-reason: It checks each pin against its crate's `Cargo.toml` version, and the bump changes both together.
 
 **Acceptance:**
 
