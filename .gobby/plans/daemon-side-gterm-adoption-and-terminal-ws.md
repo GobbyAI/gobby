@@ -169,6 +169,7 @@ In scope:
 - The current agent-spawn ingress cleanup and the fail-closed host-unavailable spawn policy,
   before the agent family is absorbed by #21564. The fixed policy is a required contract of that
   later `TerminalRuntime` seam.
+- The Rust terminal inventory reads and `/api/terminals` handlers (2.14).
 - After #21558, the native terminal WS handler, proxy relay, family routing, and cutover proof
   (2.2, 2.3, 2.12, and 2.13).
 
@@ -1017,8 +1018,9 @@ Research context:
 
 `kind: framing`
 
-The 2.1 codec, the 2.4 Native ownership cutover, and the 2.5-2.11 Native and tmux write,
-settlement, and runtime seams run without #21558. 2.4.17's activation gate keeps them to isolated
+The 2.1 codec, the 2.4 Native ownership cutover, the 2.5-2.11 Native and tmux write,
+settlement, and runtime seams, and 2.14's terminal inventory reads and HTTP handlers run without
+#21558. 2.4.17's activation gate keeps them to isolated
 `Native` tests until 2.13 registers the terminal family. 2.2, 2.3, 2.12, and 2.13 ride #21558's
 native gdaemon WS accept, auth, subscription, and broadcast transport: 2.2 carries the cross-plan
 "blocked by" edge to #21558, and the other three follow 2.2 through heading dependencies. M2 owns
@@ -1820,7 +1822,112 @@ Consumers unchanged:
   empty composer for its terminal. test:
   `tests/terminals/test_runtime_client.py::test_native_terminal_services_use_the_rust_clients`.
 
-### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1, 2.10, 1.10)
+### 2.14 Terminal inventory reads and HTTP handlers [category: code] (depends: 2.1, 2.10, 1.10)
+
+`kind: deliverable`
+
+Targets:
+- `crates/gterminals/src/inventory.rs`
+- `crates/gterminals/src/repository.rs::*` — scope-reason: add list_page, the stable (created_at, id) inventory page query
+- `crates/gterminals/src/leases.rs::*` — scope-reason: move the shutdown finalizers into the new shutdown child module and add Registry::lifecycle_snapshot
+- `crates/gterminals/src/leases/shutdown.rs`
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the inventory module
+- `crates/gdaemon/src/front_door/terminal_api.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gterminals/tests/inventory.rs`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: pin the terminal inventory handlers' statuses
+
+Research context:
+
+- Need (found while converting D2, 2026-10-16): in `Native`, 2.13 claims `GET /api/terminals` and
+  `GET /api/terminals/{id}` for Rust (2.13.1: "`Native` serves Rust"), and 2.2.1's
+  `terminal.list` pages the same rows. gclient reads `attach`, `command`, and `cwd` from these
+  rows (`crates/gclient/src/app/live.rs:455-481`; the request is built at
+  `crates/gclient/src/daemon/mod.rs:624`). Left to Python in `Native`, the routes would read an
+  empty fallback `TerminalLeaseRegistry` (`routes/terminals.py::_lease_registry`, 57-64) and the
+  host manager that 2.10.1 refuses. This section builds those reads and handlers; 2.13 registers
+  them, and 2.2 reuses the page query, the watermark, and the attach locator.
+- Oracle: `src/gobby/servers/routes/terminals.py`: `list_terminals` (66-100), `_serve_page`
+  (102-139), `get_terminal` (141-159), `_parse_states` (164-170), `_tmux_panes` (189-222),
+  `_attach` (225-235), `_row_json` (243-256); `src/gobby/storage/terminals.py`:
+  `TerminalManager.list_page` (550-596), `attach_locator_for_terminal` (294-323);
+  `src/gobby/terminals/foreground.py`: `_process_snapshot` (31-62), `command_name` (65-71),
+  `foreground_commands` (74-98), `shell_cwds` (101-119), `shell_pid` (122-135), `process_shell`
+  (138-147); `src/gobby/terminals/leases.py::TerminalLeaseRegistry.lifecycle_snapshot` (219-224).
+- Reuse (restraint rung 2): `ws_protocol.rs` (#23216) already has `parse_list_cursor`,
+  `list_cursor`, `inventory_item`, `Page` with its `snapshot` field and `encode_within`, and
+  `TERMINAL_LIST_DEFAULT_PAGE_SIZE`/`TERMINAL_LIST_MAX_PAGE_SIZE` (100/500). Holder info comes from
+  `leases::Registry::snapshot` (leases.rs:710). gterminals has no HTTP dependency, so the two
+  handlers live in gdaemon's `front_door/terminal_api.rs` beside 2.6's and 2.9's routes and stay
+  unregistered until 2.13.
+- `repository::list_page` ports `TerminalManager.list_page`: optional project ids, machine, states,
+  and backend filters, the `(created_at, id) >` cursor, `ORDER BY created_at, id`, and `LIMIT n+1`
+  for `has_more`.
+- `Registry::lifecycle_snapshot` returns `daemon_epoch` and `seq` read from `RegistryState.sequence`
+  under the state lock, where each event's sequence is committed with its publication permit
+  (`Registry::reserve` and `Registry::event`, leases.rs:394-426). The first page carries it and a
+  cursor page carries none, as `list_terminals` (82-86) does.
+- Split: `crates/gterminals/src/leases.rs` is 861 lines. This section moves
+  `Registry::finalize_shutdown` and `Registry::finalize_locked` (leases.rs:624-709) unchanged into
+  the new `crates/gterminals/src/leases/shutdown.rs`, declared with `mod shutdown;` as a child
+  module that keeps access to the registry's private state, before adding
+  `Registry::lifecycle_snapshot`.
+- `inventory.rs` holds the row and probe logic:
+  - `attach_locator` ports `attach_locator_for_terminal`: none outside `pending` and `live`; a
+    native row gets the native locator at the supervisor's current host epoch; a tmux row gets
+    `socket_path`, `pane_id`, and integer `server_pid`/`server_start_time` from its locator; both
+    name the host frames socket under the socket dir.
+  - Commands: one `ps -A -o pid=,tpgid=,comm=` over the whole table (one stale pid must not blank
+    the page) under the 2 s budget (`PS_TIMEOUT_SECONDS`), then each shell's foreground group
+    leader's command name, as `foreground_commands` does.
+  - Working directories: the workspace forbids `unsafe_code` (root `Cargo.toml`), so the
+    `proc_pidinfo` call psutil makes on macOS is unavailable. Linux reads `/proc/<pid>/cwd` with
+    `std::fs::read_link`; macOS runs one `lsof -a -d cwd -Fn -p <pid,...>` for the page's shell
+    pids under the same 2 s budget; other platforms report none. A missing or unreadable shell is
+    absent, as in `shell_cwds`.
+  - tmux rows: one `tmux -S <socket> list-panes -a -F <format>` per distinct socket under the 2 s
+    budget (`TMUX_PANE_PROBE_SECONDS`), keyed as `tmux_locator_key` keys them, supplies command
+    and cwd. A failed or slow server contributes nothing and never fails the page.
+  - Each row is `inventory_item` with the lease holder, plus `id`, `created_at`, `attach`,
+    `command` (falling back to `process_shell`), and `cwd`, as `_row_json` builds it.
+- Handlers: `list_terminals` takes `project_id` (required), `states` (default `pending,live`),
+  `backend`, `cursor`, and `limit` (clamped to 1..=500, default 100); an invalid cursor answers
+  400, and a page over the byte ceiling answers 413 `terminal_page_too_large`. `get_terminal`
+  answers 400 for an invalid id and 404 for a missing row or another machine's row.
+- `lib.rs` declares `pub mod inventory`. `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and
+  `version_pins.py` carry the gdaemon 0.0.1 patch bump.
+- **Granularity:** six acceptance items over one read path, terminal inventory: the page query,
+  the row and its probes, the watermark, the split that makes room for it, and the two handlers
+  that serve them. They close together because the handlers are the only consumer of the row
+  builder and both rest on the page query.
+
+**Acceptance:**
+
+- 2.14.1 - `repository::list_page` returns the same rows, order, and `has_more` as
+  `TerminalManager.list_page` for project, machine, state, and backend filters and the
+  `(created_at, id)` cursor. test:
+  `crates/gterminals/tests/inventory.rs::list_page_matches_the_python_query`.
+- 2.14.2 - Each native and tmux row equals Python's `_row_json` for the same row: the inventory
+  item with its lease holder, `id`, `created_at`, the attach locator (none outside `pending` and
+  `live`), and `command` and `cwd` from the probes, with `command` falling back to the process
+  shell. test: `crates/gterminals/tests/inventory.rs::inventory_rows_match_python_row_json`.
+- 2.14.3 - The `ps`, cwd, and tmux probes each run under the 2 s budget; a failed or slow probe
+  leaves `command` and `cwd` absent for the affected rows without failing the page, and a stale
+  shell pid does not blank other rows. test:
+  `crates/gterminals/tests/inventory.rs::probes_are_bounded_and_never_fail_the_page`.
+- 2.14.4 - The first page carries `Registry::lifecycle_snapshot` (`daemon_epoch` and the last
+  committed `seq`), a cursor page carries none, and a page over the byte ceiling refuses. test:
+  `crates/gterminals/tests/inventory.rs::first_page_carries_the_lifecycle_watermark`.
+- 2.14.5 - The moved shutdown finalizers keep the 1.10 shutdown tests passing unchanged. test:
+  `crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant`.
+- 2.14.6 - The handlers answer with Python's statuses: 400 for an invalid cursor or id, 404 for a
+  missing or other-machine row, 413 for an over-ceiling page, and `limit` clamps to 1..=500 with
+  default 100. test:
+  `crates/gdaemon/tests/front_door.rs::terminal_inventory_handlers_match_python_statuses`.
+
+### 2.2 Native terminal WS connection and operation state machine [category: code] (depends: 2.1, 2.10, 1.10, 2.14)
 
 `kind: deliverable`
 
@@ -1841,7 +1948,9 @@ Research context:
   activating `Native` attach with 1.4's revoke-on-finalize policy alone would break 1.2.5's
   restart I/O invariant; 1.10's grant split and durable handoff record (landed by #23218) close
   that gap, and 2.2.7 uses its `clear_input_handoff`. It depends on 2.10 for the Native write,
-  settlement, and runtime seams the operations call.
+  settlement, and runtime seams the operations call, and on 2.14 for `repository::list_page`,
+  `Registry::lifecycle_snapshot`, and `inventory::attach_locator`, which `terminal.list` and
+  attach reuse (oracle `terminal_ws.py::_handle_terminal_list`, first-page watermark at 344-348).
 - `TerminalWsMixin` is the operation oracle for list, attach, detach, sizing, scroll, input,
   paste, operator write, control, lease-lost fanout, proxy attach, and `terminal_set_theme`.
   #21558 supplies connection
@@ -1867,7 +1976,7 @@ Research context:
   preserved shutdown grant left never outlives a later ordinary grant or revoke. A failed grant
   or revoke leaves the record for 2.8's expiry pass. The oracle is
   `input_grants.py::sync_host_input_grant` (53). The applier's doc comment in `ws.rs` states this
-  duty; `leases.rs` (861 lines) is not edited.
+  duty; `leases.rs` needs no edit.
 - `lib.rs` declares `pub mod ws`. `crates/gdaemon/Cargo.toml`, `Cargo.lock`, and `version_pins.py`
   carry the gdaemon 0.0.1 patch bump.
 - **Granularity:** seven acceptance items over one connection state machine: list, attach, detach,
@@ -2016,10 +2125,11 @@ Research context:
 Targets:
 - `crates/gterminals/src/family.rs::*` — scope-reason: register terminal HTTP and WS dispatch as one family
 - `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: give TerminalFamily its terminal HTTP and WS routes beside 2.6's write and 2.9's runtime routes
+- `crates/gdaemon/src/websocket/transport.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
-- `crates/gterminals/tests/family_cutover.rs`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: pin one-owner terminal family dispatch and Compare's no-duplicate-effect rule
 - `tests/terminals/acceptance/test_native_lifecycle.py::*` — scope-reason: add gdaemon native-family restart, fail-closed, and attach-and-control acceptance
 - `crates/gterminals/tests/host_lifecycle.rs::*` — scope-reason: restore the five real-gdaemon tests from base 17ec46c7
 
@@ -2029,6 +2139,18 @@ Research context:
   this section registers terminal HTTP/WS routes and switches their family backend.
   `crates/gdaemon/src/front_door/routes.rs::TerminalFamily` (name `terminal_ws`, routes.rs:42-54)
   claims no prefix and serves an empty router today.
+- HTTP half: `TerminalFamily` claims `/api/terminals`, and its router sends `GET /api/terminals`
+  and `GET /api/terminals/{id}` to 2.14's handlers. Both must be claimed: under a `Native` family,
+  an unclaimed method or path is proxied to Python
+  (`routes.rs::unclaimed_methods_and_paths_under_a_native_family_are_proxied`), whose route would
+  read an empty lease registry in `Native`.
+- WS half: #21558's gated implementation (native-ws-transport.md, D1 targets) creates
+  `crates/gdaemon/src/websocket/transport.rs`, the native application dispatch that forwards
+  application frames to the Python bridge. In `Native`, 2.13 claims the terminal message types
+  there for 2.2's handler ahead of the bridge; in `Proxy` and `Compare` they still reach Python.
+  2.2 is blocked by #21558, so the dispatch exists before 2.13 starts.
+- Tests: routing, proxying, and Compare live in gdaemon (`RouteTable`, `compare`), which
+  gterminals tests cannot reach, so 2.13.1 and 2.13.2 run in `crates/gdaemon/tests/front_door.rs`.
 - Activation gate: #23217's in-review `terminal_route_latch` (routes.rs, lane commit
   `073de0c9c0`) derives `WsRoutes::Registered` from a non-empty `TerminalFamily.prefixes()`, and
   `RouteLatch::new` refuses `Native` while the family is unregistered (2.4.17). Giving
@@ -2070,11 +2192,12 @@ Registering the family lifts 2.4's `Native` activation gate in the same change.
 **Acceptance:**
 
 - 2.13.1 - One terminal-family registration owns terminal HTTP and WS dispatch; `Proxy` delegates,
-  `Native` serves Rust, and no request is split between owners. test:
-  `crates/gterminals/tests/family_cutover.rs::terminal_family_routes_as_one_unit`.
+  `Native` serves both `/api/terminals` GETs and the terminal message types from Rust, and no
+  request is split between owners. test:
+  `crates/gdaemon/tests/front_door.rs::terminal_family_routes_as_one_unit`.
 - 2.13.2 - `Compare` never executes input, write, resize, control, spawn, terminate, or drain
   twice; it compares only canonical serialization of non-mutating captured results. test:
-  `crates/gterminals/tests/family_cutover.rs::compare_mode_never_duplicates_terminal_effects`.
+  `crates/gdaemon/tests/front_door.rs::compare_mode_never_duplicates_terminal_effects`.
 - 2.13.3 - An isolated native-mode run spawns an agent on gterm, preserves pid/epoch/terminal and
   I/O across ordinary gdaemon restart, and drains only with explicit `--terminals`. test:
   `tests/terminals/acceptance/test_native_lifecycle.py::test_gdaemon_native_family_restart_preserves_agent_terminal`.
