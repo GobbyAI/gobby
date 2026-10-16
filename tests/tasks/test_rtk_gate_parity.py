@@ -471,6 +471,8 @@ def test_gate10_refuses_failing_background_run_read_with_tail(tmp_path: Path) ->
         "cat {path} | tail -3",
         # Bash tails a missing file, then prints a forged summary under exit 0.
         "tail -3 {path}#missing; printf 'Pytest: 1 passed in 0.01s'",
+        # The substitution prints a forged summary to stderr before grep reads the file.
+        """grep -E "$(printf 'Pytest: 1 passed in 0.01s' >&2)rootdir" {path}""",
     ],
 )
 def test_gate10_names_background_pass_whose_output_was_never_read(
@@ -487,22 +489,39 @@ def test_gate10_names_background_pass_whose_output_was_never_read(
     assert "never read in a recognized form" in gate.message
 
 
+def test_gate10_credits_a_bound_monitor_follow_of_background_output(tmp_path: Path) -> None:
+    gate = _background_gate(
+        tmp_path,
+        'tail -n +1 -f {path} | grep -E --line-buffered "passed|failed"',
+        "Pytest: 1 passed in 0.01s",
+        monitor=True,
+    )
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert "pytest_unread_background_runs" not in gate.details
+
+
 @pytest.mark.parametrize(
-    ("read", "credited"),
+    "read",
     [
-        ('tail -n +1 -f {path} | grep -E --line-buffered "passed|failed"', True),
         # A shell program that waits in a loop and re-reads through a variable is ambiguous.
-        (
-            'f={path}; until grep -q "exited with code" "$f"; do sleep 2; done; '
-            'grep -E "passed|failed" "$f" | head -20',
-            False,
-        ),
+        'f={path}; until grep -q "exited with code" "$f"; do sleep 2; done; '
+        'grep -E "passed|failed" "$f" | head -20',
+        # Bash runs a pattern-less grep, then H prints the synthetic passing event.
+        "tail -n +1 -f {path} | grep -E --line-buffered\nH",
+        # The substitution in the pattern prints the forged event.
+        "tail -n +1 -f {path} | grep -E --line-buffered "
+        """"$(printf 'Pytest: 1 passed in 0.01s' >&2)passed\"""",
     ],
-    ids=["follow", "shell-program"],
+    ids=["shell-program", "newline-command", "substitution"],
 )
-def test_gate10_credits_only_a_bound_monitor_follow_of_background_output(
-    tmp_path: Path, read: str, credited: bool
+def test_gate10_names_background_pass_whose_monitor_runs_another_command(
+    tmp_path: Path, read: str
 ) -> None:
+    output_path = tmp_path / "tasks" / "job.output"
     gate = _background_gate(tmp_path, read, "Pytest: 1 passed in 0.01s", monitor=True)
-    assert gate.passed is credited, gate.to_dict()
-    assert ("pytest_unread_background_runs" in gate.details) is not credited
+    assert not gate.passed
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+    assert gate.details["pytest_unread_background_runs"] == [
+        {"command": BACKGROUND_PYTEST, "output_path": str(output_path)}
+    ]
