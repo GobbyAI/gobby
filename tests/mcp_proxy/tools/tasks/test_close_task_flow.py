@@ -1521,6 +1521,10 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.LocalAgentRunManager",
             return_value=run_manager,
         ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.reviewer_placement",
+            return_value=None,
+        ),
     ):
         async with asyncio.timeout(5), asyncio.TaskGroup() as task_group:
             first_close = task_group.create_task(
