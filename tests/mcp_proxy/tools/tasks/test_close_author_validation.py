@@ -122,6 +122,16 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
     shared = case.startswith(("shared-", "reclaimed-shared-"))
     shared_path = "settings.toml" if case.endswith("shared-source-stale") else _TEST
     shared_edit_seconds = 25 if case.endswith("shared-before-run") else 40
+    if case == "reclaimed-shared-before-run":
+        records += _claude_shell_records(
+            start,
+            65,
+            "reclaim-audit",
+            f"cd {root} && uv run gobby test-types audit {_TEST} "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+            "Files scanned: 1\nErrors: 0\nNew errors: 0",
+            0,
+        )
     if shared:
         edit = json.loads(json.dumps(records[0]))
         edit["timestamp"] = (start + timedelta(seconds=shared_edit_seconds)).isoformat()
@@ -207,11 +217,12 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
     if case == "stale":
         assert any(edit.timestamp == start + timedelta(seconds=40) for edit in evidence.edits)
     if shared:
-        # Gate 12 must still exclude the later claim's shared-path edits.
-        assert all(
-            edit.timestamp != start + timedelta(seconds=shared_edit_seconds)
+        # The later claim's shared-path edit stays as unattributed safety evidence.
+        assert [
+            edit.task_attributed
             for edit in evidence.edits
-        )
+            if edit.timestamp == start + timedelta(seconds=shared_edit_seconds)
+        ] == [False]
     if case == "unknown":
         assert any(run.outcome == "unknown" for run in evidence.off_task_author_runs)
     source_only = case == "author-source-only"
@@ -232,11 +243,11 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         "author-copy",
         "author-source-only",
         "author-later-failure",
-        "shared-before-run",
         "reclaimed-shared-before-run",
     }
     assert gate.passed is expected, gate.message
     if source_only:
         assert gate.details["python_source_uncovered_tests"] == {}
     else:
-        assert gate.details["pytest_uncovered_paths"] == ([] if expected else [_TEST])
+        credited = expected or case == "shared-before-run"
+        assert gate.details["pytest_uncovered_paths"] == ([] if credited else [_TEST])

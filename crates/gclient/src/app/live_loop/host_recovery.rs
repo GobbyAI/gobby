@@ -45,6 +45,8 @@ pub(in crate::app) struct HostRecovery {
     pane_id: PaneId,
     terminal_id: String,
     epoch: String,
+    /// When the reconnect began, for the completion record's `elapsed_ms`.
+    started: Instant,
     outcome: HostRecoveryOutcome,
 }
 
@@ -186,6 +188,7 @@ impl Workspace<LiveDaemon> {
         self.host_recovering.insert(pane_id);
         self.host_recovered.remove(&pane_id);
         let epoch = locator.frame_host_epoch.clone();
+        let started = Instant::now();
         let cancel = Arc::new(HostCancel::new());
         let future_cancel = Arc::clone(&cancel);
         let future: HostRecoveryFuture = Box::pin(async move {
@@ -249,6 +252,7 @@ impl Workspace<LiveDaemon> {
                 pane_id,
                 terminal_id,
                 epoch,
+                started,
                 outcome,
             }
         });
@@ -266,6 +270,7 @@ impl Workspace<LiveDaemon> {
             pane_id,
             terminal_id,
             epoch,
+            started,
             outcome,
         } = recovery;
         self.host_recovering.remove(&pane_id);
@@ -284,6 +289,7 @@ impl Workspace<LiveDaemon> {
                 pane.fallback_in_flight = false;
                 let minted_on = pane.attached_generation();
                 self.host_recovered.insert(pane_id);
+                self.host_recovery_completed(pane_id, started);
                 // The attachment keeps the daemon generation it was minted
                 // on; stamping the current one hid a generation change, and
                 // the kept attachment, finalized with its socket, then refused
@@ -305,6 +311,7 @@ impl Workspace<LiveDaemon> {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.fallback_in_flight = false;
                 }
+                self.host_recovery_stale(pane_id, started);
                 None
             }
             HostRecoveryOutcome::Cancelled => {
@@ -347,3 +354,7 @@ async fn connect_host(
         None => UnixSocketFrameSource::from_env(locator, cols, rows).await,
     }
 }
+
+#[cfg(test)]
+#[path = "host_recovery/tests.rs"]
+mod tests;
