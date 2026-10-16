@@ -14,6 +14,7 @@ from gobby.tasks.close_test_coverage import (
     changed_web_source_paths,
     copy_differing_paths,
     coverage_failure_messages,
+    credit_off_task_author_runs,
     drop_foreign_runs,
     related_python_source_tests_in_pool,
     uncovered_pytest_paths,
@@ -158,6 +159,17 @@ def evaluate_validation_commands(
             CloseCandidate(close_root, candidate_commit_sha) if candidate_commit_sha else None
         )
         evidence, foreign = drop_foreign_runs(evidence, changed_tests, close_root, paths, candidate)
+        if candidate is not None and evidence.off_task_author_runs:
+            source_tests = related_python_source_tests_in_pool(paths, base_dir=close_root)
+            required_tests = tuple(
+                dict.fromkeys(
+                    (
+                        *_pytest_module_paths(changed_tests),
+                        *(test for tests in source_tests.values() for test in tests),
+                    )
+                )
+            )
+            evidence = credit_off_task_author_runs(evidence, required_tests, paths, candidate)
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,

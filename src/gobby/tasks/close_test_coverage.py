@@ -455,6 +455,49 @@ def drop_foreign_runs(
     return scoped, foreign
 
 
+def credit_off_task_author_runs(
+    evidence: TranscriptEvidence,
+    required_tests: tuple[str, ...],
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate,
+) -> TranscriptEvidence:
+    """Project owner-away pytest proof into Gate 10 without changing shared TDD evidence."""
+    credited: list[TranscriptValidationRun] = []
+    for run in evidence.off_task_author_runs:
+        if (
+            run.outcome != "success"
+            or run.wrapped
+            or run.core_command is None
+            or run.categories != ("test",)
+        ):
+            continue
+        targets = pytest_targets(run.core_command)
+        if not targets or any(not target.endswith(".py") for target in targets):
+            continue
+        proven = candidate_pytest_paths(run, required_tests, changed_paths, candidate)
+        covered = set(required_tests).difference(
+            uncovered_pytest_paths(
+                (run,),
+                required_tests,
+                close_root=candidate.root,
+                changed_paths=changed_paths,
+                candidate=candidate,
+            )
+        )
+        if proven and proven == covered:
+            credited.append(run)
+    references = {(run.session_id, run.command, run.started_at) for run in credited}
+    return replace(
+        evidence,
+        validation_runs=(*evidence.validation_runs, *credited),
+        excluded_runs=tuple(
+            run
+            for run in evidence.excluded_runs
+            if (run.session_id, run.command, run.started_at) not in references
+        ),
+    )
+
+
 def candidate_pytest_paths(
     run: TranscriptValidationRun,
     paths: Sequence[str],
