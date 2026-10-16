@@ -1542,17 +1542,43 @@ def test_file_evidence_missing_at_the_close_candidate_names_it(tmp_path: Path) -
     )
 
 
-def test_native_backend_evidence_regression_fails_on_local_contradictions() -> None:
+def test_native_backend_evidence_regression_fails_on_local_contradictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-01-02T00:00:00+00:00")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-01-02T00:00:00+00:00")
+    repo = _init_repo(tmp_path)
+    seed = repo / "seed.txt"
+    seed.write_text("first\n", encoding="utf-8")
+    first_sha = _commit(repo, "first cited commit")
+    seed.write_text("second\n", encoding="utf-8")
+    second_sha = _commit(repo, "second cited commit")
+    evidence = repo / "docs" / "evidence" / "native-backend-flip.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(
+        "# Native backend evidence\n\n"
+        + "\n\n".join(
+            "## Run\n"
+            "- workflow_name: Native Backend Producer\n"
+            f"- run_url: https://github.com/GobbyAI/gobby/actions/runs/{index}\n"
+            f"- commit_sha: {sha}\n"
+            "- utc_timestamp: 2026-01-01T00:00:00Z\n"
+            for index, sha in enumerate((first_sha, second_sha), start=1)
+        ),
+        encoding="utf-8",
+    )
+    candidate_sha = _commit(repo, "evidence cites postdated commits without producer workflows")
+
     findings = validate_structured_file_evidence(
         evidence_files=("docs/evidence/native-backend-flip.md",),
-        repo_path=str(REPO_ROOT),
-        commit_shas=["d07111cf2d", "6b4e032125"],
-        candidate_commit_sha="6b4e032125",
+        repo_path=str(repo),
+        commit_shas=[candidate_sha],
+        candidate_commit_sha=candidate_sha,
     )
 
-    assert any("89f7b404" in finding and "newer" in finding for finding in findings)
-    assert any("c62e4bae" in finding and "newer" in finding for finding in findings)
-    assert any("89f7b404" in finding and "producer workflow" in finding for finding in findings)
+    assert any(first_sha in finding and "newer" in finding for finding in findings)
+    assert any(second_sha in finding and "newer" in finding for finding in findings)
+    assert any(first_sha in finding and "producer workflow" in finding for finding in findings)
 
 
 def _fixture_tdd_cycle(
