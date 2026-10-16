@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Decision 14 admission budgets, counting queued plus in-flight operations.
+# Decision 14 admission budgets, counting queued plus in-flight operations. The byte budget
+# is also the bound on each request body.
 MAX_RETAINED_BYTES = 128 * 1024 * 1024
 MAX_RETAINED_OPS = 65_536
 MAX_WAITING_FUTURES = 65_536
@@ -70,7 +71,8 @@ class NativePublisher:
         self._secret = secret
         self._base_url = base_url.rstrip("/")
         self._config = config
-        self._client = httpx.AsyncClient(transport=transport)
+        # The secret and token go only to loopback: no proxy or .netrc from the environment.
+        self._client = httpx.AsyncClient(transport=transport, trust_env=False)
         self._generation: str | None = None
         self._legs: dict[str, set[NativeLeg]] = {}
         self._queue: deque[_Op] = deque()
@@ -210,6 +212,7 @@ class NativePublisher:
         # Each operation holds exactly one waiting future, so the op count is the future count.
         if (
             self._retained_bytes + len(encoded) > MAX_RETAINED_BYTES
+            or len(_request_body(generation, [])) + len(encoded) > MAX_RETAINED_BYTES
             or self._retained_ops + 1 > MAX_RETAINED_OPS
             or self._retained_ops + 1 > MAX_WAITING_FUTURES
         ):
@@ -246,14 +249,15 @@ class NativePublisher:
     def _take_batch(self) -> list[_Op]:
         first = self._queue.popleft()
         batch = [first]
-        size = len(first.encoded)
+        size = len(_request_body(first.generation, [])) + len(first.encoded)
         while self._queue:
             candidate = self._queue[0]
             if candidate.generation != first.generation:
                 break
-            if size + len(candidate.encoded) > MAX_RETAINED_BYTES:
+            # Each further operation adds its bytes and one separating comma.
+            if size + 1 + len(candidate.encoded) > MAX_RETAINED_BYTES:
                 break
-            size += len(candidate.encoded)
+            size += 1 + len(candidate.encoded)
             batch.append(self._queue.popleft())
         return batch
 
@@ -262,15 +266,7 @@ class NativePublisher:
         if token is None:
             logger.warning("Native WS publish has no supervisor write token")
             return False
-        body = b"".join(
-            (
-                b'{"generation":',
-                json_dumps(generation).encode(),
-                b',"ops":[',
-                b",".join(op.encoded for op in batch),
-                b"]}",
-            )
-        )
+        body = _request_body(generation, [op.encoded for op in batch])
         try:
             response = await asyncio.wait_for(
                 self._client.post(
@@ -347,6 +343,12 @@ class NativePublisher:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+
+
+def _request_body(generation: str, ops: list[bytes]) -> bytes:
+    return b"".join(
+        (b'{"generation":', json_dumps(generation).encode(), b',"ops":[', b",".join(ops), b"]}")
+    )
 
 
 def native_publisher_from_environment(

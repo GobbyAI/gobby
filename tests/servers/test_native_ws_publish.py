@@ -46,6 +46,7 @@ class _Daemon:
         self.binds: list[httpx.Request] = []
         self.bind_times: list[float] = []
         self.requests: list[dict[str, Any]] = []
+        self.body_sizes: list[int] = []
         self.publish_headers: list[httpx.Headers] = []
         self.received = asyncio.Event()
         self.gate: asyncio.Event | None = None
@@ -66,6 +67,7 @@ class _Daemon:
             return httpx.Response(404)
         index = len(self.requests)
         self.requests.append(json.loads(request.content))
+        self.body_sizes.append(len(request.content))
         self.publish_headers.append(request.headers)
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -254,14 +256,25 @@ async def test_publisher_binds_and_publishes_encoded_frames(
             assert headers["X-Gobby-Backend-Token"] == supervisor_token
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
 
-        # The request bound is checked before anything is sent.
+        # The request bound covers the whole body, wrapper and separators included: two
+        # operations that fit the bound by their own bytes go in two requests.
         assert native_publish.MAX_RETAINED_BYTES == 128 * 1024 * 1024
-        monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 512)
-        oversized = publisher.publish({"type": "agent_event", "blob": "y" * 1024})
+        op_size = len(json_dumps(_publish_op(second)).encode())
+        monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 2 * op_size)
+        sent = len(daemon.requests)
+        pair = [publisher.publish(second), publisher.publish(second)]
+        assert await asyncio.wait_for(asyncio.gather(*pair), 1.0) == [None, None]
+        assert daemon.requests[sent:] == [{"generation": GEN1, "ops": [_publish_op(second)]}] * 2
+        assert max(daemon.body_sizes[sent:]) <= 2 * op_size
+        assert publisher.generation == GEN1
+
+        # One operation whose request would exceed the bound fails its generation unsent.
+        monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", op_size)
+        oversized = publisher.publish(second)
         assert oversized.done()
         assert oversized.result() is None
         await _turns()
-        assert all("y" * 1024 not in json.dumps(request) for request in daemon.requests)
+        assert len(daemon.requests) == sent + 2
         assert publisher.generation != GEN1
     finally:
         await publisher.stop()
@@ -530,6 +543,88 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
         await publisher.stop()
     finally:
         runner_backend._token.reset()
+
+
+class _LoopbackHTTP:
+    """A bare HTTP/1.1 listener on loopback that records each request and answers it."""
+
+    def __init__(self, answer: Callable[[str], bytes]) -> None:
+        self.requests: list[tuple[str, dict[str, str]]] = []
+        self._answer = answer
+        self._server: asyncio.Server | None = None
+
+    async def __aenter__(self) -> int:
+        self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
+        return int(self._server.sockets[0].getsockname()[1])
+
+    async def __aexit__(self, *_exc: object) -> None:
+        assert self._server is not None
+        self._server.close()
+        await self._server.wait_closed()
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while True:
+                head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
+                request_line, *lines = head.split("\r\n")[:-2]
+                headers = {
+                    name.strip().lower(): value.strip()
+                    for name, value in (line.split(":", 1) for line in lines)
+                }
+                await reader.readexactly(int(headers.get("content-length", "0")))
+                target = request_line.split(" ")[1]
+                self.requests.append((target, headers))
+                writer.write(self._answer(target))
+                await writer.drain()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+
+
+def _daemon_answer(target: str) -> bytes:
+    if target == "/_gobby/ws/bind":
+        body = json.dumps({"generation": GEN1}).encode()
+        head = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(body)}"
+        return f"{head}\r\n\r\n".encode() + body
+    return b"HTTP/1.1 204 No Content\r\n\r\n"
+
+
+async def test_production_client_ignores_proxy_environment(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bind and publish go straight to loopback even when proxy variables are set."""
+    proxy_refusal = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    daemon = _LoopbackHTTP(_daemon_answer)
+    proxy = _LoopbackHTTP(lambda _target: proxy_refusal)
+    async with daemon as daemon_port, proxy as proxy_port:
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        # Lower-case names take precedence, so both spellings point at the recording proxy.
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, f"http://127.0.0.1:{proxy_port}")
+        monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "9")
+        monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            assert publisher.generation == GEN1
+            await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 2.0)
+            assert publisher.generation == GEN1
+        finally:
+            await publisher.stop()
+
+    assert proxy.requests == []
+    assert [target for target, _headers in daemon.requests] == [
+        "/_gobby/ws/bind",
+        "/_gobby/ws/publish",
+    ]
+    for _target, headers in daemon.requests:
+        assert headers["x-gobby-front-door"] == SECRET
+        assert headers["x-gobby-backend-token"] == supervisor_token
 
 
 @pytest.mark.parametrize("budget", ["bytes", "ops", "futures"])
