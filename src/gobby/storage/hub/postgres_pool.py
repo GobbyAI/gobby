@@ -91,6 +91,8 @@ _POOL_UNAVAILABLE_MESSAGE_MARKERS = (
     "terminating connection",
     "connection is closed",
     "connection not open",
+    "server closed the connection unexpectedly",
+    "connection refused",
 )
 
 
