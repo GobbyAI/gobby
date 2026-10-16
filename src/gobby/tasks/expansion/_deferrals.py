@@ -9,7 +9,7 @@ from gobby.plans._task_refs import is_placeholder_task_ref
 from gobby.storage.hub.protocol import Transaction
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
-from gobby.tasks.expansion._common import _contract_single_task_id
+from gobby.tasks.expansion._common import _contract_single_task_id, resolve_declared_task_ref
 
 # A deferral task is a ledger entry for work the plan could not specify yet. The
 # label holds it out of automated dispatch until someone writes its real spec.
@@ -35,7 +35,8 @@ def create_placeholder_deferral_tasks(
     carrying ``deferred-from:<plan-id>:<section-id>`` provenance, the
     ``needs-planning`` hold label, validation criteria that duplicate its original
     acceptance items, a ``blocked_by`` edge to every leaf named by the section's
-    ``(depends: ...)`` annotation, and a ``blocked_by`` edge from the root epic so
+    ``(depends: ...)`` annotation (a cross-plan ``#N`` ref resolves to that task),
+    and a ``blocked_by`` edge from the root epic so
     it sits in the epic's dependency closure. A numeric ``task_ref`` is left alone;
     expansion-qa reports a dangling one as ``task_missing``.
 
@@ -64,6 +65,8 @@ def create_placeholder_deferral_tasks(
                     "which produced no task in this expansion run"
                 )
             blockers.append(blocker)
+        for ref in deferral.get("external_blocked_by") or []:
+            blockers.append(resolve_declared_task_ref(conn, str(ref), parent.project_id))
         existing_id = (prior_holders or {}).get(section_id)
         if isinstance(existing_id, str):
             row = conn.execute(
