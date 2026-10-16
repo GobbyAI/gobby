@@ -16,7 +16,7 @@ from gobby.storage.tasks._transitions import (
     reopen_closed_ancestors_in_txn,
     withdraw_memory_reviews,
 )
-from gobby.tasks.expansion._common import _manifest_stage_names
+from gobby.tasks.expansion._common import _manifest_stage_names, resolve_declared_task_ref
 from gobby.tasks.expansion._deferrals import create_placeholder_deferral_tasks
 from gobby.tasks.expansion._reconcile import (
     ReconciliationPlan,
@@ -189,6 +189,16 @@ def apply_run(
                             (phase_task_id,),
                         )
 
+        # A ``(#N)`` phase heading names the task its phase epic is created under.
+        # Declared roots lock after the phase epics and before the root. A
+        # single-phase plan creates no phase epic, so its declared root is unused.
+        declared_roots: dict[str, str] = {}
+        if multi_phase:
+            for ref in {phase["root_task_ref"] for phase in phase_list if "root_task_ref" in phase}:
+                declared_roots[ref] = resolve_declared_task_ref(conn, ref, task.project_id)
+            for root_id in sorted(set(declared_roots.values())):
+                conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (root_id,))
+
         # A closed target takes no new children (#22570). An expansion applied to
         # a task whose previous children were obsoleted -- which auto-closed it on
         # its last child -- is work resuming, so reopen it and any closed ancestor
@@ -217,7 +227,7 @@ def apply_run(
                     project_id=task.project_id,
                     title=phase["title"],
                     task_type="epic",
-                    parent_task_id=task.id,
+                    parent_task_id=declared_roots.get(phase.get("root_task_ref", ""), task.id),
                     category="planning",
                     validation_criteria=epic_validation,
                     created_in_session_id=session_id,
@@ -335,6 +345,10 @@ def apply_run(
                 blocker_created = created_task_map.get(blocker_id)
                 if blocker_created:
                     self._add_dependency(created_id, blocker_created)
+            for ref in task_item.get("external_blocked_by") or []:
+                self._add_dependency(
+                    created_id, resolve_declared_task_ref(conn, ref, task.project_id)
+                )
 
         if multi_phase:
             for phase in phase_list:
@@ -342,6 +356,8 @@ def apply_run(
                 for child_id in phase_child_ids.get(phase["id"], []):
                     self._add_dependency(subepic_id, child_id)
                 self._add_dependency(task.id, subepic_id)
+                if "root_task_ref" in phase:
+                    self._add_dependency(declared_roots[phase["root_task_ref"]], subepic_id)
         else:
             for child_id in phase_child_ids.get(phase_list[0]["id"], []):
                 self._add_dependency(task.id, child_id)

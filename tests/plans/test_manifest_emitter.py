@@ -951,6 +951,36 @@ def test_yolo_fallback_then_reemit_recovers(tmp_path: Path) -> None:
         ),
         ("Rename the react label", [], "docs/guides/seats.md", "frontend"),
         ("Rename the seat label", [], "docs/guides/seats.md", "backend"),
+        (
+            "Client grant handshake",
+            ["crates/gobby-daemon/src/grant.rs"],
+            "crates/gobby-daemon/src/grant.rs",
+            "backend",
+        ),
+        (
+            "Client index prune",
+            ["crates/gobby-code/src/index/prune.rs"],
+            "crates/gobby-code/src/index/prune.rs",
+            "backend",
+        ),
+        (
+            "Client hook ingress",
+            ["crates/gdaemon/src/hooks.rs", "crates/gcode/src/lib.rs"],
+            "crates/gdaemon/src/hooks.rs",
+            "backend",
+        ),
+        (
+            "Pane chrome bumps its crate",
+            ["crates/gclient/Cargo.toml", "Cargo.toml", "Cargo.lock"],
+            "crates/gclient/Cargo.toml",
+            "frontend",
+        ),
+        (
+            "Pane chrome reads the grant",
+            ["crates/gclient/src/pane_chrome/mod.rs", "crates/gcore/src/grant/handshake.rs"],
+            "crates/gclient/src/pane_chrome/mod.rs",
+            "fullstack",
+        ),
     ],
     ids=[
         "web-only",
@@ -960,6 +990,11 @@ def test_yolo_fallback_then_reemit_recovers(tmp_path: Path) -> None:
         "unclassifiable-targets-default",
         "no-targets-keyword",
         "no-targets-default",
+        "rust-daemon-crate",
+        "rust-code-crate",
+        "rust-binary-crates",
+        "gclient-with-root-cargo-files",
+        "gclient-and-rust-core",
     ],
 )
 def test_code_entry_domain_derives_from_targets(
@@ -979,3 +1014,37 @@ def test_code_entry_domain_derives_from_targets(
     entries = derive_manifest_entries(parse_plan(plan, parse_mode="draft"), {})
 
     assert [entry["implementation_domain"] for entry in entries] == [domain]
+
+
+def test_rust_test_entry_routes_to_developer_without_domain(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "> **Plan ID:** rust-test-plan\n\n"
+        "## P1 Phase\n`kind: framing`\n\n"
+        "### 1.1 Grant parity suite [category: test]\n`kind: deliverable`\n\n"
+        "Targets:\n- `crates/gdaemon/tests/grant_parity.rs` — added\n\n"
+        "**Acceptance:**\n- 1.1.1 — Parity holds. file: `crates/gdaemon/tests/grant_parity.rs`\n",
+        encoding="utf-8",
+    )
+
+    entries = derive_manifest_entries(parse_plan(plan, parse_mode="draft"), {})
+
+    assert [entry["assigned_agent"] for entry in entries] == ["developer"]
+    assert all("implementation_domain" not in entry for entry in entries)
+
+
+def test_cross_plan_dependency_stays_out_of_synthesized_depends_on(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "> **Plan ID:** cross-plan\n\n"
+        "## P1 Phase (depends: #24150)\n`kind: framing`\n\n"
+        "### 1.1 Producer [category: code]\n`kind: deliverable`\n\n"
+        "**Acceptance:**\n- 1.1.1 — Produced. file: `src/gobby/producer.py`\n\n"
+        "### 1.2 Consumer [category: code] (depends: 1.1, #24151)\n`kind: deliverable`\n\n"
+        "**Acceptance:**\n- 1.2.1 — Consumed. file: `src/gobby/consumer.py`\n",
+        encoding="utf-8",
+    )
+
+    entries = derive_manifest_entries(parse_plan(plan, parse_mode="draft"), {})
+
+    assert [entry["depends_on"] for entry in entries] == [[], ["1.1"]]

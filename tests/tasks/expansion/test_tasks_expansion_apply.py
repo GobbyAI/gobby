@@ -707,3 +707,134 @@ def test_apply_ignores_closed_obsolete_historical_output(
         old_task = service.task_manager.get_task(task_id)
         assert old_task.closed_at is not None
         assert old_task.closed_reason == "obsolete"
+
+
+def _cross_plan_spec(parent_id: str, root_ref: str, blocker_ref: str) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "parent_task_id": parent_id,
+        "contract_plan": True,
+        "plan_id": "node-halves",
+        "phases": [
+            {
+                "id": "phase-p1",
+                "title": "P1: Node hook ingress",
+                "summary": "P1",
+                "task_ids": ["1.1::single"],
+                "root_task_ref": root_ref,
+            },
+            {
+                "id": "phase-p2",
+                "title": "P2: Follow-up",
+                "summary": "P2",
+                "task_ids": ["2.1::single"],
+            },
+        ],
+        "tasks": [
+            {
+                "id": "1.1::single",
+                "phase_id": "phase-p1",
+                "title": "Consume the hub contract",
+                "category": "code",
+                "validation": "leaf 1 exists",
+                "labels": ["covers:node-halves:1.1:1.1.1"],
+                "external_blocked_by": [blocker_ref],
+            },
+            {
+                "id": "2.1::single",
+                "phase_id": "phase-p2",
+                "title": "Follow up",
+                "category": "code",
+                "validation": "leaf 2 exists",
+                "labels": ["covers:node-halves:2.1:2.1.1"],
+                "external_blocked_by": [],
+            },
+        ],
+        "dependencies": [],
+        "deferrals": [
+            {
+                "section_id": "D1",
+                "title": "Gated rollout",
+                "task_ref": "#TBD-created-at-expansion",
+                "depends_on": ["1.1"],
+                "external_blocked_by": [blocker_ref],
+                "reason": "gated on the hub plan",
+                "owner": "backend-developer",
+                "original_acceptance_items": [],
+            }
+        ],
+    }
+
+
+def test_apply_parents_phase_epic_under_declared_root_and_wires_cross_plan_edges(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    service = _service(temp_db)
+    tasks = service.task_manager
+    parent = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    declared_root = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Node hook ingress",
+        task_type="epic",
+        validation_criteria="Phase root completion is observable.",
+    )
+    hub_task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Hub contract from another plan",
+        validation_criteria="Hub contract exists.",
+    )
+    spec = _cross_plan_spec(parent.id, f"#{declared_root.seq_num}", f"#{hub_task.seq_num}")
+    run = _save_run(service, parent, sample_project, spec)
+
+    applied = service.apply_run(run.id, session_id=None)
+
+    assert applied.checkpoints is not None
+    assert applied.checkpoints["apply_validation"] == {"valid": True, "errors": []}
+    phase_map = applied.checkpoints["phase_parent_map"]
+    rooted_epic = tasks.get_task(phase_map["phase-p1"])
+    default_epic = tasks.get_task(phase_map["phase-p2"])
+    assert rooted_epic is not None and rooted_epic.parent_task_id == declared_root.id
+    assert default_epic is not None and default_epic.parent_task_id == parent.id
+
+    def blockers(task_id: str) -> set[str]:
+        return {dep.depends_on for dep in service.dep_manager.get_blockers(task_id)}
+
+    task_id_map = applied.task_id_map or {}
+    assert hub_task.id in blockers(task_id_map["1.1::single"])
+    assert hub_task.id not in blockers(task_id_map["2.1::single"])
+    assert rooted_epic.id in blockers(declared_root.id)
+    assert {rooted_epic.id, default_epic.id} <= blockers(parent.id)
+    deferral_id = applied.checkpoints["deferral_task_map"]["D1"]
+    assert blockers(deferral_id) == {task_id_map["1.1::single"], hub_task.id}
+
+
+def test_apply_rejects_undeclared_cross_plan_task(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    service = _service(temp_db)
+    tasks = service.task_manager
+    parent = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    declared_root = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Node hook ingress",
+        task_type="epic",
+        validation_criteria="Phase root completion is observable.",
+    )
+    spec = _cross_plan_spec(parent.id, f"#{declared_root.seq_num}", "#999999")
+    run = _save_run(service, parent, sample_project, spec)
+
+    with pytest.raises(ValueError, match="#999999"):
+        service.apply_run(run.id, session_id=None)
+
+    assert tasks.list_tasks(parent_task_id=declared_root.id) == []
+    assert tasks.list_tasks(parent_task_id=parent.id) == []
