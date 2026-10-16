@@ -16,7 +16,6 @@ def test_standalone_shutdown_exits_without_module_finalization(
     tmp_path: Path, exit_code: int, standalone: bool
 ) -> None:
     ready = tmp_path / "ready"
-    released = tmp_path / "released"
     cleanup = tmp_path / "cleanup"
     finalizing = tmp_path / "finalizing"
     resumed = tmp_path / "resumed"
@@ -28,15 +27,13 @@ def test_standalone_shutdown_exits_without_module_finalization(
         import sys
         import time
         from pathlib import Path
-        from types import SimpleNamespace
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
 
         import gobby.runner as runner
         # Import the existing exit backstop before starting the exit deadline.
         runner._force_exit_after_expired_settlement()
 
         ready = Path({str(ready)!r})
-        released = Path({str(released)!r})
         cleanup = Path({str(cleanup)!r})
         finalizing = Path({str(finalizing)!r})
         resumed = Path({str(resumed)!r})
@@ -64,17 +61,9 @@ def test_standalone_shutdown_exits_without_module_finalization(
             if {exit_code}:
                 raise RuntimeError('isolated startup failure')
 
-        claim = Mock()
-        claim.release.side_effect = lambda: released.write_text('claim released')
-        bootstrap = SimpleNamespace(daemon_port=0, bind_host='127.0.0.1')
         with (
             patch('gobby.utils.spawn.seal_inherited_descriptors'),
             patch('gobby.utils.dev.worktree_daemon_refusal', return_value=None),
-            patch('gobby.config.bootstrap.load_bootstrap', return_value=bootstrap),
-            patch('gobby.cli.utils.get_gobby_home', return_value=ready.parent),
-            patch('gobby.runner_pid_file.adopt_inherited_claim', return_value=None),
-            patch('gobby.runner_pid_file.claim_pid_file', return_value=claim),
-            patch.object(runner, '_healthy_daemon_running', return_value=False),
             patch.object(runner, 'run_gobby', completed_daemon),
         ):
             try:
@@ -119,13 +108,71 @@ def test_standalone_shutdown_exits_without_module_finalization(
             assert "isolated startup failure" in stderr
         if exit_code == 2 and standalone:
             assert "FatalShutdown: isolated fatal shutdown" in stderr
-        assert released.read_text() == "claim released"
         if standalone:
             assert cleanup.read_text() == "exit cleanup ran"
         else:
             assert not cleanup.exists()
         assert not finalizing.exists()
         assert resumed.exists() is not standalone
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5.0)
+
+
+def test_standalone_exit_stops_joining_executor_workers_at_shutdown_deadline(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "ready"
+    finished = tmp_path / "finished"
+    script = textwrap.dedent(
+        f"""
+        import asyncio
+        import threading
+        import time
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import gobby.runner as runner
+        import gobby.runner_lifecycle_shutdown as shutdown
+
+        ready = Path({str(ready)!r})
+        finished = Path({str(finished)!r})
+
+        def finishing_worker():
+            time.sleep(0.2)
+            finished.write_text('finishing worker completed')
+
+        async def daemon_with_wedged_worker(**kwargs):
+            loop = asyncio.get_running_loop()
+            # Shutdown leaves 3 s of its overall budget for the final executor join.
+            shutdown._overall_shutdown_deadline = loop.time() + 3.0
+            loop.run_in_executor(None, threading.Event().wait)
+            loop.run_in_executor(None, finishing_worker)
+            ready.write_text('daemon shutdown completed')
+
+        with (
+            patch('gobby.utils.spawn.seal_inherited_descriptors'),
+            patch('gobby.utils.dev.worktree_daemon_refusal', return_value=None),
+            patch.object(runner, 'run_gobby', daemon_with_wedged_worker),
+        ):
+            runner._standalone_main()
+        """
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        wait_for_condition(
+            lambda: ready.exists() or process.poll() is not None,
+            timeout=60.0,
+            description="isolated daemon returned with a wedged executor worker",
+        )
+        assert ready.exists(), process.communicate(timeout=5.0)
+        # asyncio.run would otherwise join the wedged worker for 300 s.
+        stdout, stderr = process.communicate(timeout=30.0)
+        assert process.returncode == 0, (stdout, stderr)
+        assert finished.read_text() == "finishing worker completed"
     finally:
         if process.poll() is None:
             process.kill()
