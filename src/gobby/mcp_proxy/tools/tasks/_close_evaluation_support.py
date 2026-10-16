@@ -269,7 +269,6 @@ async def derive_close_transcript_evidence(
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
-        temporally_scoped_paths: frozenset[str] = frozenset()
         # Released pairs still prove the earlier worker's transcript edits after
         # a transfer. Live ownership checks continue to use only the live ledger.
         task_checkout_paths = task_edited_checkout_paths(
@@ -289,7 +288,6 @@ async def derive_close_transcript_evidence(
         task_links: list[dict[str, Any]] | None = None
         observed: TranscriptEvidence | None = None
         observed_pairs = task_checkout_paths
-        observed_files = task_edited_files | {path for _, path in observed_pairs}
         owner_pairs_outside_window = False
         if (
             session_id == owner_session_id
@@ -406,7 +404,6 @@ async def derive_close_transcript_evidence(
                 and min(at for at, _ in history) <= window_epoch
                 else frozenset()
             )
-            temporally_scoped_paths = frozenset(path for _, path in temporal_pairs)
             task_checkout_paths -= other_task_paths - temporal_pairs
             legacy_closed_tasks = _legacy_closed_other_tasks(
                 task_links,
@@ -481,7 +478,6 @@ async def derive_close_transcript_evidence(
                         session_evidence,
                         presence,
                         keep_edits=session_id == owner_session_id,
-                        temporally_scoped_paths=temporally_scoped_paths,
                     )
             try:
                 excluded = await derive_prelink_runs(
@@ -652,9 +648,15 @@ def _task_presence(
         return epoch > start and (history_start is None or epoch < history_start)
 
     events = [
-        (epoch, getattr(row.get("task"), "id", None) == task_id)
+        (epoch, action == "claimed" and getattr(row.get("task"), "id", None) == task_id)
         for row in task_links
-        if (row.get("action") or row.get("session_action")) == "claimed"
+        if (
+            (action := row.get("action") or row.get("session_action")) == "claimed"
+            or (
+                action in {"escalated", "closed"}
+                and getattr(row.get("task"), "id", None) == task_id
+            )
+        )
         and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
         and before_history(epoch)
     ]
@@ -674,15 +676,13 @@ def _while_on_task(
     presence: list[tuple[float, bool]],
     *,
     keep_edits: bool = False,
-    temporally_scoped_paths: frozenset[str] = frozenset(),
 ) -> TranscriptEvidence:
     """Keep only the runs and edits a linked session made while working this task.
 
     ``keep_edits`` keeps the owner's edits at any time: an owner edit to the task's
     files stales its earlier green even while another claim was active or no claim
-    call marked a return. ``temporally_scoped_paths``, the shared paths another task
-    also edited in this checkout, are carved out: selection history attributes each
-    of their edits by timestamp, so they count only while on this task.
+    call marked a return. Shared-path edits also remain as physical safety evidence;
+    selection history limits their affirmative credit through ``task_attributed``.
     Owner-away validation stays separate for Gate 10; it cannot supply TDD proof.
     """
 
@@ -716,7 +716,7 @@ def _while_on_task(
         edits=tuple(
             replace(edit, task_attributed=on_task(edit.timestamp))
             for edit in evidence.edits
-            if (keep_edits and edit.path not in temporally_scoped_paths) or on_task(edit.timestamp)
+            if keep_edits or on_task(edit.timestamp)
         ),
     )
 
