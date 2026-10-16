@@ -556,7 +556,7 @@ def _has_named_red_failure(
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
-    if _has_failed_node_summary(output, test):
+    if _has_failed_node_summary(output, test) or _has_compacted_pytest_failure(output, test):
         return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
@@ -624,6 +624,51 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
         if re.match(
             r"(?:AssertionError\b|assert\s|Failed:\s+DID NOT RAISE\b)", detail
         ) and is_assertion_failure(detail):
+            return True
+    return False
+
+
+def _has_compacted_pytest_failure(output: str, test: AcceptanceTest) -> bool:
+    """Pair RTK's retained assertion bodies with its ordered FAILED node list."""
+    if not test.path.endswith(".py") or not re.search(
+        r"(?m)^\[full output: rtk recall [0-9a-f]{12,64}\]$", output
+    ):
+        return False
+    lines = output.splitlines()
+    if any(
+        _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        for line in lines
+    ):
+        return False  # Complete reports keep their existing section attribution.
+    failed = [
+        (index, match)
+        for index, line in enumerate(lines)
+        if (match := re.fullmatch(r"FAILED (\S+\.py)::(\S+)(?:\s+-\s+.*)?", line))
+    ]
+    if not failed:
+        return False
+    summary = re.search(r"(?m)^[= ]*(\d+) failed\b", output)
+    if summary is None or int(summary[1]) != len(failed):
+        return False
+    # A missing body cannot shift a sibling's assertion onto the next node.
+    body = lines[: failed[0][0]]
+    starts = [index for index, line in enumerate(body) if re.match(r"^>\s+", line)]
+    if len(starts) != len(failed):
+        return False
+    ends = [*starts[1:], len(body)]
+    expected = test.symbol.replace("::", ".")
+    for (_, node), start, end in zip(failed, starts, ends, strict=True):
+        reported = node[2].replace("::", ".")
+        if "[" not in expected:
+            reported = reported.split("[", maxsplit=1)[0]
+        if (
+            _path_matches_artifact(node[1], test)
+            and reported == expected
+            and any(
+                re.match(r"^\s*E\s+(?!\+)", line) and _section_has_failure_detail(line)
+                for line in body[start:end]
+            )
+        ):
             return True
     return False
 
