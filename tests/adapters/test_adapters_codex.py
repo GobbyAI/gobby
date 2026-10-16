@@ -1997,7 +1997,9 @@ class TestCodexAdapterTranslateToHookEvent:
     def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path: Path) -> None:
         """Synthetic Codex AFTER_TOOL edits inside cwd should still mark had_edits."""
         repo_root = tmp_path / "repo"
-        repo_root.mkdir()
+        # Edit attribution needs a project root; never depend on one above tmp_path.
+        (repo_root / ".gobby").mkdir(parents=True)
+        (repo_root / ".gobby" / "project.json").write_text("{}")
         in_repo_file = repo_root / "src" / "main.py"
         in_repo_file.parent.mkdir(parents=True)
 
@@ -4676,6 +4678,39 @@ class TestCodexAdapterApprovalHandling:
 
         assert result == {"action": "accept", "content": None, "_meta": None}
         mock_hm.handle.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_checkout_approval_git_runs_off_the_event_loop(self, tmp_path: Path) -> None:
+        """Canonical shell normalization of an approval probes Git on a worker thread."""
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        probes: list[tuple[list[str], bool]] = []
+
+        def git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                probes.append((argv, False))
+            else:
+                probes.append((argv, True))
+            return subprocess.CompletedProcess(argv, 1, stdout=b"")
+
+        mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="allow")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        with patch("gobby.hooks._normalization_git.subprocess.run", side_effect=git):
+            result = await adapter.handle_approval_request(
+                "item/commandExecution/requestApproval",
+                {
+                    "threadId": "thr-cmd",
+                    "itemId": "item-1",
+                    "parsedCmd": f"git -C {tmp_path} checkout missing.py",
+                },
+            )
+
+        assert result == {"decision": "accept"}
+        assert probes
+        assert all(str(tmp_path) in argv and not on_loop for argv, on_loop in probes)
 
 
 class TestCodexAdapterApprovalAttach:
