@@ -107,6 +107,10 @@ struct ExportStore {
       try fm.removeItem(at: directory)
     case "cancel":
       if fm.fileExists(atPath: directory.path) { try fm.removeItem(at: directory) }
+    case "delete":
+      // Staged exports are named by export ID; an already-missing ZIP counts as deleted.
+      let staged = root.appendingPathComponent("gobby-annotate-\(request.transferId).zip")
+      if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
     default: throw Failure.invalid("Unknown export action")
     }
   }
@@ -114,6 +118,17 @@ struct ExportStore {
     guard FileManager.default.fileExists(atPath: root.path) else { return [] }
     return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
       .filter { $0.pathExtension == "zip" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+  }
+  func delete(_ file: URL) throws {
+    let exportId = String(
+      file.deletingPathExtension().lastPathComponent.dropFirst("gobby-annotate-".count))
+    try handle(
+      ExportRequest(
+        action: "delete", transferId: exportId, name: nil, size: nil, offset: nil, data: nil))
+  }
+  /// Deletes every staged ZIP and leaves unfinished transfers alone.
+  func deleteCompleted() throws {
+    for file in try completed() { try delete(file) }
   }
   func clearInterrupted() throws {
     guard FileManager.default.fileExists(atPath: root.path) else { return }
