@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import subprocess
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import replace
@@ -572,6 +573,67 @@ async def test_close_attaches_indexed_edit_languages(
     assert judged.edits == evidence.edits
     assert evaluation.transcript_evidence["task_edit_count"] == 2
     assert evaluation.extra["validation_commands"]["last_task_edit_order"] == 3
+
+
+@pytest.mark.asyncio
+async def test_close_tracked_script_git_runs_off_the_event_loop(tmp_path: Path) -> None:
+    script = tmp_path / "check.py"
+    script.write_text("print('ok')\n")
+    command = f"python {script}"
+    task = _task(criteria=f"`{command}` exits 0.")
+    ctx = _ctx(task, validator=object())
+    evidence = _successful_transcript(task, command=command)
+    calls: list[list[str]] = []
+
+    def git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    review = AsyncMock(
+        return_value=ValidationResult(can_close=False, error_type="close_review_required")
+    )
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value=str(tmp_path)),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(
+            lifecycle, "_derive_close_transcript_evidence", AsyncMock(return_value=evidence)
+        ),
+        patch.object(lifecycle, "active_validation_backoff"),
+        patch.object(lifecycle, "evaluate_close_review", review),
+        patch("gobby.tasks.transcript_outcomes.subprocess.run", side_effect=git),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Verified the tracked script.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert calls
+    assert all(
+        argv
+        == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "--literal-pathspecs",
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            "check.py",
+        ]
+        for argv in calls
+    )
+    records = evaluation.extra["validation_commands"]["criterion_commands"]
+    assert records[0]["status"] == "satisfied"
 
 
 @pytest.mark.asyncio
