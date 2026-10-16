@@ -305,48 +305,6 @@ class TaskToolBindings:
             else None
         )
 
-    def record_operand_baseline(
-        self, event: HookEvent, baseline: dict[str, dict[str, list[str]]]
-    ) -> None:
-        """Keep the call's program operands and their start-time dirt, per checkout root."""
-
-        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
-            key = _matching_key(event, variables)
-            calls = _bindings(variables)
-            if key is None or key not in calls:
-                return None, False
-            calls[key]["operand_baseline"] = baseline
-            variables["task_tool_bindings"] = calls
-            return None, True
-
-        self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_bindings",))
-
-    def take_operand_baseline(self, event: HookEvent) -> dict[str, dict[str, list[str]]] | None:
-        """Remove and return the call's operand baseline; None when none was recorded."""
-
-        def mutate(
-            variables: dict[str, Any],
-        ) -> tuple[dict[str, dict[str, list[str]]] | None, bool]:
-            key = _matching_key(event, variables)
-            calls = _bindings(variables)
-            call = calls.get(key) if key is not None else None
-            baseline = call.pop("operand_baseline", None) if call is not None else None
-            if not isinstance(baseline, dict):
-                return None, False
-            variables["task_tool_bindings"] = calls
-            return {
-                root: {
-                    field: [path for path in entry[field] if isinstance(path, str)]
-                    for field in ("operands", "dirty")
-                }
-                for root, entry in baseline.items()
-                if isinstance(root, str)
-                and isinstance(entry, dict)
-                and all(isinstance(entry.get(field), list) for field in ("operands", "dirty"))
-            }, True
-
-        return self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_bindings",))
-
     def complete(self, event: HookEvent) -> None:
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
             key = _matching_key(event, variables)
