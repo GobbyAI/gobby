@@ -93,6 +93,7 @@ class ConfigRuntime:
         expected_secret_identity: str | None = None,
         secret_identity_verifier: Callable[[], str] | None = None,
         managed_resolver: Callable[[StoredConfigSnapshot], Mapping[str, object]] | None = None,
+        active_state_publisher: Callable[[ConfigSnapshot], None] | None = None,
     ) -> None:
         if db_workers <= 0 or constructor_workers <= 0:
             raise ValueError("Runtime lane worker counts must be positive")
@@ -123,6 +124,8 @@ class ConfigRuntime:
         self._expected_secret_identity = expected_secret_identity
         self._secret_identity_verifier = secret_identity_verifier
         self._managed_resolver = managed_resolver
+        self._active_state_publisher = active_state_publisher
+        self._unpublished_active = False
         self._reconcile_lock = asyncio.Lock()
         self._reconnect_lock = asyncio.Lock()
         self._max_requested_revision = -1
@@ -193,6 +196,7 @@ class ConfigRuntime:
                 managed,
             )
             self._max_requested_revision = stored.revision
+            await self._publish_active(snapshot)
             self._ready = True
             self._healthy = True
             if self._notifications is not None:
@@ -288,6 +292,7 @@ class ConfigRuntime:
                     MappingProxyType(handles),
                     managed if failure is None else bundle.managed,
                 )
+                await self._publish_active(snapshot)
                 await self._dispose_replaced(old_handles)
                 if activation_failure is not None:
                     raise activation_failure.error
@@ -373,6 +378,7 @@ class ConfigRuntime:
                     MappingProxyType(handles),
                     bundle.managed,
                 )
+                await self._publish_active(snapshot)
                 return snapshot
 
     async def _initialize(
@@ -511,6 +517,7 @@ class ConfigRuntime:
                 MappingProxyType(handles),
                 managed if failure is None else current_bundle.managed,
             )
+            await self._publish_active(snapshot)
             await self._dispose_replaced(old_handles)
             if activation_failure is not None:
                 raise activation_failure.error
@@ -747,6 +754,20 @@ class ConfigRuntime:
     ) -> None:
         await self._run_disposer(resource.dispose, timeout=subscriber.dispose_timeout)
 
+    async def _publish_active(self, snapshot: ConfigSnapshot) -> None:
+        publisher = self._active_state_publisher
+        if publisher is None:
+            return
+        try:
+            await self._run_db(lambda: publisher(snapshot))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._unpublished_active = True
+            logger.warning("Active configuration publication failed", exc_info=True)
+        else:
+            self._unpublished_active = False
+
     async def _poll_revisions(self) -> None:
         """Heal a silently dead LISTEN socket with a low-frequency revision poll."""
         current_revision = getattr(self._repository, "current_revision", None)
@@ -755,6 +776,9 @@ class ConfigRuntime:
             await asyncio.sleep(self._revision_poll_interval)
             if self._closed:
                 return
+            if self._unpublished_active:
+                async with self._reconcile_lock:
+                    await self._publish_active(self.capture().snapshot)
             try:
                 observed = await self._run_db(current_revision)
             except asyncio.CancelledError:
