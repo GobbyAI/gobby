@@ -325,3 +325,61 @@ def test_json_code_fence_and_surrounding_text_are_tolerated() -> None:
 def test_unparseable_response_is_infrastructure_failure(payload: object) -> None:
     with pytest.raises(CloseVerdictParseError):
         parse_close_verdict(payload, CRITERIA)
+
+
+def _verdict_with_findings(findings: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "status": "invalid",
+        "criteria": [
+            {"index": 1, "satisfied": True, "gap": None},
+            {"index": 2, "satisfied": True, "gap": None},
+        ],
+        "feedback": "Findings block the close.",
+        "findings": findings,
+    }
+
+
+def _finding(**overrides: object) -> dict[str, object]:
+    return {
+        "path": "src/close.py",
+        "start_line": 4,
+        "end_line": 6,
+        "severity": "high",
+        "category": "bug",
+        "description": "Count drifts from the submitted findings.",
+        "suggested_fix": None,
+        **overrides,
+    }
+
+
+def test_finding_id_round_trips_from_submitted_finding() -> None:
+    submitted = parse_close_verdict(
+        _verdict_with_findings(
+            [_finding(id="reviewer-finding-1"), _finding(start_line=9, end_line=9)]
+        ),
+        list(CRITERIA),
+    )
+    # The persisted verdict is reparsed on later reads, so a derived id must not move.
+    reparsed = parse_close_verdict(
+        _verdict_with_findings(
+            [_finding(id="reviewer-finding-1"), _finding(start_line=9, end_line=9)]
+        ),
+        list(CRITERIA),
+    )
+    round_tripped = parse_close_verdict(submitted.to_dict(), list(CRITERIA))
+
+    assert submitted.findings[0].id == "reviewer-finding-1"
+    derived_id = submitted.findings[1].id
+    assert derived_id
+    assert [finding.id for finding in reparsed.findings] == ["reviewer-finding-1", derived_id]
+    assert [finding.id for finding in round_tripped.findings] == ["reviewer-finding-1", derived_id]
+
+
+def test_duplicate_finding_ids_are_rejected() -> None:
+    with pytest.raises(CloseVerdictParseError, match="repeats id dup"):
+        parse_close_verdict(
+            _verdict_with_findings(
+                [_finding(id="dup"), _finding(id="dup", start_line=8, end_line=8)]
+            ),
+            list(CRITERIA),
+        )

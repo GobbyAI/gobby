@@ -473,22 +473,35 @@ def account_criteria_verdict(
             )
             if part
         )
+        or f"Criterion {criterion.index} is not satisfied: {criterion.criterion}"
         for criterion in gap_verdicts
-        if criterion.gap or criterion.required_evidence
     ]
-    requirements = gaps or [verdict.feedback]
-    requirements.extend(
-        f"{finding.severity} {finding.category} finding at "
-        f"{finding.path}:{finding.start_line}-{finding.end_line}: {finding.description}"
-        for finding in blocking_findings
-    )
+    # Gaps, findings and the reviewer's summary each keep their own field: the
+    # summary is never a blocker and the finding count never includes a gap.
+    requirements = [
+        *gaps,
+        *(
+            f"{finding.severity} {finding.category} finding {finding.id} at "
+            f"{finding.path}:{finding.start_line}-{finding.end_line}: {finding.description}"
+            for finding in blocking_findings
+        ),
+    ] or [
+        "The close reviewer returned invalid without a criterion gap or blocking finding; "
+        "see review_feedback."
+    ]
     return ValidationResult(
         can_close=False,
         error_type="validation_failed",
         message=verdict.feedback,
         # The requirements are the blocking reasons; repeating them as
         # required_actions states the same sentences a second time.
-        extra={**extra, "blocking_reasons": requirements},
+        extra={
+            **extra,
+            "blocking_reasons": requirements,
+            "criterion_gaps": gaps,
+            "outstanding_findings": [finding.to_dict() for finding in blocking_findings],
+            "review_feedback": verdict.feedback,
+        },
         failure_category=FailureCategory.CODE,
         validation_status="invalid",
         validation_feedback=verdict.feedback,
