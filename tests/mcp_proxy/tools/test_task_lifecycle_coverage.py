@@ -248,21 +248,38 @@ def _create_stage_ops_registry(task_manager: MagicMock) -> Any:
 # ---------------------------------------------------------------------------
 
 
-class TestCloseTask:
-    """Tests for the close_task lifecycle tool."""
+class _CloseTaskGitIsolation:
+    """Keep close lifecycle unit tests independent of the host repository."""
 
-    # close_task now requires an active session context or task.claimed_by_session_id
-    # (Change 4). The original tests in this class predate that guard and don't
-    # exercise it — seed a SessionContext so they continue to test the
-    # non-audit-guard paths.
     @pytest.fixture(autouse=True)
-    def _seed_session_context(self) -> Iterator[None]:
-        with session_context_for_test("legacy-test-session"):
+    def _reject_host_git_history(self) -> Iterator[None]:
+        with patch(
+            "gobby.tasks.commits.daemon_git.run",
+            side_effect=AssertionError("Lifecycle unit tests must not scan host Git history"),
+        ):
             yield
 
     @pytest.fixture(autouse=True)
     def _candidate_is_its_own_identity(self) -> Iterator[None]:
         with (
+            # Lifecycle assertions own close behavior, not Git history or metadata.
+            patch(
+                "gobby.tasks.commits.unlinked_task_tagged_commits_async",
+                return_value=([], []),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
+                side_effect=lambda sha, cwd: sha,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.collect_commit_paths",
+                return_value=[],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._committable_task_paths",
+                side_effect=lambda paths, repo_path: paths,
+            ),
+            patch("gobby.tasks.acceptance_artifacts._repository_slug", return_value=None),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
                 new=ECHOING_DAEMON_GIT,
@@ -270,6 +287,16 @@ class TestCloseTask:
             # The link step stores Git's short form of each close SHA (#23251).
             patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd: sha),
         ):
+            yield
+
+
+class TestCloseTask(_CloseTaskGitIsolation):
+    """Tests for the close_task lifecycle tool."""
+
+    # These tests predate the session guard and exercise other close behavior.
+    @pytest.fixture(autouse=True)
+    def _seed_session_context(self) -> Iterator[None]:
+        with session_context_for_test("legacy-test-session"):
             yield
 
     @pytest.mark.asyncio
@@ -2019,7 +2046,7 @@ class TestIsUuid:
 # ---------------------------------------------------------------------------
 
 
-class TestCloseTaskSessionContextGuard:
+class TestCloseTaskSessionContextGuard(_CloseTaskGitIsolation):
     """close_task fallback to task.claimed_by_session_id / error when no ContextVar."""
 
     @pytest.mark.asyncio
