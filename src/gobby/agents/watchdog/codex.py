@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -9,7 +10,7 @@ from pathlib import Path
 from threading import Lock
 from typing import cast
 
-from gobby.agents.watchdog._scan import ScanVerdict
+from gobby.agents.watchdog._scan import ScanVerdict, find_turn_start
 from gobby.agents.watchdog.models import (
     WATCHDOG_TAIL_LIMIT,
     ActivityKind,
@@ -23,6 +24,7 @@ from gobby.utils.datetime import parse_stored_datetime
 CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 _CODEX_SCAN_STATE_LIMIT = 128
 _CODEX_RESUME_GUARD_BYTES = 256
+_CODEX_TURN_START_MARKER = re.compile(rb'"type"\s*:\s*"task_started"')
 
 
 @dataclass
@@ -45,6 +47,25 @@ class _CodexScanState:
     latest_activity_kind: ActivityKind | None = None
     latest_model_output_line_num: int | None = None
     last_malformed_line_num: int | None = None
+
+    def begin_turn(self) -> None:
+        """Forget what earlier turns left, as `ResumableScanState.begin_turn` does."""
+        self.tail.clear()
+        self.provider_error_event = None
+        self.provider_error_kind = None
+        self.provider_error_reason = None
+        self.latest_activity_kind = None
+        self.latest_model_output_line_num = None
+        self.last_malformed_line_num = None
+
+
+def _starts_codex_turn(data: dict[str, object]) -> bool:
+    payload = data.get("payload")
+    return (
+        data.get("type") == "event_msg"
+        and isinstance(payload, dict)
+        and payload.get("type") == "task_started"
+    )
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -92,6 +113,12 @@ def _read_codex_snapshot(
         or not guard_matches
     ):
         state = _CodexScanState(device=stat.st_dev, inode=stat.st_ino)
+        with transcript_path.open("rb") as handle:
+            turn_start = find_turn_start(
+                handle, stat.st_size, _CODEX_TURN_START_MARKER, _starts_codex_turn
+            )
+        if turn_start is not None:
+            state.offset, state.line_num = turn_start
         if states is not None:
             states[path] = state
 
@@ -127,6 +154,7 @@ def _read_codex_snapshot(
         if payload_type in {"agent_message", "agent_reasoning"}:
             state.latest_model_output_line_num = line_num
         if payload_type == "task_started":
+            state.begin_turn()
             state.turn_started_event = summary
             state.latest_turn_event = summary
             state.latest_turn_kind = "started"
