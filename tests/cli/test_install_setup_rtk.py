@@ -87,14 +87,15 @@ def _ensure_rule(db: HubDatabase, *, enabled: bool = False) -> None:
     )
 
 
-def test_probe_accepts_minimum_rewrite_contract(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["0.45.0", "0.51.0", "1.0.1"])
+def test_probe_accepts_minimum_rewrite_contract(tmp_path: Path, version: str) -> None:
     binary = tmp_path / "rtk"
-    _write_fake_rtk(binary)
+    _write_fake_rtk(binary, version=version)
 
     result = probe_rtk(binary)
 
     assert result.compatible is True
-    assert result.version == "0.45.0"
+    assert result.version == version
     assert result.path == binary.resolve()
 
 

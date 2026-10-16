@@ -503,6 +503,8 @@ def _first_executable(
                 _directory_options(arguments[: len(arguments) - len(inner)], directories)
             tokens = inner
         elif executable in {"env", "rtk"}:
+            if executable == "rtk" and arguments[:1] in {("proxy",), ("bypass",)}:
+                arguments = arguments[1:]
             if arguments[:1] == ("--",):
                 arguments = arguments[1:]
             if arguments and arguments[0].startswith("-"):
