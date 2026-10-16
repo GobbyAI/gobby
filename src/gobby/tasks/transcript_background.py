@@ -216,6 +216,9 @@ def _recover_monitor_receipt(
         # Non-POSIX lexing keeps quotes on their words, so only the unquoted pipe
         # lexes as ``|`` and any other separator or redirection breaks the shape.
         argv = _shell_words(pending.arguments.get("command"), posix=False)
+        if argv is not None and argv.count("|") == 1:
+            pipe = argv.index("|")
+            argv = _reader_command(argv[:pipe]) + ["|"] + _reader_command(argv[pipe + 1 :])
         if (
             argv is None
             or len(argv) != 10
@@ -313,6 +316,7 @@ def _read_path(pending: PendingTool) -> str | None:
     argv = _shell_words(pending.arguments.get("command"), posix=True)
     if argv is None:
         return None
+    argv = _reader_command(argv)
     if len(argv) == 2 and argv[0] == "cat":
         return argv[1]
     if argv[:1] == ["tail"]:
@@ -326,6 +330,22 @@ def _read_path(pending: PendingTool) -> str | None:
     ):
         return argv[3]
     return None
+
+
+def _reader_command(argv: list[str]) -> list[str]:
+    """Strip only RTK's direct execution prefixes from one reader command.
+
+    Keep lexing and the reader's strict argument grammar in charge of shell safety.
+    Proxy (0.x) and bypass (1.x) execute the same reader without output filtering.
+    """
+    if argv[:1] != ["rtk"]:
+        return argv
+    argv = argv[1:]
+    if argv[:1] in (["proxy"], ["bypass"]):
+        argv = argv[1:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    return argv
 
 
 def _tail_path(args: list[str]) -> str | None:

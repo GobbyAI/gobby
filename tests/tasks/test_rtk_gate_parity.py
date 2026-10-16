@@ -386,6 +386,101 @@ def test_gate13_operational_markers_preserve_wrapper_parity(form: str, command: 
 BACKGROUND_PYTEST = f"uv run rtk pytest {TEST} -q"
 
 
+@pytest.mark.parametrize("form", ["bare", "hook", "explicit", "proxy", "bypass"])
+@pytest.mark.parametrize("reader", ["cat", "tail -n 40", "grep -E 'passed|failed'"])
+@pytest.mark.parametrize("code", [0, 1])
+def test_background_read_launcher_gate10_parity(
+    tmp_path: Path, form: str, reader: str, code: int
+) -> None:
+    read = _wrapped(f"{reader} {{path}}", form)
+    output = "Pytest: 1 passed" if code == 0 else "Pytest: 0 passed, 1 failed"
+    gate = _background_gate(tmp_path, read, output, code=code)
+    assert gate.passed is (code == 0), gate.to_dict()
+    if code == 0:
+        assert gate.details["pytest_uncovered_paths"] == []
+    assert "pytest_unread_background_runs" not in gate.details
+
+
+@pytest.mark.parametrize("form", ["bare", "hook", "explicit", "proxy", "bypass"])
+@pytest.mark.parametrize("reader", ["cat", "tail -n 40", "grep -E 'passed|failed'"])
+def test_background_read_launcher_red_green_parity(tmp_path: Path, form: str, reader: str) -> None:
+    body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
+    records = _pair(0, "Write", {"file_path": str(tmp_path / TEST), "content": body}, "written")
+    command = f"uv run rtk pytest {TEST}::test_feature -q"
+    outputs = ((FIXTURES / "pytest-assertion-raw.txt").read_text().strip(), "Pytest: 1 passed")
+    for at, code, output in ((4, 1, outputs[0]), (14, 0, outputs[1])):
+        path = tmp_path / "tasks" / f"job-{at}.output"
+        records += _pair(
+            at,
+            "Bash",
+            {"command": command, "run_in_background": True},
+            f"Command running in background with ID: job-{at}. Output is being written to: "
+            f"{path}. You will be notified when it completes.",
+        )
+        status = "failed" if code else "completed"
+        records.append(
+            _user_text(
+                at + 2,
+                f"<task-notification><task-id>job-{at}</task-id><tool-use-id>call-{at}</tool-use-id>"
+                f"<output-file>{path}</output-file><status>{status}</status>"
+                f'<summary>Background command "{command}" {status} with exit code {code}</summary>'
+                "</task-notification>",
+            )
+        )
+        records += _pair(at + 4, "Bash", {"command": _wrapped(f"{reader} {path}", form)}, output)
+        if code:
+            records += _pair(12, "Write", {"file_path": str(tmp_path / SOURCE)}, "written")
+    records += _pair(
+        22,
+        "Bash",
+        {
+            "command": f"uv run gobby test-types audit {TEST} "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new"
+        },
+        "0 new type findings",
+    )
+    evidence = _derive(tmp_path, records)
+    runs = [run for run in evidence.validation_runs if run.background_job_id]
+    assert len(runs) == 2
+    assert [run.output for run in runs] == list(outputs)
+    assert [run.exit_code for run in runs] == [1, 0]
+    tdd = evaluate_tdd_evidence(
+        (
+            AcceptanceTest(
+                reference=f"{TEST}::test_feature",
+                path=TEST,
+                symbol="test_feature",
+                body=body,
+            ),
+        ),
+        evidence,
+    )
+    assert tdd.passed, tdd
+    assert tdd.red_runs == (command,)
+    assert tdd.green_runs == (command,)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=(TEST,),
+        close_root=str(tmp_path),
+    )
+    assert gate.passed, gate.to_dict()
+
+
+@pytest.mark.parametrize("tail_form", ["bare", "hook", "explicit", "proxy", "bypass"])
+@pytest.mark.parametrize("grep_form", ["bare", "hook", "explicit", "proxy", "bypass"])
+def test_background_monitor_launcher_parity(tmp_path: Path, tail_form: str, grep_form: str) -> None:
+    read = (
+        _wrapped("tail -n +1 -f {path}", tail_form)
+        + " | "
+        + _wrapped('grep -E --line-buffered "passed|failed"', grep_form)
+    )
+    gate = _background_gate(tmp_path, read, "Pytest: 1 passed", monitor=True)
+    assert gate.passed, gate.to_dict()
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
 def _user_text(at: int, content: str) -> dict[str, Any]:
     return {
         "type": "user",

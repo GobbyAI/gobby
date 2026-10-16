@@ -310,9 +310,10 @@ def test_one_line_follow_monitor_delivers_its_events() -> None:
         "tail -n +1 -f /tmp/job-1.out\r | grep -E --line-buffered x",
     ],
 )
-def test_monitor_running_another_command_binds_no_run(command: str) -> None:
+@pytest.mark.parametrize("prefix", ["", "rtk ", "rtk -- ", "rtk proxy ", "rtk bypass -- "])
+def test_monitor_running_another_command_binds_no_run(command: str, prefix: str) -> None:
     runs = [_pending_run()]
-    receipt, pending = _monitor_started(command)
+    receipt, pending = _monitor_started(prefix + command.replace("| grep", f"| {prefix}grep", 1))
 
     recover_background_receipt(runs, receipt, pending, order=2)
     recover_background_receipt(runs, _monitor_event(), pending=None, order=3)
@@ -350,8 +351,9 @@ def _bash(command: str) -> PendingTool:
         "cat /tmp/job-1.output\n",
     ],
 )
-def test_plain_reads_name_their_one_file(command: str) -> None:
-    assert _read_path(_bash(command)) == "/tmp/job-1.output"
+@pytest.mark.parametrize("prefix", ["", "rtk ", "rtk -- ", "rtk proxy ", "rtk bypass -- "])
+def test_plain_reads_name_their_one_file(command: str, prefix: str) -> None:
+    assert _read_path(_bash(prefix + command)) == "/tmp/job-1.output"
 
 
 @pytest.mark.parametrize(
@@ -419,5 +421,8 @@ def test_read_tool_names_its_file() -> None:
         "grep -F -f /tmp/job-1.output",
     ],
 )
-def test_following_multi_file_operator_and_comment_reads_name_no_file(command: str) -> None:
-    assert _read_path(_bash(command)) is None
+@pytest.mark.parametrize("prefix", ["", "rtk ", "rtk -- ", "rtk proxy ", "rtk bypass -- "])
+def test_following_multi_file_operator_and_comment_reads_name_no_file(
+    command: str, prefix: str
+) -> None:
+    assert _read_path(_bash(prefix + command)) is None
