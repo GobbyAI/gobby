@@ -129,6 +129,72 @@ async def test_shutdown_marker_cleanup_respects_ownership(
         assert marker.read_bytes() == original
 
 
+def test_remaining_shutdown_budget_counts_down_to_the_overall_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget = runner_lifecycle_shutdown._OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    monkeypatch.setattr(runner_lifecycle_shutdown, "_overall_shutdown_deadline", None)
+    assert runner_lifecycle_shutdown.remaining_shutdown_budget(100.0) == budget
+
+    monkeypatch.setattr(runner_lifecycle_shutdown, "_overall_shutdown_deadline", 100.0 + budget)
+    assert runner_lifecycle_shutdown.remaining_shutdown_budget(110.0) == budget - 10.0
+    assert runner_lifecycle_shutdown.remaining_shutdown_budget(100.0 + budget + 5.0) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_shutdown_bounds_pre_commit_spare_drain_by_remaining_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_lifecycle_shutdown, "_overall_shutdown_deadline", None)
+    close_database = MagicMock()
+    runner = cast(
+        GobbyRunner,
+        SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.RESTART, database=SimpleNamespace(close=close_database)
+        ),
+    )
+    server = cast("uvicorn.Server", SimpleNamespace(should_exit=False))
+    drains: list[tuple[float, float]] = []
+
+    def record_spare_drain(*, timeout: float) -> None:
+        drains.append((timeout, asyncio.get_running_loop().time()))
+
+    async def server_done() -> None:
+        return None
+
+    with (
+        patch.object(runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()),
+        patch.object(runner_lifecycle_shutdown, "_run_async_shutdown_cleanup", AsyncMock()),
+        patch.object(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            return_value=tmp_path / "shutdown_intent_active.json",
+        ),
+        patch("gobby.agents.sandbox_policy.shutdown_pre_commit_store_spare", record_spare_drain),
+    ):
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(server_done()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+            ownership_resolution=FailOpenPidOwnership("test"),
+        )
+
+    deadline = runner_lifecycle_shutdown._overall_shutdown_deadline
+    assert deadline is not None
+    assert len(drains) == 1
+    timeout, drained_at = drains[0]
+    # The drain gets what is left of this shutdown's budget, not an unbounded join.
+    assert 0.0 < timeout <= runner_lifecycle_shutdown._OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    assert timeout == pytest.approx(deadline - drained_at, abs=0.5)
+    close_database.assert_called_once_with()
+
+
 class TestGobbyRunnerShutdown:
     """Tests for shutdown handling in run method."""
 
