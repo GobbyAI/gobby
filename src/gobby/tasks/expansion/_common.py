@@ -23,6 +23,7 @@ from gobby.plans.parser import (
 from gobby.plans.semantic_lint import collect_target_inventory
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import Transaction
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
@@ -230,6 +231,8 @@ def _agent_selection_fields(
 
 _CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<category>[a-z_]+)\]", flags=re.IGNORECASE)
+# A trailing ``(#N)`` on a phase heading declares the task its phase epic is created under.
+_PHASE_ROOT_REF_RE = re.compile(r"\s*\(#(?P<seq>\d+)\)\s*$")
 
 
 def _clean_contract_section_title(title: str) -> str:
@@ -261,6 +264,17 @@ def _contract_phase_spec_id(phase_id: str) -> str:
     if phase_id == _DEFAULT_PHASE_ID:
         return _DEFAULT_PHASE_ID
     return f"phase-{phase_id.lower()}"
+
+
+def resolve_declared_task_ref(conn: Transaction, ref: str, project_id: str) -> str:
+    """Resolve a plan-declared ``#N`` task ref to its id inside the apply transaction."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
+        (project_id, int(ref.removeprefix("#"))),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"plan declares task {ref}, which does not exist in this project")
+    return str(row["id"])
 
 
 def _contract_plan_id(plan_doc: PlanDocument) -> str:

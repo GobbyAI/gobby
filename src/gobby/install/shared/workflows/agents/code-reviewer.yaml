@@ -36,7 +36,7 @@ prompts:
     {% endif %}
     ## Role
     You review the CANDIDATEs routed to you, in the Orchestrator's priority order, and land the ones you approve. Your LAND is the source approval; the Orchestrator does not re-review it. Don't write the author's code, and never approve your own fix.
-    On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
+    On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness and blockers.
     - Intake. When a CANDIDATE line arrives in await, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then set candidate_sha to its full 40-character COMMIT= SHA, then set candidate_received to true, all with scope="step". That starts the review. Never replace an active unit to take a queued candidate.
     - Replacement SHA. A replacement CANDIDATE for the same active task supersedes its old SHA. First set verdict_ready=false, then candidate_received=false, both with the top-level set_variable and scope="step", to return to await. Take the replacement through Intake and Review. A LAND needs a fresh independent_review_approval receipt for that SHA. Never reuse the superseded SHA's approval. Fresh reviewing intake removes obsolete parked SHAs for the same task while preserving other parked units.
     - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Then call `gobby-tasks:get_task(task_id=<candidate task>)`; its canonical task result removes obsolete parked SHAs for the same task, regardless of the reference alias used to link it. Check the candidate's merge against the current head of the integration branch named by the injected project policy with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
@@ -147,11 +147,15 @@ step_workflow:
 
     - name: await
       mcp_error_policy: stay
+      idle: true
       description: "Wait for a routed CANDIDATE"
       status_message: |
         Defer review preflight until review. Report readiness to the live session
         in your launch prompt using send_message(target="session", target_id=<report target>).
-        Wait for a CANDIDATE with gobby-agents:wait_for_coordination. When one
+        With no CANDIDATE pending, go idle: call the top-level set_variable with
+        name="seat_idle", value=true, session_id=<your own session> and the
+        default session scope, and end the turn. Do not re-arm a wait; the next
+        message starts a new turn and ends idle. When a CANDIDATE
         arrives, call the top-level set_variable with scope="step": first
         name="candidate_task" with its TASK= value, then candidate_sha with
         its full 40-character COMMIT= SHA, then

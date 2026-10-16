@@ -4,6 +4,7 @@ import asyncio
 import gzip
 import threading
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import Any
 from unittest.mock import MagicMock
@@ -411,7 +412,7 @@ async def test_probe_generation_endpoint_applies_httpx_timeout(
 
 
 @pytest.mark.asyncio
-async def test_probe_generation_endpoint_caller_timeout_uses_independent_result(
+async def test_probe_generation_endpoint_excludes_executor_queue_time_from_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     endpoint = GenerationEndpointConfig(
@@ -419,35 +420,33 @@ async def test_probe_generation_endpoint_caller_timeout_uses_independent_result(
         api_base="http://localhost:8000/v1",
         model="configured-model",
     )
-    release = threading.Event()
-    worker_done = threading.Event()
     response = _FakeResponse(
         "http://localhost:8000/v1/models",
         {"data": [{"id": "served-model"}]},
     )
-
-    class BlockingClient(_FakeSyncClient):
-        def get(self, url: str, **kwargs: Any) -> _FakeResponse:
-            release.wait(timeout=1)
-            return super().get(url, **kwargs)
-
-        def __exit__(self, *_args: Any) -> None:
-            worker_done.set()
-
-    client = BlockingClient({"http://localhost:8000/v1/models": response})
+    client = _FakeSyncClient({"http://localhost:8000/v1/models": response})
     monkeypatch.setattr(
         "gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: client
     )
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+    release = threading.Event()
+    # Saturate the default executor so the probe queues behind a busy worker.
+    busy_worker = loop.run_in_executor(None, release.wait, 5.0)
+    probe = asyncio.create_task(probe_generation_endpoint("remote", endpoint, timeout=0.01))
+    try:
+        done, _pending = await asyncio.wait({probe}, timeout=0.2)
+        assert not done, "queue time behind a busy executor counted against the probe"
+    finally:
+        release.set()
+    assert await busy_worker is True
 
-    result = await probe_generation_endpoint("remote", endpoint, timeout=0.01)
-    assert result["healthy"] is False
-    assert result["error"] == "TimeoutError"
-
-    release.set()
-    assert await asyncio.to_thread(worker_done.wait, 1)
-    assert result["healthy"] is False
-    assert result["served_model"] is None
-    assert result["model_count"] is None
+    result = await probe
+    assert result["healthy"] is True
+    assert result["served_model"] == "configured-model"
+    assert result["model_count"] == 1
+    assert result["error"] is None
+    assert client.timeouts == [0.01]
 
 
 @pytest.mark.asyncio

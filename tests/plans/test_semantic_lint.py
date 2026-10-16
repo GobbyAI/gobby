@@ -1582,3 +1582,45 @@ def test_iter_description_target_lines_skips_fenced_blocks() -> None:
     )
 
     assert list(iter_description_target_lines(description)) == [entry]
+
+
+def test_cross_plan_task_dependency_resolves_and_bare_external_ref_does_not(
+    tmp_path: Path,
+) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** cross-plan-dependency
+
+        # Cross-Plan Dependency
+
+        ## P1: Work (depends: #24150)
+        `kind: framing`
+
+        ### 1.1 Gated consumer [category: code] (depends: #24151)
+        `kind: deliverable`
+
+        Target: `src/shared.py::first`
+
+        Consume the other plan's producer.
+
+        **Acceptance:**
+        - 1.1.1 - Consumer is complete. file: `src/shared.py`.
+
+        ### 1.2 Unlinked consumer [category: code] (depends: 24152, other-plan)
+        `kind: deliverable`
+
+        Target: `src/other.py::second`
+
+        Consume a producer without naming its task.
+
+        **Acceptance:**
+        - 1.2.1 - Consumer is complete. file: `src/other.py`.
+        """,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "unresolved-dependency"]
+    assert [(issue.section_id, issue.details["reference"]) for issue in issues] == [
+        ("1.2", "24152"),
+        ("1.2", "other-plan"),
+    ]

@@ -170,6 +170,8 @@ class TestDaemonHealthWait:
         mock_httpx_get.side_effect = side_effect
 
         assert _is_daemon_healthy(60887) is False
+        # Decision probes stay strict; only the health wait widens the budget.
+        assert mock_httpx_get.call_args.kwargs["timeout"] == 1.0
 
     @patch("gobby.cli.daemon_lifecycle.time.sleep")
     @patch("gobby.cli.daemon_lifecycle.time.monotonic")
@@ -193,6 +195,8 @@ class TestDaemonHealthWait:
 
         assert elapsed == pytest.approx(1.0)
         assert mock_httpx_get.call_count == 2
+        # Each probe may use the rest of the wait, not a fixed 1 s.
+        assert [call.kwargs["timeout"] for call in mock_httpx_get.call_args_list] == [5.0, 4.5]
         mock_sleep.assert_called_once_with(0.5)
 
     @patch("gobby.cli.daemon_lifecycle.time.sleep")
@@ -332,21 +336,37 @@ class TestStartupProgressPolling:
             httpx.ProtocolError("bad protocol"),
             httpx.TooManyRedirects("redirect loop"),
             httpx.RequestError("request failed"),
-            RuntimeError("unexpected"),
         ],
     )
+    @patch("gobby.cli.daemon_start.time.sleep")
     @patch("gobby.cli.daemon_lifecycle.httpx.get")
-    def test_non_retryable_startup_progress_errors_return_false(
+    def test_transient_startup_progress_errors_keep_waiting(
         self,
         mock_httpx_get: MagicMock,
+        mock_sleep: MagicMock,
         side_effect: Exception,
     ) -> None:
-        """Non-retryable startup progress failures are reported without escaping."""
+        """A loaded daemon's transport or decode failure is retried until readiness."""
         from gobby.cli.daemon_start import _poll_startup_progress
 
-        mock_httpx_get.side_effect = side_effect
+        mock_httpx_get.side_effect = [side_effect, httpx.Response(200, json={"done": True})]
+
+        assert _poll_startup_progress(60887, max_wait=5.0) is True
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.5)
+
+    @patch("gobby.cli.daemon_lifecycle.httpx.get")
+    def test_unexpected_startup_progress_error_returns_false(
+        self,
+        mock_httpx_get: MagicMock,
+    ) -> None:
+        """An unexpected polling failure is reported without escaping."""
+        from gobby.cli.daemon_start import _poll_startup_progress
+
+        mock_httpx_get.side_effect = RuntimeError("unexpected")
 
         assert _poll_startup_progress(60887, max_wait=5.0) is False
+        mock_httpx_get.assert_called_once()
 
 
 def test_startup_readiness_budget_is_not_smaller_than_the_health_budget() -> None:

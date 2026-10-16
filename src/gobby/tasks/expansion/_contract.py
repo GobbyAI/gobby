@@ -17,6 +17,7 @@ from gobby.plans.manifest_emitter import (
     emit_stub_manifest,
     resolve_dependency_ref,
     section_dependency_refs,
+    section_external_task_refs,
 )
 from gobby.plans.parser import (
     ArtifactKind,
@@ -34,6 +35,7 @@ from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
     _DEFAULT_PHASE_ID,
+    _PHASE_ROOT_REF_RE,
     _contract_acceptance_lines,
     _contract_affected_files,
     _contract_deferral_record,
@@ -104,6 +106,15 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
                 section=section,
                 phase_id=phase_id,
             )
+            # Cross-plan ``(depends: #N)`` refs become blocked-by edges at apply. In a
+            # multi-phase plan the phase's declared root waits on this leaf's phase
+            # epic, so it is skipped rather than left to form a cycle.
+            phase_root = phase.get("root_task_ref") if len(phase_id_order) > 1 else None
+            single_task["external_blocked_by"] = [
+                ref
+                for ref in section_external_task_refs(section, section_by_id)
+                if ref != phase_root
+            ]
             tasks.append(single_task)
             phase["task_ids"].append(single_task["id"])
             entry_work_task_id[entry.source_section] = single_task["id"]
@@ -166,6 +177,7 @@ def _contract_deferrals(self: Any, plan_doc: PlanDocument) -> list[dict[str, Any
             depends_on.extend(candidate for candidate in resolved if candidate not in depends_on)
         record = _contract_deferral_record(section, depends_on=tuple(depends_on))
         if record is not None:
+            record["external_blocked_by"] = list(section_external_task_refs(section, section_by_id))
             deferrals.append(record)
     return deferrals
 
@@ -186,10 +198,13 @@ def _ensure_contract_phase(
 
     phase_number = _contract_phase_number(phase_source_id)
     phase_title = phase_section.title if phase_section is not None else task.title
+    root_match = _PHASE_ROOT_REF_RE.search(phase_title) if phase_section is not None else None
+    if root_match is not None:
+        phase_title = phase_title[: root_match.start()]
     phase = {
         "id": phase_id,
         "title": f"P{phase_number}: {phase_title}",
-        "summary": phase_section.title if phase_section is not None else task.description or "",
+        "summary": phase_title if phase_section is not None else task.description or "",
         "test_intent": {
             "summary": f"Validate Phase {phase_number} leaves with focused evidence.",
             "behaviors": [],
@@ -202,6 +217,8 @@ def _ensure_contract_phase(
         },
         "task_ids": [],
     }
+    if root_match is not None:
+        phase["root_task_ref"] = f"#{root_match.group('seq')}"
     phases.append(phase)
     phase_by_id[phase_id] = phase
     return phase
