@@ -1,5 +1,5 @@
 //! Process identity for the gterm host: a live, non-zombie process named gterm.
-//! Identity is read in-process, so it needs no exec. The macOS libproc calls are
+//! Identity is read in-process, so it needs no exec. The macOS libproc call is
 //! the crate's only unsafe code.
 #![allow(unsafe_code)]
 
@@ -18,9 +18,10 @@ pub(super) async fn process_is_host(pid: u32) -> Result<bool, HostFailure> {
     }
 }
 
+/// Reads the exec-time command name, which survives promotion replacing or
+/// unlinking the running host's executable.
 #[cfg(target_os = "macos")]
 async fn identity(pid: i32) -> Result<bool, HostFailure> {
-    use std::os::unix::ffi::OsStrExt;
     /// `SZOMB` in `<sys/proc.h>`.
     const SZOMB: u32 = 5;
 
@@ -41,20 +42,10 @@ async fn identity(pid: i32) -> Result<bool, HostFailure> {
     if info.pbi_status == SZOMB {
         return Ok(false);
     }
-
-    let mut path = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: `path` is writable, lives through the call, and its exact length is passed.
-    let len = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
-    let Some(path) = usize::try_from(len)
-        .ok()
-        .filter(|len| *len > 0)
-        .and_then(|len| path.get(..len))
-    else {
-        return absent_or_failure(std::io::Error::last_os_error());
-    };
-    Ok(std::path::Path::new(std::ffi::OsStr::from_bytes(path))
-        .file_name()
-        .is_some_and(|name| name == HOST_NAME))
+    // p_comm fills MAXCOMLEN bytes and is NUL-terminated only when shorter.
+    let comm = info.pbi_comm.map(|byte| byte as u8);
+    let name = comm.split(|byte| *byte == 0).next().unwrap_or_default();
+    Ok(name == HOST_NAME.as_bytes())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -77,9 +68,12 @@ async fn identity(pid: i32) -> Result<bool, HostFailure> {
     Ok(state != 'Z' && comm == HOST_NAME)
 }
 
-/// ESRCH or a vanished /proc entry proves absence; anything else is an I/O failure.
+/// Only ESRCH proves a pid is gone, plus a vanished /proc entry off macOS;
+/// anything else is an I/O failure.
 fn absent_or_failure(error: std::io::Error) -> Result<bool, HostFailure> {
-    if error.kind() == std::io::ErrorKind::NotFound
+    let vanished_proc_entry =
+        cfg!(not(target_os = "macos")) && error.kind() == std::io::ErrorKind::NotFound;
+    if vanished_proc_entry
         || rustix::io::Errno::from_io_error(&error) == Some(rustix::io::Errno::SRCH)
     {
         Ok(false)
