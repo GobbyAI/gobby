@@ -16,6 +16,23 @@ pytestmark = pytest.mark.unit
 RULE_NAME = "block-dirty-path-approval-cli"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
+# Every launcher, wrapper and global-option spelling that reaches the CLI.
+INVOCATIONS = (
+    "gobby sessions approve-dirty-paths s7 --checkout /repo a.txt",
+    "cd /repo && uv run gobby sessions approve-dirty-paths s7 a.txt",
+    "env gobby sessions approve-dirty-paths s7 --checkout /repo a.txt",
+    "env -i PATH=/usr/bin gobby sessions approve-dirty-paths s7 a.txt",
+    "uv run --directory /repo gobby sessions approve-dirty-paths s7 a.txt",
+    "uv run --no-sync gobby sessions approve-dirty-paths s7 a.txt",
+    "uvx gobby sessions approve-dirty-paths s7 a.txt",
+    "python -m gobby.cli sessions approve-dirty-paths s7 a.txt",
+    "gobby --verbose sessions approve-dirty-paths s7 a.txt",
+    ".venv/bin/gobby sessions approve-dirty-paths s7 a.txt",
+    "g=gobby; $g sessions approve-dirty-paths s7 a.txt",
+    'gobby sessions approve-dirty-path"s" s7 a.txt',
+    "bash -c 'gobby sessions approve-dirty-paths s7 a.txt'",
+    'echo "$(gobby sessions approve-dirty-paths s7 a.txt)"',
+)
 
 
 def _bash_event(command: str) -> HookEvent:
@@ -47,15 +64,21 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
         )
         return response.decision, response.reason or ""
 
-    direct = await decide("gobby sessions approve-dirty-paths #7 --checkout /repo a.txt")
-    via_uv = await decide("cd /repo && uv run gobby sessions approve-dirty-paths #7 a.txt")
-    substituted = await decide('echo "$(gobby sessions approve-dirty-paths #7 a.txt)"')
-    quoted = await decide('echo "ask the operator: gobby sessions approve-dirty-paths #7 a.txt"')
-    listing = await decide("gobby sessions list")
+    direct = await decide("gobby sessions approve-dirty-paths s7 --checkout /repo a.txt")
+    decisions = {
+        command: (await decide(command))[0]
+        for command in (
+            *INVOCATIONS,
+            'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"',
+            "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt",
+            "gobby sessions list",
+        )
+    }
 
-    assert direct[0] == "block"
     assert "operator" in direct[1]
-    assert via_uv[0] == "block"
-    assert substituted[0] == "block"
-    assert quoted[0] == "allow"
-    assert listing[0] == "allow"
+    assert decisions == {
+        **dict.fromkeys(INVOCATIONS, "block"),
+        'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"': "allow",
+        "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt": "allow",
+        "gobby sessions list": "allow",
+    }

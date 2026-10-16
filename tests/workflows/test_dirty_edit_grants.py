@@ -1,11 +1,14 @@
-"""Operator approvals for unowned dirty paths: recording, expiry and who may write them."""
+"""Operator approvals for unowned dirty paths: recording, expiry and who may write them.
+
+Also covers the edit ledgers the gate trusts, which no seat may write either.
+"""
 
 from __future__ import annotations
 
 import getpass
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
@@ -111,6 +114,26 @@ def test_seat_variable_writes_cannot_create_a_dirty_path_approval(
 
     assert result["success"] is False
     assert OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE not in variables
+
+
+@pytest.mark.parametrize(
+    ("name", "forged"),
+    [
+        ("session_dirty_files", ["a.txt"]),
+        ("session_dirty_file_checkouts", {"/repo": ["a.txt"]}),
+        ("task_edited_file_checkouts", {"task-id": {"/repo": ["a.txt"]}}),
+    ],
+)
+def test_seat_variable_writes_cannot_forge_the_edit_ledgers_the_gate_trusts(
+    temp_db: HubDatabase, seat: Session, name: str, forged: list[str] | dict[str, Any]
+) -> None:
+    result = set_variable(
+        SessionManager(temp_db), temp_db, name=name, value=forged, session_id=seat.id
+    )
+    variables = SessionVariableManager(temp_db).get_variables(seat.id)
+
+    assert result["success"] is False
+    assert variables.get(name) != forged
 
 
 def test_approve_dirty_paths_cli_records_the_operator_approval(
