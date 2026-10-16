@@ -68,9 +68,6 @@ from gobby.hooks._normalization_shell import (
     _get_command_text as _get_command_text,
 )
 from gobby.hooks._normalization_shell import (
-    _has_perl_inplace_option as _has_perl_inplace_option,
-)
-from gobby.hooks._normalization_shell import (
     _looks_file_like as _looks_file_like,
 )
 from gobby.hooks._normalization_shell import (
@@ -97,6 +94,9 @@ from gobby.hooks._normalization_tools import (
     _set_canonical_tool_metadata as _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_tools import (
+    normalize_tool_display_fields as normalize_tool_display_fields,
+)
+from gobby.hooks._normalization_tools import (
     normalize_tool_fields as normalize_tool_fields,
 )
 from gobby.hooks.tool_outcomes import ToolOutcome as ToolOutcome
@@ -115,7 +115,6 @@ __all__ = [
     "_extract_redirection_paths",
     "_extract_tool_input_paths",
     "_get_command_text",
-    "_has_perl_inplace_option",
     "_looks_file_like",
     "_looks_path_target",
     "_normalize_apply_patch_input",
@@ -137,6 +136,7 @@ __all__ = [
     "normalize_mcp_fields",
     "normalize_notification_input",
     "normalize_tool_outcome",
+    "normalize_tool_display_fields",
     "normalize_tool_fields",
     "notification_message_from_payload",
     "notification_type_from_payload",

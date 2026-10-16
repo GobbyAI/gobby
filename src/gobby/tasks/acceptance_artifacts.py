@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import re
-import textwrap
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from gobby.tasks.acceptance_python import (
+    extract_python_test_body,
+    python_test_findings,
+    resolve_assertion_helpers,
+)
 from gobby.tasks.acceptance_rust_modules import (
     RustModuleCache,
     resolve_rust_module,
@@ -94,10 +97,13 @@ class AcceptanceTest:
     path: str
     symbol: str
     body: str
-    # Same-file functions the test reaches through bare calls (braced languages).
+    # Helper definitions the test reaches: same-file bare calls (braced languages),
+    # or the assert helpers Python calls resolve to.
     helpers: tuple[str, ...] = ()
     rust_module: tuple[str, ...] | None = None
     rust_target: tuple[str, str | None] | None = None
+    # Python: a call in the test's own body binds to a helper proven to assert.
+    helper_asserts: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,7 +282,7 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
-            body, helpers = await _resolve_test_body(
+            body, helpers, helper_asserts = await _resolve_test_body(
                 path, symbol, repo_path, candidate, source_cache=source_cache
             )
             rust_module = (
@@ -295,7 +301,16 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
         tests.append(
-            AcceptanceTest(reference, path, symbol, body, helpers, rust_module, rust_target)
+            AcceptanceTest(
+                reference,
+                path,
+                symbol,
+                body,
+                helpers,
+                rust_module,
+                rust_target,
+                helper_asserts=helper_asserts,
+            )
         )
     return tuple(tests), tuple(findings)
 
@@ -322,7 +337,7 @@ def render_acceptance_test_bodies(tests: tuple[AcceptanceTest, ...]) -> str:
     parts = ["Named acceptance tests (exact bodies from the reviewed close candidate):"]
     for test in tests:
         parts.append(f"\n### {test.reference}\n{test.body}")
-        parts.extend(f"\n#### same-file helper\n{helper}" for helper in test.helpers)
+        parts.extend(f"\n#### helper\n{helper}" for helper in test.helpers)
     return "\n".join(parts)
 
 
@@ -485,16 +500,22 @@ async def _resolve_test_body(
     commit_sha: str,
     *,
     source_cache: dict[str, str] | None = None,
-) -> tuple[str, tuple[str, ...]]:
+) -> tuple[str, tuple[str, ...], bool]:
     source = source_cache.get(path) if source_cache is not None else None
     if source is None:
         source = await _read_test_file_from_commit(path, commit_sha, repo_path)
         if source_cache is not None:
             source_cache[path] = source
     if Path(path).suffix.casefold() == ".py":
-        return _extract_python_test_body(source, symbol), ()
+        body = extract_python_test_body(source, symbol)
+
+        async def read(module_path: str) -> str:
+            return await _read_test_file_from_commit(module_path, commit_sha, repo_path)
+
+        helpers, helper_asserts = await resolve_assertion_helpers(source, path, symbol, read)
+        return body, helpers, helper_asserts
     body = _extract_braced_test_body(source, symbol, path)
-    return body, _same_file_helper_bodies(source, path, symbol, body)
+    return body, _same_file_helper_bodies(source, path, symbol, body), False
 
 
 def _is_rust(path: str) -> bool:
@@ -567,37 +588,6 @@ async def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str
     return result.stdout
 
 
-def _extract_python_test_body(source: str, symbol: str) -> str:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        raise RuntimeError("committed test file is not parseable Python") from exc
-    requested = tuple(part for part in re.split(r"::|\.", symbol) if part)
-    matches: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
-
-    def visit(nodes: list[ast.stmt], parents: tuple[str, ...]) -> None:
-        for node in nodes:
-            if isinstance(node, ast.ClassDef):
-                visit(node.body, (*parents, node.name))
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                qualified = (*parents, node.name)
-                if requested and qualified[-len(requested) :] == requested:
-                    matches.append(node)
-                visit(node.body, qualified)
-
-    visit(tree.body, ())
-    if len(matches) != 1:
-        raise RuntimeError(f"expected one matching symbol, found {len(matches)}")
-    node = matches[0]
-    start_line = min(
-        (decorator.lineno for decorator in node.decorator_list),
-        default=node.lineno,
-    )
-    if node.end_lineno is None:
-        raise RuntimeError("committed Python symbol has no source boundary")
-    return "".join(source.splitlines(keepends=True)[start_line - 1 : node.end_lineno])
-
-
 def _extract_braced_test_body(source: str, symbol: str, path: str) -> str:
     name = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
     escaped = re.escape(name)
@@ -661,7 +651,7 @@ def _matching_brace_end(source: str, opening: int, path: str) -> int:
 def _test_body_findings(test: AcceptanceTest) -> list[str]:
     suffix = Path(test.path).suffix.casefold()
     if suffix == ".py":
-        return _python_test_findings(test)
+        return python_test_findings(test.reference, test.body, test.helper_asserts)
     if suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
         return _javascript_test_findings(test)
     return _text_test_findings(test)
@@ -735,32 +725,6 @@ def _javascript_test_findings(test: AcceptanceTest) -> list[str]:
     return findings
 
 
-def _python_test_findings(test: AcceptanceTest) -> list[str]:
-    try:
-        tree = ast.parse(textwrap.dedent(test.body))
-    except SyntaxError:
-        return [f"{test.reference}: test body is not parseable Python"]
-    findings: list[str] = []
-    has_assertion = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            called = _called_name(node.func)
-            if called in {"assertEqual", "assertNotEqual", "assertTrue", "assertFalse"} and all(
-                _is_static_expression(arg) for arg in node.args
-            ):
-                findings.append(f"{test.reference}: assertion compares only constant values")
-            if called.startswith("assert") or called in {"fail", "raises"}:
-                has_assertion = True
-        if not isinstance(node, ast.Assert):
-            continue
-        has_assertion = True
-        if _is_tautological_assert(node.test) or _is_static_expression(node.test):
-            findings.append(f"{test.reference}: contains a constant or tautological assertion")
-    if not has_assertion:
-        findings.append(f"{test.reference}: contains no executable assertion")
-    return list(dict.fromkeys(findings))
-
-
 def _text_test_findings(test: AcceptanceTest) -> list[str]:
     helpers = (_mask_code(helper, test.path) for helper in test.helpers)
     credited = [helper for helper in helpers if _TEXT_ASSERTION_RE.search(helper)]
@@ -778,57 +742,6 @@ def _text_test_findings(test: AcceptanceTest) -> list[str]:
     if not _TEXT_ASSERTION_RE.search(body):
         findings.append(f"{test.reference}: contains no executable assertion or panic expectation")
     return findings
-
-
-def _called_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return ""
-
-
-def _is_static_expression(node: ast.AST) -> bool:
-    if isinstance(node, ast.Constant):
-        return True
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return all(_is_static_expression(item) for item in node.elts)
-    if isinstance(node, ast.Dict):
-        return all(
-            key is not None and _is_static_expression(key) and _is_static_expression(value)
-            for key, value in zip(node.keys, node.values, strict=True)
-        )
-    if isinstance(node, ast.JoinedStr):
-        return all(
-            isinstance(item, ast.Constant)
-            or isinstance(item, ast.FormattedValue)
-            and _is_static_expression(item.value)
-            for item in node.values
-        )
-    if isinstance(node, ast.BinOp):
-        return _is_static_expression(node.left) and _is_static_expression(node.right)
-    if isinstance(node, ast.UnaryOp):
-        return _is_static_expression(node.operand)
-    if isinstance(node, ast.Compare):
-        return _is_static_expression(node.left) and all(
-            _is_static_expression(item) for item in node.comparators
-        )
-    if isinstance(node, ast.Call) and _called_name(node.func) in {"str", "repr", "format"}:
-        return all(_is_static_expression(arg) for arg in node.args)
-    return False
-
-
-def _is_tautological_assert(node: ast.AST) -> bool:
-    if isinstance(node, ast.BoolOp):
-        if isinstance(node.op, ast.Or):
-            return any(
-                isinstance(item, ast.Constant) and item.value is True for item in node.values
-            )
-        if isinstance(node.op, ast.And):
-            return any(
-                isinstance(item, ast.Constant) and item.value is False for item in node.values
-            )
-    return False
 
 
 def _structured_run_blocks(content: str) -> list[dict[str, str]]:

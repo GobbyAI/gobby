@@ -455,9 +455,9 @@ step_workflow:
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
         the commit moves you to submit. Close only from submit, after your Lane
         Manager releases the task.
-        If the assigned task needs no changes, close it here with reason
-        already_implemented and evidence in changes_summary; the ordinary close
-        checklist still applies. No candidate or manual step-variable write is needed.
+        If the assigned task needs no changes and no candidate was sent, close
+        it here with reason already_implemented and evidence in changes_summary;
+        the ordinary close checklist still applies. No candidate or manual step-variable write is needed.
         For an Orchestrator-directed handoff, use escalate_task with a reason
         starting exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
@@ -472,6 +472,17 @@ step_workflow:
       on_mcp_before:
         - *assigned_handoff_guard
         - *handoff_de_escalate_guard
+        # A sent candidate is under review; its bounce returns here for rework.
+        - server: gobby-tasks
+          tool: close_task
+          action: block
+          when: >-
+            tool_input.get('reason') == 'already_implemented'
+            and vars.get('candidate_sent')
+          reason: >-
+            A candidate was already sent for this task, so it cannot close as
+            already_implemented. Fix the bounce, commit, link_commit, and send a
+            new candidate.
         - <<: *handoff_close_guard
           when: >-
             tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])

@@ -29,6 +29,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.commit_guard import inspect_checkout_path_ownership_async
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task, remove_claimed_task
 from gobby.worktrees.git import WorktreeGitManager
@@ -319,6 +320,47 @@ async def test_timeout_cleanup_keeps_the_child_task_edit_attribution(
         TRACKED_PATH,
         UNTRACKED_PATH,
     }
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_foreign_gate_uses_the_live_interval_owner(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, sample_project, tmp_path)
+    assert harness.agent_runs.timeout(harness.run.id, error="Execution timed out") is not None
+    # The terminal child still holds an earlier claim whose edit history lists the path too;
+    # only the checkpointed task holds the path's live interval.
+    earlier = harness.task_manager.create_task(
+        str(sample_project["id"]),
+        "Earlier claim",
+        category="code",
+        validation_criteria="Earlier claim paths stay attributed to it.",
+    )
+    root = str(harness.worktree_path)
+    variables = harness.variables.get_variables(harness.child_session_id)
+    harness.variables.merge_variables(
+        harness.child_session_id,
+        {
+            **add_claimed_task(variables, earlier.id, f"#{earlier.seq_num}"),
+            "task_edited_file_checkouts": {
+                **variables["task_edited_file_checkouts"],
+                earlier.id: {root: [TRACKED_PATH]},
+            },
+        },
+    )
+
+    ownership = await inspect_checkout_path_ownership_async(
+        temp_db, project_id=str(sample_project["id"]), checkout_root=root
+    )
+    owners = {item.path: {owner.task_ref for owner in item.owners} for item in ownership}
+    assert owners[TRACKED_PATH] == {f"#{harness.task_seq_num}"}
+
+    result = await harness.checkpoint()
+
+    assert result["success"] is True, result
+    assert result["included_paths"] == [TRACKED_PATH, UNTRACKED_PATH]
 
 
 @pytest.mark.asyncio

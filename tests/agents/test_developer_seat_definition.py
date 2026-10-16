@@ -171,13 +171,14 @@ def test_developer_reaches_implement_only_through_both_skill_gates() -> None:
     for step_name in ("route_skills", "load_additional_skills", "implement"):
         assert _transitions(steps[step_name])["claim"] == "not vars.task_claimed"
     assert set(_transitions(steps["submit"])) == {"implement", "claim"}
-    close_guard = next(
+    candidate_guard, handoff_guard = (
         handler
         for handler in steps["implement"]["on_mcp_before"]
         if handler["tool"] == "close_task"
     )
-    assert close_guard["action"] == "block"
-    assert "_developer_handoff_tasks" in close_guard["when"]
+    assert candidate_guard["action"] == handoff_guard["action"] == "block"
+    assert "vars.get('candidate_sent')" in candidate_guard["when"]
+    assert "_developer_handoff_tasks" in handoff_guard["when"]
 
 
 @pytest.mark.parametrize("tool", ["close_task", "escalate_task"])

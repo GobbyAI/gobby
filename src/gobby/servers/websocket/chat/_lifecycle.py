@@ -167,7 +167,8 @@ class ChatLifecycleMixin:
         if data:
             from gobby.hooks.normalization import normalize_tool_fields
 
-            data = normalize_tool_fields(data)
+            # Shell command analysis can run Git; keep it off the event loop.
+            data = await asyncio.to_thread(normalize_tool_fields, data)
 
         # Source is determined by session's provider (default claude)
         provider_value = getattr(session, "provider", "claude")

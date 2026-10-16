@@ -466,6 +466,41 @@ async def test_implement_already_implemented_close_reaches_checklist(
     assert LocalTaskManager(seats.db).get_task(seats.task_id).closed_at is None
 
 
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_bounced_candidate_cannot_close_as_already_implemented(
+    seats: _Seats, tmp_path: Path, use_ref: bool
+) -> None:
+    """A bounce after a sent candidate returns to rework, not the no-work close."""
+    task = LocalTaskManager(seats.db).get_task(seats.task_id)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, task.project_id, str(tmp_path))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    instance = AgentStepInstanceManager(seats.db).get_for_session(seats.former)
+    assert instance is not None
+    instance.variables.update(implementation_complete=True, candidate_sent=True, bounced=True)
+    AgentStepInstanceManager(seats.db).save(instance)
+    before = _instance_state(seats.db, seats.former)
+
+    with session_context_for_test(seats.former):
+        result = await _task_proxy(seats, full_hooks=True).call_tool(
+            "gobby-tasks",
+            "close_task",
+            {
+                "task_id": seats.ref if use_ref else seats.task_id,
+                "reason": "already_implemented",
+                "project_path": str(tmp_path),
+                "preview": True,
+            },
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+
+    assert result["error_code"] == "TOOL_BLOCKED"
+    assert "A candidate was already sent for this task" in result["error"]
+    assert _instance_state(seats.db, seats.former) == before
+    assert LocalTaskManager(seats.db).get_task(seats.task_id).closed_at is None
+
+
 @pytest.mark.parametrize("reviewed", [False, True])
 @pytest.mark.parametrize("use_ref", [False, True])
 async def test_implement_no_work_close_releases_binding(

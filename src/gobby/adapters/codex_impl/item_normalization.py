@@ -22,7 +22,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 from gobby.adapters.codex_impl.execution_chain import (
     extract_yielded_cell_id as extract_yielded_cell_id,
 )
-from gobby.hooks.normalization import normalize_tool_fields, tool_input_error
+from gobby.hooks.normalization import normalize_tool_display_fields, tool_input_error
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,7 @@ def build_tool_event_data(
     item_data.setdefault("item_type", item_type)
     item_data.setdefault("status", item.get("status", item_data.get("status", "")))
 
-    normalize_tool_fields(item_data)
+    normalize_tool_display_fields(item_data)
     return item_data
 
 

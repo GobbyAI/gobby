@@ -8,8 +8,10 @@ repository.workspace = true
 publish = false
 description = "Workspace-private gterm host-wire clients for the gdaemon terminal family"
 
-[lints]
-workspace = true
+# The workspace forbids unsafe code, which no module can allow. Deny it here so
+# host/process.rs alone may allow it for the macOS libproc identity lookup.
+[lints.rust]
+unsafe_code = "deny"
 
 [dependencies]
 anyhow = "1"
@@ -24,6 +26,9 @@ thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "net", "process", "sync", "time", "rt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 gobby-core = { path = "../gcore", features = ["postgres-pool"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import textwrap
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from pytest_mock import MockerFixture
 
 from gobby.tasks import acceptance_artifacts as artifacts_module
 from gobby.tasks.acceptance_artifacts import (
+    AcceptanceArtifactResult,
     AcceptanceTest,
     evaluate_acceptance_artifacts,
     malformed_test_reference_findings,
@@ -22,6 +24,7 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.acceptance_python import MAX_HELPER_DEPTH
 from gobby.tasks.tdd_evidence import (
     TddEvidenceResult,
     evaluate_tdd_evidence,
@@ -1039,7 +1042,9 @@ def test_feature() -> None:
     test_other()
     assert value or True
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
@@ -1052,6 +1057,743 @@ def test_feature() -> None:
     assert all("test_feature" in finding for finding in result.findings)
 
 
+NO_ASSERTION = "tests/test_feature.py::test_feature: contains no executable assertion"
+
+
+def _committed_python_result(
+    tmp_path: Path, source: str, extra: dict[str, str] | None = None
+) -> AcceptanceArtifactResult:
+    """Gate 11 over a committed test file, so helper resolution reads real source."""
+    repo = _init_repo(tmp_path)
+    for relative, text in {"tests/test_feature.py": source, **(extra or {})}.items():
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_text(textwrap.dedent(text), encoding="utf-8")
+    return evaluate_acceptance_artifacts(
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
+        repo_path=str(repo),
+        commit_shas=[_commit(repo, "python acceptance test")],
+    )
+
+
+@pytest.mark.parametrize("helper", ["_assert_ok", "__assert_ok"])
+def test_underscore_prefixed_assert_helper_counts_as_assertion(tmp_path: Path, helper: str) -> None:
+    source = f"""
+    def {helper}(receipt, expected):
+        assert receipt == expected
+
+    def test_feature():
+        {helper}(make_receipt(), expected="ok")
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize("helper", ["_check_ok", "_ok_assert"])
+def test_non_assert_private_helper_still_flagged(tmp_path: Path, helper: str) -> None:
+    source = f"""
+    def {helper}(receipt):
+        assert receipt == "ok"
+
+    def test_feature():
+        {helper}(make_receipt())
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize("helper", ["assert_ok", "_assert_ok"])
+@pytest.mark.parametrize(
+    "helper_body",
+    ["pass", 'return receipt == "ok"', "assert True", 'assert receipt == "ok" or True'],
+    ids=["noop", "placebo_return", "constant_assert", "tautological_assert"],
+)
+def test_noop_and_placebo_assert_helpers_are_flagged(
+    tmp_path: Path, helper: str, helper_body: str
+) -> None:
+    source = f"""
+    def {helper}(receipt):
+        {helper_body}
+
+    def test_feature():
+        {helper}(make_receipt())
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature(receipt):
+            receipt.assert_ok()
+        """,
+        """
+        from tests.missing_support import assert_ok
+
+        def test_feature():
+            assert_ok(make_receipt())
+        """,
+        """
+        def _assert_first(receipt):
+            _assert_second(receipt)
+
+        def _assert_second(receipt):
+            _assert_first(receipt)
+
+        def test_feature():
+            _assert_first(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        class Other:
+            def _assert_ok(self, receipt):
+                pass
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+    ],
+    ids=["attribute_without_definition", "unresolvable_import", "cycle", "ambiguous_name"],
+)
+def test_unresolved_and_cyclic_assert_helpers_are_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+_ASSERTING_SUPPORT = """
+def assert_matches(receipt, expected):
+    assert receipt == expected
+"""
+
+
+_NOOP_SUPPORT = """
+def assert_matches(receipt, expected):
+    pass
+"""
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            def unused():
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            async def unused():
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_ok(receipt):
+            class Unused:
+                def check(self):
+                    assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def _assert_matches(receipt, expected):
+            assert receipt == expected
+
+        def _assert_ok(receipt):
+            check = lambda: _assert_matches(receipt, "ok")
+
+        def test_feature():
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            def unused():
+                assert make_receipt() == "ok"
+        """,
+    ],
+    ids=["nested_def", "nested_async_def", "nested_class", "lambda_call", "test_body_nested_def"],
+)
+def test_uncalled_nested_assert_helper_is_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_receiver_decoy_is_flagged(tmp_path: Path) -> None:
+    source = """
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+
+    def test_feature(receipt):
+        receipt._assert_ok()
+    """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "test_function",
+    [
+        """
+        def test_feature(_assert_ok):
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            _assert_ok = lambda receipt: None
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            for _assert_ok in (print,):
+                _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            from tests.support.noop import assert_matches as _assert_ok
+            _assert_ok(make_receipt(), "ok")
+        """,
+    ],
+    ids=["parameter", "local_noop_rebinding", "loop_target", "local_import"],
+)
+def test_assert_helper_lexical_shadow_is_flagged(tmp_path: Path, test_function: str) -> None:
+    source = textwrap.dedent(
+        """
+        def _assert_ok(receipt, expected="ok"):
+            assert receipt == expected
+        """
+    ) + textwrap.dedent(test_function)
+    result = _committed_python_result(tmp_path, source, {"tests/support/noop.py": _NOOP_SUPPORT})
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_nested_scope_import_is_flagged(tmp_path: Path) -> None:
+    source = """
+    from tests.support.noop import assert_matches as _assert_ok
+
+    def _unrelated():
+        from tests.support.receipts import assert_matches as _assert_ok
+
+    def test_feature():
+        _assert_ok(make_receipt(), "ok")
+    """
+    result = _committed_python_result(
+        tmp_path,
+        source,
+        {"tests/support/noop.py": _NOOP_SUPPORT, "tests/support/receipts.py": _ASSERTING_SUPPORT},
+    )
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize("dots", ["...", ".."], ids=["three_levels", "two_levels"])
+def test_assert_helper_overdeep_relative_import_is_flagged(tmp_path: Path, dots: str) -> None:
+    source = f"""
+    from {dots}support import _assert_ok
+
+    def test_feature():
+        _assert_ok(make_receipt())
+    """
+    decoy = """
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+    """
+    result = _committed_python_result(tmp_path, source, {"support.py": decoy})
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def _helper_chain(length: int) -> str:
+    helpers = [
+        f"def _assert_{index}(receipt):\n    _assert_{index + 1}(receipt)\n"
+        for index in range(length - 1)
+    ]
+    helpers.append(f'def _assert_{length - 1}(receipt):\n    assert receipt == "ok"\n')
+    return "\n".join([*helpers, "def test_feature():\n    _assert_0(make_receipt())\n"])
+
+
+@pytest.mark.parametrize(
+    ("length", "passed"),
+    [(MAX_HELPER_DEPTH, True), (MAX_HELPER_DEPTH + 1, False)],
+    ids=["at_limit", "beyond_limit"],
+)
+def test_assert_helper_depth_limit(tmp_path: Path, length: int, passed: bool) -> None:
+    result = _committed_python_result(tmp_path, _helper_chain(length))
+
+    assert result.passed is passed, result.findings
+    assert result.findings == (() if passed else (NO_ASSERTION,))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok = lambda receipt: None
+                self._assert_ok("bad")
+        """,
+        """
+        class TestFeature:
+            def setup_method(self):
+                self._assert_ok = lambda receipt: None
+
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        class TestFeature:
+            def setup_method(self):
+                setattr(self, "_assert_ok", lambda receipt: None)
+
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+    ],
+    ids=["in_test", "setup_method", "setattr"],
+)
+def test_assert_helper_instance_rebinding_is_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+
+        TestFeature._assert_ok = lambda self, receipt: None
+        """,
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                type(self)._assert_ok = lambda self, receipt: None
+                self._assert_ok("bad")
+        """,
+        """
+        def _silence(function):
+            return lambda *args: None
+
+        @_silence
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("bad")
+        """,
+        """
+        def _silence(function):
+            return lambda *args: None
+
+        class TestFeature:
+            @_silence
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        def _silence_helpers(cls):
+            cls._assert_ok = lambda self, receipt: None
+            return cls
+
+        @_silence_helpers
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def setup_module():
+            global _assert_ok
+            _assert_ok = lambda receipt: None
+
+        def test_feature():
+            _assert_ok("bad")
+        """,
+    ],
+    ids=[
+        "class_attribute",
+        "type_self",
+        "module_decorator",
+        "method_decorator",
+        "class_decorator",
+        "setup_module_global",
+    ],
+)
+def test_assert_helper_module_rebinding_or_decoration_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+_NOOP_STATICMETHOD_CLASS = """
+class TestFeature:
+    @staticmethod
+    def _assert_ok(receipt):
+        assert receipt == "ok"
+
+    def test_feature(self):
+        self._assert_ok("bad")
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "extra"),
+    [
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature(monkeypatch):
+                monkeypatch.setattr("tests.test_feature._assert_ok", lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            from unittest.mock import patch
+
+            class TestFeature:
+                def _assert_ok(self, receipt):
+                    assert receipt == "ok"
+
+                @patch.object(TestFeature, "_assert_ok")
+                def test_feature(self, _mock):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            from unittest.mock import patch
+
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                with patch("tests.test_feature._assert_ok"):
+                    _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def setup_module():
+                globals()["_assert_ok"] = lambda receipt: None
+
+            def test_feature():
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            class Meta(type):
+                def __new__(mcs, name, bases, namespace):
+                    namespace["_assert_ok"] = lambda self, receipt: None
+                    return super().__new__(mcs, name, bases, namespace)
+
+            class TestFeature(metaclass=Meta):
+                def _assert_ok(self, receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            "staticmethod = lambda function: (lambda *args, **kwargs: None)\n"
+            + _NOOP_STATICMETHOD_CLASS,
+            {},
+        ),
+        (
+            "from tests.util import noop as staticmethod\n" + _NOOP_STATICMETHOD_CLASS,
+            {"tests/util.py": "def noop(function):\n    return lambda *args, **kwargs: None\n"},
+        ),
+        (
+            """
+            def _noop(function):
+                return lambda *args, **kwargs: None
+
+            class TestFeature:
+                staticmethod = _noop
+
+                @staticmethod
+                def _assert_ok(receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            import unittest
+            from tests.helpers import Checks
+
+            class TestFeature(Checks, unittest.TestCase):
+                def test_feature(self):
+                    self.assertValid("bad")
+            """,
+            {
+                "tests/helpers.py": """
+                class Checks:
+                    def assertValid(self, receipt):
+                        pass
+                """
+            },
+        ),
+        (
+            """
+            from tests.fakes import FakeClient
+
+            def test_feature():
+                client = FakeClient()
+                client.assert_called_once_with(1)
+            """,
+            {
+                "tests/fakes.py": """
+                class FakeClient:
+                    def assert_called_once_with(self, *args):
+                        pass
+                """
+            },
+        ),
+    ],
+    ids=[
+        "monkeypatch_dotted_path",
+        "patch_object",
+        "patch_dotted_path",
+        "globals_subscript",
+        "metaclass_namespace",
+        "module_staticmethod_rebinding",
+        "imported_staticmethod_alias",
+        "class_body_staticmethod",
+        "imported_base_assertion",
+        "imported_mock_lookalike",
+    ],
+)
+def test_assert_helper_string_named_or_shadowed_binding_is_flagged(
+    tmp_path: Path, source: str, extra: dict[str, str]
+) -> None:
+    result = _committed_python_result(tmp_path, source, extra)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        from unittest.mock import Mock
+
+        def test_feature():
+            sink = Mock()
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        import unittest
+
+        class TestFeature(unittest.TestCase):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+        """
+        from unittest import IsolatedAsyncioTestCase as AsyncCase
+
+        class TestFeature(AsyncCase):
+            async def test_feature(self):
+                self.assertIn("ok", await make_receipts())
+        """,
+        """
+        from unittest import TestCase
+
+        class TestFeature(TestCase):
+            def test_feature(self):
+                self.assertTrue(make_receipt())
+        """,
+    ],
+    ids=["mock_assertion", "testcase", "async_testcase_alias", "testcase_from_import"],
+)
+def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def assert_called_once_with(self, *args):
+                pass
+
+            def test_feature(self):
+                self.assert_called_once_with("ok")
+        """,
+        """
+        from unittest.mock import Mock
+
+        def assert_called_once_with(*args):
+            pass
+
+        def test_feature():
+            sink = Mock()
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        class TestFeature:
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+    ],
+    ids=["noop_method", "noop_module_def", "not_a_testcase"],
+)
+def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    ("source", "extra"),
+    [
+        (
+            """
+            def _assert_matches(receipt, expected):
+                assert receipt == expected
+
+            def _assert_ok(receipt):
+                _assert_matches(receipt, "ok")
+
+            def test_feature():
+                _assert_ok(make_receipt())
+            """,
+            {},
+        ),
+        (
+            """
+            from tests.support.receipts import assert_matches as _assert_matches
+
+            def _assert_ok(receipt):
+                _assert_matches(receipt, "ok")
+
+            def test_feature():
+                _assert_ok(make_receipt())
+            """,
+            {
+                "tests/support/receipts.py": """
+                def assert_matches(receipt, expected):
+                    assert receipt == expected
+                """
+            },
+        ),
+        (
+            """
+            import pytest
+
+            def _assert_rejected(receipt):
+                with pytest.raises(ValueError):
+                    receipt.validate()
+
+            class TestFeature:
+                def _assert_ok(self, receipt):
+                    _assert_rejected(receipt)
+
+                def test_feature(self):
+                    self._assert_ok(make_receipt())
+            """,
+            {},
+        ),
+        (
+            """
+            class TestFeature:
+                @staticmethod
+                def _assert_ok(receipt):
+                    assert receipt == "ok"
+
+                def test_feature(self):
+                    self._assert_ok(make_receipt())
+            """,
+            {},
+        ),
+    ],
+    ids=["same_file", "imported_module", "method_to_raises", "staticmethod_helper"],
+)
+def test_delegating_assert_helper_counts_as_assertion(
+    tmp_path: Path, source: str, extra: dict[str, str]
+) -> None:
+    result = _committed_python_result(tmp_path, source, extra)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
 def test_rust_format_constant_placebo_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1062,7 +1804,9 @@ fn protocol_frame_roundtrip() {
     assert_eq!(format!("{}", 256), "256");
 }
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("frame_protocol",))
     )
@@ -1118,7 +1862,9 @@ def test_test_named_helper_call_is_not_delegation(
     symbol: str,
     body: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
     )
@@ -1178,7 +1924,9 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     body: str,
     finding: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, (), False))
+    )
     monkeypatch.setattr(
         artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
     )

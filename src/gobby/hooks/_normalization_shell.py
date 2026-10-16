@@ -957,13 +957,3 @@ def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
         if _looks_path_target(candidate.value) and candidate.value not in paths:
             paths.append(candidate.value)
     return paths
-
-
-def _has_perl_inplace_option(parts: list[str]) -> bool:
-    """Return True when a perl command edits files in place."""
-    for part in parts[1:]:
-        if part == "-pi" or part.startswith("-pi"):
-            return True
-        if part == "-i" or part.startswith("-i"):
-            return True
-    return False

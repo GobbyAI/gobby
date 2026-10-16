@@ -12,7 +12,6 @@ from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
-from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspace_layout import (
     MIN_PANE_COLUMNS,
     MIN_PANE_ROWS,
@@ -21,6 +20,7 @@ from gobby.storage.workspace_layout import (
 )
 from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceTarget
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.terminals.session_pane import session_pane
 from gobby.utils.git import get_git_branch, run_git_command
 
 LANE_MANAGER_AGENT = "lane-manager"
@@ -91,39 +91,6 @@ def _manager(
     ):
         raise _refuse("manager", [report_to])
     return manager
-
-
-def _manager_pane(workspaces: WorkspaceManager, manager: Session) -> WorkspaceTarget | None:
-    """Resolve the manager's newest placed live terminal before context hints."""
-    context = manager.terminal_context or {}
-    pane = next(
-        (
-            pane
-            for terminal in TerminalManager(workspaces.db).list_for_session(manager.id)
-            if terminal.state in {"pending", "live"}
-            if (pane := workspaces.get_pane_for_terminal(terminal.id)) is not None
-        ),
-        None,
-    )
-    pane_ref = pane.id if pane else context.get("gobby_pane_ref") or context.get("pane_ref")
-    if not pane_ref:
-        terminal = context.get("gobby_terminal_id")
-        pane = workspaces.get_pane_for_terminal(terminal) if isinstance(terminal, str) else None
-        pane_ref = pane.id if pane else None
-    if not isinstance(pane_ref, str):
-        return None
-    try:
-        target = workspaces.resolve_reference(pane_ref, node=manager.machine_id)
-    except (ValueError, WorkspaceNotFoundError):
-        return None
-    if (
-        target.pane is None
-        or target.tab is None
-        or target.tab.project_id != manager.project_id
-        or target.node.id != manager.machine_id
-    ):
-        return None
-    return target
 
 
 def _manager_lane_placement(
@@ -210,7 +177,7 @@ def resolve_team_launch_inputs(
     sessions = SessionManager(db)
     manager = _manager(db, sessions, caller, lane, report_to)
     workspaces = WorkspaceManager(db)
-    manager_pane = _manager_pane(workspaces, manager)
+    manager_pane = session_pane(workspaces, manager)
     tabs = [
         tab
         for candidate in workspaces.list_for_node(caller.machine_id)

@@ -29,6 +29,7 @@ from gobby.tasks.agentic_close_review import (
     TASK_CLOSE_REVIEWER_AGENT,
     build_agentic_review_prompt,
     build_terminal_review_payload,
+    reviewer_placement,
     reviewer_spawn_overrides,
 )
 from gobby.utils.machine_id import get_machine_id
@@ -398,22 +399,32 @@ async def _launch_promoted_review(
     )
     if queued_run is None:
         return _finish_launch_error(store, review, "Queued reviewer run could not be refreshed.")
+    spawn_arguments: dict[str, Any] = {
+        "prompt": prompt,
+        "agent": TASK_CLOSE_REVIEWER_AGENT,
+        "task_id": None,
+        "checkout_mode": "none",
+        "parent_session_id": review.caller_session_id,
+        "project_path": evaluation.repo_path,
+        "notify_parent_on_completion": True,
+        "timeout": validator_timeout_seconds,
+        "reserved_run_id": review.agent_run_id,
+        **overrides,
+    }
+    placement = await asyncio.to_thread(
+        reviewer_placement, ctx.task_manager.db, review.caller_session_id, review.task_ref
+    )
     try:
         launch = await registry.call(
             "spawn_agent",
-            {
-                "prompt": prompt,
-                "agent": TASK_CLOSE_REVIEWER_AGENT,
-                "task_id": None,
-                "checkout_mode": "none",
-                "parent_session_id": review.caller_session_id,
-                "project_path": evaluation.repo_path,
-                "notify_parent_on_completion": True,
-                "timeout": validator_timeout_seconds,
-                "reserved_run_id": review.agent_run_id,
-                **overrides,
-            },
+            spawn_arguments if placement is None else {**spawn_arguments, "placement": placement},
         )
+        # A refused placement that left the reserved run queued never blocks the close.
+        if placement is not None and isinstance(launch, Mapping) and launch.get("placement_error"):
+            reserved = LocalAgentRunManager(ctx.task_manager.db).get(review.agent_run_id)
+            if reserved is not None and reserved.status == "queued":
+                logger.info("Reviewer placement refused: %s", launch.get("placement_error"))
+                launch = await registry.call("spawn_agent", spawn_arguments)
     except Exception as exc:
         logger.warning("Task-close reviewer launch failed", exc_info=True)
         return _finish_launch_error(
