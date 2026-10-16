@@ -2246,7 +2246,8 @@ Research context:
 - Oracle: `src/gobby/terminals/leases.py::TerminalLeaseRegistry.viewports` (595-607) returns the
   distinct `(rows, cols)` of records for the terminal that are not finalized, whose viewer is
   `"gclient"`, and whose viewport is set. Its docstring records that sync tools call it from a
-  worker thread.
+  worker thread: `InternalToolRegistry.call` runs a sync tool such as `check_runbook_seats_tool`
+  with `asyncio.to_thread` (`mcp_proxy/tools/internal.py:315-316`), off the daemon loop.
 - Rust state: `leases.rs` `Record` carries `viewer` (`Viewer::Gclient`), `finalized`, and
   `view.viewport`, which `Registry::set_viewport` (747-759) stores as `(rows, cols)`.
   `Registry::viewports(terminal) -> BTreeSet<(u16, u16)>` reads them under the state lock with no
@@ -2824,9 +2825,10 @@ Executors run focused verification after each leaf and the complete matrix befor
   2.7 now records it as a ruling. The ruling also accepted the three validator-forced edits to 1.6,
   1.8, and the 2.4 and D2 leaf targets; the adversary decides the remaining consumer-coverage
   warnings.
-- 2026-10-16: Repair of Adversary gobby#16983's F1-F6 and two LOW findings raised at `121294e`
-  (Plan Writer gobby#16490), under Orchestrator gobby#15977's no-deferral ruling.
-  - F1 (no deferral): D1 and D2 are removed. D1 becomes the landed P1 section 1.10, which #23218
+- 2026-10-16: Repair of Adversary gobby#16983's F1-F6 raised at `121294e`, plus the two LOW
+  findings D2 carried from #23219 (Plan Writer gobby#16490), under Orchestrator gobby#15977's
+  no-deferral ruling.
+  - F1 (no deferral): D1 and D2 are converted. D1 becomes the landed P1 section 1.10, which #23218
     executed (`6322c1874f`). D2's leaves become the P2 deliverables 2.2, 2.3, 2.12, and 2.13, with
     every acceptance obligation kept. A2 records #23219 as superseded and retired at expansion. The
     new "Cross-plan edges set at expansion" section lists 2.2 blocked by #21558, 2.4 blocking
