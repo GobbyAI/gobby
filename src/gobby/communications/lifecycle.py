@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+import psycopg
+from psycopg_pool import PoolTimeout
 
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.inbound_mode import channel_for_adapter_init, should_poll
@@ -176,9 +178,15 @@ class AdapterLifecycleOperations:
                 if generation != self._adapter_generations.get(channel.id, 0):
                     return
                 try:
-                    current = await asyncio.to_thread(
-                        self._manager._store.get_channel_by_name, name
-                    )
+                    try:
+                        current = await asyncio.to_thread(
+                            self._manager._store.get_channel_by_name, name
+                        )
+                    except (psycopg.OperationalError, PoolTimeout) as error:
+                        if isinstance(error, psycopg.OperationalError) and error.sqlstate:
+                            if not error.sqlstate.startswith(("08", "40", "53", "57P0")):
+                                raise
+                        raise ConnectionError(str(error)) from error
                     if current is None or current.id != channel.id or not current.enabled:
                         return
                     if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
@@ -203,12 +211,23 @@ class AdapterLifecycleOperations:
                 self._retry_state.pop(name, None)
 
     async def _cancel_retry(self, name: str) -> None:
-        task = self._retry_tasks.pop(name, None)
+        task = self._retry_tasks.get(name)
+        interrupted = False
         if task is not None:
             task.cancel()
+            # Drain cleanup without forwarding a second cancellation into the child.
+            while not task.done():
+                try:
+                    await asyncio.wait([task])
+                except asyncio.CancelledError:
+                    interrupted = True
             with suppress(asyncio.CancelledError):
-                await task
+                task.result()
+            if self._retry_tasks.get(name) is task:
+                self._retry_tasks.pop(name, None)
         self._retry_state.pop(name, None)
+        if interrupted:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""

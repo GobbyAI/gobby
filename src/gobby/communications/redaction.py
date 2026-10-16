@@ -7,7 +7,9 @@ import re
 from gobby.utils.terminal_output import redact_terminal_output
 
 TRUNCATION_MARKER = "\n…(truncated)"
-_BOT_URL_TOKEN = re.compile(r"(/bot)[^/\s?#\"'<>\\]+", re.IGNORECASE)
+_BOT_URL_TOKEN = re.compile(
+    r"(https?://api\.telegram\.org/(?:file/)?bot)[^/\s?#\"'<>\\]+", re.IGNORECASE
+)
 
 
 def redact_and_bound(text: str, max_chars: int) -> str:

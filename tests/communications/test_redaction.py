@@ -26,6 +26,14 @@ def test_telegram_bot_urls_are_redacted(prefix: str) -> None:
     assert SECRET not in redacted
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["https://t.me/botfather", "https://example.com/botguide", "ordinary /bot text"],
+)
+def test_non_token_bot_text_is_preserved(text: str) -> None:
+    assert redact_and_bound(text, 512) == text
+
+
 @pytest.mark.parametrize("prefix", ["bot", "file/bot"])
 def test_bot_url_secret_straddling_bound_is_redacted_first(prefix: str) -> None:
     token = "123456789:" + SECRET
