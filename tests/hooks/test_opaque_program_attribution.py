@@ -118,11 +118,13 @@ class Checkout:
             {"session_dirty_files": held, "session_dirty_file_checkouts": {str(self.repo): held}},
         )
 
-    def rule_3_reason(self, rel_path: str) -> str:
-        data: dict[str, Any] = {
-            "tool_name": "Edit",
-            "tool_input": {"file_path": str(self.repo / rel_path)},
-        }
+    def rule_3_reason(self, rel_path: str, *, command: str | None = None) -> str:
+        """Rule 3's verdict on an Edit of ``rel_path``, or on a Bash ``command`` writing it."""
+        data: dict[str, Any] = (
+            {"tool_name": "Bash", "tool_input": {"command": command, "cwd": str(self.repo)}}
+            if command is not None
+            else {"tool_name": "Edit", "tool_input": {"file_path": str(self.repo / rel_path)}}
+        )
         normalize_tool_fields(data)
         assert data["canonical_tool_kind"] == "write"
         edit = HookEvent(
@@ -282,6 +284,27 @@ def test_independently_resolved_mutations_still_attribute(
     assert checkout.task_ledger() == {"out.txt"}
     reason = checkout.rule_3_reason("out.txt")
     assert reason == "", reason
+
+
+@pytest.mark.parametrize("switches", ["-0pi -e", "-i.bak -pe"])
+def test_perl_in_place_edit_attributes_to_its_author(
+    mock_dependencies: dict[str, Any], checkout: Checkout, switches: str
+) -> None:
+    """#24504: the author of a perl in-place edit can keep editing or revert the file."""
+
+    def perl_writes() -> None:
+        checkout.write("base.txt", "perl edit\n")
+
+    command = f"perl {switches} 's/base/perl edit/' base.txt"
+    checkout.run(_handlers(mock_dependencies, checkout.db), command, perl_writes)
+
+    assert checkout.ledger() == {"owned.txt", "base.txt"}
+    assert checkout.task_ledger() == {"base.txt"}
+    for reason in (
+        checkout.rule_3_reason("base.txt"),
+        checkout.rule_3_reason("base.txt", command="git checkout -- base.txt"),
+    ):
+        assert reason == "", reason
 
 
 @pytest.mark.parametrize(

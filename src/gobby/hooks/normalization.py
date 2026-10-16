@@ -68,9 +68,6 @@ from gobby.hooks._normalization_shell import (
     _get_command_text as _get_command_text,
 )
 from gobby.hooks._normalization_shell import (
-    _has_perl_inplace_option as _has_perl_inplace_option,
-)
-from gobby.hooks._normalization_shell import (
     _looks_file_like as _looks_file_like,
 )
 from gobby.hooks._normalization_shell import (
@@ -115,7 +112,6 @@ __all__ = [
     "_extract_redirection_paths",
     "_extract_tool_input_paths",
     "_get_command_text",
-    "_has_perl_inplace_option",
     "_looks_file_like",
     "_looks_path_target",
     "_normalize_apply_patch_input",
