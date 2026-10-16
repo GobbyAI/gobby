@@ -41,6 +41,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.conftest import _init_git_repo
 
 pytestmark = pytest.mark.unit
 
@@ -597,9 +598,7 @@ async def test_implement_close_blocks_other_tasks_and_dispositions(
 
 
 @pytest.mark.parametrize("has_commit", [False, True])
-async def test_reclaimed_handoff_restores_ordinary_close_gate(
-    seats: _Seats, has_commit: bool
-) -> None:
+async def test_reclaimed_handoff_keeps_its_close_rights(seats: _Seats, has_commit: bool) -> None:
     manager = LocalTaskManager(seats.db)
     registry = create_task_registry(manager)
     claim_task(seats.db, seats.task_id, seats.former)
@@ -650,7 +649,7 @@ async def test_reclaimed_handoff_restores_ordinary_close_gate(
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
-    assert instance.variables["_developer_handoff_tasks"] == []
+    assert instance.variables["_developer_handoff_tasks"] == [seats.task_id]
     instance.variables.update(skills_routed=True, additional_skills_loaded=True)
     instances.save(instance)
     await engine._process_step_after_tool(
@@ -679,12 +678,66 @@ async def test_reclaimed_handoff_restores_ordinary_close_gate(
         assert _current_step(seats.db, seats.former) == "submit"
     close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
     close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
-    response = engine._check_step_tool_enforcement(close_event, seats.former, {})
-    if has_commit:
-        assert response is None
-    else:
-        assert response is not None and response.decision == "block"
-        assert "Finish only a task this developer handed off" in str(response.reason)
+    # The hand-off entry lasts until the close, so implement admits it too.
+    assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
+
+
+@pytest.mark.parametrize("close_step", ["implement", "submit"])
+async def test_reclaim_before_de_escalation_keeps_the_reviewed_close(
+    seats: _Seats, tmp_path: Path, close_step: str
+) -> None:
+    """A seat reclaiming its handed-off task still de-escalates it and reaches review (#24610)."""
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(repo))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    proxy = _task_proxy(seats, full_hooks=True)
+    handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(seats.db),
+        task_manager=tasks,
+        session_manager=SessionManager(seats.db),
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(seats.former):
+            result = await proxy.call_tool(
+                "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
+            )
+        completion = _after_tool(seats.former, tool, arguments, result)
+        completion.metadata["_platform_session_id"] = seats.former
+        completion.cwd = str(repo)
+        await handler._evaluate_rules(completion)
+        return cast(dict[str, Any], result)
+
+    handoff = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at abc"}
+    assert await call("escalate_task", handoff) == {}
+    assert _current_step(seats.db, seats.former) == "claim"
+    claimed = await call("claim_task", {"task_id": seats.ref})
+    assert claimed["task_id"] == seats.task_id
+    assert tasks.get_task(seats.task_id).is_escalated
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    assert instance.variables["_developer_handoff_tasks"] == [seats.task_id]
+    instance.current_step = close_step
+    instance.variables.update(implementation_complete=close_step == "submit")
+    instances.save(instance)
+
+    released = await call("de_escalate_task", {"task_id": seats.ref, "reason": "Landed"})
+    assert "error_code" not in released, released
+    assert not tasks.get_task(seats.task_id).is_escalated
+    result = await call(
+        "close_task", {"task_id": seats.ref, "changes_summary": "Landed and released."}
+    )
+    # Gates 1-12 pass and the ordinary Gate 13 review runs; this harness has no reviewer.
+    assert result["blocking_reasons"] == [
+        "close_review: The task-close criteria reviewer is not configured."
+    ]
+    assert tasks.get_task(seats.task_id).validation_override_reason is None
 
 
 @pytest.mark.parametrize("step", ["claim", "implement", "submit"])
