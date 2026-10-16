@@ -4202,6 +4202,12 @@ Verification planned:
   `tests/config/test_decisions_config.py`, added by #24243 at 635f7c8417. It
   builds `DaemonConfig` with only `ai` set, so it joins 2.5's Consumers
   unchanged with a no-edit reason. No other section changes.
+- 2026-10-16: Consensus on the drift repairs at e61ecc57c3. Plan Adversary
+  gobby#16987 re-reviewed after #24272 closed: validation is valid with 5
+  phases and 23 deliverables, no warnings or symbol issues, and route A
+  clears the 2.2 size-growth blocker. It found the new consumer's no-edit
+  reason supported and the 1.2-before-terminal-2.6 edge decided, with no
+  remaining findings. The Plan Adversary derives M1 from this commit.
 
 ## V2: Verification
 `kind: verification`
