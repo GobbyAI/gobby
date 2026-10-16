@@ -160,6 +160,24 @@ class SessionEditLedger(ABC):
                 task_times[task_id] = times_for_task
                 variables["task_edited_file_times"] = task_times
                 if normalized_checkout is not None:
+                    # Path-only times cannot distinguish edits of the same path
+                    # in different checkouts or different claims.
+                    raw_pair_times = variables.get("task_edited_checkout_times")
+                    pair_times = dict(raw_pair_times) if isinstance(raw_pair_times, dict) else {}
+                    raw_task_pairs = pair_times.get(task_id)
+                    task_pairs = dict(raw_task_pairs) if isinstance(raw_task_pairs, dict) else {}
+                    raw_root_times = task_pairs.get(normalized_checkout)
+                    root_times = dict(raw_root_times) if isinstance(raw_root_times, dict) else {}
+                    for path in normalized_paths:
+                        previous = root_times.get(path)
+                        root_times[path] = (
+                            max(float(previous), stamp)
+                            if isinstance(previous, (int, float)) and not isinstance(previous, bool)
+                            else stamp
+                        )
+                    task_pairs[normalized_checkout] = root_times
+                    pair_times[task_id] = task_pairs
+                    variables["task_edited_checkout_times"] = pair_times
                     # Clean paths leave the live ledger, but close evidence still
                     # needs their task attribution for later transcript edits.
                     variables.setdefault(
@@ -203,6 +221,7 @@ class SessionEditLedger(ABC):
                 "session_dirty_file_checkouts",
                 "task_edited_files",
                 "task_edited_file_times",
+                "task_edited_checkout_times",
                 "task_live_edit_starts",
                 "task_edited_file_checkouts",
                 "task_edited_file_checkouts_history",
