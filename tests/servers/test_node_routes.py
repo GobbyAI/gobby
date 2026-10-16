@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import Callable
@@ -13,6 +14,8 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from gobby.config.app import DaemonConfig
+from gobby.config.node_reports import NodeReportsConfig
 from gobby.hub import node_reports
 from gobby.hub.node_commands import ReportBody
 from gobby.servers.auth_service import AuthService
@@ -56,7 +59,9 @@ async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-def _client(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(
+    db: HubDatabase, monkeypatch: pytest.MonkeyPatch, config: object | None = None
+) -> TestClient:
     node_reports.node_report_inbox.cache_clear()
     auth = AuthService(lambda: db)
     auth.bind_runtime(
@@ -64,7 +69,12 @@ def _client(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
     server = cast(
         HTTPServer,
-        SimpleNamespace(auth_service=auth, services=SimpleNamespace(database=db), run_db=_run_db),
+        SimpleNamespace(
+            auth_service=auth,
+            services=SimpleNamespace(database=db),
+            run_db=_run_db,
+            config=config,
+        ),
     )
     app = FastAPI()
     monkeypatch.setattr(nodes, "require_machine_id", lambda: LOCAL)
@@ -193,9 +203,30 @@ def _updated_at(db: HubDatabase, path: str) -> datetime:
     return cast(datetime, row["updated_at"])
 
 
-def _post(client: TestClient, route: str, body: dict[str, Any]) -> tuple[int, Any]:
-    response = client.post(f"/api/nodes/{route}", headers=_headers(), json=body)
+def _post(
+    client: TestClient, route: str, body: dict[str, Any], machine: str = NODE
+) -> tuple[int, Any]:
+    response = client.post(f"/api/nodes/{route}", headers=_headers(machine), json=body)
     return response.status_code, response.json()
+
+
+def _admit(inbox: node_reports.NodeReportInbox, report: ReportBody) -> bool:
+    admission = inbox.admit(
+        NODE,
+        inbox.hub_epoch,
+        report.revision,
+        node_reports.report_size(report),
+        NodeReportsConfig().max_pending_bytes_per_machine,
+    )
+    return admission is node_reports.Admission.ADMITTED
+
+
+def _put(inbox: node_reports.NodeReportInbox, report: ReportBody) -> None:
+    inbox.put(NODE, report, node_reports.report_size(report))
+
+
+def _compact_size(body: dict[str, Any]) -> int:
+    return len(json.dumps(body, separators=(",", ":")).encode())
 
 
 def test_checkout_registration_uses_key_machine(
@@ -324,7 +355,7 @@ def test_node_routes_refuse_unverified_and_local_identity(
         )
         response = client.post(f"/api/nodes/{route}", headers=headers, json=body | extra)
         taken = inbox.take()
-        admitted = inbox.admit(NODE, inbox.hub_epoch, 1)
+        admitted = _admit(inbox, ReportBody.model_validate(_report(None, 1)))
 
     assert (response.status_code, response.json()) == (status, {"detail": code})
     assert taken == {}
@@ -371,25 +402,25 @@ def test_report_order_and_epoch_barrier(
         return ReportBody.model_validate(_report(None, revision, exits=exits))
 
     finishing = node_reports.NodeReportInbox()
-    assert finishing.admit(NODE, finishing.hub_epoch, 1)
-    assert finishing.admit(NODE, finishing.hub_epoch, 2)
-    finishing.put(NODE, body(2))
-    finishing.put(NODE, body(1))
+    assert _admit(finishing, body(1))
+    assert _admit(finishing, body(2))
+    _put(finishing, body(2))
+    _put(finishing, body(1))
     assert finishing.take()[NODE].snapshot.revision == 2
 
     intervening = node_reports.NodeReportInbox()
-    r1_exit = _fresh_exit()
-    assert intervening.admit(NODE, intervening.hub_epoch, 1)
-    assert intervening.admit(NODE, intervening.hub_epoch, 2)
-    intervening.put(NODE, body(2))
+    r1 = body(1, [_fresh_exit()])
+    assert _admit(intervening, r1)
+    assert _admit(intervening, body(2))
+    _put(intervening, body(2))
     assert intervening.take()[NODE].snapshot.revision == 2
-    intervening.put(NODE, body(1, [r1_exit]))
+    _put(intervening, r1)
     assert intervening.take() == {}
-    assert intervening.admit(NODE, intervening.hub_epoch, 3)
-    intervening.put(NODE, body(3))
+    assert _admit(intervening, body(3))
+    _put(intervening, body(3))
     resumed = intervening.take()
     assert resumed[NODE].snapshot.revision == 3
-    assert [e.run_id for e in resumed[NODE].exits] == [r1_exit["run_id"]]
+    assert [e.run_id for e in resumed[NODE].exits] == [r1.exits[0].run_id]
 
 
 def test_reported_workspace_is_durable_before_200(
@@ -475,3 +506,84 @@ def test_reported_workspace_moves_updated_at(
     assert rows_after_repeat == 1
     assert _updated_at(temp_db, live_path) > _updated_at(temp_db, exited_path)
     assert len(_workspace_rows(temp_db, "worktrees")) == 2
+
+
+def test_report_byte_budgets(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _machines(temp_db)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    path = f"/node-only/worktrees/{uuid.uuid4()}"
+    agent = _agent(run.run_id, run.terminal_id, _workspace(path))
+    kept = [_fresh_exit() for _ in range(10)]
+    bulk = [_fresh_exit() for _ in range(30)]
+    repeated_exit = _fresh_exit()
+    config = SimpleNamespace(node_reports=NodeReportsConfig(max_request_bytes=2048))
+
+    def failed_write(*_args: object) -> None:
+        raise RuntimeError("workspace write failed")
+
+    with _client(temp_db, monkeypatch, config) as client:
+        inbox = node_reports.node_report_inbox()
+        epoch = inbox.hub_epoch
+        too_large = _post(client, "report", _report(epoch, 1, [agent], bulk))
+        unparsed = client.post("/api/nodes/report", headers=_headers(), content=b"{" * 4096)
+        after_too_large = inbox.take()
+
+        first = _report(epoch, 1, exits=kept)
+        refused = _report(epoch, 2, [agent], bulk)
+        budget = _compact_size(refused) + _compact_size(first) // 2
+        config.node_reports = NodeReportsConfig(max_pending_bytes_per_machine=budget)
+        accepted = _post(client, "report", first)
+        backlog = client.post("/api/nodes/report", headers=_headers(), json=refused)
+        rows_while_full = _workspace_rows(temp_db, "worktrees")
+        other = _post(client, "report", _report(epoch, 1, exits=bulk), machine=OTHER)
+        held = inbox.take()
+        retried = _post(client, "report", refused)
+        rows_after_retry = _workspace_rows(temp_db, "worktrees")
+        released = inbox.take()
+
+        monkeypatch.setattr(nodes, "record_remote_workspaces", failed_write)
+        with pytest.raises(RuntimeError, match="workspace write failed"):
+            _post(client, "report", _report(epoch, 3, [agent], bulk))
+        monkeypatch.setattr(
+            nodes, "record_remote_workspaces", node_reports.record_remote_workspaces
+        )
+        after_failure = _post(client, "report", _report(epoch, 4, [agent], bulk))
+        inbox.take()
+
+        small = _report(epoch, 5, exits=[repeated_exit])
+        config.node_reports = NodeReportsConfig(
+            max_pending_bytes_per_machine=3 * _compact_size(small)
+        )
+        steady = [
+            _post(client, "report", _report(epoch, revision, exits=[repeated_exit]))
+            for revision in range(5, 25)
+        ]
+        last = inbox.take()
+
+    assert too_large == (413, {"detail": "report_too_large"})
+    assert (unparsed.status_code, unparsed.json()) == (413, {"detail": "report_too_large"})
+    assert after_too_large == {}
+    assert accepted == (200, {})
+    assert (backlog.status_code, backlog.json()) == (429, {"detail": "report_backlog_full"})
+    assert int(backlog.headers["Retry-After"]) > 0
+    assert rows_while_full == []
+    assert other == (200, {})
+    assert set(held) == {NODE, OTHER}
+    assert held[NODE].snapshot.revision == 1
+    assert {e.run_id for e in held[NODE].exits} == {e["run_id"] for e in kept}
+    assert retried == (200, {})
+    assert [r["path"] for r in rows_after_retry] == [path]
+    assert released[NODE].snapshot.revision == 2
+    assert {e.run_id for e in released[NODE].exits} == {e["run_id"] for e in bulk}
+    assert after_failure == (200, {})
+    assert steady == [(200, {})] * 20
+    assert last[NODE].snapshot.revision == 24
+    assert [e.run_id for e in last[NODE].exits] == [repeated_exit["run_id"]]
+    assert DaemonConfig().node_reports == NodeReportsConfig(
+        max_request_bytes=8 * 1024 * 1024, max_pending_bytes_per_machine=16 * 1024 * 1024
+    )

@@ -6,6 +6,7 @@ from the body, and never touch the reported paths on the hub's disk.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from gobby.config.node_reports import NodeReportsConfig
 from gobby.hub.node_commands import (
     CONTRACT_VERSION,
     CheckoutBody,
@@ -20,7 +22,12 @@ from gobby.hub.node_commands import (
     ReportBody,
     StaleReport,
 )
-from gobby.hub.node_reports import node_report_inbox, record_remote_workspaces
+from gobby.hub.node_reports import (
+    Admission,
+    node_report_inbox,
+    record_remote_workspaces,
+    report_size,
+)
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
@@ -36,6 +43,9 @@ from gobby.utils.machine_id import require_machine_id
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
+# The node reports every 30 seconds, so a refused report waits one interval.
+REPORT_RETRY_AFTER_SECONDS = 30
+
 
 def _node_machine(server: HTTPServer, request: Request) -> str:
     identity = server.auth_service.verified_front_door_identity(request)
@@ -46,9 +56,23 @@ def _node_machine(server: HTTPServer, request: Request) -> str:
     return identity.machine_id
 
 
-async def _body[T: BaseModel](request: Request, model: type[T]) -> T:
+def _report_budgets(server: HTTPServer) -> NodeReportsConfig:
+    config = server.config
+    return config.node_reports if config is not None else NodeReportsConfig()
+
+
+async def _capped_body(request: Request, cap: int) -> bytes:
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > cap:
+            raise HTTPException(413, "report_too_large")
+    return bytes(raw)
+
+
+def _body[T: BaseModel](raw: bytes, model: type[T]) -> T:
     try:
-        body = await request.json()
+        body = json.loads(raw)
     except ValueError as exc:
         raise HTTPException(422, "invalid_body") from exc
     if not isinstance(body, dict) or type(body.get("v")) is not int:
@@ -91,20 +115,41 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
     @router.post("/checkouts")
     async def register_checkout(request: Request) -> dict[str, Any]:
         machine_id = _node_machine(server, request)
-        body = await _body(request, CheckoutBody)
+        body = _body(await request.body(), CheckoutBody)
         result: CheckoutResult = await server.run_db(_register_checkout, server, machine_id, body)
         return result.model_dump(mode="json")
 
     @router.post("/report", response_model=None)
     async def report(request: Request) -> dict[str, Any] | JSONResponse:
         machine_id = _node_machine(server, request)
-        body = await _body(request, ReportBody)
+        budgets = _report_budgets(server)
+        body = _body(await _capped_body(request, budgets.max_request_bytes), ReportBody)
         inbox = node_report_inbox()
-        if not inbox.admit(machine_id, body.hub_epoch, body.revision):
+        size = report_size(body)
+        admission = inbox.admit(
+            machine_id,
+            body.hub_epoch,
+            body.revision,
+            size,
+            budgets.max_pending_bytes_per_machine,
+        )
+        if admission is Admission.STALE:
             stale = StaleReport(code="stale_report", hub_epoch=inbox.hub_epoch)
             return JSONResponse(stale.model_dump(mode="json"), status_code=409)
-        await server.run_db(record_remote_workspaces, server.services.database, machine_id, body)
-        inbox.put(machine_id, body)
+        if admission is Admission.BACKLOG_FULL:
+            raise HTTPException(
+                429,
+                "report_backlog_full",
+                headers={"Retry-After": str(REPORT_RETRY_AFTER_SECONDS)},
+            )
+        try:
+            await server.run_db(
+                record_remote_workspaces, server.services.database, machine_id, body
+            )
+        except BaseException:
+            inbox.release(machine_id, size)
+            raise
+        inbox.put(machine_id, body, size)
         return {}
 
     return router

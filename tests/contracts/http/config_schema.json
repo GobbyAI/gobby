@@ -3480,6 +3480,26 @@
           "default": 10000,
           "description": "Maximum items to fetch when counting sessions/tasks for metrics. Set higher for large installs to avoid underreporting. Use 0 for unbounded (uses COUNT queries instead of list)."
         },
+        "node_reports.max_pending_bytes_per_machine": {
+          "type": "integer",
+          "namespace": "node_reports",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 16777216,
+          "description": "Report data the hub holds for one machine until it is taken; a report that would exceed it gets 429 and is retried."
+        },
+        "node_reports.max_request_bytes": {
+          "type": "integer",
+          "namespace": "node_reports",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 8388608,
+          "description": "Largest node report request body the hub reads; larger bodies get 413."
+        },
         "pipelines.nesting_depth_limit": {
           "type": "integer",
           "namespace": "pipelines",

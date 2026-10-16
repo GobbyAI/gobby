@@ -3,10 +3,17 @@
 The inbox lives in memory. A hub restart loses it, and the new process's epoch
 refuses every report built before the restart; workspace rows are already
 durable and the node's next fresh report refills the snapshot.
+
+Each machine's pending bytes stay within its budget. A report is measured as
+its compact JSON. Admission reserves that size, and `put` settles it into
+charges for what the inbox keeps: each gathered exit at its own size, and the
+installed snapshot at the rest. A report's compact JSON contains each of its
+exits', so the charges never exceed the reservation.
 """
 
 from __future__ import annotations
 
+import enum
 import functools
 import logging
 import secrets
@@ -14,12 +21,25 @@ import threading
 import uuid
 from dataclasses import dataclass
 
+from pydantic import BaseModel
+
 from gobby.hub.node_commands import ReportAgent, ReportBody, ReportExit, ReportWorkspace
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 logger = logging.getLogger(__name__)
 
 _ExitKey = tuple[str, str]
+
+
+class Admission(enum.Enum):
+    ADMITTED = "admitted"
+    STALE = "stale"
+    BACKLOG_FULL = "backlog_full"
+
+
+def report_size(model: BaseModel) -> int:
+    """The bytes a report or exit counts against its machine's pending budget."""
+    return len(model.model_dump_json().encode())
 
 
 @dataclass(frozen=True)
@@ -31,7 +51,7 @@ class TakenReport:
 
 
 class NodeReportInbox:
-    """Per-machine admission high-waters, published snapshots, and gathered exits."""
+    """Per-machine admission high-waters, published snapshots, gathered exits, and bytes."""
 
     def __init__(self) -> None:
         # The wire carries the epoch as a u64; 63 random bits stay inside every signed reader.
@@ -41,24 +61,50 @@ class NodeReportInbox:
         self._published: dict[str, int] = {}
         self._snapshots: dict[str, ReportBody] = {}
         self._exits: dict[str, dict[_ExitKey, ReportExit]] = {}
+        self._snapshot_bytes: dict[str, int] = {}
+        self._held_bytes: dict[str, int] = {}
+        self._reserved_bytes: dict[str, int] = {}
 
-    def admit(self, machine_id: str, hub_epoch: int | None, revision: int) -> bool:
-        """Admit a report from this epoch above the machine's high-water, and raise it."""
+    def admit(
+        self, machine_id: str, hub_epoch: int | None, revision: int, size: int, budget: int
+    ) -> Admission:
+        """Reserve `size` bytes for a fresh report within budget, and raise the high-water."""
         with self._lock:
             if hub_epoch != self.hub_epoch or revision <= self._high_water.get(machine_id, 0):
-                return False
+                return Admission.STALE
+            reserved = self._reserved_bytes.get(machine_id, 0)
+            if self._held_bytes.get(machine_id, 0) + reserved + size > budget:
+                return Admission.BACKLOG_FULL
             self._high_water[machine_id] = revision
-            return True
+            self._reserved_bytes[machine_id] = reserved + size
+            return Admission.ADMITTED
 
-    def put(self, machine_id: str, report: ReportBody) -> None:
-        """Merge the report's exits; install its snapshot only above the published revision."""
+    def release(self, machine_id: str, size: int) -> None:
+        """Free the reservation of an admitted report that will never be `put`."""
         with self._lock:
+            self._reserved_bytes[machine_id] -= size
+
+    def put(self, machine_id: str, report: ReportBody, size: int) -> None:
+        """Merge the report's exits; install its snapshot only above the published revision."""
+        incoming = {(entry.run_id, entry.terminal_id): entry for entry in report.exits}
+        incoming_bytes = {key: report_size(entry) for key, entry in incoming.items()}
+        with self._lock:
+            self._reserved_bytes[machine_id] -= size
+            held = self._held_bytes.get(machine_id, 0)
             exits = self._exits.setdefault(machine_id, {})
-            for exit_entry in report.exits:
-                exits[(exit_entry.run_id, exit_entry.terminal_id)] = exit_entry
+            for key, entry in incoming.items():
+                replaced = exits.get(key)
+                if replaced is not None:
+                    held -= report_size(replaced)
+                exits[key] = entry
+                held += incoming_bytes[key]
             if report.revision > self._published.get(machine_id, 0):
                 self._published[machine_id] = report.revision
                 self._snapshots[machine_id] = report
+                snapshot_bytes = size - sum(incoming_bytes.values())
+                held += snapshot_bytes - self._snapshot_bytes.get(machine_id, 0)
+                self._snapshot_bytes[machine_id] = snapshot_bytes
+            self._held_bytes[machine_id] = held
 
     def take(self) -> dict[str, TakenReport]:
         """Drain each machine with a snapshot installed since the last take."""
@@ -67,6 +113,9 @@ class NodeReportInbox:
                 machine_id: TakenReport(snapshot, tuple(self._exits.pop(machine_id, {}).values()))
                 for machine_id, snapshot in self._snapshots.items()
             }
+            for machine_id in taken:
+                self._snapshot_bytes.pop(machine_id, None)
+                self._held_bytes.pop(machine_id, None)
             self._snapshots.clear()
             return taken
 
