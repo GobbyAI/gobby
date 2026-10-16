@@ -55,29 +55,6 @@ class CodeIndexCommunityLabelConfig(FeatureDefaultConfig):
         ge=1,
         description="Maximum tokens for each community label generation",
     )
-    decisions_api_base: str | None = Field(
-        default=None,
-        description="Optional Decisions API base URL for label gating",
-    )
-    decisions_api_key: str | None = Field(
-        default=None,
-        description="Secret reference for the Decisions API key",
-    )
-    decisions_model: str = Field(
-        default="jev-latest",
-        description="Decisions API model used for label gating",
-    )
-    decisions_min_confidence: float = Field(
-        default=0.5,
-        ge=0,
-        le=1,
-        description="Minimum Decisions API confidence for a model label",
-    )
-    decisions_timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        description="Decisions API request timeout in seconds",
-    )
 
 
 class CodeIndexConfig(BaseModel):

@@ -15,7 +15,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
 )
 from gobby.ai._tool_chat_builder import _local_client_factory
-from gobby.config.ai import AIConfig, GenerationConfig
+from gobby.config.ai import AIConfig, DecisionsConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
@@ -561,6 +561,52 @@ def test_daemon_registry_reports_embedding_configured_state() -> None:
     assert binding.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
     assert binding.models == ("nomic-embed-text",)
     assert binding.metadata["dim"] == 768
+
+
+def test_decide_binding_reports_configuration() -> None:
+    unconfigured = build_daemon_ai_capability_registry(
+        DaemonConfig(), provider_installed=lambda _entry: False
+    )
+
+    status = unconfigured.status(AICapability.DECIDE)
+    assert status.available is False
+    assert status.reason == (
+        "Decision capability requires ai.decisions.api_base and ai.decisions.model."
+    )
+    snapshot = unconfigured.status_snapshot()["capabilities"]
+    assert snapshot["decide"]["state"] == "unavailable"
+    with pytest.raises(CapabilityUnavailableError):
+        unconfigured.select(AICapability.DECIDE)
+
+    for wire_api, api_base, model, provider in (
+        ("systemone", "http://127.0.0.1:8100", "jev-latest", "systemone"),
+        ("openrouter-decisions", "https://openrouter.ai/api", "jev-latest", "openrouter"),
+        (
+            "workers-ai",
+            "https://api.cloudflare.com/client/v4/accounts/account-id",
+            "clef",
+            "cloudflare",
+        ),
+    ):
+        decisions = DecisionsConfig.model_validate(
+            {"api_base": api_base, "model": model, "wire_api": wire_api}
+        )
+        registry = build_daemon_ai_capability_registry(
+            DaemonConfig(ai=AIConfig(decisions=decisions)),
+            provider_installed=lambda _entry: False,
+        )
+
+        binding = registry.select(AICapability.DECIDE)
+
+        assert binding.provider == provider
+        assert binding.adapter_style == AIAdapterStyle.LLM_PROVIDER
+        assert binding.models == (model,)
+        assert binding.metadata == {
+            "wire_api": wire_api,
+            "max_input_tokens": 8192,
+            "api_base_configured": True,
+        }
+        assert registry.status_snapshot()["capabilities"]["decide"]["state"] == "available"
 
 
 def test_daemon_registry_reports_voice_transcribe_configured_state(

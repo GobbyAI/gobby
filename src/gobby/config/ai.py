@@ -20,13 +20,22 @@ from gobby.config.feature_base import (
     FeatureProfile,
     validate_feature_candidates,
 )
-from gobby.config.url_validation import validate_endpoint_url
+from gobby.config.url_validation import validate_endpoint_url, validate_optional_endpoint_url
 
 logger = logging.getLogger(__name__)
 
 _GENERATION_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 GenerationEndpointProtocol = Literal["openai-compatible", "lmstudio", "ollama", "vllm"]
 GenerationWireAPI = Literal["chat-completions", "responses"]
+DecisionsWireAPI = Literal["systemone", "openrouter-decisions", "workers-ai"]
+DecisionConsumerMode = Literal["off", "shadow", "enforce"]
+_DECISIONS_BACKEND_MAX_STATE_TOKENS: dict[str, int] = {
+    "systemone": 65536,
+    "openrouter-decisions": 32000,
+    "workers-ai": 65536,
+}
+# Cloudflare's input schema allows only these, and the URL path is built from the model.
+_WORKERS_AI_DECISION_MODELS = frozenset({"clef", "clef-flash"})
 
 
 class ToolLoopConfig(BaseModel):
@@ -278,6 +287,171 @@ def default_model_metadata_aliases() -> list[ModelMetadataAlias]:
     ]
 
 
+class _DecisionConsumerConfig(BaseModel):
+    """Rollout mode and recorded evaluation shared by every decision consumer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: DecisionConsumerMode = Field(
+        default="off",
+        description="off ignores the decision, shadow records it, enforce acts on it.",
+    )
+    evaluated_model: str | None = Field(
+        default=None,
+        description="Decision model whose evaluation justifies enforce mode.",
+    )
+    evaluated_backend: str | None = Field(
+        default=None,
+        description="Decision backend whose evaluation justifies enforce mode.",
+    )
+
+    @model_validator(mode="after")
+    def require_evaluation_for_enforce(self) -> _DecisionConsumerConfig:
+        if self.mode == "enforce" and (
+            self.evaluated_model is None or self.evaluated_backend is None
+        ):
+            raise ValueError(
+                "enforce mode requires evaluated_model and evaluated_backend "
+                "from a recorded evaluation"
+            )
+        return self
+
+
+class ChoiceConsumerConfig(_DecisionConsumerConfig):
+    """Decision consumer that accepts a choice above a confidence floor."""
+
+    min_confidence: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Minimum decision confidence to accept the chosen option.",
+    )
+
+
+class RerankConsumerConfig(_DecisionConsumerConfig):
+    """Decision consumer that keeps candidates above a probability floor."""
+
+    min_probability: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Minimum decision probability to keep a candidate.",
+    )
+
+
+class CascadeConsumerConfig(_DecisionConsumerConfig):
+    """Decision consumer that settles confident cases and escalates the rest."""
+
+    accept_below: float = Field(
+        default=0.1,
+        ge=0,
+        le=1,
+        description="Probability below which the negative outcome is accepted.",
+    )
+    accept_above: float = Field(
+        default=0.9,
+        ge=0,
+        le=1,
+        description="Probability above which the positive outcome is accepted.",
+    )
+
+    @model_validator(mode="after")
+    def validate_accept_band(self) -> CascadeConsumerConfig:
+        if self.accept_below >= self.accept_above:
+            raise ValueError("accept_below must be less than accept_above")
+        return self
+
+
+class DecisionsConfig(BaseModel):
+    """Decision classifier endpoint and its consumers (``ai.decisions``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_base: str | None = Field(
+        default=None,
+        description="Decision endpoint base URL; unset leaves the decide capability unavailable.",
+    )
+    wire_api: DecisionsWireAPI = Field(
+        default="systemone",
+        description="Wire protocol the decision endpoint speaks.",
+    )
+    identity_contract: Literal["model_card", "response_version"] | None = Field(
+        default=None,
+        description="How the decision model identity is proven; model_card needs systemone.",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="Decision endpoint API key or $secret:NAME reference.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Decision model; required with api_base.",
+    )
+    timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        description="Decision request timeout in seconds.",
+    )
+    max_input_tokens: int = Field(
+        default=8192,
+        ge=256,
+        description="Request input ceiling; below the backend's maximum state tokens.",
+    )
+    backend_max_state_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description="Backend state-token maximum; unset uses the wire's documented default.",
+    )
+    failure_cooldown_seconds: float = Field(
+        default=60,
+        ge=0,
+        description="Seconds the capability stays unavailable after a failed request.",
+    )
+    community_label: ChoiceConsumerConfig = Field(
+        default_factory=ChoiceConsumerConfig,
+        description="Code-index community label gating.",
+    )
+    tool_rerank: RerankConsumerConfig = Field(
+        default_factory=RerankConsumerConfig,
+        description="MCP tool search reranking.",
+    )
+    found_work: CascadeConsumerConfig = Field(
+        default_factory=CascadeConsumerConfig,
+        description="Found-work classification.",
+    )
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, value: str | None) -> str | None:
+        return validate_optional_endpoint_url(value, field_name="api_base")
+
+    @property
+    def resolved_backend_max_state_tokens(self) -> int:
+        """Return the explicit backend maximum or the wire's default."""
+        if self.backend_max_state_tokens is not None:
+            return self.backend_max_state_tokens
+        return _DECISIONS_BACKEND_MAX_STATE_TOKENS[self.wire_api]
+
+    @model_validator(mode="after")
+    def validate_decisions(self) -> DecisionsConfig:
+        if self.api_base is not None and self.model is None:
+            raise ValueError("model is required when api_base is set")
+        if (
+            self.wire_api == "workers-ai"
+            and self.model is not None
+            and self.model not in _WORKERS_AI_DECISION_MODELS
+        ):
+            raise ValueError("workers-ai model must be clef or clef-flash")
+        if self.max_input_tokens >= self.resolved_backend_max_state_tokens:
+            raise ValueError(
+                "max_input_tokens must be below backend_max_state_tokens "
+                f"({self.resolved_backend_max_state_tokens})"
+            )
+        if self.identity_contract == "model_card" and self.wire_api != "systemone":
+            raise ValueError("identity_contract model_card requires wire_api systemone")
+        return self
+
+
 class AIConfig(BaseModel):
     """Daemon-owned AI configuration namespace."""
 
@@ -290,6 +464,10 @@ class AIConfig(BaseModel):
     model_metadata_aliases: list[ModelMetadataAlias] = Field(
         default_factory=default_model_metadata_aliases,
         description="Provider-scoped aliases into the OpenRouter model metadata registry.",
+    )
+    decisions: DecisionsConfig = Field(
+        default_factory=DecisionsConfig,
+        description="Decision classifier endpoint and its consumers.",
     )
 
     @model_validator(mode="after")

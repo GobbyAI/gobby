@@ -21,7 +21,7 @@ from gobby.ai.registry import (
     _normalize_binding_model,
     _normalize_provider,
 )
-from gobby.config.ai import GenerationEndpointConfig
+from gobby.config.ai import DecisionsConfig, GenerationEndpointConfig
 from gobby.config.feature_base import (
     candidate_labels,
     iter_feature_default_configs,
@@ -47,6 +47,7 @@ def build_daemon_ai_capability_registry(
     feature_models_by_provider = _feature_candidate_models_by_provider(config)
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
+        _decision_binding(config),
     ]
     bindings.extend(_generation_endpoint_text_bindings(config, feature_models_by_provider))
     bindings.extend(_generation_endpoint_tool_bindings(config, feature_models_by_provider))
@@ -159,6 +160,37 @@ def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
         available=True,
         models=(embeddings.model,),
         metadata=metadata,
+    )
+
+
+_DECISION_PROVIDERS = {
+    "systemone": "systemone",
+    "openrouter-decisions": "openrouter",
+    "workers-ai": "cloudflare",
+}
+
+
+def _decision_binding(config: DaemonConfig | None) -> CapabilityBinding:
+    decisions = config.ai.decisions if config is not None else DecisionsConfig()
+    provider = _DECISION_PROVIDERS[decisions.wire_api]
+    if decisions.api_base is None or decisions.model is None:
+        return CapabilityBinding.unavailable(
+            AICapability.DECIDE,
+            provider,
+            adapter_style=AIAdapterStyle.LLM_PROVIDER,
+            reason="Decision capability requires ai.decisions.api_base and ai.decisions.model.",
+        )
+    return CapabilityBinding(
+        capability=AICapability.DECIDE,
+        provider=provider,
+        adapter_style=AIAdapterStyle.LLM_PROVIDER,
+        available=True,
+        models=(decisions.model,),
+        metadata={
+            "wire_api": decisions.wire_api,
+            "max_input_tokens": decisions.max_input_tokens,
+            "api_base_configured": True,
+        },
     )
 
 

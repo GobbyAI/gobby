@@ -151,6 +151,259 @@
           "default": "permissive",
           "description": "Sandbox strictness level for daemon-owned runtimes."
         },
+        "ai.decisions.api_base": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision endpoint base URL; unset leaves the decide capability unavailable."
+        },
+        "ai.decisions.api_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "reference",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision endpoint API key or $secret:NAME reference."
+        },
+        "ai.decisions.backend_max_state_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Backend state-token maximum; unset uses the wire's documented default."
+        },
+        "ai.decisions.community_label.evaluated_backend": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision backend whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.community_label.evaluated_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision model whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.community_label.min_confidence": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.5,
+          "description": "Minimum decision confidence to accept the chosen option."
+        },
+        "ai.decisions.community_label.mode": {
+          "type": "string",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": "off",
+          "description": "off ignores the decision, shadow records it, enforce acts on it."
+        },
+        "ai.decisions.failure_cooldown_seconds": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 60,
+          "description": "Seconds the capability stays unavailable after a failed request."
+        },
+        "ai.decisions.found_work.accept_above": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.9,
+          "description": "Probability above which the positive outcome is accepted."
+        },
+        "ai.decisions.found_work.accept_below": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.1,
+          "description": "Probability below which the negative outcome is accepted."
+        },
+        "ai.decisions.found_work.evaluated_backend": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision backend whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.found_work.evaluated_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision model whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.found_work.mode": {
+          "type": "string",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": "off",
+          "description": "off ignores the decision, shadow records it, enforce acts on it."
+        },
+        "ai.decisions.identity_contract": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "How the decision model identity is proven; model_card needs systemone."
+        },
+        "ai.decisions.max_input_tokens": {
+          "type": "integer",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 8192,
+          "description": "Request input ceiling; below the backend's maximum state tokens."
+        },
+        "ai.decisions.model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision model; required with api_base."
+        },
+        "ai.decisions.timeout_seconds": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 2.0,
+          "description": "Decision request timeout in seconds."
+        },
+        "ai.decisions.tool_rerank.evaluated_backend": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision backend whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.tool_rerank.evaluated_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision model whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.tool_rerank.min_probability": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.5,
+          "description": "Minimum decision probability to keep a candidate."
+        },
+        "ai.decisions.tool_rerank.mode": {
+          "type": "string",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": "off",
+          "description": "off ignores the decision, shadow records it, enforce acts on it."
+        },
+        "ai.decisions.wire_api": {
+          "type": "string",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": "systemone",
+          "description": "Wire protocol the decision endpoint speaks."
+        },
         "ai.embeddings.api_base": {
           "type": [
             "string",
@@ -649,62 +902,6 @@
             }
           ],
           "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}]."
-        },
-        "code_index.community_label.decisions_api_base": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "code_index",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Optional Decisions API base URL for label gating"
-        },
-        "code_index.community_label.decisions_api_key": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "code_index",
-          "secrecy": "reference",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Secret reference for the Decisions API key"
-        },
-        "code_index.community_label.decisions_min_confidence": {
-          "type": "number",
-          "namespace": "code_index",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 0.5,
-          "description": "Minimum Decisions API confidence for a model label"
-        },
-        "code_index.community_label.decisions_model": {
-          "type": "string",
-          "namespace": "code_index",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "jev-latest",
-          "description": "Decisions API model used for label gating"
-        },
-        "code_index.community_label.decisions_timeout_seconds": {
-          "type": "integer",
-          "namespace": "code_index",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 30,
-          "description": "Decisions API request timeout in seconds"
         },
         "code_index.community_label.enabled": {
           "type": "boolean",
