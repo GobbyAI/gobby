@@ -1054,7 +1054,7 @@ Targets:
 - `src/gobby/cli/__init__.py::*` — scope-reason: drop the `stages` lazy command entry
 - `src/gobby/cli/tasks/main.py::*` — scope-reason: drop the stages, advance and review registrations
 - `src/gobby/workflows/enforcement/blocking.py::*` — scope-reason: the task-ops mutation set drops the three review tools
-- `src/gobby/workflows/hooks.py::*` — operation: delete-lines — base-blob: 32e029092083b8ee765210ee906c758664426a14 — lines: 568-570 — scope-reason: the commit-gate tool set drops the three review tools
+- `src/gobby/workflows/hooks.py::*` — operation: delete-lines — base-blob: 70580b4d5d0e5ab987bda6317ee1023c4e578bc9 — lines: 569-571 — scope-reason: the commit-gate tool set drops the three review tools
 - `src/gobby/storage/tasks/_updates.py::*` — scope-reason: the update_task refusal hints name only surviving tools
 - `src/gobby/tasks/expansion_qa_coverage.py::*` — scope-reason: coverage results drop the stage review action
 - `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py::*` — operation: delete-lines — base-blob: 44055d98e20864e941d4d0f62fcea65521bfe9f2 — lines: 222-238, 307, 349, 412-419, 759 — scope-reason: drop the spawned-caller probe and the internal stage pipeline flag
@@ -1149,7 +1149,7 @@ Rules:
 Gates and hints:
 
 - `blocking.py`: in `TASK_MUTATION_TOOLS_BY_SERVER`, the `gobby-tasks-ops` set keeps `set_landing_freeze` and `land_commit`.
-- `workflows/hooks.py` (924 lines): the delete-lines proof removes lines 568-570, the three `gobby-tasks-ops` review identities in the commit-gate tool set, which keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`. The file ends at 921 lines, and no other leaf in this plan edits it.
+- `workflows/hooks.py` (925 lines): the delete-lines proof removes lines 569-571, the three `gobby-tasks-ops` review identities in the commit-gate tool set, which keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`. The file ends at 922 lines, and no other leaf in this plan edits it.
 - `_updates.py`: the legacy-state hint becomes "Use close_task, reopen_task, or escalate_task instead." and the stage-or-ownership hint becomes "Use claim_task, release_task_claim, escalate_task, de_escalate_task, close_task, or reopen_task instead." The refused field lists change in P4.
 
 Expansion coverage:
@@ -1202,7 +1202,7 @@ Tests:
 - `review_learning.recorders.mint_plan_review_lessons` stays with only test callers, as part of the stage-bound evidence remainder that Decision Record item 9 keeps.
 - After 3.4 no kept definition or `SKILL.md` names any of the 20 tools (`rg`, 2026-10-08), so the substring scan behind `REMOVED_LIFECYCLE_TOOLS` passes.
 - The web tool-block editor's placeholder text names `submit_for_review`; 4.1 changes it with the other web readers.
-- Large files: `workflows/hooks.py` (924 lines) and `_expansion_registry.py` (890 lines) each take one delete-lines proof here. Neither contains stage, column or dispatch vocabulary that a later leaf removes. No other production Target reaches 850 lines (`blocking.py` 653, `expansion_qa_coverage.py` 533, `src/gobby/servers/routes/tasks.py` 526, `_updates.py` 412).
+- Large files: `workflows/hooks.py` (925 lines) and `_expansion_registry.py` (890 lines) each take one delete-lines proof here. Neither contains stage, column or dispatch vocabulary that a later leaf removes. No other production Target reaches 850 lines (`blocking.py` 653, `expansion_qa_coverage.py` 533, `src/gobby/servers/routes/tasks.py` 526, `_updates.py` 412).
 - `sync_bundled_rules` soft-deletes the installed `block-needs-review-interactive` row at the next sync.
 - Planned checks: focused pytest on every edited test Target plus `tests/agents/test_bundled_agent_contract.py`, `tests/skills/test_reference_library.py`, `tests/mcp_proxy/test_registries.py`, `tests/workflows/test_close_validator_allowlist.py` and `tests/cli/`; ruff, format check and mypy on `src/`; `uv run python -c "import gobby.runner"`.
 
@@ -1859,3 +1859,4 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-13: Plan Adversary gobby#16804 consensus on 8416a4897c22c2fbb0b8f96b7538cf4d82b7edc6 for #24318: PA-1 resolved (3.5 owns the `test_worker_safety_rules.py` task-enforcement count pin), no blocking finding remains.
 - 2026-10-13: Writer repair for the no-deferrals audit (memory 878d0c35) on the Orchestrator's ruling: 6.1 carries the gdaemon release bump (crate version, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`) instead of leaving it to activation, with acceptance 6.1.5. The two cross-references to `spawn-network-override` section D1 drop the word "deferred", since that section is the other plan's. Decision Record item 9's review-evidence remainder is with Josh for a decision, and M1 waits on his answer.
 - 2026-10-16: Writer renumber for #24318 on the Orchestrator's ruling: #24445 landed migration 469 and #24617 holds 470, so 6.1 and V2 move to migration 471. The next-free-version rule stays for later collisions.
+- 2026-10-16: Writer re-derivation for #24318: #24405 changed `workflows/hooks.py` at `db48065cff`, so 3.5's delete-lines proof moves to blob `70580b4d5d0e5ab987bda6317ee1023c4e578bc9`, lines 569-571, and the file goes from 925 lines to 922.
