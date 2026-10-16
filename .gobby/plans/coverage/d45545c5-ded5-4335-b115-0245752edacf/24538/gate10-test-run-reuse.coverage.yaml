@@ -1,319 +1,535 @@
 header:
   plan_id: gate10-test-run-reuse
-  plan_hash: 95807f00e4f1e9ccee4a246b7b1c45847e92bbce7c95934594593ddcad17fe9a
+  plan_hash: 01e7d890798afd553c9c5e052380b0f936fbaffc0c8bb27f80ad624c6236ffd7
   root_task_ref: '24538'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T02:54:31Z'
+  generated_at: '2026-10-16T04:00:33Z'
   task_tree_source: db
-  task_tree_source_hash: c980eb6b4800b6d62895a71d30648cf43832cf8a0a6b1db427d3c81b84adcd65
+  task_tree_source_hash: ebf2f16b4d7e2a3257a3140a5bae3357e6be703aabb9e82c2dd83f629a0e240e
   evidence_summary: []
   evidence: []
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
   plan_node_hash: 35a548c9861586ef4f8645751ff569a21d2924dc290a9c82d22302e64c008079
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24548'
+    validation_criteria_snippet: '1.1.1: Migration 469 creates `validation_run_records`
+      with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
+      SELECT, INSERT...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/469_validation_run_records.sql
   deferral_target: null
   detail: ''
 - section_id: '1.1'
   item_id: 1.1.2
   plan_node_hash: c9c207aa46d68f89dd4800dcb873784d765865e8e13e2da85813f47e5a1f1fb7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24548'
+    validation_criteria_snippet: '1.1.1: Migration 469 creates `validation_run_records`
+      with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
+      SELECT, INSERT...'
+    matched_artifact_ref: crates/gcore/assets/schema/catalog.manifest.json
   deferral_target: null
   detail: ''
 - section_id: '1.1'
   item_id: 1.1.3
   plan_node_hash: ea8e42ca7e20c5139f8ac977febf029c9f1241f4b56b15483f2e7ab6ab523ddc
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24548'
+    validation_criteria_snippet: '1.1.1: Migration 469 creates `validation_run_records`
+      with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
+      SELECT, INSERT...'
+    matched_artifact_ref: Cargo.lock
   deferral_target: null
   detail: ''
 - section_id: '2.1'
   item_id: 2.1.1
   plan_node_hash: 9bf4381d890e5c78837914e05b916d0f5433c328a2c608342bf43fb71946f709
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24549'
+    validation_criteria_snippet: '2.1.1: The persisted sandbox metadata carries `wrap_prefix`
+      equal to the argv prefix `SandboxLaunch.wrap` produces for an enforced SRT launch,
+      and an empty lis...'
+    matched_artifact_ref: src/gobby/agents/spawn_executor_support.py
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.1
   plan_node_hash: 885b7f5c5e753bb895321aea43dab1e602609b3caefe4624fbb9e70cc9f990d9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/src/lifecycle/group.rs
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.2
   plan_node_hash: 294140870f7367df8567c3c01635a381db317d3c90949336d2f3739739985f5d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::refuses_unmanaged_forged_and_provider_native_callers
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.3
   plan_node_hash: ef5bf3461f7dd9cebb184279cdfbf16cd3b1922e28fe00b1493f32aea8286f0c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::verifies_python_minted_capability
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.4
   plan_node_hash: 6fd8eafb7bcf6e56f433c320c47a537c47abd642201d19d9d638aa678fa6c592
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::wraps_child_in_caller_srt_policy
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.5
   plan_node_hash: 11e3758767b76f63dd05f92fc004a1696ac4ab7428cef090bcf8a571e0fe9fc6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.6
-  plan_node_hash: 966ed3360397b9d2561440e78e890097718a7f67a83001a983599de1ccbe92d3
-  status: missing
-  leaves: []
+  plan_node_hash: 94d83d7dd91b36e010d6a37384f919ca6841979ee821f1d6c5ef7f7d70172b74
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::admits_hub_and_heavy_pools_and_bounds_queue_wait
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.7
   plan_node_hash: 18c6c4103fe10b519adb332a8187bab59e5781cc8f646373036c9c389ba474d2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.8
   plan_node_hash: dd5c23aac965b2baeda8f62c52535680c1a1be47d4cbe0fc4f868141a987a129
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.9
   plan_node_hash: d87960534d3d04947d52e02fd815ebaddc3e01fb42b15e28a865b3e05cacfbf6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24550'
+    validation_criteria_snippet: '2.2.1: The shared group helper TERMs, waits with
+      the leader unreaped, KILLs and reaps an owned group, and `BackendChild` drains
+      through it with unchanged behav...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run.rs::records_outcome_identity_and_reusability
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.1
   plan_node_hash: 8ccc45cf44ef022a26a0ccd8902a447bf82e46d56434aee9091ccae789c5fffa
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24551'
+    validation_criteria_snippet: '2.3.1: Output passes through byte for byte on both
+      streams and the launcher exits with the child''s exit code. test: `crates/gdaemon/tests/bounded_run_cli.rs::p...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run_cli.rs::passes_output_and_exit_code_through
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.2
   plan_node_hash: 3a3ff9dbdc3e7807bc63240bd41f56de06365aad6c663cf79693a88a7d8b4693
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24551'
+    validation_criteria_snippet: '2.3.1: Output passes through byte for byte on both
+      streams and the launcher exits with the child''s exit code. test: `crates/gdaemon/tests/bounded_run_cli.rs::p...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run_cli.rs::exits_124_with_one_trailer_line
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.3
   plan_node_hash: 1a8699a089ee4ddc36dbef8e50ab56e400d2b87ab0cc7fb4a2a846e64d8dc48d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24551'
+    validation_criteria_snippet: '2.3.1: Output passes through byte for byte on both
+      streams and the launcher exits with the child''s exit code. test: `crates/gdaemon/tests/bounded_run_cli.rs::p...'
+    matched_artifact_ref: crates/gdaemon/tests/bounded_run_cli.rs::exits_125_on_launcher_failure
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.4
   plan_node_hash: b71abb8675a94b7ea3be1e024ae46ac008f91f702bdb77f0af919c07c6bf501a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24551'
+    validation_criteria_snippet: '2.3.1: Output passes through byte for byte on both
+      streams and the launcher exits with the child''s exit code. test: `crates/gdaemon/tests/bounded_run_cli.rs::p...'
+    matched_artifact_ref: crates/gdaemon/tests/cli_contract.rs::cli_contract_lists_run_subcommand
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.1
   plan_node_hash: 0cb204ba9f0d5f81232680749aa9b68a2b8bd9404067819ee90cb8c4169d2667
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24552'
+    validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
+      <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
+      `--` or another gdaemon subcomma...'
+    matched_artifact_ref: tests/tasks/test_transcript_outcomes.py::test_gdaemon_run_launcher_resolves_child_executable
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.2
   plan_node_hash: fd4224d58ce64c2932619c3ad70875b8ca4d33d61e2c05c17eb279290fb90b02
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24552'
+    validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
+      <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
+      `--` or another gdaemon subcomma...'
+    matched_artifact_ref: tests/config/test_validation_detection.py::test_gdaemon_run_delimiter_wrapper_unwraps_child
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.3
   plan_node_hash: 2b56f89d17ef18e3254ec3eb8c01cc285338308bd30fd8b27fb82f1354ddc846
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24552'
+    validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
+      <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
+      `--` or another gdaemon subcomma...'
+    matched_artifact_ref: tests/tasks/test_close_checklist.py::test_gdaemon_run_pytest_earns_bare_run_credit
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.4
   plan_node_hash: 845a0944214c0c26a8dbea2c1a3503de8e0f57bcadb07ee32d7952831d0cbde8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24552'
+    validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
+      <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
+      `--` or another gdaemon subcomma...'
+    matched_artifact_ref: tests/tasks/test_tdd_retained_output.py::test_gdaemon_run_trailer_is_generated_line
   deferral_target: null
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.5
   plan_node_hash: d37fcda4bada1273c272b683b616ac19e6d7af0a98d1c53ea548e4dcb69d5200
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24552'
+    validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
+      <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
+      `--` or another gdaemon subcomma...'
+    matched_artifact_ref: src/gobby/tasks/transcript_launchers.py
   deferral_target: null
   detail: ''
 - section_id: '2.5'
   item_id: 2.5.1
   plan_node_hash: 51b380bab68ae8f7753ec1cfad3e746b6362e64bc5db515696a799b467d3d533
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24553'
+    validation_criteria_snippet: '2.5.1: `gdaemon run --bound 300 -- pytest x` is
+      rewritten to `gdaemon run --bound 300 -- rtk pytest x` with the prefix preserved
+      byte for byte. test: `tests/wo...'
+    matched_artifact_ref: tests/workflows/test_proxy_hooks.py::test_rtk_rewrites_inside_gdaemon_run_launcher
   deferral_target: null
   detail: ''
 - section_id: '2.5'
   item_id: 2.5.2
   plan_node_hash: 630645183105e7510eda4fe2eb1c2fb9ba47dbf471d280a47147d69213222f6d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24553'
+    validation_criteria_snippet: '2.5.1: `gdaemon run --bound 300 -- pytest x` is
+      rewritten to `gdaemon run --bound 300 -- rtk pytest x` with the prefix preserved
+      byte for byte. test: `tests/wo...'
+    matched_artifact_ref: tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_keeps_command_on_rejection
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.1
   plan_node_hash: b8492d68d3beec1d635a1361f06c5b30bf0c990c1771990c2e713fc2b56069f0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24554'
+    validation_criteria_snippet: '3.1.1: Against the real tree, `tests/tasks/test_criterion_commands.py`
+      is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is
+      refused wit...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse_classifier.py::test_real_root_chain_leaves_plain_module_eligible
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.2
   plan_node_hash: 02e9b255116374f8cfd6694a5c0b0e7c6326b2bbeb6d83c6b91e7abca8982cee
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24554'
+    validation_criteria_snippet: '3.1.1: Against the real tree, `tests/tasks/test_criterion_commands.py`
+      is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is
+      refused wit...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse_classifier.py::test_disposition_pins_are_current_and_fail_closed
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.3
   plan_node_hash: 6552cf87ccca041d4b57b9af9b5916922f4a4c363ccf4d07f332201cbf2f41a8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24554'
+    validation_criteria_snippet: '3.1.1: Against the real tree, `tests/tasks/test_criterion_commands.py`
+      is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is
+      refused wit...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse_classifier.py::test_sites_in_executed_units_refuse
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.4
   plan_node_hash: 9cd080173b749c4a05640c902b587feb3cefcbda6449fd4d8ab09058fadfd960
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24554'
+    validation_criteria_snippet: '3.1.1: Against the real tree, `tests/tasks/test_criterion_commands.py`
+      is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is
+      refused wit...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse_classifier.py::test_unresolvable_and_dynamic_requests_refuse
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.1
   plan_node_hash: 0967cd8936b8828ab2fedbf32422991e4671a82b39459ca0837e7a8ac586f4b6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_edit_outside_closure_keeps_credit
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.2
   plan_node_hash: 464c86b335b3f6a504ffccb3ff50e6518bc4d2167bb139dd8dd49e85a82881ea
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_conftest_plugin_and_patch_target_join_closure
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.3
   plan_node_hash: d1d75e7046e20767798d70dddab85d2a954da3aae6e6e6b3a48808fe3f6e3451
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_deletion_rename_shadow_and_sibling_join_key
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.4
   plan_node_hash: f95780709bc55b27879c97e6492ca9421d7e9994846864d5c534aa6e9864e3f3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_data_env_python_and_gdaemon_identity_void_all_reuse
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.5
   plan_node_hash: 2efd6070c6b35dfba62181457c4fd906757ab9afa2b99117420a6e207b72db9a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_failing_record_under_key_cancels_pass
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.6
   plan_node_hash: 392f11ad6ae308c986e799eff18652005294cdd7205af2cff65a856881ee1552
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_later_transcript_failure_cancels_pass
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.7
   plan_node_hash: ebb9a583b42469b528bc647ce55101b3fe2021af6bc8b549ec7cb259cd3a6bd2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_reuse_fails_closed
   deferral_target: null
   detail: ''
 - section_id: '3.2'
   item_id: 3.2.8
   plan_node_hash: 72bd609d297c04f04948bc9dfbd5e458f331505288dad143e065c68e5f23aa72
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24555'
+    validation_criteria_snippet: '3.2.1: A one-line edit to a source file reuses every
+      target module whose closure excludes it and refuses those that import it, directly,
+      transitively or throug...'
+    matched_artifact_ref: tests/tasks/test_validation_reuse.py::test_rebase_recomputes_keys_at_candidate
   deferral_target: null
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.1
   plan_node_hash: adaf4c91bddb219a4de6f9672de3a38670f81986df94ab7e22aec666f2ec593b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24556'
+    validation_criteria_snippet: '3.3.1: `load_confinement_context` returns the project''s
+      records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+      test: ...'
+    matched_artifact_ref: ConfinementContext
   deferral_target: null
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.2
   plan_node_hash: a8e4e10a3df976c8b3df01588cffe268e50f257433060b4629e9d0607b331558
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24556'
+    validation_criteria_snippet: '3.3.1: `load_confinement_context` returns the project''s
+      records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+      test: ...'
+    matched_artifact_ref: tests/tasks/test_close_checklist.py::test_gate10_reuses_unaffected_module_records
   deferral_target: null
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.3
   plan_node_hash: ee213cde38025957402e10d2eac92ce2cf8962ce8142a703d70cc12235bb909f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24556'
+    validation_criteria_snippet: '3.3.1: `load_confinement_context` returns the project''s
+      records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+      test: ...'
+    matched_artifact_ref: tests/tasks/test_close_checklist.py::test_gate10_reuse_never_hides_fresh_failure
   deferral_target: null
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.4
   plan_node_hash: d8982242671a327b5a74d0713bb6ef6baeed0bc5b28bb73bfb86a4bbc4b5130f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24556'
+    validation_criteria_snippet: '3.3.1: `load_confinement_context` returns the project''s
+      records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+      test: ...'
+    matched_artifact_ref: tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance
   deferral_target: null
   detail: ''
 - section_id: '3.3'
   item_id: 3.3.5
   plan_node_hash: 88944644aa3b0803c98b5708ba59c4fb5d560fffc7fa9d040c69f8a257aa50eb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24556'
+    validation_criteria_snippet: '3.3.1: `load_confinement_context` returns the project''s
+      records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+      test: ...'
+    matched_artifact_ref: tests/tasks/test_close_checklist.py::test_gate10_criterion_pytest_command_accepts_reuse
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.1
   plan_node_hash: dfe9abfbf1d33c3ec27b324ff4049ea05b28e16bb1342eba9279fa001878d35f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24557'
+    validation_criteria_snippet: '4.1.1: The tasks guide states when a daemon record
+      keeps Gate 10 credit, the refusal rules and where reused passes are shown. behavior:
+      "reused_test_credit" in...'
+    matched_artifact_ref: reused_test_credit
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.2
   plan_node_hash: 544090a736f7a7e5e8a5ccd630d7a27c8fa566e5f2215d54fe8d3ae3f1291f71
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24557'
+    validation_criteria_snippet: '4.1.1: The tasks guide states when a daemon record
+      keeps Gate 10 credit, the refusal rules and where reused passes are shown. behavior:
+      "reused_test_credit" in...'
+    matched_artifact_ref: gdaemon run
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.3
   plan_node_hash: 5167bbb66ac2e2ef6ca28bb2830dd7d7d70c59fd56daeea65d4d56e10a3ae24c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24557'
+    validation_criteria_snippet: '4.1.1: The tasks guide states when a daemon record
+      keeps Gate 10 credit, the refusal rules and where reused passes are shown. behavior:
+      "reused_test_credit" in...'
+    matched_artifact_ref: gdaemon run
   deferral_target: null
   detail: ''
