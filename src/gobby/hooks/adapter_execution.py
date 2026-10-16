@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from gobby.hooks.background_tasks import create_background_task
@@ -150,6 +151,19 @@ async def register_adapter_timeout_finalization(
         registration.result()
 
 
+@dataclass
+class _AdmissionHolder:
+    """The admitted worker of one session, as the watchdog sees it."""
+
+    release: Callable[[], None]
+    abandon_at: float
+    admitted_at: float
+    hook_type: Any
+    envelope_id: Any
+    tool_name: Any
+    abandoned: bool = False
+
+
 class _SessionAdmission:
     """One session's adapter admission lock and its outstanding reservations."""
 
@@ -157,10 +171,86 @@ class _SessionAdmission:
         self.session_id = session_id
         self.lock = CrossLoopFifoLock()
         self.references = 0
+        self.holder: _AdmissionHolder | None = None
+        # Abandoned workers still running. Each keeps one reference, so the cap
+        # survives while the session has no queued hooks.
+        self.abandoned = 0
 
 
 _session_admissions_lock = threading.Lock()
 _session_admissions: dict[str, _SessionAdmission] = {}
+# A worker admitted this many timeouts ago is wedged: a legitimate hook ends by its
+# request timeout. Its slot is abandoned, at most one worker per session, so one
+# session parks at most two of the shared workers (#24505).
+ADMISSION_ABANDON_TIMEOUTS: Final = 2
+_WATCHDOG_INTERVAL_SECONDS: Final = 5.0
+_watchdog_started = False
+_watchdog_start_lock = threading.Lock()
+
+
+def _ensure_admission_watchdog() -> None:
+    global _watchdog_started
+    with _watchdog_start_lock:
+        if _watchdog_started:
+            return
+        threading.Thread(
+            target=_run_admission_watchdog,
+            name="gobby-hook-admission-watchdog",
+            daemon=True,
+        ).start()
+        _watchdog_started = True
+
+
+def _run_admission_watchdog() -> None:
+    while True:
+        time.sleep(_WATCHDOG_INTERVAL_SECONDS)
+        try:
+            abandon_wedged_admissions(time.monotonic())
+        except Exception:
+            logger.exception("Hook admission watchdog pass failed")
+
+
+def abandon_wedged_admissions(now: float) -> int:
+    """Release the slot of each session's worker that has outlived its abandon deadline.
+
+    Runs off the event loop. A session that already has an abandoned worker
+    still running keeps its current holder, so one session cannot drain the pool.
+    """
+    wedged: list[tuple[_SessionAdmission, _AdmissionHolder]] = []
+    with _session_admissions_lock:
+        for admission in _session_admissions.values():
+            holder = admission.holder
+            if holder is None or admission.abandoned or now < holder.abandon_at:
+                continue
+            holder.abandoned = True
+            admission.holder = None
+            admission.abandoned += 1
+            admission.references += 1
+            wedged.append((admission, holder))
+    for admission, holder in wedged:
+        logger.error(
+            "Abandoned wedged hook adapter worker for session %s",
+            admission.session_id,
+            extra={
+                "session_id": admission.session_id,
+                "envelope_id": holder.envelope_id,
+                "hook_type": holder.hook_type,
+                "tool_name": holder.tool_name,
+                "elapsed_seconds": now - holder.admitted_at,
+            },
+        )
+        holder.release()
+    return len(wedged)
+
+
+def _end_abandoned_worker(admission: _SessionAdmission, holder: _AdmissionHolder) -> None:
+    with _session_admissions_lock:
+        if not holder.abandoned:
+            return
+        admission.abandoned -= 1
+        admission.references -= 1
+        if admission.references == 0:
+            _session_admissions.pop(admission.session_id, None)
 
 
 def _reserve_session_admission(session_id: str) -> _SessionAdmission:
@@ -173,10 +263,17 @@ def _reserve_session_admission(session_id: str) -> _SessionAdmission:
         return admission
 
 
-def _end_session_admission(admission: _SessionAdmission, *, admitted: bool) -> None:
+def _end_session_admission(
+    admission: _SessionAdmission,
+    *,
+    admitted: bool,
+    holder: _AdmissionHolder | None = None,
+) -> None:
     if admitted:
         admission.lock.release()
     with _session_admissions_lock:
+        if holder is not None and admission.holder is holder:
+            admission.holder = None
         admission.references -= 1
         if admission.references == 0:
             _session_admissions.pop(admission.session_id, None)
@@ -210,6 +307,7 @@ async def run_adapter_hook(
     admission_ended = False
     admission_end_lock = threading.Lock()
     executor_future: Future[dict[str, Any]] | None = None
+    holder: _AdmissionHolder | None = None
 
     def end_worker_admission() -> None:
         nonlocal admission_ended
@@ -219,7 +317,12 @@ async def run_adapter_hook(
             if admission_ended:
                 return
             admission_ended = True
-        _end_session_admission(admission, admitted=True)
+        _end_session_admission(admission, admitted=True, holder=holder)
+
+    def end_worker(_worker: Future[dict[str, Any]]) -> None:
+        end_worker_admission()
+        if admission is not None and holder is not None:
+            _end_abandoned_worker(admission, holder)
 
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
@@ -258,11 +361,17 @@ async def run_adapter_hook(
             await asyncio.wait_for(admission.lock.acquire(), timeout=timeout_seconds)
             admitted = True
         submitted_at = time.perf_counter()
+        if admission is not None and timeout_seconds is not None:
+            holder = _admission_holder(payload, end_worker_admission, timeout_seconds)
+            with _session_admissions_lock:
+                admission.holder = holder
+            _ensure_admission_watchdog()
         executor_future = _HOOK_ADAPTER_EXECUTOR.submit(run_adapter)
         if admission is not None:
             # The worker owns the slot, so one that outlives this request's
-            # timeout keeps the session's later hooks queued until it exits.
-            executor_future.add_done_callback(lambda _worker: end_worker_admission())
+            # timeout keeps the session's later hooks queued until it exits or
+            # the watchdog abandons it.
+            executor_future.add_done_callback(end_worker)
         pending = asyncio.wrap_future(executor_future, loop=loop)
         if timeout_seconds is None:
             return await pending
@@ -295,7 +404,10 @@ async def run_adapter_hook(
         raise
     finally:
         if admission is not None and executor_future is None:
-            _end_session_admission(admission, admitted=admitted)
+            if admitted:
+                end_worker_admission()
+            else:
+                _end_session_admission(admission, admitted=False)
         admission_wait, queue_duration, execution_duration = durations()
         input_data = payload.get("input_data")
         payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
@@ -312,6 +424,24 @@ async def run_adapter_hook(
                 "exception_type": exception_type,
             },
         )
+
+
+def _admission_holder(
+    payload: dict[str, Any],
+    release: Callable[[], None],
+    timeout_seconds: float,
+) -> _AdmissionHolder:
+    input_data = payload.get("input_data")
+    fields = input_data if isinstance(input_data, dict) else {}
+    admitted_at = time.monotonic()
+    return _AdmissionHolder(
+        release=release,
+        abandon_at=admitted_at + ADMISSION_ABANDON_TIMEOUTS * timeout_seconds,
+        admitted_at=admitted_at,
+        hook_type=payload.get("hook_type"),
+        envelope_id=fields.get("source_event_id"),
+        tool_name=fields.get("tool_name"),
+    )
 
 
 async def _renew_envelope_lease(envelope_id: str, owner_token: str) -> None:

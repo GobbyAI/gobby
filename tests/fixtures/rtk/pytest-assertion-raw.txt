@@ -1,0 +1,16 @@
+============================= test session starts ==============================
+collected 1 item
+
+tests/test_feature.py F                                                   [100%]
+
+=================================== FAILURES ===================================
+_________________________________ test_feature _________________________________
+
+    def test_feature():
+>       assert feature() == 1
+E       assert 0 == 1
+
+tests/test_feature.py:4: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_feature.py::test_feature - assert 0 == 1
+============================== 1 failed in 0.01s ===============================

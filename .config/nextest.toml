@@ -38,10 +38,17 @@ fail-fast = false
 ghook-process = { max-threads = 2 }
 serial-db = { max-threads = 1 }
 gterm-pty = { max-threads = 1 }
+gdaemon-lease = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(gobby-hooks)'
 test-group = 'ghook-process'
+
+[[profile.default.overrides]]
+# Lease and lifecycle fixtures serialize on one advisory lock with a bounded
+# wait; queued behind long lifecycle cases, a lease case outwaits that bound.
+filter = 'package(gobby-daemon) & (binary(lease) | binary(lifecycle))'
+test-group = 'gdaemon-lease'
 
 [[profile.default.overrides]]
 filter = 'package(gobby-core) & (test(schema::runner_tests) | binary(catalog_manifest_freshness) | binary(schema_contract))'

@@ -63,6 +63,7 @@ _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECAS
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
     r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
+    r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
     # Each Rust node's block ends where the next nextest status line or libtest
     # per-test header starts, so a sibling's panic never lands in this section.
@@ -623,27 +624,27 @@ def _has_named_red_failure(
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
-    symbols = (
-        test.symbol,
-        test.symbol.replace(".", "::"),
-        test.symbol.replace("::", "."),
-    )
-    symbol_patterns = tuple(
-        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])") for symbol in symbols
-    )
+    if test.path.endswith(".py"):
+        return False, reason
+    symbols = (test.symbol, test.symbol.replace(".", "::"), test.symbol.replace("::", "."))
     lines = output.splitlines()
+    section_node: str | None = None
     for index, line in enumerate(lines):
-        # Summaries carry their own path/node identity. Never borrow an assertion
-        # from a sibling summary through the generic symbol/section fallback.
-        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
-            continue
-        if _PYTEST_LOCATION_RE.match(line):
-            continue
-        if not any(pattern.search(line) for pattern in symbol_patterns):
-            continue
-        if _PASS_STATUS_RE.search(line):
+        # Node identity comes from runner headers, never assertion text that
+        # happens to mention a target symbol inside a sibling's failure body.
+        header = re.fullmatch(r"\s*---- (\S+) std(?:out|err) ----\s*", line) or re.fullmatch(
+            r"\s*FAIL \S+::\S+ (\S+)\s*", line
+        )
+        if _FAILURE_SECTION_BOUNDARY_RE.match(line):
+            section_node = header[1] if header else None
+        panic = re.match(r"\s*thread '([^']+)'(?: \(\d+\))? panicked at\b", line)
+        node = header[1] if header else panic[1] if panic else None
+        if node not in symbols or (section_node is not None and section_node not in symbols):
             continue
         section = _failure_section(lines, index)
+        panic_nodes = re.findall(r"(?m)^\s*thread '([^']+)'(?: \(\d+\))? panicked at\b", section)
+        if any(name not in symbols for name in panic_nodes):
+            continue
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True, ""
     return False, reason
@@ -656,7 +657,9 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
     expected = test.symbol.replace("::", ".")
     lines = output.splitlines()
     for index, line in enumerate(lines):
-        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line)
+        match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-\s+(.+))?", line) or re.fullmatch(
+            r"\s*(\S+\.py)::(\S+)\s+FAILED(?:\s+-\s+(.+))?", line
+        )
         if match is None or not _path_matches_artifact(match[1], test):
             continue
         reported = match[2].replace("::", ".")
@@ -702,7 +705,12 @@ def _has_pytest_body_failure(
         ):
             continue
         section = _failure_section(lines, index)
-        if _section_has_artifact_location(section, test):
+        if _section_has_artifact_location(section, test) or (
+            artifact_nodes
+            and not any(_PYTEST_LOCATION_RE.match(row) for row in section.splitlines())
+            and _ASSERTION_DETAIL_RE.search(section)
+            and is_assertion_failure(section)
+        ):
             has_attributable_section = True
             if _section_has_failure_detail(section) and (
                 not require_not_implemented or "NotImplementedError" in section

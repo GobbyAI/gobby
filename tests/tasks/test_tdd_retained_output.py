@@ -311,7 +311,7 @@ def _python_result(tmp_path: Path, *, production_at: float = 10) -> TddEvidenceR
     )
 
 
-def _assert_uncredited(result: TddEvidenceResult) -> None:
+def assert_uncredited(result: TddEvidenceResult) -> None:
     assert not result.passed
     assert result.red_runs == ()
     assert any("no attributable failure section" in finding for finding in result.findings), (
@@ -349,7 +349,7 @@ def test_retained_output_rejected_when_provenance_fails(
     if case != "missing":
         _retain(tmp_path / job_name, job_text, mtime)
     production_at = NOTICE + 0.2 if case == "after_production" else 10
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path, production_at=production_at)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path, production_at=production_at)))
 
     _recall_store(
         tmp_path / "home",
@@ -358,7 +358,7 @@ def test_retained_output_rejected_when_provenance_fails(
         created={"modified_late": 4.0, "after_production": 3.0}.get(case, 2.5),
         recall="ba9876543210" if case == "unnamed_path" else RECALL,
     )
-    _assert_uncredited(
+    assert_uncredited(
         _python_result(tmp_path / "py", production_at=3.0 if case == "after_production" else 10)
     )
 
@@ -385,7 +385,7 @@ def test_red_after_the_closing_edit_earns_no_credit(tmp_path: Path) -> None:
 def test_job_output_must_be_the_jobs_own_tasks_file(tmp_path: Path, job_file: str) -> None:
     # The receipt names this path, but only tasks/<job_id>.output is the job's own file.
     _retain(tmp_path / job_file, _nextest_file("expected 2"), NOTICE + 0.3)
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path, job_file=job_file)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path, job_file=job_file)))
 
 
 @pytest.mark.parametrize("retained", ["summary_only", "sibling_body"])
@@ -397,7 +397,7 @@ def test_retained_output_rejects_summary_only_and_sibling_body(
         kept = ("Starting", "FAIL [", "Summary", "[exited")
         text = "\n".join(line for line in text.splitlines() if line.strip().startswith(kept))
     _retain(tmp_path / "tasks/job.output", text + "\n", NOTICE + 0.3)
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
 
 
 @pytest.mark.parametrize("later", ["read", "tail", "monitor", "rerun"])
@@ -440,7 +440,7 @@ def test_job_output_requires_its_exit_trailer(tmp_path: Path, trailer: str) -> N
         _nextest_file("expected 2", exit_line=trailer),
         NOTICE + 0.3,
     )
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
 
 
 def test_backdated_job_output_earns_no_credit(
@@ -449,7 +449,7 @@ def test_backdated_job_output_earns_no_credit(
     # The job ran in the past; the file is forged now and its mtime set back with os.utime.
     monkeypatch.setattr(f"{__name__}.START", datetime(2026, 10, 14, tzinfo=UTC))
     _retain(tmp_path / "tasks/job.output", _nextest_file("expected 2"), NOTICE + 0.3)
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
 
 
 @pytest.mark.timeout(5)
@@ -458,7 +458,7 @@ def test_job_output_fifo_is_refused_without_blocking(tmp_path: Path) -> None:
     output_path = tmp_path / "tasks/job.output"
     output_path.parent.mkdir(parents=True)
     os.mkfifo(output_path)
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
 
 
 @pytest.mark.parametrize("restamp", ["late", "original"])
@@ -481,7 +481,7 @@ def test_job_output_mutated_between_stat_and_read_is_refused(
         return info
 
     monkeypatch.setattr(os, "fstat", fstat_then_rewrite)
-    _assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
+    assert_uncredited(_rust_result(tmp_path, _rust_cycle(tmp_path)))
     assert rewritten
 
 

@@ -13,6 +13,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::{HubDatabaseBootstrap, RunMode};
+use gobby_core::postgres_pool::Pool;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -84,6 +85,7 @@ impl RuntimeState {
         bootstrap: &HubDatabaseBootstrap,
         home: &Path,
         secret: &str,
+        pool: Option<Arc<Pool>>,
     ) -> Result<Option<(Arc<Self>, BackendSupervisor)>> {
         if bootstrap.mode == RunMode::Node {
             anyhow::bail!(
@@ -93,13 +95,10 @@ impl RuntimeState {
         let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
             return Ok(None);
         };
-        let database_url = bootstrap
-            .database_url
-            .as_deref()
-            .context("native runtime ownership requires bootstrap database_url")?;
+        let pool = pool.context("native runtime ownership requires bootstrap database_url")?;
         let machine = gobby_core::machine::read_machine_id_from_home(home)?;
         let token = gobby_core::grant::deployment_token(home);
-        let lease = ActiveDaemonLease::new(database_url, &machine, &token, bootstrap.mode)?;
+        let lease = ActiveDaemonLease::new(pool, &machine, &token, bootstrap.mode)?;
         let lease_state = Some(lease.subscribe());
         let lease = Some(Arc::new(Mutex::new(lease)));
         let mut config = BackendConfig::from_environment(home)?;

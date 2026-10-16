@@ -113,14 +113,16 @@ def _model_display_names(
     rows: Sequence[AttentionRosterRow],
 ) -> dict[tuple[str | None, str | None], str | None]:
     """Each distinct model's name as its provider prints it, when the catalog has it."""
-    names: dict[tuple[str | None, str | None], str | None] = {}
+    # One catalog read per provider: each read loads every model the provider lists.
+    models_by_provider: dict[str, set[str]] = {}
     for row in rows:
-        key = (row.provider, row.model)
-        if not row.provider or not row.model or key in names:
-            continue
-        capability = resolver.find_model(row.provider, row.model)
-        names[key] = None if capability is None else capability.display_name
-    return names
+        if row.provider and row.model:
+            models_by_provider.setdefault(row.provider, set()).add(row.model)
+    return {
+        (provider, model): None if capability is None else capability.display_name
+        for provider, models in models_by_provider.items()
+        for model, capability in resolver.find_models(provider, models).items()
+    }
 
 
 def _serialize_attention(state: AttentionState | None) -> dict[str, object] | None:
