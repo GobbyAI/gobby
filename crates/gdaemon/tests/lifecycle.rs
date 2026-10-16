@@ -10,6 +10,7 @@ use gobby_daemon::{
         pid_file::{Role, claim_pid_file},
     },
 };
+use gobby_terminals::write_api::WriteRefused;
 use serde_json::json;
 use std::fs;
 use std::{
@@ -182,7 +183,7 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         assert_eq!(standby.fence().map(|f| f.epoch), Some(2));
         let healthy_home=TempDir::new()?;
         let claim=claim_pid_file(&healthy_home.path().join("gobby.pid"),Role::Daemon)?.context("standby PID claim")?;
-        let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)";
+        let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
         let argv=serde_json::to_string(&["uv","run","python","-c",script])?;
         let mut config=BackendConfig::from_command_json(healthy_home.path(),Some(&argv))?;
         config.drain_timeout=Duration::from_millis(100);
@@ -212,7 +213,7 @@ p.write_text('a'*n)
 (p.parent/f'spawn-{n}').write_text(str(time.monotonic()))
 if n<3: raise SystemExit(1)
 (pathlib.Path(os.environ['GOBBY_HOME'])/'stable').write_text('ready')
-os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
+open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()
 "#;
         let mut supervisor = db.supervisor(home.path(), script).await?;
         let mut state = supervisor.subscribe();
@@ -256,6 +257,53 @@ os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
         let (outcome, _supervisor) = timeout(Duration::from_secs(5), task).await??;
         assert_eq!(outcome?, SupervisorExit::Stopped);
         assert_eq!(fs::read_to_string(home.path().join("starts"))?, "aaa");
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn backend_write_token_rotates_per_spawn_over_the_pipe_only() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib,json,sys
+home=pathlib.Path(os.environ['GOBBY_HOME']); fd=int(os.environ['GOBBY_SUPERVISOR_FD'])
+line=os.read(fd,4096); token=line.decode().removesuffix('\n')
+n=len(list(home.glob('token-*')))+1
+(home/f'token-{n}').write_text(json.dumps({'line':line.decode(),'env':any(token in v for v in os.environ.values()),'argv':any(token in a for a in sys.argv)}))
+if n<2: raise SystemExit(1)
+os.read(fd,1)
+"#;
+        let mut lease = db.lease("token-rotation")?;
+        ensure!(lease.try_acquire().await?, "fixture must hold lease");
+        let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+            .context("fixture PID claim")?;
+        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        config.drain_timeout = Duration::from_millis(100);
+        let slot = config.write_token.clone();
+        assert_eq!(slot.authorize(None), Err(WriteRefused::NoBackend));
+        let mut supervisor = BackendSupervisor::new(lease, claim, config);
+        let (stop, stop_rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(stop_rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let mut tokens = Vec::new();
+        for n in 1..=2 {
+            let report: serde_json::Value =
+                serde_json::from_str(&wait_for_file(&home.path().join(format!("token-{n}"))).await?)?;
+            assert_eq!(report["env"], json!(false), "token never travels in env");
+            assert_eq!(report["argv"], json!(false), "token never travels in argv");
+            let line = report["line"].as_str().context("token line")?;
+            let token = line.strip_suffix('\n').context("token is one newline-ended line")?;
+            assert_eq!(token.len(), 43, "32 random bytes, base64url without padding");
+            tokens.push(token.to_owned());
+        }
+        assert_ne!(tokens[0], tokens[1], "each spawn mints a fresh token");
+        assert_eq!(slot.authorize(Some(&tokens[1])), Ok(()));
+        assert_eq!(slot.authorize(Some(&tokens[0])), Err(WriteRefused::WrongToken));
+        stop.send(true)?;
+        assert_eq!(timeout(Duration::from_secs(5), task).await???, SupervisorExit::Stopped);
+        assert_eq!(slot.authorize(Some(&tokens[1])), Err(WriteRefused::NoBackend));
         Ok(())
     })
     .await
@@ -353,7 +401,7 @@ async fn exited_backend_leaves_no_process_group_descendant() -> Result<()> {
             r#"import os,pathlib,socket,subprocess,sys
 home=pathlib.Path(os.environ['GOBBY_HOME'])
 if (home/'first').exists():
-    os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
+    open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()
     raise SystemExit(0)
 (home/'first').write_text('first')
 child=subprocess.Popen([sys.executable,'-c','import signal; signal.pause()'])
@@ -567,6 +615,7 @@ for candidate in range(3,512):
     try: os.fstat(candidate); opened.append(candidate)
     except OSError: pass
 (home/'descriptors').write_text(json.dumps({'pid':os.getpid(),'open':opened,'liveness':fd}))
+assert os.read(fd,4096).endswith(b'\n')
 assert os.read(fd,1)==b''
 (home/'eof').write_text('EOF')
 "#;

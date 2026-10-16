@@ -33,6 +33,7 @@ def bind_wake_write_services(manager: Any, coordinator: Any) -> None:
 def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     """Build each runner-owned terminal service exactly once."""
     from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.runner_backend import require_latched_terminal_route
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.terminals import TerminalManager
     from gobby.storage.workspaces import WorkspaceManager
@@ -59,6 +60,8 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.terminal_host_config = host_config
     runner.workspace_manager = WorkspaceManager(runner.database)
     bootstrap = getattr(runner, "bootstrap_config", None)
+    if bootstrap is not None:
+        require_latched_terminal_route(bootstrap)
     if (
         bootstrap is not None
         and bootstrap.front_door.enabled

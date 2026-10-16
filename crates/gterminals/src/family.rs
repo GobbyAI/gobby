@@ -11,20 +11,78 @@ pub enum SupervisorMode {
     Owner,
 }
 
+/// Whether gdaemon serves the terminal WS routes natively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsRoutes {
+    Registered,
+    Unregistered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RouteModeError {
+    #[error(
+        "front_door.routes.terminal_ws: native needs terminal WS routes this gdaemon does not register; use proxy or compare"
+    )]
+    FamilyUnregistered,
+    #[error(
+        "front_door.routes.terminal_ws changed from {started:?} to {requested:?}; restart gdaemon to apply it"
+    )]
+    RestartRequired {
+        started: RouteBackend,
+        requested: RouteBackend,
+    },
+}
+
+/// The terminal route mode, read once per process. Ownership follows it, and
+/// a later selection of another mode is refused until restart.
+pub struct RouteLatch {
+    route: RouteBackend,
+}
+
+impl RouteLatch {
+    pub fn new(route: RouteBackend, ws: WsRoutes) -> Result<Self, RouteModeError> {
+        if route == RouteBackend::Native && ws == WsRoutes::Unregistered {
+            return Err(RouteModeError::FamilyUnregistered);
+        }
+        Ok(Self { route })
+    }
+
+    pub fn route(&self) -> RouteBackend {
+        self.route
+    }
+
+    pub fn mode(&self) -> SupervisorMode {
+        match self.route {
+            RouteBackend::Native => SupervisorMode::Owner,
+            RouteBackend::Proxy | RouteBackend::Compare => SupervisorMode::Observer,
+        }
+    }
+
+    pub fn select(&self, requested: RouteBackend) -> Result<SupervisorMode, RouteModeError> {
+        if requested != self.route {
+            return Err(RouteModeError::RestartRequired {
+                started: self.route,
+                requested,
+            });
+        }
+        Ok(self.mode())
+    }
+}
+
 pub struct TerminalFamily {
     supervisor: Option<HostSupervisor>,
 }
 
 impl TerminalFamily {
     pub fn new(
-        route: RouteBackend,
+        latch: &RouteLatch,
         options: HostOptions,
         authority: Arc<dyn EpochAuthority>,
     ) -> Self {
         Self {
-            supervisor: match route {
-                RouteBackend::Native => Some(HostSupervisor::new(options, authority)),
-                RouteBackend::Proxy | RouteBackend::Compare => None,
+            supervisor: match latch.mode() {
+                SupervisorMode::Owner => Some(HostSupervisor::new(options, authority)),
+                SupervisorMode::Observer => None,
             },
         }
     }
