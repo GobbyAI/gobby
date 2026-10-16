@@ -11,20 +11,6 @@ from gobby.worktrees.git._runner import GitRunner
 logger = logging.getLogger(__name__)
 
 
-class BranchDivergenceUnavailableError(RuntimeError):
-    """Raised when Git cannot verify local-vs-remote branch divergence."""
-
-    code = "branch_divergence_unavailable"
-
-    def __init__(self, branch: str, detail: str) -> None:
-        self.branch = branch
-        self.detail = detail
-        super().__init__(
-            f"Unable to verify local-vs-remote divergence for branch '{branch}': {detail}. "
-            "Refusing to select a remote worktree base; retry after Git is responsive."
-        )
-
-
 class SupportsRunGit(Protocol):
     """Structural runner contract for read-only default-branch detection."""
 
@@ -116,63 +102,6 @@ async def get_current_branch(runner: GitRunner) -> str | None:
         raise
     except Exception:
         return None
-
-
-async def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[bool, int]:
-    """
-    Check if the branch has commits not pushed to origin.
-
-    Args:
-        branch: Branch to check (defaults to current branch)
-
-    Returns:
-        Tuple of (has_unpushed, count) where:
-        - has_unpushed: True if there are unpushed commits
-        - count: Number of unpushed commits
-
-    Raises:
-        BranchDivergenceUnavailableError: Git could not verify divergence.
-    """
-    if branch is None:
-        branch = await get_current_branch(runner)
-    if not branch:
-        return False, 0
-
-    try:
-        # Check if remote tracking branch exists
-        result = await runner._run_git(
-            ["rev-parse", "--verify", f"origin/{branch}"],
-            timeout=5,
-        )
-        if result.returncode != 0:
-            # No remote tracking branch - count commits ahead of the default branch.
-            base_branch = await get_default_branch(runner)
-            count_result = await runner._run_git(
-                ["rev-list", "--count", f"{base_branch}..{branch}"],
-                timeout=5,
-            )
-            if count_result.returncode == 0:
-                count = int(count_result.stdout.strip())
-                return count > 0, count
-            detail = count_result.stderr.strip() or (
-                f"git rev-list exited with status {count_result.returncode}"
-            )
-            raise BranchDivergenceUnavailableError(branch, detail)
-
-        # Count commits ahead of origin
-        result = await runner._run_git(
-            ["rev-list", "--count", f"origin/{branch}..{branch}"],
-            timeout=5,
-        )
-        if result.returncode == 0:
-            count = int(result.stdout.strip())
-            return count > 0, count
-        detail = result.stderr.strip() or f"git rev-list exited with status {result.returncode}"
-        raise BranchDivergenceUnavailableError(branch, detail)
-    except BranchDivergenceUnavailableError:
-        raise
-    except Exception as exc:
-        raise BranchDivergenceUnavailableError(branch, str(exc)) from exc
 
 
 async def get_local_commit(runner: GitRunner, branch: str) -> str | None:

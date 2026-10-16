@@ -719,7 +719,6 @@ class TestWorktreeHandlers:
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
         git_manager.repo_path = "/repo"
-        git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
         )
@@ -814,7 +813,6 @@ class TestWorktreeHandlers:
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-        git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
         )
@@ -853,7 +851,6 @@ class TestWorktreeHandlers:
         git_manager = MagicMock(repo_path="/repo")
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-        git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
         )

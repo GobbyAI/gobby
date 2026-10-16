@@ -74,13 +74,13 @@ def list_clones(
 @clones.command("create")
 @click.argument("branch_name")
 @click.argument("clone_path")
-@click.option("--base", "-b", "base_branch", default="main", help="Base branch to clone from")
+@click.option("--base", "-b", "base_branch", default=None, help="Base ref (default: caller HEAD)")
 @click.option("--task", "-t", "task_id", help="Link clone to a task")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def create_clone(
     branch_name: str,
     clone_path: str,
-    base_branch: str,
+    base_branch: str | None,
     task_id: str | None,
     json_format: bool,
 ) -> None:
@@ -97,9 +97,10 @@ def create_clone(
     arguments = {
         "branch_name": branch_name,
         "clone_path": clone_path,
-        "base_branch": base_branch,
     }
 
+    if base_branch:
+        arguments["base_branch"] = base_branch
     if task_id:
         arguments["task_id"] = task_id
 
