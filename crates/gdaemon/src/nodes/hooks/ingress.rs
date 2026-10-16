@@ -4,10 +4,12 @@ use super::{ledger::Ledger, receipts};
 use crate::state::NodeServices;
 use axum::{
     body::{Body, Bytes, to_bytes},
-    http::{Request, Response, StatusCode},
+    http::{HeaderMap, Request, Response, StatusCode},
 };
 use futures_util::Stream;
+use hmac::digest::CtOutput;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     convert::Infallible,
     error::Error as _,
@@ -84,7 +86,10 @@ pub async fn execute(
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
     let request = Request::from_parts(parts, Body::from(body));
-    if payload["response_capability"] != "hook-response.v1" || id.is_none() {
+    if payload["response_capability"] != "hook-response.v1"
+        || id.is_none()
+        || !has_node_key(&node, request.headers()).await
+    {
         return node.relay.forward(request).await;
     }
     let (sender, receiver) = oneshot::channel();
@@ -101,6 +106,32 @@ pub async fn execute(
         .unwrap_or_else(|error| failure(StatusCode::BAD_GATEWAY, error).map(Body::from))
 }
 
+async fn has_node_key(node: &NodeServices, headers: &HeaderMap) -> bool {
+    let Some((scheme, bearer)) = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+    else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("bearer") || bearer.is_empty() {
+        return false;
+    }
+    let Some(home) = node.bootstrap_path.parent().map(std::path::Path::to_owned) else {
+        return false;
+    };
+    let Ok(Ok(key)) =
+        tokio::task::spawn_blocking(move || gobby_core::local_token::read_api_key_at(&home)).await
+    else {
+        return false;
+    };
+    // CtOutput compares fixed-size digests in constant time, without a
+    // handwritten byte loop whose early-exit behavior could be optimized.
+    CtOutput::<Sha256>::new(Sha256::digest(bearer.as_bytes()))
+        == CtOutput::<Sha256>::new(Sha256::digest(key.as_bytes()))
+}
+
+/// Forward a node-key-authenticated request (HTTP ingress or a local spool item).
 pub async fn forward_claimed(
     node: &NodeServices,
     ledger: &Ledger,

@@ -191,6 +191,105 @@ async fn call_hook(
 }
 
 #[tokio::test]
+async fn ingress_unauthenticated_no_ledger_effects() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let cached = json!({"decision":"allow", "reason":"private cached response"});
+    let refused = json!({"error":"hub authentication required"});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, cached.clone())]);
+    let node = NodeHome::new(&hub)?;
+    let ledger = &node.node.hook_ledger;
+    let seeded = call_hook(
+        node.node.clone(),
+        hook_request(Some("auth-cached"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(seeded.status(), StatusCode::OK);
+    let seeded_body = axum::body::to_bytes(seeded.into_body(), 1024).await?;
+    assert_eq!(serde_json::from_slice::<Value>(&seeded_body)?, cached);
+    let marker = fs::read(marker_path(ledger, "auth-cached"))?;
+    let ack = ledger.inbox.join(format!("{ACK_ID}.json"));
+    let pending = serde_json::to_vec(&receipt())?;
+    fs::write(&ack, &pending)?;
+
+    // These credentials are outside the node-key ledger contract, including
+    // managed-run tokens that only the hub can validate or revoke.
+    for authorization in [
+        None,
+        Some("malformed"),
+        Some("Basic wrong"),
+        Some("Bearer wrong"),
+        Some("Bearer gobby-agent-v1.revoked"),
+    ] {
+        for id in ["auth-cached", "auth-fresh"] {
+            hub.script(
+                "/api/hooks/execute",
+                vec![(StatusCode::UNAUTHORIZED, refused.clone())],
+            );
+            let mut request = hook_request(Some(id), "hook-response.v1", "pre_tool_use");
+            request.headers_mut().remove("authorization");
+            if let Some(value) = authorization {
+                request
+                    .headers_mut()
+                    .insert("authorization", value.parse()?);
+            }
+            let expected_headers = request.headers().clone();
+            let before = hub.requests().len();
+            let answer = call_hook(node.node.clone(), request).await;
+            assert_eq!(
+                answer.status(),
+                StatusCode::UNAUTHORIZED,
+                "non-node credentials must reach hub, never replay: {authorization:?}, {id}"
+            );
+            let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+            assert_eq!(serde_json::from_slice::<Value>(&body)?, refused);
+            let requests = hub.requests();
+            assert_eq!(requests.len(), before + 1, "no receipt sweep");
+            let forwarded = requests.last().unwrap();
+            assert_eq!(forwarded.path, "/api/hooks/execute");
+            assert_eq!(
+                forwarded.headers.get("authorization"),
+                expected_headers.get("authorization")
+            );
+            assert_eq!(forwarded.headers["x-gobby-envelope-id"], id);
+            assert_eq!(
+                forwarded.body,
+                json!({"hook_type":"pre_tool_use", "response_capability":"hook-response.v1"})
+            );
+            assert_eq!(fs::read(marker_path(ledger, "auth-cached"))?, marker);
+            assert!(ledger.marker("auth-fresh").await?.is_none());
+            assert_eq!(fs::read(&ack)?, pending);
+        }
+    }
+    // A node credential cannot authorize local state if its key source is gone
+    // or unreadable as a bootstrap document.
+    for contents in [Some("not: [valid yaml"), None] {
+        if let Some(contents) = contents {
+            fs::write(&node.node.bootstrap_path, contents)?;
+        } else {
+            fs::remove_file(&node.node.bootstrap_path)?;
+        }
+        hub.script(
+            "/api/hooks/execute",
+            vec![(StatusCode::UNAUTHORIZED, refused.clone())],
+        );
+        let before = hub.requests().len();
+        let answer = call_hook(
+            node.node.clone(),
+            hook_request(Some("auth-cached"), "hook-response.v1", "pre_tool_use"),
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+        assert_eq!(serde_json::from_slice::<Value>(&body)?, refused);
+        assert_eq!(hub.requests().len(), before + 1);
+        assert_eq!(fs::read(marker_path(ledger, "auth-cached"))?, marker);
+        assert_eq!(fs::read(&ack)?, pending);
+    }
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn ingress_dedupes_retries() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
     let response = json!({"decision":"allow"});
