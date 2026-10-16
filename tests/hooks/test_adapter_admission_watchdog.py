@@ -7,20 +7,20 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.hooks import adapter_execution, shell_execution
-from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
+from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.hooks import adapter_execution
 from gobby.hooks.adapter_execution import (
     AdapterHookTimeout,
     abandon_wedged_admissions,
     run_adapter_hook,
 )
+from gobby.hooks.event_enrichment import EventEnricher
+from gobby.hooks.events import HookEvent, HookResponse
 
 pytestmark = pytest.mark.unit
 
@@ -91,12 +91,10 @@ async def _run(
     finished: dict[str, threading.Event],
     session_id: str,
     envelope_id: str,
-    *,
-    timeout_seconds: float = _TIMEOUT,
 ) -> dict[str, Any]:
     finished[envelope_id] = threading.Event()
     return await run_adapter_hook(
-        adapter, _payload(session_id, envelope_id), MagicMock(), timeout_seconds=timeout_seconds
+        adapter, _payload(session_id, envelope_id), MagicMock(), timeout_seconds=_TIMEOUT
     )
 
 
@@ -124,50 +122,47 @@ async def _release(
 
 
 @pytest.mark.asyncio
-async def test_blocked_script_body_read_in_normalization_leaves_session_admitting(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_pending_message_is_injected_on_next_hook_after_abandoned_holder(
+    gates: dict[str, threading.Event],
     finished: dict[str, threading.Event],
 ) -> None:
-    """The #24505 trigger: `bash -n <script>` whose open() waits on a privacy prompt."""
-    script = tmp_path / "reset-unowned-files.command"
-    script.write_text("#!/usr/bin/env bash\ngit status\n", encoding="utf-8")
-    prompt = threading.Event()
-    path_open = Path.open
+    session_id = "watchdog-inject-session"
+    await _wedge(_adapter(gates), gates, finished, session_id, "env-wedged")
+    assert abandon_wedged_admissions(time.monotonic() + _PAST_ABANDON_DEADLINE) == 1
 
-    def open_behind_prompt(self: Path, *args: Any, **kwargs: Any) -> Any:
-        if self == script.resolve():
-            prompt.wait(timeout=30)
-        return path_open(self, *args, **kwargs)
+    message = MagicMock()
+    message.id = "msg-ruling"
+    message.content = "Ruling: land the candidate"
+    message.message_type = "message"
+    message.from_session = "from-1111-2222-3333-444444444444"
+    message.priority = "normal"
+    message.metadata_json = None
+    messages = MagicMock()
+    messages.get_undelivered_messages.return_value = [message]
+    enricher = EventEnricher(
+        session_manager=None, injected_sessions=set(), inter_session_msg_manager=messages
+    )
 
-    read_executor = ThreadPoolExecutor(max_workers=shell_execution._SCRIPT_READ_WORKERS)
-    monkeypatch.setattr(Path, "open", open_behind_prompt)
-    monkeypatch.setattr(shell_execution, "SCRIPT_READ_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(shell_execution, "_SCRIPT_READ_EXECUTOR", read_executor)
-    monkeypatch.setattr(shell_execution, "_parked_reads", set())
-    adapter = MagicMock()
+    def handle(event: HookEvent) -> HookResponse:
+        response = HookResponse(decision="allow")
+        enricher.enrich(event, response)
+        return response
 
-    def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, Any]:
-        command = f"chmod +x {script} && bash -n {script}"
-        data: dict[str, Any] = {
-            "tool_name": "Bash",
-            "tool_input": {"command": command, "cwd": str(tmp_path)},
-        }
-        _set_canonical_tool_metadata(data)
-        return {"continue": True, "envelope_id": payload["input_data"]["source_event_id"]}
+    hook_manager = MagicMock()
+    hook_manager.handle.side_effect = handle
+    payload = _payload(session_id, "env-after")
+    payload["input_data"]["tool_input"] = {"command": "git status"}
+    finished["env-after"] = threading.Event()
+    output = await run_adapter_hook(
+        ClaudeCodeAdapter(), payload, hook_manager, timeout_seconds=_TIMEOUT
+    )
 
-    adapter.handle_native.side_effect = handle_native
-    session_id = "script-read-session"
-    try:
-        for envelope_id in ("env-bash-n", "env-next"):
-            assert await _run(adapter, finished, session_id, envelope_id, timeout_seconds=2.0) == {
-                "continue": True,
-                "envelope_id": envelope_id,
-            }
-    finally:
-        prompt.set()
-        read_executor.shutdown(wait=True)
-    assert await asyncio.to_thread(finished["env-next"].wait, 5)
+    context = output["hookSpecificOutput"]["additionalContext"]
+    assert "[Pending P2P messages from other sessions]:" in context
+    assert "Ruling: land the candidate" in context
+    messages.get_undelivered_messages.assert_called_once_with(session_id)
+    assert await asyncio.to_thread(finished["env-after"].wait, 5)
+    await _release(gates, finished, "env-wedged")
     assert session_id not in adapter_execution._session_admissions
 
 
