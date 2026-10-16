@@ -314,6 +314,23 @@ def _lock_pane_tabs(
     return homes, locked
 
 
+def _write_positions(conn: Transaction, order: Sequence[str]) -> tuple[WorkspaceTab, ...]:
+    """Number the tabs in ``order`` from 0; the caller holds their rows."""
+    return tuple(
+        WorkspaceTab.from_row(
+            _required(
+                conn.execute(
+                    "UPDATE workspace_tabs SET position = %s, updated_at = now() "
+                    "WHERE id = %s RETURNING *",
+                    (index, row_id),
+                ).fetchone(),
+                f"Tab {row_id}",
+            )
+        )
+        for index, row_id in enumerate(order)
+    )
+
+
 class WorkspaceManager:
     """Hub storage for node-scoped workspaces, tabs, and panes.
 
@@ -596,20 +613,22 @@ class WorkspaceManager:
                 ).fetchall()
             ]
             order.insert(max(0, min(position, len(order))), tab_id)
-            tabs = tuple(
-                WorkspaceTab.from_row(
-                    _required(
-                        conn.execute(
-                            "UPDATE workspace_tabs SET position = %s, updated_at = now() "
-                            "WHERE id = %s RETURNING *",
-                            (index, row_id),
-                        ).fetchone(),
-                        f"Tab {row_id}",
-                    )
-                )
-                for index, row_id in enumerate(order)
-            )
-        return LayoutChange(tabs=tabs)
+            return LayoutChange(tabs=_write_positions(conn, order))
+
+    def reorder_tabs(self, workspace_id: str, order: Sequence[str]) -> LayoutChange:
+        """Rewrite a workspace's tab positions to ``order``, which names each tab once."""
+        workspace_id, order = _uuid(workspace_id), [_uuid(tab_id) for tab_id in order]
+        if len(set(order)) != len(order):
+            raise InvalidWorkspaceOpError("Tab order names a tab more than once")
+        with self.db.transaction() as conn:
+            _lock_rows(conn, "workspaces", workspace_id)
+            rows = conn.execute(
+                "SELECT id FROM workspace_tabs WHERE workspace_id = %s ORDER BY id FOR UPDATE",
+                (workspace_id,),
+            ).fetchall()
+            if {str(row["id"]) for row in rows} != set(order):
+                raise WorkspaceBusyError("Tabs changed since the order was read; retry")
+            return LayoutChange(tabs=_write_positions(conn, order))
 
     def close_tab(
         self,

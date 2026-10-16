@@ -45,6 +45,9 @@ fn lifecycle_post_includes_bearer() {
         [
             ("GOBBY_HOME", Some(home_path)),
             (gobby_core::local_token::AGENT_API_TOKEN_ENV, None::<&str>),
+            (gobby_core::grant::MANAGED_BOOTSTRAP_ENV, None),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
         ],
         || {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP listener");

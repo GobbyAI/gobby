@@ -97,25 +97,27 @@ ON CONFLICT (provider, source_key) DO UPDATE SET
     last_error = EXCLUDED.last_error
 """
 
+# JSON columns as text: the pool's jsonb loader would decode and re-dump them, and
+# _model_capability decodes them again (#23359).
 _SELECT_CAPABILITIES_SQL = """
 SELECT
     provider,
     canonical_model,
     display_name,
-    aliases,
+    aliases::text AS aliases,
     available,
     hidden,
     is_default,
     context_length,
     max_output_tokens,
     reasoning,
-    supported_efforts,
+    supported_efforts::text AS supported_efforts,
     default_effort,
     latency_class,
-    input_modalities,
+    input_modalities::text AS input_modalities,
     supports_tools,
     generation,
-    provenance
+    provenance::text AS provenance
 FROM provider_model_capabilities
 WHERE (%s::text IS NULL OR provider = %s)
 ORDER BY provider, is_default DESC, display_name, canonical_model

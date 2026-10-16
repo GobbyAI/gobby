@@ -55,6 +55,8 @@ fn isolated_gcode_with_env(
         .env("GOBBY_DAEMON_URL", unused_loopback())
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .env_remove("GOBBY_AGENT_API_TOKEN")
+        .env_remove("GOBBY_AGENT_RUN_ID")
+        .env_remove("GOBBY_MANAGED_EXECUTION_ID")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (key, value) in extra {

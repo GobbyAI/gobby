@@ -79,7 +79,7 @@ impl Default for SidebarState {
             project_order: Vec::new(),
             expanded_project: None,
             project_labels: BTreeMap::new(),
-            machine_filter: Some(crate::ui::sidebar::ALL_MACHINES.to_owned()),
+            machine_filter: None,
             all_projects: true,
             all_sessions: true,
         }

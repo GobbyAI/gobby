@@ -350,11 +350,9 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths = await _without_closed_task_paths(
                     task_checkout_paths, legacy_closed_tasks, repo_path
                 )
-        session_task_files = task_edited_files
-        if session_id != owner_session_id:
-            # A linked session's own proven pairs attribute its edits; a reclaiming
-            # owner's ledger can hold only what it touched afterwards (#23017).
-            session_task_files = task_edited_files | {path for _, path in task_checkout_paths}
+        # Both owners and linked workers retain edits proved by historical pairs.
+        # The owner's live projection can shrink after commit or claim restoration.
+        session_task_files = task_edited_files | {path for _, path in task_checkout_paths}
         try:
             session_evidence = await _derive_session_evidence_at_sync_point(
                 session,

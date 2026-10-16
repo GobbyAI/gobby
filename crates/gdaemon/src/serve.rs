@@ -118,6 +118,7 @@ pub struct PublicListener {
 #[cfg(unix)]
 pub fn run() -> Result<()> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use gobby_core::postgres_pool::{Pool, PoolSettings};
     use rand::RngCore;
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
@@ -133,10 +134,25 @@ pub fn run() -> Result<()> {
         let mut secret = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret);
         let secret = URL_SAFE_NO_PAD.encode(secret);
-        let resolver = bootstrap
+        // One pool serves key resolution, the lease and the hub node routes.
+        let pool = bootstrap
             .database_url
             .as_deref()
-            .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
+            .map(|url| {
+                Pool::build(
+                    url,
+                    PoolSettings {
+                        max_size: 8,
+                        application_name: "gobby-gdaemon".into(),
+                        acquire_timeout: Duration::from_secs(5),
+                    },
+                )
+                .map(Arc::new)
+            })
+            .transpose()?;
+        let resolver = pool
+            .clone()
+            .map(|pool| Arc::new(PostgresKeyResolver::new(pool)) as Arc<dyn KeyResolver>);
         let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
         let ports = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
         for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
@@ -144,7 +160,7 @@ pub fn run() -> Result<()> {
                 "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
             );
         }
-        Some((secret, auth, ports))
+        Some((secret, auth, ports, pool))
     };
     let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
     if let Some(loaded) = &tls {
@@ -163,7 +179,7 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        let Some((secret, auth, (backend_http, backend_ws))) = native else {
+        let Some((secret, auth, (backend_http, backend_ws), pool)) = native else {
             let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
@@ -190,7 +206,7 @@ pub fn run() -> Result<()> {
             return result;
         };
         let Some((state, supervisor)) =
-            crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
+            crate::state::RuntimeState::prepare(&bootstrap, home, &secret, pool.clone())?
         else {
             eprintln!(
                 "gdaemon serve: runtime singleton claim unavailable \
@@ -199,18 +215,7 @@ pub fn run() -> Result<()> {
             );
             return Ok(());
         };
-        use gobby_core::postgres_pool::{Pool, PoolSettings};
-        let pool = Pool::build(
-            bootstrap
-                .database_url
-                .as_deref()
-                .context("backend requires database_url")?,
-            PoolSettings {
-                max_size: 4,
-                application_name: "gobby-gdaemon-nodes".into(),
-                acquire_timeout: Duration::from_secs(2),
-            },
-        )?;
+        let pool = pool.context("backend requires database_url")?;
         let native_routes = if bootstrap.mode == RunMode::Hub {
             NativeRoutes::Hub(Arc::new(crate::nodes::HubNodes {
                 db: pool,
@@ -218,7 +223,7 @@ pub fn run() -> Result<()> {
                 timing: Default::default(),
             }))
         } else {
-            NativeRoutes::Standalone(Some(Arc::new(pool)))
+            NativeRoutes::Standalone(Some(pool))
         };
         let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
         listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);

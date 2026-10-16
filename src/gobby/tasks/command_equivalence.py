@@ -466,6 +466,7 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
 
 
 _VITEST_LAUNCHERS = (
+    ("bunx",),
     ("npm", "exec", "--"),
     ("npm", "exec"),
     ("pnpm", "exec"),

@@ -252,6 +252,14 @@ pub enum WorkspaceOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },
+    /// Every tab of `workspace`, each named once, in their new order.
+    #[serde(rename = "tab.reorder")]
+    TabReorder {
+        workspace: String,
+        order: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
     #[serde(rename = "tab.close")]
     TabClose {
         tab: String,

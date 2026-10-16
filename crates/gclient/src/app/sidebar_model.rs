@@ -294,8 +294,13 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .iter()
                 .copied()
                 .find(|pane| pane.terminal_id == terminal.terminal_id);
-            let project_id = session
-                .map(|(project, _)| project)
+            // The roster places every entry on the hub; the fetched rows only
+            // cover the local windows, so they are the fallback.
+            let project_id = entry
+                .project_id
+                .as_deref()
+                .filter(|project| !project.is_empty())
+                .or(session.map(|(project, _)| project))
                 .or(run.map(|(project, _)| project))
                 .or(inputs.focused_project)
                 .unwrap_or_default();
@@ -342,11 +347,16 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     session.identity_title(name)
                 })
                 .map(str::to_owned);
-            let machine_id = session
-                .and_then(|(_, session)| session.machine_id.clone())
-                .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
-                .filter(|machine| !machine.is_empty())
-                .unwrap_or_else(|| inputs.local_machine.to_string());
+            let machine_id = [
+                entry.machine_id.as_deref(),
+                session.and_then(|(_, session)| session.machine_id.as_deref()),
+                run.and_then(|(_, run)| run.machine_id.as_deref()),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|machine| !machine.is_empty())
+            .unwrap_or(inputs.local_machine)
+            .to_string();
             let managed = entry.run_id.is_some() || entry.entry_id.starts_with("run:");
             Some(AgentEntry {
                 entry_id: entry.entry_id.clone(),
