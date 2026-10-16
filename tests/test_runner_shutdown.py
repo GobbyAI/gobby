@@ -1552,7 +1552,9 @@ class TestStopShutdownAgentPreservation:
         assert {name for name, _args, _kwargs in run_storage.mock_calls} == {
             "list_active_for_machine"
         }
-        reap.assert_awaited_once_with(preserve_agents=True, preserved_agent_pids={4242})
+        reap.assert_awaited_once_with(
+            preserve_agents=True, preserved_agent_pids={4242}, preserve_srt_monitor=False
+        )
         runner.agent_lifecycle_monitor.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
