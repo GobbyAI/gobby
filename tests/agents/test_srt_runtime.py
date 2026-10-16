@@ -120,8 +120,8 @@ def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
 
 
 @pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])
-def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None) -> None:
-    from tests.srt_fixture_helpers import upstream_proxy_bytes
+def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None, tmp_path: Path) -> None:
+    from tests.srt_fixture_helpers import upstream_proxy_bytes, write_srt_settings_fixture
 
     paths = ResolvedSandboxPaths(
         workspace_path="/workspace",
@@ -132,17 +132,31 @@ def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None) -> Non
     )
     settings = render_srt_settings(paths)
     baseline = render_srt_settings(paths.model_copy(update={"provider": None}))
-    expected = baseline | {"allowMachLookup": ["com.apple.windowserver.active"]}
-    assert settings == (expected if provider == "grok" else baseline)
+    expected = baseline | {
+        "network": baseline["network"] | {"allowMachLookup": ["com.apple.windowserver.active"]}
+    }
     assert "allowMachLookup" not in baseline
 
     # Exercise the pinned generator: the setting must grant precisely this
     # global-name, while every other Seatbelt rule stays byte-for-byte equal.
     node = shutil.which("node")
     assert node is not None
+    write_srt_settings_fixture(tmp_path)
     script = r"""
-const fs = require('node:fs');
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const root = process.argv[1];
+const {SandboxRuntimeConfigSchema} = await import(
+  pathToFileURL(path.join(root, 'dist/sandbox/sandbox-config.js')));
 const {source, settings} = JSON.parse(fs.readFileSync(0, 'utf8'));
+const parsed = SandboxRuntimeConfigSchema.parse(settings);
+const manager = fs.readFileSync(path.join(root, 'dist/sandbox/sandbox-manager.js'), 'utf8');
+const getter = manager.match(/^function getAllowMachLookup\(\) \{[\s\S]*?^}/m);
+const call = manager.match(/return wrapCommandWithSandboxMacOS\(\{([\s\S]*?)^\s*}\);/m);
+const argument = call?.[1].match(/^\s*allowMachLookup: (.+),$/m);
+if (!getter || !argument) throw new Error('missing pinned manager Mach argument path');
+const lookup = new Function('config', `${getter[0]}; return ${argument[1]};`)(parsed);
 const body = source.match(/^function generateSandboxProfile\([\s\S]*?^}\n/m);
 if (!body) throw new Error('missing pinned profile generator');
 const factory = new Function(
@@ -151,12 +165,12 @@ const factory = new Function(
   `return (${body[0]})`);
 const generate = factory(() => [], () => [], () => [], () => undefined, JSON.stringify);
 const base = {libraryDenyEntries: [], needsNetworkRestriction: true, logTag: 'test-seat'};
-console.log(JSON.stringify([
-  generate(base), generate({...base, allowMachLookup: settings.allowMachLookup}),
-]));
+console.log(JSON.stringify({
+  parsed, profiles: [generate(base), generate({...base, allowMachLookup: lookup})],
+}));
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "--input-type=module", "-e", script, str(tmp_path)],
         input=json.dumps(
             {"source": upstream_proxy_bytes("macos-sandbox-utils").decode(), "settings": settings}
         ),
@@ -166,7 +180,10 @@ console.log(JSON.stringify([
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    original, rendered = json.loads(result.stdout)
+    output = json.loads(result.stdout)
+    assert output["parsed"] == settings
+    assert settings == (expected if provider == "grok" else baseline)
+    original, rendered = output["profiles"]
     anchor = "\n\n; POSIX IPC - shared memory"
     rule = (
         "\n; User-specified XPC/Mach services"

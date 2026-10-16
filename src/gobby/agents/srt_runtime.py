@@ -608,7 +608,7 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
     }
     if paths.provider == "grok":
         # Grok queries SkyLight flags on its UI thread, including after compact.
-        settings["allowMachLookup"] = ["com.apple.windowserver.active"]
+        settings["network"]["allowMachLookup"] = ["com.apple.windowserver.active"]
     if credentials:
         settings["credentials"] = {"envVars": credentials, "allowPlaintextInject": False}
     return settings
