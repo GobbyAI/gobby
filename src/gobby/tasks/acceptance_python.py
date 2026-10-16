@@ -216,11 +216,44 @@ def _method(module: _Module, owner: ast.ClassDef, name: str) -> _Function | None
     if len(binders) != 1 or not _defined_once(module.tree, name):
         return None
     binder = binders[0]
-    if isinstance(binder, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-        binder is node for node in owner.body
+    if (
+        isinstance(binder, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(binder is node for node in owner.body)
+        and not _receiver_writes(owner, name)
     ):
         return _Function(module, binder, owner)
     return None
+
+
+def _receiver_writes(owner: ast.ClassDef, name: str) -> bool:
+    """Whether any method of ``owner`` rebinds or deletes ``name`` on its receiver."""
+    for method in owner.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        positional = [*method.args.posonlyargs, *method.args.args]
+        if not positional:
+            continue
+        receiver = positional[0].arg
+        for node in ast.walk(method):
+            if (
+                isinstance(node, ast.Attribute)
+                and not isinstance(node.ctx, ast.Load)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == receiver
+                and node.attr == name
+            ):
+                return True
+            if (
+                isinstance(node, ast.Call)
+                and called_name(node.func) in {"setattr", "delattr"}
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == receiver
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == name
+            ):
+                return True
+    return False
 
 
 def _receiver_is_instance(function: _Def, receiver: str) -> bool:

@@ -1347,6 +1347,50 @@ def test_assert_helper_depth_limit(tmp_path: Path, length: int, passed: bool) ->
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        """
+        class TestFeature:
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok = lambda receipt: None
+                self._assert_ok("bad")
+        """,
+        """
+        class TestFeature:
+            def setup_method(self):
+                self._assert_ok = lambda receipt: None
+
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+        """
+        class TestFeature:
+            def setup_method(self):
+                setattr(self, "_assert_ok", lambda receipt: None)
+
+            def _assert_ok(self, receipt):
+                assert receipt == "ok"
+
+            def test_feature(self):
+                self._assert_ok("bad")
+        """,
+    ],
+    ids=["in_test", "setup_method", "setattr"],
+)
+def test_assert_helper_instance_rebinding_is_flagged(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
     ("source", "extra"),
     [
         (
