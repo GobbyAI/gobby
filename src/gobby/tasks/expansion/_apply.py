@@ -12,6 +12,7 @@ from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._transitions import (
+    ancestor_ids_in_txn,
     clear_closure_in_txn,
     reopen_closed_ancestors_in_txn,
     withdraw_memory_reviews,
@@ -168,7 +169,7 @@ def apply_run(
                 "Reset expansion output before applying a new run."
             )
 
-        # Lock order: leaves, holders, phase epics, root, ancestors.
+        # Lock order: leaves, holders, phase epics, declared roots, root, ancestors.
         # Phase epics are locked in phase_list order before the root so a
         # close that holds a phase can still take the root.
         adopted_by_item: dict[str, Any] = {}
@@ -190,13 +191,16 @@ def apply_run(
                         )
 
         # A ``(#N)`` phase heading names the task its phase epic is created under.
-        # Declared roots lock after the phase epics and before the root. A
-        # single-phase plan creates no phase epic, so its declared root is unused.
+        # Declared roots lock after the phase epics and before the root, except
+        # the root itself and its ancestors, which the root-then-ancestors walk
+        # below locks once each. A single-phase plan creates no phase epic, so
+        # its declared root is unused.
         declared_roots: dict[str, str] = {}
         if multi_phase:
             for ref in {phase["root_task_ref"] for phase in phase_list if "root_task_ref" in phase}:
                 declared_roots[ref] = resolve_declared_task_ref(conn, ref, task.project_id)
-            for root_id in sorted(set(declared_roots.values())):
+            root_chain = {task.id, *ancestor_ids_in_txn(conn, task.id)}
+            for root_id in sorted(set(declared_roots.values()) - root_chain):
                 conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (root_id,))
 
         # A closed target takes no new children (#22570). An expansion applied to

@@ -49,8 +49,8 @@ async def test_pre_history_departure_bounds_the_original_claim(departure: str) -
     links = [
         _session_link("task", "2026-09-29T20:00:00+00:00"),
         {**_session_link("task", "2026-09-29T20:10:00+00:00"), "action": departure},
-        # Another task's terminal event cannot end this task's resumed window.
-        {**_session_link("other", "2026-09-29T20:42:00+00:00"), "action": departure},
+        # Another task's terminal event cannot end this task's pre-history window.
+        {**_session_link("other", "2026-09-29T20:02:00+00:00"), "action": departure},
     ]
     evidence = await _owner_evidence(
         links,
@@ -64,8 +64,11 @@ async def test_pre_history_departure_bounds_the_original_claim(departure: str) -
     assert [run.exclusion_reason for run in evidence.excluded_runs] == ["off-task", "off-task"]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("away_edit", ["prior-production", "after-green"])
-def test_shared_off_task_edits_preserve_negative_checks_and_green_freshness(away_edit: str) -> None:
+async def test_shared_off_task_edits_preserve_negative_checks_and_green_freshness(
+    away_edit: str,
+) -> None:
     start = datetime(2026, 9, 29, 20, tzinfo=UTC)
     test_path, production_path = "tests/test_shared.py", "src/shared.py"
     body = "def test_shared():\n    assert run() == 2\n"
@@ -108,12 +111,18 @@ def test_shared_off_task_edits_preserve_negative_checks_and_green_freshness(away
         validation_runs=(red, green),
         command_runs=(red, green),
     )
-    presence = [
-        (start.timestamp(), False),
-        ((start + timedelta(seconds=2)).timestamp(), True),
-        ((start + timedelta(seconds=10)).timestamp(), False),
-    ]
-    evidence = _while_on_task(original, presence, keep_edits=True)
+    evidence = await _owner_evidence(
+        [_session_link("task", start.isoformat())],
+        (),
+        (red, green),
+        original.edits,
+        selection_history=[
+            {"epoch": start.isoformat(), "task_id": "other"},
+            {"epoch": (start + timedelta(seconds=2)).isoformat(), "task_id": "task"},
+            {"epoch": (start + timedelta(seconds=10)).isoformat(), "task_id": "other"},
+        ],
+        shared_paths=(test_path, production_path),
+    )
     result = evaluate_tdd_evidence((test,), evidence)
     gate = evaluate_validation_commands(
         task_category="code", evidence=evidence, has_attributed_edits=True
@@ -1455,15 +1464,27 @@ async def _owner_evidence(
     edits: tuple[TranscriptEdit, ...] = (),
     *,
     selection_history: list[dict[str, str | None]] | None = None,
+    shared_paths: tuple[str, ...] = (),
 ) -> TranscriptEvidence:
     """Derive close evidence where QA alone owns and closes the task."""
     ctx = _context(
         [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
         {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
     )
-    ctx.session_var_manager.get_variables.return_value = (
+    variables: dict[str, Any] = (
         {"task_selection_history": selection_history} if selection_history is not None else {}
     )
+    if shared_paths:
+        variables.update(
+            task_edited_file_checkouts_history={
+                "task": {"/repo": list(shared_paths)},
+                "other": {"/repo": list(shared_paths)},
+            },
+            task_edited_file_checkouts_history_started_at=datetime(
+                2026, 9, 29, 20, tzinfo=UTC
+            ).timestamp(),
+        )
+    ctx.session_var_manager.get_variables.return_value = variables
     ctx.session_task_manager.get_session_tasks.return_value = db_claims
 
     async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
@@ -1488,7 +1509,7 @@ async def _owner_evidence(
             owner_session_id=QA,
             closing_session_id=QA,
             owner_window_start="2026-09-29T20:00:00+00:00",
-            task_edited_files=set(),
+            task_edited_files=set(shared_paths),
             repo_path="/repo",
         )
     (evidence,) = merged

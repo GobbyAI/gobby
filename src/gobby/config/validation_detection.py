@@ -529,7 +529,7 @@ def _unwrap_matched_rule(
             nice_command = _unwrap_nice_tokens(tokens)
             return ([nice_command], ()) if nice_command is not None else None
         if wrapper.id == "env":
-            env_command = _unwrap_env_tokens(tokens)
+            env_command = unwrap_env_tokens(tokens)
             return ([env_command], ()) if env_command is not None else None
         try:
             delimiter_index = tokens.index(wrapper.delimiter, consumed)
@@ -564,20 +564,49 @@ def _unwrap_nice_tokens(tokens: list[str]) -> list[str] | None:
     return tokens[cursor:]
 
 
-def _unwrap_env_tokens(tokens: list[str]) -> list[str] | None:
-    """Return the command env runs when env only sets variables, with or without --.
-
-    Options such as -i, -u, -C or -S change what the command sees, so they are refused.
-    """
+def unwrap_env_tokens(
+    tokens: list[str], *, directories: list[str] | None = None
+) -> list[str] | None:
+    """Unwrap proven exit-preserving env options, retaining effective directories."""
     if not tokens or not _matches_command_token(tokens[0], "env"):
         return None
     cursor = 1
+    directory: str | None = None
+    operand_boundary = False
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if token in {"--", "-"}:
+            cursor += 1
+            operand_boundary = True
+            break
+        if token in {"-i", "--ignore-environment"}:
+            cursor += 1
+            continue
+        option, equals, value = token.partition("=")
+        if option in {"-u", "--unset", "-C", "--chdir"}:
+            if equals and option.startswith("--"):
+                cursor += 1
+            elif not equals and cursor + 1 < len(tokens):
+                value = tokens[cursor + 1]
+                cursor += 2
+            else:
+                return None
+            if not value:
+                return None
+            if option in {"-C", "--chdir"}:
+                directory = value  # env changes directory once, using the last -C.
+            continue
+        if token.startswith("-"):
+            return None
+        break
     while cursor < len(tokens) and _looks_like_env_assignment(tokens[cursor]):
         cursor += 1
-    if cursor < len(tokens) and tokens[cursor] == "--":
+    if not operand_boundary and cursor < len(tokens) and tokens[cursor] == "--":
         cursor += 1
     if cursor >= len(tokens) or tokens[cursor].startswith("-"):
         return None
+    if directories is not None and directory is not None:
+        directories.append(directory)
     return tokens[cursor:]
 
 
@@ -631,7 +660,9 @@ def unwrap_validation_launcher_tokens(tokens: list[str]) -> list[str] | None:
     return (tokens[index:] or None) if waits_for_child else None
 
 
-def normalize_validation_evidence_command(command: str) -> str:
+def normalize_validation_evidence_command(
+    command: str, *, directories: list[str] | None = None
+) -> str:
     """Remove exit-preserving prefixes, unwrapping nice and env in any order and nesting."""
     cursor = _evidence_skip_whitespace(command, 0)
     while True:
@@ -669,7 +700,7 @@ def normalize_validation_evidence_command(command: str) -> str:
         for _ in range(_MAX_WRAPPER_NORMALIZATION_DEPTH):
             inner = (
                 _unwrap_nice_tokens(tokens)
-                or _unwrap_env_tokens(tokens)
+                or unwrap_env_tokens(tokens, directories=directories)
                 or unwrap_validation_launcher_tokens(tokens)
             )
             if inner is None:
