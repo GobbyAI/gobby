@@ -1385,10 +1385,13 @@ Research context:
   `event_reader_loop` needs a `TerminalHostManager`. In `Native` the client keeps a local
   `ComposerLedger`, loaded with `load_ledger(composer_ledger_path())` and bound with
   `bind_composer_ledger` as `terminal_wiring.py:100` does today. It calls `observe_write` for
-  every step the route reply reports as dispatched, accepted or uncertain. A `Refusal` with stage
-  `Partial` means the text landed and Enter did not, so it records `observe_write(text,
-  submit=False)`. A reply lost after send marks the terminal blocked with
-  `block(terminal_id, "gap")`. The ledger stays in Python in this epic.
+  every step the route reply reports as dispatched, accepted or uncertain. A reply lost after
+  send marks the terminal blocked with `block(terminal_id, "gap")`. The ledger stays in Python in
+  this epic.
+- Partial refusal — Orchestrator ruling (2026-10-15 22:12 CDT): a `Refusal` with stage `Partial`
+  (the text landed, Enter did not) counts as dispatched, and the client records it as
+  `observe_write(text, submit=False)`. The text is in the composer, so treating it as undelivered
+  would retype and duplicate it, and 2.7.4 requires never typing over a draft.
 - Native event reader: `host_event_reader.ledger_event_loop` opens
   `HostClient.open_event_stream(control_socket_path(socket_dir), token, since=<ledger cursor seq>)`.
   `socket_dir` is `expand_socket_dir(TerminalHostConfig.socket_dir)` (host_protocol.py:19), the
@@ -2089,3 +2092,7 @@ Executors run focused verification after each leaf and the complete matrix befor
   replaces 1.8, which #23214 closed as obsolete, so D2 and leaf 2.2 drop the 1.8 edge. 1.6's
   consumer row follows the f2ec9007f7 rename (#23779), and its Targets drop the symbols that
   #23212 and #22856 already deleted. D2 carries #23219's restored tests and two LOW findings.
+- 2026-10-15: Orchestrator gobby#15977 ruled 2.7's partial-refusal reading in (22:12 CDT), and
+  2.7 now records it as a ruling. The ruling also accepted the three validator-forced edits to 1.6,
+  1.8, and the 2.4 and D2 leaf targets; the adversary decides the remaining consumer-coverage
+  warnings.
