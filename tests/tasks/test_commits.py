@@ -1,5 +1,6 @@
 """Tests for commit linking and diff functionality."""
 
+import subprocess
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -935,75 +936,77 @@ class TestUnlinkedTaskTaggedCommits:
 
     SINCE = "2026-07-01T00:00:00+00:00"
 
-    def test_splits_missing_tagged_commits_by_reachability(self) -> None:
+    @pytest.fixture
+    def git_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-07-02T00:00:00+00:00")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-07-02T00:00:00+00:00")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-b", "main")
+        self._git(repo, "config", "user.email", "tests@example.com")
+        self._git(repo, "config", "user.name", "Tests")
+        return repo
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def test_splits_missing_tagged_commits_by_reachability(self, git_repo: Path) -> None:
         manager = MagicMock()
         manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
-        branch_lookup = MagicMock(return_value="feature")
+        self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#42] linked")
+        linked_sha = self._git(git_repo, "rev-parse", "HEAD")
+        self._git(git_repo, "checkout", "-b", "other")
+        self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#42] other ref")
+        other_sha = self._git(git_repo, "rev-parse", "--short", "HEAD")
+        self._git(git_repo, "checkout", "main")
+        self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#42] on head")
+        head_sha = self._git(git_repo, "rev-parse", "--short", "HEAD")
+        self._git(git_repo, "commit", "--allow-empty", "-m", "[gobby-#43] unrelated")
 
-        with (
-            patch("gobby.tasks.commits._resolve_branch_for_task", branch_lookup),
-            _patch_git_log() as mock_git,
-        ):
-            mock_git.side_effect = [
-                "aaa1111|[gobby-#42] linked\n"
-                "bbb2222|[gobby-#42] on head\n"
-                "ccc3333|[gobby-#43] other task\n",
-                "aaa1111|[gobby-#42] linked\n"
-                "bbb2222|[gobby-#42] on head\n"
-                "ddd4444|[gobby-#42] only on a branch\n",
-            ]
+        result = unlinked_task_tagged_commits(
+            manager,
+            task_id="task-uuid",
+            since=self.SINCE,
+            cwd=git_repo,
+            project_name="gobby",
+            project_id=None,
+            linked=[linked_sha],
+        )
 
-            result = unlinked_task_tagged_commits(
-                manager,
-                task_id="task-uuid",
-                since=self.SINCE,
-                cwd="/tmp/repo",
-                project_name="gobby",
-                project_id=None,
-                linked=["aaa1111deadbeef"],
-            )
+        assert result == ([head_sha], [other_sha])
 
-        assert result == (["bbb2222"], ["ddd4444"])
-        assert [call.args[0] for call in mock_git.call_args_list] == [
-            ["git", "log", "--reverse", "--pretty=format:%h|%s", "HEAD", f"--since={self.SINCE}"],
-            ["git", "log", "--reverse", "--pretty=format:%h|%s", "--all", f"--since={self.SINCE}"],
-        ]
-        branch_lookup.assert_not_called()
-
-    def test_failed_scan_raises_instead_of_reporting_no_divergence(self) -> None:
+    def test_failed_scan_raises_instead_of_reporting_no_divergence(self, git_repo: Path) -> None:
         manager = MagicMock()
         manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
 
-        with (
-            _patch_git_log(return_value=None) as mock_git,
-            pytest.raises(RuntimeError, match="git log unavailable"),
-        ):
+        # A real initialized repository with unborn HEAD makes git log fail.
+        with pytest.raises(RuntimeError, match="git log unavailable"):
             unlinked_task_tagged_commits(
                 manager,
                 task_id="task-uuid",
                 since=self.SINCE,
-                cwd="/tmp/repo",
+                cwd=git_repo,
                 project_name="gobby",
                 project_id=None,
                 linked=[],
             )
 
-        assert mock_git.call_count == 1
-
-    def test_unknown_task_skips_git(self) -> None:
+    def test_unknown_task_skips_git(self, git_repo: Path) -> None:
         manager = MagicMock()
         manager.get_task.side_effect = TaskNotFoundError("missing")
 
-        with _patch_git_log() as mock_git:
-            result = unlinked_task_tagged_commits(
-                manager,
-                task_id="task-uuid",
-                since=self.SINCE,
-                cwd="/tmp/repo",
-                project_name="gobby",
-                project_id=None,
-                linked=[],
-            )
+        # The same unborn HEAD would raise if an unknown task reached git log.
+        result = unlinked_task_tagged_commits(
+            manager,
+            task_id="task-uuid",
+            since=self.SINCE,
+            cwd=git_repo,
+            project_name="gobby",
+            project_id=None,
+            linked=[],
+        )
 
         assert result == ([], [])
-        mock_git.assert_not_called()
