@@ -428,6 +428,139 @@ async def test_dispatched_seat_handlers_match_resolved_assigned_task(
     assert current_step == (next_step if assigned else step)
 
 
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_implement_already_implemented_close_reaches_checklist(
+    seats: _Seats, tmp_path: Path, use_ref: bool
+) -> None:
+    """No candidate is needed to request a no-work close of the assigned claim."""
+    task = LocalTaskManager(seats.db).get_task(seats.task_id)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, task.project_id, str(tmp_path))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    before = _instance_state(seats.db, seats.former)
+    assert before[1]["implementation_complete"] is False
+    assert before[1]["_developer_handoff_tasks"] == []
+    assert not LocalTaskManager(seats.db).get_task(seats.task_id).commits
+
+    with session_context_for_test(seats.former):
+        result = await _task_proxy(seats, full_hooks=True).call_tool(
+            "gobby-tasks",
+            "close_task",
+            {
+                "task_id": seats.ref if use_ref else seats.task_id,
+                "reason": "already_implemented",
+                "project_path": str(tmp_path),
+                "preview": True,
+                "response_detail": "diagnostic",
+            },
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+
+    # The real checklist, rather than step enforcement, rejects missing evidence.
+    assert result["preview"] is True
+    assert result["can_close"] is False
+    assert result["closed"] is False
+    assert any(gate["status"] == "failed" for gate in result["checklist"])
+    assert _instance_state(seats.db, seats.former) == before
+    assert LocalTaskManager(seats.db).get_task(seats.task_id).closed_at is None
+
+
+@pytest.mark.parametrize("reviewed", [False, True])
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_implement_no_work_close_releases_binding(
+    seats: _Seats, use_ref: bool, reviewed: bool
+) -> None:
+    """A successful close or its reviewed observation completes the claim loop."""
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    engine = RuleEngine(seats.db)
+    task_ref = seats.ref if use_ref else seats.task_id
+    if reviewed:
+        await engine._process_step_after_tool(
+            _after_tool(
+                seats.former,
+                "close_task",
+                {"task_id": task_ref, "reason": "already_implemented"},
+                {"closed": False, "error": "close_review_required"},
+            ),
+            seats.former,
+            {},
+        )
+        assert _current_step(seats.db, seats.former) == "implement"
+        event = _after_tool(
+            seats.former,
+            "get_task",
+            {"task_id": task_ref},
+            {"id": seats.task_id, "state": {"is_closed": True}},
+        )
+    else:
+        event = _after_tool(
+            seats.former,
+            "close_task",
+            {"task_id": task_ref, "reason": "already_implemented", "preview": False},
+            {"closed": True},
+        )
+    # Feed the completion result through the real handler/transition engine.
+    await engine._process_step_after_tool(event, seats.former, {})
+    step, variables = _instance_state(seats.db, seats.former)
+    assert step == "claim"
+    for flag in (
+        "task_claimed",
+        "implementation_complete",
+        "additional_skills_loaded",
+        "skills_routed",
+        "candidate_sent",
+        "bounced",
+    ):
+        assert variables[flag] is False
+    assert variables["assigned_task_id"] is None
+    assert variables["assigned_task_ref"] is None
+
+
+@pytest.mark.parametrize("use_ref", [False, True])
+@pytest.mark.parametrize(
+    ("assigned", "reason"),
+    [
+        (True, None),
+        (True, "completed"),
+        (True, "obsolete"),
+        (False, None),
+        (False, "completed"),
+        (False, "obsolete"),
+        (False, "already_implemented"),
+    ],
+)
+async def test_implement_close_blocks_other_tasks_and_dispositions(
+    seats: _Seats, tmp_path: Path, use_ref: bool, assigned: bool, reason: str | None
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    task = tasks.get_task(seats.task_id)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, task.project_id, str(tmp_path))
+    if not assigned:
+        task = tasks.create_task(
+            task.project_id,
+            "Unassigned close target",
+            validation_criteria="The developer cannot close an unassigned task.",
+        )
+    arguments: dict[str, Any] = {"task_id": f"#{task.seq_num}" if use_ref else task.id}
+    if reason is not None:
+        arguments["reason"] = reason
+    with session_context_for_test(seats.former):
+        result = await _task_proxy(seats).call_tool(
+            "gobby-tasks",
+            "close_task",
+            arguments,
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+    assert result["error_code"] == "TOOL_BLOCKED"
+    assert "Finish only a task this developer handed off" in result["error"]
+    assert tasks.get_task(task.id).closed_at is None
+
+
 @pytest.mark.parametrize("has_commit", [False, True])
 async def test_reclaimed_handoff_restores_ordinary_close_gate(
     seats: _Seats, has_commit: bool

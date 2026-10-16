@@ -152,7 +152,11 @@ def _restore_orphaned_receipt_claims(inbox_dir: Path) -> int:
         ack_name, _, owner = claimed.name.removesuffix(
             inbox_envelopes.INBOX_CLAIM_SUFFIX
         ).rpartition(".")
-        if not ack_name or owner.removesuffix("-drain") == inbox_envelopes.INBOX_CLAIM_OWNER:
+        if (
+            not ack_name
+            or owner.removesuffix("-drain") == inbox_envelopes.INBOX_CLAIM_OWNER
+            or owner.startswith(f"{inbox_envelopes.INBOX_CLAIM_OWNER}-drain-")
+        ):
             continue
         try:
             inbox_envelopes.restore_inbox_claim(claimed, claimed.with_name(ack_name))

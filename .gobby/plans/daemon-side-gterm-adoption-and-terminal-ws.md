@@ -233,16 +233,14 @@ external work has not started can be flipped without changing this plan.
 | 2.2 | #21558 (Native WS transport in gdaemon) | blocked by | 2.2's handler rides #21558's native WS accept, auth, subscription, and broadcast transport and its outer envelope. 2.3, 2.12, and 2.13 follow 2.2. |
 | 2.4 | node-halves 2.2 (Node terminal host, #24371) | blocks | Both change `crates/gdaemon/src/serve.rs::run`. |
 | 2.6 | native-ws-transport A3 (Bounded native broadcast fanout, #23880) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`. |
-| 2.6 | node-halves 1.5 (Node hook ingress arm, #24368) | blocks | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`. |
+| 2.6 | node-halves 1.5 (Node hook ingress arm, #24368) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`; the Orchestrator flipped this row on 2026-10-16 for hub-node priority. |
+| 2.6 | hub-mode 1.2 (gdaemon internal node-command route over the node channel) | blocked by | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, and following node-halves 1.5 alone does not order them; the Orchestrator ruled hub-mode 1.2 first on 2026-10-16 for hub-node priority. Hub-mode 1.2 has no leaf until #21575 (Hub mode) expands, and the Orchestrator wires this edge at that expansion. |
 
 Relations that set no edge:
 - node-halves 2.1 (Durable node agent state, #24370) changes `crates/gdaemon/src/state.rs`
   through `NodeServices`; 2.4 and 2.6 change `RuntimeState`, a different struct.
 - node-halves 2.10 (#24379) adds a snapshot method to `crates/gterminals/src/control.rs`; 2.5,
   2.8, and 2.2 add `write_batch`, `revoke_input`, and `grant_input`, distinct new methods.
-- hub-mode 1.2 (gdaemon internal node-command route over the node channel) changes
-  `FrontDoor::handle` after node-halves 1.5 through node-halves 2.1, so it follows 2.6 through
-  the 2.6 to node-halves 1.5 row.
 - #23219 (#21558 terminal WS operations, relay, and family cutover) is retired at expansion,
   superseded by 2.2, 2.3, 2.12, and 2.13 (A2).
 
@@ -878,18 +876,18 @@ The replacement owners are:
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql`
+- `crates/gcore/assets/schema/migrations/457_workspace_pane_role.sql`
 - `crates/gcore/src/schema/assets.rs::MIGRATIONS`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: add the workspace_panes.role column and its check constraint
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: move the pinned latest asset and root hash to 456
-- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate the expected schema identity for 456
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: move the no-postgres expected identity's latest_version, checksum, and root hash to 456
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: move any pinned schema identity to 456
-- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-sign the golden for the 456 identity
-- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-sign the golden for the 456 identity
-- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-sign the golden for the 456 identity
-- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-sign the golden for the 456 identity
-- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-sign the golden for the 456 identity
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: move the pinned latest asset and root hash to 457
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate the expected schema identity for 457
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: move the no-postgres expected identity's latest_version, checksum, and root hash to 457
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: move any pinned schema identity to 457
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-sign the golden for the 457 identity
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-sign the golden for the 457 identity
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-sign the golden for the 457 identity
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-sign the golden for the 457 identity
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-sign the golden for the 457 identity
 - `src/gobby/storage/workspace_panes.py`
 - `src/gobby/storage/workspaces.py::*` — scope-reason: move WorkspacePane and _optional_str into workspace_panes.py and thread role through _insert_pane, create_tab and add_pane
 - `src/gobby/terminals/workspace_ops.py::WorkspaceOps.tab_create`
@@ -903,9 +901,10 @@ Research context:
 - PD ruling (A1): this plan owns the column, and #22895 consumes the contract. The contract is a
   nullable `role text` on `workspace_panes`, opaque to this plan: non-empty means `persistent_role`
   (1.6), absent means `run`. #22895 owns which role names a runbook writes.
-- Migration slot: 456 is the next free slot on 2026-10-01 (`455_drop_ask_artifacts.sql` is the
-  latest). The executor re-checks the catalog immediately before writing it and, if taken,
-  renumbers with every identity carrier. Carriers follow commit `bab7aac030`: the SQL asset, the
+- Migration slot: 457. Slot 456 went to `456_bind_agent_run_overlay_to_requested_worktree.sql`,
+  and #23215 (Durable pane role column and workspace-op argument) landed the column as
+  `457_workspace_pane_role.sql` in `c65c9b151a`, renumbering with every identity carrier.
+  Carriers follow commit `bab7aac030`: the SQL asset, the
   `EmbeddedMigration` entry in `assets.rs::MIGRATIONS`, the `workspace_panes.role` entry in
   `catalog.manifest.json` (regenerated by
   `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`
@@ -952,11 +951,11 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 1.9.1 - Migration 456 adds nullable `workspace_panes.role` with the non-empty and byte-ceiling
+- 1.9.1 - Migration 457 adds nullable `workspace_panes.role` with the non-empty and byte-ceiling
   check, and every schema identity carrier agrees: `cargo test -p gobby-core --lib grant::tests`
   without features, `cargo test -p gobby-core --features postgres --test schema_contract`, and
   `cargo test -p gobby-core --features postgres --test catalog_manifest_freshness` run without
-  `UPDATE_GCORE_SCHEMA_MANIFEST` all pass. file: `crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql`.
+  `UPDATE_GCORE_SCHEMA_MANIFEST` all pass. file: `crates/gcore/assets/schema/migrations/457_workspace_pane_role.sql`.
 - 1.9.2 - `create_tab` and `add_pane` persist a supplied role, every pane read returns it, and an
   omitted role stores NULL. test:
   `tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null`.
@@ -2874,6 +2873,21 @@ Executors run focused verification after each leaf and the complete matrix befor
   cross-plan edge directions as written, with the 2.6 edge to #23880 kept and already satisfied
   by its landing at `9da990c47b`, and accepted 2.10.5, 2.14, and 2.15. The Adversary derives M1
   from this revision.
+- 2026-10-16: Post-expansion delta (Plan Writer gobby#16490, assigned by Orchestrator
+  gobby#15977). Coverage of 1.9.1 failed because #23215 (Durable pane role column and
+  workspace-op argument) landed the migration as `457_workspace_pane_role.sql` (`c65c9b151a`)
+  after slot 456 went to `456_bind_agent_run_overlay_to_requested_worktree.sql`; 1.9's Targets,
+  scope-reasons, migration-slot note, and 1.9.1 now name 457. The Orchestrator flipped the 2.6
+  row so node-halves 1.5 (#24368) blocks 2.6, and the Cross-plan edges table and its hub-mode
+  1.2 note now match. No other narrative changed; the Adversary re-derives M1 from this revision.
+- 2026-10-16: Delta consensus. Adversary gobby#16983 verified and accepted the 457 correction at
+  `68eea3b76f` and raised F7 (cross-plan.flip-retains-shared-edit-order, blocking): after the
+  flip, 2.6 and hub-mode 1.2 both follow node-halves 1.5, and a common predecessor does not order
+  two edits of `FrontDoor::handle`. Orchestrator gobby#15977 accepted F7 and ruled that hub-mode
+  1.2 blocks 2.6 for hub-node priority. The Cross-plan edges table carries that row, the stale
+  relations note is removed, and `.gobby/plans/hub-mode.md` mirrors the row under its 1.2. The
+  Orchestrator wires the edge when #21575 (Hub mode) expands. No other narrative changed; the
+  Adversary derives M1 from this revision.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -3144,12 +3158,12 @@ Executors run focused verification after each leaf and the complete matrix befor
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+  validation_criteria: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
     with the non-empty and byte-ceiling check, and every schema identity carrier agrees:
     `cargo test -p gobby-core --lib grant::tests` without features, `cargo test -p
     gobby-core --features postgres --test schema_contract`, and `cargo test -p gobby-core
     --features postgres --test catalog_manifest_freshness` run without `UPDATE_GCORE_SCHEMA_MANIFEST`
-    all pass. file: `crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql`.
+    all pass. file: `crates/gcore/assets/schema/migrations/457_workspace_pane_role.sql`.
 
     1.9.2: `create_tab` and `add_pane` persist a supplied role, every pane read returns
     it, and an omitted role stores NULL. test: `tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null`.

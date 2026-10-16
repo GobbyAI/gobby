@@ -456,10 +456,11 @@ async def test_restart_resumes_from_durable_checkpoint(
     assert [run.outcome for run in second.validation_runs] == ["failure", "success"]
 
 
+@pytest.mark.parametrize("prior_version", [21, 22, 25, 26])
 async def test_pre_rtk_parity_checkpoint_is_rederived(
-    tmp_path: Path, parse_counts: list[int], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, parse_counts: list[int], monkeypatch: pytest.MonkeyPatch, prior_version: int
 ) -> None:
-    """Version-21 prefixes must be reparsed after RTK evidence semantics change."""
+    """Old prefixes must be reparsed after RTK evidence semantics change."""
     transcript = tmp_path / "rtk-version.jsonl"
     records = _claude_tool_pair(
         command="rtk proxy pytest tests/tasks/test_a.py",
@@ -473,7 +474,7 @@ async def test_pre_rtk_parity_checkpoint_is_rederived(
 
     def legacy_dumps(value: Any, **kwargs: Any) -> str:
         if isinstance(value, dict) and "derivation_version" in value:
-            value = {**value, "derivation_version": 21}
+            value = {**value, "derivation_version": prior_version}
         return original_dumps(value, **kwargs)
 
     with monkeypatch.context() as legacy:

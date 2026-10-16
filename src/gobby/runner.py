@@ -580,6 +580,21 @@ def _exit_after_standalone_shutdown() -> None:
     os._exit(code)
 
 
+class _StandaloneEventLoop(asyncio.EventLoop):
+    """Event loop whose final executor join ends at the overall shutdown deadline.
+
+    ``asyncio.run`` otherwise joins default-executor workers for up to 300 s after
+    shutdown completes, so one wedged ``to_thread`` call holds the old backend
+    alive through a restart. CPython warns with RuntimeWarning when the join expires.
+    """
+
+    async def shutdown_default_executor(self, timeout: float | None = None) -> None:
+        from gobby.runner_lifecycle_shutdown import remaining_shutdown_budget
+
+        budget = remaining_shutdown_budget(self.time())
+        await super().shutdown_default_executor(budget if timeout is None else min(timeout, budget))
+
+
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # A daemon started from a pane inherits that pane's identity; every
     # os.environ copy below would hand it to agent terminals, web shells,
@@ -616,7 +631,10 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     from gobby.runner_init import StartRefusal
 
     try:
-        asyncio.run(run_gobby(config_path=config_path, verbose=verbose))
+        asyncio.run(
+            run_gobby(config_path=config_path, verbose=verbose),
+            loop_factory=_StandaloneEventLoop,
+        )
     except KeyboardInterrupt:
         sys.exit(0)
     except StartRefusal as exc:

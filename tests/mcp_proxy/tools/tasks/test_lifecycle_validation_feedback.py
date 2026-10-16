@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -11,7 +12,9 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import account_criteria_verdict
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.task_close_reviews import TaskCloseReview
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.agentic_close_review import build_terminal_review_payload
 from gobby.tasks.close_verdict import (
     FINDING_SEVERITY_ORDER,
     CloseCriterionVerdict,
@@ -45,8 +48,9 @@ def _criterion(*, gap: bool = False) -> CloseCriterionVerdict:
     )
 
 
-def _finding(severity: FindingSeverity) -> CloseFinding:
+def _finding(severity: FindingSeverity, finding_id: str = "finding-1") -> CloseFinding:
     return CloseFinding(
+        id=finding_id,
         path="src/review.py",
         start_line=10,
         end_line=12,
@@ -145,3 +149,98 @@ def test_pending_external_stays_pending_without_gaps_or_blocking_findings(
     assert result.can_close is False
     assert result.error_type == "external_pending"
     assert result.extra["pending_external_criteria"] == [criterion.criterion]
+
+
+def _owner_payload(extra: dict[str, Any], message: str | None) -> dict[str, Any]:
+    """Render the verdict's close extra as the owner-visible terminal wake payload."""
+    now = datetime(2026, 10, 15, tzinfo=UTC)
+    review = TaskCloseReview(
+        id="review",
+        task_id="task",
+        task_ref="#42",
+        caller_session_id="owner",
+        agent_run_id="run",
+        close_arguments={},
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        status="running",
+        result_payload=None,
+        error=None,
+        launched_at=now,
+        completed_at=None,
+        delivered_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+    return build_terminal_review_payload(
+        review, status="invalid", close_result=extra, message=message
+    )
+
+
+def test_single_finding_without_gaps_counts_one_and_carries_id(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, str(sample_project["id"]))
+    verdict = CloseVerdict(
+        status="invalid",
+        criteria=(_criterion(),),
+        feedback="One bug blocks the close.",
+        findings=(_finding("high", "finding-7"),),
+    )
+
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=_ctx(manager),
+        resolved_id=task.id,
+        validation_config=TaskValidationConfig(close_review_min_severity="low"),
+        reset_reason="close_review_valid",
+    )
+    payload = _owner_payload(result.extra, result.message)
+
+    assert payload["outstanding_finding_count"] == 1
+    assert [
+        (finding["id"], finding["severity"], finding["description"])
+        for finding in payload["outstanding_findings"]
+    ] == [("finding-7", "high", "high code finding")]
+    assert payload["blocking_reasons"] == [
+        "high bug finding finding-7 at src/review.py:10-12: high code finding"
+    ]
+    assert payload["criterion_gaps"] == []
+
+
+def test_feedback_summary_is_not_a_finding(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, str(sample_project["id"]))
+    feedback = "Criterion 1 lacks evidence and one finding blocks."
+    verdict = CloseVerdict(
+        status="invalid",
+        criteria=(_criterion(gap=True),),
+        feedback=feedback,
+        findings=(_finding("medium", "finding-2"),),
+    )
+
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=_ctx(manager),
+        resolved_id=task.id,
+        validation_config=TaskValidationConfig(close_review_min_severity="low"),
+        reset_reason="close_review_valid",
+    )
+    payload = _owner_payload(result.extra, result.message)
+
+    assert payload["review_feedback"] == feedback
+    assert feedback not in payload["blocking_reasons"]
+    assert payload["criterion_gaps"] == ["Criterion evidence is incomplete."]
+    assert [finding["id"] for finding in payload["outstanding_findings"]] == ["finding-2"]
+    assert payload["outstanding_finding_count"] == 1
+    assert payload["blocking_reasons"] == [
+        "Criterion evidence is incomplete.",
+        "medium bug finding finding-2 at src/review.py:10-12: medium code finding",
+    ]

@@ -450,6 +450,39 @@ def test_shutdown_pre_commit_store_spare_waits_for_replenish_and_removes_paths(
     assert not temporary.exists()
 
 
+def test_shutdown_pre_commit_store_spare_leaves_a_running_replenish_after_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = _operator_store(tmp_path / "operator-pre-commit", "operator")
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    managed_root = sandbox_policy.managed_execution_root()
+    spare, temporary = sandbox_policy.pre_commit_store_spare_paths(managed_root)
+    clone_started = threading.Event()
+    release_clone = threading.Event()
+    original_clone = sandbox_policy._clone_pre_commit_store
+
+    def controlled_clone(clone_source: Path, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        clone_started.set()
+        assert release_clone.wait(timeout=5)
+        original_clone(clone_source, destination)
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", controlled_clone)
+    sandbox_policy._schedule_pre_commit_store_spare(source)
+    assert clone_started.wait(timeout=5)
+
+    try:
+        sandbox_policy.shutdown_pre_commit_store_spare(timeout=0.05)
+        # The live replenisher keeps its partial clone; the startup sweep retires it.
+        assert temporary.exists()
+    finally:
+        release_clone.set()
+    sandbox_policy.shutdown_pre_commit_store_spare()
+    assert not spare.exists()
+    assert not temporary.exists()
+
+
 def test_prepare_sandbox_run_paths_uses_apfs_clone_on_macos(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

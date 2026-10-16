@@ -1,11 +1,11 @@
 header:
   plan_id: daemon-side-gterm-adoption-and-terminal-ws
-  plan_hash: ccc080954f31b649e968e5cea577b34847664bcd3c422f764d17aecb470a32d9
+  plan_hash: cb9d43cedd8b8d66b3170769fc699ad4fdbfc1b8f4c600d2861dd4d548218db5
   root_task_ref: '21565'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T05:36:33Z'
+  generated_at: '2026-10-16T08:47:08Z'
   task_tree_source: db
-  task_tree_source_hash: 6115db8766729e4973afb248e5d78a7b71974e88f399d0d0dfb5f99108d8a364
+  task_tree_source_hash: a7f0dccdf2e562af5b753eb805f07c8bb323701f3dc86d4c343494c9a63922e1
   evidence_summary: []
   evidence: []
 rows:
@@ -467,14 +467,14 @@ rows:
   detail: ''
 - section_id: '1.9'
   item_id: 1.9.1
-  plan_node_hash: 4000dfc4165116711fffbfa9cc59bc75d01286c71321566998adaf7d7e427b8f
-  status: invalid
+  plan_node_hash: 9f60f289f01ddbff01b6e210b520c5b2647c2a340bef266c6c68da566cd6a7ab
+  status: covered
   leaves:
   - leaf_task_ref: '#23215'
     validation_criteria_snippet: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
       with the non-empty and byte-ceiling check, and every schema identity carrier
       agrees: `cargo test -p g...'
-    matched_artifact_ref: crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/457_workspace_pane_role.sql
   deferral_target: null
   detail: ''
 - section_id: '1.9'
@@ -535,6 +535,11 @@ rows:
       items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
       on 2026-10-14. ...'
     matched_artifact_ref: crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant
+  - leaf_task_ref: '#24567'
+    validation_criteria_snippet: '1.10.1: Daemon-shutdown finalization preserves only
+      an already-authorized direct native holder''s input grant; socket loss, release,
+      preemption, proxy and web h...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant
   deferral_target: null
   detail: ''
 - section_id: '1.10'
@@ -546,6 +551,11 @@ rows:
     validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
       items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
       on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_preservation_requires_a_durable_identity_cas
+  - leaf_task_ref: '#24567'
+    validation_criteria_snippet: '1.10.1: Daemon-shutdown finalization preserves only
+      an already-authorized direct native holder''s input grant; socket loss, release,
+      preemption, proxy and web h...'
     matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_preservation_requires_a_durable_identity_cas
   deferral_target: null
   detail: ''
@@ -559,6 +569,11 @@ rows:
       items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
       on 2026-10-14. ...'
     matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_expiry_never_clears_a_rebound_record
+  - leaf_task_ref: '#24567'
+    validation_criteria_snippet: '1.10.1: Daemon-shutdown finalization preserves only
+      an already-authorized direct native holder''s input grant; socket loss, release,
+      preemption, proxy and web h...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::handoff_expiry_never_clears_a_rebound_record
   deferral_target: null
   detail: ''
 - section_id: '1.10'
@@ -570,6 +585,11 @@ rows:
     validation_criteria_snippet: 'Spec is plan daemon-side-gterm-adoption-and-terminal-ws
       items 1.4.6-1.4.9 (gate 1.4 passed; #23210 closed). Orchestrator cleared needs-planning
       on 2026-10-14. ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::failed_handoff_revoke_keeps_the_record_and_retries
+  - leaf_task_ref: '#24567'
+    validation_criteria_snippet: '1.10.1: Daemon-shutdown finalization preserves only
+      an already-authorized direct native holder''s input grant; socket loss, release,
+      preemption, proxy and web h...'
     matched_artifact_ref: crates/gterminals/tests/leases.rs::failed_handoff_revoke_keeps_the_record_and_retries
   deferral_target: null
   detail: ''
@@ -684,477 +704,732 @@ rows:
 - section_id: '2.5'
   item_id: 2.5.1
   plan_node_hash: b36cce927c8834c8bab55349a3179792a2798d39b075a9138e16b023b1c75e00
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24568'
+    validation_criteria_snippet: '2.5.1: A Native text write with submit sends the
+      text, waits the Enter delay, and sends Enter. An unavailable host or a first-write
+      error refuses with stage no...'
+    matched_artifact_ref: crates/gterminals/tests/write_runtimes.rs::native_write_matches_python_stage_semantics
   deferral_target: null
   detail: ''
 - section_id: '2.5'
   item_id: 2.5.2
   plan_node_hash: 67fb67880d385e5bc5d79997aedf55ea6a2774d69d7b084f0eeed5a758079b40
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24568'
+    validation_criteria_snippet: '2.5.1: A Native text write with submit sends the
+      text, waits the Enter delay, and sends Enter. An unavailable host or a first-write
+      error refuses with stage no...'
+    matched_artifact_ref: crates/gterminals/tests/write_runtimes.rs::native_batch_matches_gterm_write_batch_fixture
   deferral_target: null
   detail: ''
 - section_id: '2.5'
   item_id: 2.5.5
   plan_node_hash: e37309091d71c1806d016575e3229e0171eb47dab867499425474da644a58671
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24568'
+    validation_criteria_snippet: '2.5.1: A Native text write with submit sends the
+      text, waits the Enter delay, and sends Enter. An unavailable host or a first-write
+      error refuses with stage no...'
+    matched_artifact_ref: crates/gterminals/tests/write_runtimes.rs::open_control_authenticates_an_independent_connection
   deferral_target: null
   detail: ''
 - section_id: '2.11'
   item_id: 2.11.1
   plan_node_hash: 45fa4bbb57848107463ddec8399bdf15a7ef023cd6d7b1ccab22c493f982b21c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24569'
+    validation_criteria_snippet: '2.11.1: tmux writes run only on the row''s recorded
+      socket and refuse before sending when `server_pid` or `server_start_time` differs
+      from the locator. test: `c...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_write.rs::tmux_write_is_socket_and_generation_scoped
   deferral_target: null
   detail: ''
 - section_id: '2.11'
   item_id: 2.11.2
   plan_node_hash: 8339978eb25e64773122953c091bc3ad34110bed92ad4b1501b3a12fb69df82a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24569'
+    validation_criteria_snippet: '2.11.1: tmux writes run only on the row''s recorded
+      socket and refuse before sending when `server_pid` or `server_start_time` differs
+      from the locator. test: `c...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_write.rs::tmux_resize_and_release_size_match_python
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.1
   plan_node_hash: 16db5224f6b4d033cedd210c787693d6a00cf3931d7284cce64f4217f9b77018
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24570'
+    validation_criteria_snippet: '2.6.1: A non-loopback peer gets 403; a missing,
+      wrong, or retired token gets 401; without a backend child or Native route services
+      the route answers 503; a bod...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::terminal_write_route_requires_loopback_and_the_current_token
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.2
   plan_node_hash: 4cc52cb16a7056600dd0b157df0499ab0fa42ba2940378f06b6060fc41d88f4a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24570'
+    validation_criteria_snippet: '2.6.1: A non-loopback peer gets 403; a missing,
+      wrong, or retired token gets 401; without a backend child or Native route services
+      the route answers 503; a bod...'
+    matched_artifact_ref: crates/gterminals/tests/write_route.rs::route_calls_return_typed_per_step_outcomes
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.3
   plan_node_hash: 9d0d6d6e29558619da06e11b094a0e82511bd3c05e21db710ec9092daee53282
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24570'
+    validation_criteria_snippet: '2.6.1: A non-loopback peer gets 403; a missing,
+      wrong, or retired token gets 401; without a backend child or Native route services
+      the route answers 503; a bod...'
+    matched_artifact_ref: crates/gterminals/tests/write_route.rs::held_action_binds_token_row_and_lease_generation
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.4
   plan_node_hash: a57912661e92e6fc5a20a7bf0f4c570e0585b093de98cf23b07aa55b3b353bbf
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24570'
+    validation_criteria_snippet: '2.6.1: A non-loopback peer gets 403; a missing,
+      wrong, or retired token gets 401; without a backend child or Native route services
+      the route answers 503; a bod...'
+    matched_artifact_ref: crates/gterminals/tests/write_route.rs::token_rotation_and_lost_replies_never_replay_writes
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.5
   plan_node_hash: 04c7b7cd9d4bc95b2fe1e542029c1e96dc56c6d08a6ebf251e75b3832d304cda
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24570'
+    validation_criteria_snippet: '2.6.1: A non-loopback peer gets 403; a missing,
+      wrong, or retired token gets 401; without a backend child or Native route services
+      the route answers 503; a bod...'
+    matched_artifact_ref: crates/gterminals/tests/write_route.rs::route_admits_each_operation_maximum_and_refuses_over_limit_steps
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.1
   plan_node_hash: f84ddff9d6e18428ad7251452529fef1349a942953edf422bac586613f7528f0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.2
   plan_node_hash: 36f239419111942cd4abc5a702c03069e39190ed4b57f80c6373ab69b2d4714a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_client_covers_the_coordinator_surface_without_blocking_the_loop
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.3
   plan_node_hash: 9e2197cf475d0e9aa8d1106fccac36e025764bff6e51f700524870f0218db2e7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_client_fails_closed_without_the_supervisor_token
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.4
   plan_node_hash: 297f2842c5c36b59291ad996e5b97a75ec09f7a6d678a4de3e2763d4717ad165
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_native_automatic_write_never_types_over_an_operator_draft
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.5
   plan_node_hash: 2c8528a6ab58e2d8f748f83dd9884bac36672a6baf7ba29043e24a1788ee18a7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_native_ledger_restores_persists_and_follows_host_events
   deferral_target: null
   detail: ''
 - section_id: '2.7'
   item_id: 2.7.6
   plan_node_hash: 0d581855daa79cc46ddb12c6cbede6f6d37f6d9cd1ba02f700e1ba2b75119f2a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24571'
+    validation_criteria_snippet: '2.7.1: In `Native`, every Python coordinator caller
+      reaches the Rust coordinator through `RustWriteCoordinatorClient`, and #22722''s
+      submit regressions pass aga...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_client_enforces_runtime_payload_limits_before_send
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.1
   plan_node_hash: fea4ba2696ec4a957cc5ff4eb5cdf404f653d8c8cc266403eeaf4a2bef216505
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/settler.rs::host_restart_settles_only_the_dead_epoch
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.2
   plan_node_hash: d500ff49a4993d8562ac234e8c0d5ca5f3b4309b9bb9b1acf1f67f8c26bd57b8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::superseded_epoch_between_snapshot_and_apply_settles_no_dead_epoch_rows
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.3
   plan_node_hash: 6e5f70330d41aa46ea23fb69d161430be69101621b7913f792ae11d4735c83b4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/settler.rs::confirmed_absence_records_the_prior_epoch_exit
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.4
   plan_node_hash: 23ef14706894aaf3ef9bda6a823c127814f2e93758ec50d6b495819d7f0b7958
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/settler.rs::process_status_matches_the_python_reap_oracle
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.5
   plan_node_hash: 5996a5c346df5598b8bbbf1d18ae1c5e758e4b07bfbba866c6c4179ae0371634
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/settler.rs::run_interruption_matches_the_python_cancel_transition
   deferral_target: null
   detail: ''
 - section_id: '2.8'
   item_id: 2.8.6
   plan_node_hash: ab07f4dec0e052419a98c4f03b424b77c516e3b6d200a9a910d5ae57e222af4a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24572'
+    validation_criteria_snippet: '2.8.1: An integration test shows a host restart
+      (old epoch exited, new epoch observed) settles the old epoch''s absent live
+      rows as orphaned and interrupts thei...'
+    matched_artifact_ref: crates/gterminals/tests/settler.rs::settler_expires_input_handoffs_through_the_host_revoke
   deferral_target: null
   detail: ''
 - section_id: '2.9'
   item_id: 2.9.1
   plan_node_hash: 9440087d06fe6154ebaa5f421082b547b2ff52437af13b2fc666eea5e3282952
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24573'
+    validation_criteria_snippet: '2.9.1: A Native spawn prepares, commits, and settles
+      once with the Rust repository as the only settler; a settler pass never settles
+      a held prepared spawn; and...'
+    matched_artifact_ref: crates/gterminals/tests/runtime_route.rs::spawn_settles_once_with_one_rust_owner
   deferral_target: null
   detail: ''
 - section_id: '2.9'
   item_id: 2.9.2
   plan_node_hash: 513629bff63d49c0ff94026f278825946848ed38f9dacfd912d60b98263445d0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24573'
+    validation_criteria_snippet: '2.9.1: A Native spawn prepares, commits, and settles
+      once with the Rust repository as the only settler; a settler pass never settles
+      a held prepared spawn; and...'
+    matched_artifact_ref: crates/gterminals/tests/runtime_route.rs::native_reads_match_the_python_runtime_contract
   deferral_target: null
   detail: ''
 - section_id: '2.9'
   item_id: 2.9.3
   plan_node_hash: 5d4a3bf9e8db9fef212f8c15edf757c1163903d1af4ce1a5181b64bb479e0f8c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24573'
+    validation_criteria_snippet: '2.9.1: A Native spawn prepares, commits, and settles
+      once with the Rust repository as the only settler; a settler pass never settles
+      a held prepared spawn; and...'
+    matched_artifact_ref: crates/gterminals/tests/runtime_route.rs::terminate_and_resize_are_epoch_scoped
   deferral_target: null
   detail: ''
 - section_id: '2.9'
   item_id: 2.9.4
   plan_node_hash: 55b1f65f7bc807c065162bbde40d39d5889584a7117b8ab158dbca8e89c78600
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24573'
+    validation_criteria_snippet: '2.9.1: A Native spawn prepares, commits, and settles
+      once with the Rust repository as the only settler; a settler pass never settles
+      a held prepared spawn; and...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::terminal_runtime_route_shares_the_write_route_gate
   deferral_target: null
   detail: ''
 - section_id: '2.10'
   item_id: 2.10.1
   plan_node_hash: a80c512bf9541d5d20300aad763bbe6fab8bc97a7a0f99e3be64ae81c41ea888
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24574'
+    validation_criteria_snippet: '2.10.1: In `Native`, constructing `TerminalHostManager`
+      is refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+      run through `RustNati...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client
   deferral_target: null
   detail: ''
 - section_id: '2.10'
   item_id: 2.10.2
   plan_node_hash: c6f8935bf72c7e4b776b6a23b0dda20be6a7b893ae379dcc8f2c2399fcbb3afe
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24574'
+    validation_criteria_snippet: '2.10.1: In `Native`, constructing `TerminalHostManager`
+      is refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+      run through `RustNati...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_settlement_has_one_rust_owner
   deferral_target: null
   detail: ''
 - section_id: '2.10'
   item_id: 2.10.3
   plan_node_hash: 60adbbf0fcb6e0a96dd8d707102f97034b6d0de06f0023ee64a1715d3d229f9c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24574'
+    validation_criteria_snippet: '2.10.1: In `Native`, constructing `TerminalHostManager`
+      is refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+      run through `RustNati...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_native_pane_binds_after_rust_settlement
   deferral_target: null
   detail: ''
 - section_id: '2.10'
   item_id: 2.10.4
   plan_node_hash: 64878433bee76d0eea88231059ce7db3192469bf0167e1964bef8bee0e45c226
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24574'
+    validation_criteria_snippet: '2.10.1: In `Native`, constructing `TerminalHostManager`
+      is refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+      run through `RustNati...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_terminal_services_use_the_rust_clients
   deferral_target: null
   detail: ''
 - section_id: '2.10'
   item_id: 2.10.5
   plan_node_hash: ab0986a720a2603e2584b825dc2cc8c542f2b0c3c639473bbd36e9af519ea726
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24574'
+    validation_criteria_snippet: '2.10.1: In `Native`, constructing `TerminalHostManager`
+      is refused, and agent spawn, web-workspace spawn, snapshot reads, and termination
+      run through `RustNati...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_websocket_server_sequences_workspace_events_only
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.1
   plan_node_hash: 2e9a8a2c9376a3d97293908d64cf05d2ad6198355c934aa3c4c3bbf7d59b319e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::list_page_matches_the_python_query
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.2
   plan_node_hash: e644c37b2af9345160d0a4cc8755b6ec1d0a0f502e430b911c3cf752993b0290
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::inventory_rows_match_python_row_json
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.3
   plan_node_hash: 457b26b92ae087a83034c080a9c854bd6119af7ae597721fc46787deeedb4576
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::probes_are_bounded_and_never_fail_the_page
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.4
   plan_node_hash: cd9153de05f0606ec97a74c370d8beda3ceb79301a92d583dbd48e05d0ca4d99
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::first_page_carries_the_lifecycle_watermark
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.5
   plan_node_hash: ecd7356dfd80af81b141bdda2fe904a9ff31b19d426267a6cb7d0a830c0dd5be
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::shutdown_preserves_only_direct_native_input_grant
   deferral_target: null
   detail: ''
 - section_id: '2.14'
   item_id: 2.14.6
   plan_node_hash: 0022d2c2c6ee73dfdd4e57d6f40db8f892bc3a86ed29e4fee5b24d39b8ba905d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24575'
+    validation_criteria_snippet: '2.14.1: `repository::list_page` returns the same
+      rows, order, and `has_more` as `TerminalManager.list_page` for project, machine,
+      state, and backend filters an...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::terminal_inventory_handlers_match_python_statuses
   deferral_target: null
   detail: ''
 - section_id: '2.15'
   item_id: 2.15.1
   plan_node_hash: 6a65ca8df5d9fe4e514f7609e4b8d3b13f0ef95e175e918adde2a25ffb4e278d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24576'
+    validation_criteria_snippet: '2.15.1: `Registry::viewports` and the runtime route''s
+      `viewports` operation return the distinct `(rows, cols)` of the terminal''s
+      unfinalized gclient records wi...'
+    matched_artifact_ref: crates/gterminals/tests/runtime_route.rs::viewports_match_the_python_lease_predicate
   deferral_target: null
   detail: ''
 - section_id: '2.15'
   item_id: 2.15.2
   plan_node_hash: b3be8dd996eb7d79b2cfc3fcddcf98a95d00b1476586a980d3c68b66a202da56
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24576'
+    validation_criteria_snippet: '2.15.1: `Registry::viewports` and the runtime route''s
+      `viewports` operation return the distinct `(rows, cols)` of the terminal''s
+      unfinalized gclient records wi...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_lane_viewport_reads_rust_gclient_viewports
   deferral_target: null
   detail: ''
 - section_id: '2.15'
   item_id: 2.15.3
   plan_node_hash: dd4fa676e9c59e47a071ed0bc6f1120870155adc7918d44162cb098dc4b6df21
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24576'
+    validation_criteria_snippet: '2.15.1: `Registry::viewports` and the runtime route''s
+      `viewports` operation return the distinct `(rows, cols)` of the terminal''s
+      unfinalized gclient records wi...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_lane_viewport_read_fails_closed
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.1
   plan_node_hash: a31b800c77cebd5b14405aa18baf9d65a3b56ec7e27296dec14d30e2baa140a2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::list_is_scoped_bounded_and_backend_visible
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.2
   plan_node_hash: 92868229d919179db094fbc0ce7311f12fdb4aa0b8313aecf8e2920f7c0fb0d2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::attach_is_epoch_and_backend_neutral
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.3
   plan_node_hash: ea1ef5eeb8f7e4a277bd3b50f24dc04a5ef1cdf73cec5c70e45f518769963d06
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::disconnect_finalizes_all_attachment_state_once
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.4
   plan_node_hash: a0736d4def70d1801343d37d7fff986783482e4ccfa62c46d2de396776bb92a0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::mutating_operations_revalidate_before_effect
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.5
   plan_node_hash: af9d15f79574ca8f84d20463336e53325a20e684b1a549d397c980fd7352682d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::write_fault_is_fail_closed
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.6
   plan_node_hash: cea9d162e37a1c70a07898ab4a09dcdc0129d5be6f5120dee04481bec6f32785
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::set_theme_is_holder_scoped_and_isolated_from_pending_control
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.7
   plan_node_hash: 15369b114d9398ab3172b9300a282b5f48ec38959f10b972001d31091741d631
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24577'
+    validation_criteria_snippet: '2.2.1: Authenticated `terminal.list` enforces project/machine/state/page
+      filters, stable cursor, max page bytes, and backend on every item; unauthorized
+      rows a...'
+    matched_artifact_ref: crates/gterminals/tests/ws_operations.rs::ordinary_grant_or_revoke_clears_the_handoff_record
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.1
   plan_node_hash: c6811f4ad5802cf336f4e3a1360dd9a85c5401205b32b2192f88c4aaac75be4b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24578'
+    validation_criteria_snippet: '2.3.1: Native history is emitted completely before
+      live frames for an attachment, and tmux history/frame mapping produces the same
+      backend-neutral envelopes. t...'
+    matched_artifact_ref: crates/gterminals/tests/proxy_relay.rs::history_precedes_live_frames_for_each_backend
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.2
   plan_node_hash: e914d0f2157a28f863530a9a0a00d23c7d1cd51106f6fa979c2122a7812c7d2f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24578'
+    validation_criteria_snippet: '2.3.1: Native history is emitted completely before
+      live frames for an attachment, and tmux history/frame mapping produces the same
+      backend-neutral envelopes. t...'
+    matched_artifact_ref: crates/gterminals/tests/proxy_relay.rs::frame_backpressure_preserves_lifecycle_lane
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.3
   plan_node_hash: 45aa03efae52db99f6926373064be33fd191243e68f9ada83821c5141e0d7d3e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24578'
+    validation_criteria_snippet: '2.3.1: Native history is emitted completely before
+      live frames for an attachment, and tmux history/frame mapping produces the same
+      backend-neutral envelopes. t...'
+    matched_artifact_ref: crates/gterminals/tests/proxy_relay.rs::every_close_race_finalizes_exactly_once
   deferral_target: null
   detail: ''
 - section_id: '2.3'
   item_id: 2.3.4
   plan_node_hash: cd2da46d2fbb7d0b533d31df912bec7a7b7cbdc8ab210e46b72d28c15875831f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24578'
+    validation_criteria_snippet: '2.3.1: Native history is emitted completely before
+      live frames for an attachment, and tmux history/frame mapping produces the same
+      backend-neutral envelopes. t...'
+    matched_artifact_ref: crates/gterminals/tests/proxy_relay.rs::stale_or_invalid_host_frames_never_cross_attachment_generation
   deferral_target: null
   detail: ''
 - section_id: '2.12'
   item_id: 2.12.1
   plan_node_hash: c4dae4ac95e32e4aecde4cddab9f52a9189e6370d77c173cbf9eb7f977e17257
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24579'
+    validation_criteria_snippet: '2.12.1: While a Python action hold is active, Rust
+      WS operator input joins 2.4''s queue in order and flushes in order on release;
+      at the 2.4 bound or age limit ...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::operator_input_queues_behind_a_held_python_action
   deferral_target: null
   detail: ''
 - section_id: '2.12'
   item_id: 2.12.2
   plan_node_hash: e5b85c280ae6fbe9c3d69bfe837a0eff7aaf67b2d3eadc997210a94c9c9bf31f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24579'
+    validation_criteria_snippet: '2.12.1: While a Python action hold is active, Rust
+      WS operator input joins 2.4''s queue in order and flushes in order on release;
+      at the 2.4 bound or age limit ...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::action_hold_release_is_effect_safe
   deferral_target: null
   detail: ''
 - section_id: '2.12'
   item_id: 2.12.3
   plan_node_hash: 4580a1be8fa4db8452186de219e7e4cecba01b36ad0afc21a1d20da520f231f3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24579'
+    validation_criteria_snippet: '2.12.1: While a Python action hold is active, Rust
+      WS operator input joins 2.4''s queue in order and flushes in order on release;
+      at the 2.4 bound or age limit ...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_real_submit_retry_and_reprompt_paths_hold_against_operator_input
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.1
   plan_node_hash: b678bfdc7e85f785258023f2784e6ccfbca7bfb4e5950c12796c52c1913a650c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::terminal_family_routes_as_one_unit
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.2
   plan_node_hash: c9e7d1ede4d4b5e205c74396298c0bb541848656da00bd42016c698508eb2eac
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::compare_mode_never_duplicates_terminal_effects
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.3
   plan_node_hash: 4c29b65b1d466d6000fcdecf96b8b2511519033dc8416b038316e03d21fffa9e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: tests/terminals/acceptance/test_native_lifecycle.py::test_gdaemon_native_family_restart_preserves_agent_terminal
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.4
   plan_node_hash: c6894eb344ae8844ae255203af5d398bde811e860313888602794d10de2047c9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: tests/terminals/acceptance/test_native_lifecycle.py::test_native_family_host_unavailable_fails_closed_and_recovers
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.5
   plan_node_hash: 48d1a2d241ef455354676c1245357450a57c27ef380f7234675880ba327f7b1a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: terminal-family-cutover-parity-gate
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.6
   plan_node_hash: 13c073beed892727c6897dbd50a6cc92e6c6448f5a7996f1ff3b934bf3be09c7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: tests/terminals/acceptance/test_native_lifecycle.py::test_native_activation_attach_and_control_smoke
   deferral_target: null
   detail: ''
 - section_id: '2.13'
   item_id: 2.13.7
   plan_node_hash: b4b779e43a8e42c734eba114947f7d2cb66a0f7e38e646aa7d2738c47dfdf83b
-  status: missing
-  leaves: []
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.1
-  plan_node_hash: ''
-  status: invalid
+  status: covered
   leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.1' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.1
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.2
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.2' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.2
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.3
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.3' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.3
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.4
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.4' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.4
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.5
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.5' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.5
+  - leaf_task_ref: '#24580'
+    validation_criteria_snippet: '2.13.1: One terminal-family registration owns terminal
+      HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
+      GETs and the terminal mes...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::daemon_restart_preserves_live_terminal
   deferral_target: null
   detail: ''

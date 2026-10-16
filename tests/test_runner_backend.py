@@ -2,14 +2,22 @@
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
-from gobby.runner_backend import BackendBind, backend_bind, watch_supervisor
+from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig, FrontDoorRouteBackend
+from gobby.runner_backend import (
+    BackendBind,
+    backend_bind,
+    require_latched_terminal_route,
+    supervisor_write_token,
+    watch_supervisor,
+)
+from gobby.runner_init import StartRefusal
 from gobby.shutdown_intent import ShutdownIntent
 
 pytestmark = pytest.mark.unit
@@ -62,6 +70,73 @@ async def test_supervisor_eof_writes_stop_and_requests_drain(
             marker.assert_called_once_with("supervisor_liveness_eof", ShutdownIntent.STOP)
             with pytest.raises(OSError):
                 os.fstat(read_fd)
+        finally:
+            if write_fd != -1:
+                os.close(write_fd)
+            if not task.done():
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+
+@pytest.mark.parametrize(
+    ("latched", "configured", "refused"),
+    [
+        (None, {"terminal_ws": "native"}, False),
+        ("proxy", {}, False),
+        ("native", {"terminal_ws": "native"}, False),
+        ("compare", {"terminal_ws": "compare"}, False),
+        ("proxy", {"terminal_ws": "native"}, True),
+        ("native", {}, True),
+        ("native", {"terminal_ws": "compare"}, True),
+    ],
+)
+def test_terminal_route_flip_requires_a_gdaemon_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    latched: str | None,
+    configured: dict[str, FrontDoorRouteBackend],
+    refused: bool,
+) -> None:
+    monkeypatch.delenv("GOBBY_TERMINAL_ROUTE", raising=False)
+    if latched is not None:
+        monkeypatch.setenv("GOBBY_TERMINAL_ROUTE", latched)
+    bootstrap = BootstrapConfig(front_door=FrontDoorConfig(routes=configured))
+    if refused:
+        with pytest.raises(StartRefusal, match="restart gdaemon"):
+            require_latched_terminal_route(bootstrap)
+    else:
+        require_latched_terminal_route(bootstrap)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Unix pipe readiness contract")
+async def test_write_token_travels_only_over_the_supervisor_pipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    await watch_supervisor(lambda: None)
+    assert supervisor_write_token() is None
+
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    drained = asyncio.Event()
+    with patch("gobby.runner_backend.write_shutdown_intent"):
+        task = asyncio.create_task(watch_supervisor(drained.set))
+        try:
+            await asyncio.sleep(0)
+            os.write(write_fd, b"start-")
+            await asyncio.sleep(0)
+            assert supervisor_write_token() is None
+            os.write(write_fd, b"token\n")
+            await asyncio.sleep(0)
+            assert supervisor_write_token() == "start-token"
+            assert not any("start-token" in value for value in os.environ.values())
+            assert not any("start-token" in arg for arg in sys.argv)
+            assert not drained.is_set()
+            os.close(write_fd)
+            write_fd = -1
+            await asyncio.wait_for(task, timeout=2)
+            assert drained.is_set()
+            assert supervisor_write_token() is None
         finally:
             if write_fd != -1:
                 os.close(write_fd)

@@ -125,6 +125,69 @@ async def test_rule3_names_the_task_holding_the_live_interval(
     assert f"task #{other.seq_num}" not in reason
 
 
+def _claim_two_foreign_tasks(h: GuardHarness, *, reclaim: bool) -> tuple[Task, Task]:
+    """Claim two tasks for the foreign session; return (earlier, later) by current claim.
+
+    Without reclaim, claim order runs against stored key order. With reclaim, the first
+    claimed task is claimed again last, so its current claim is the later one.
+    """
+    manager = LocalTaskManager(h.db)
+    tasks = [
+        manager.create_task(
+            project_id=h.project.id,
+            title=f"Foreign claim {n}",
+            task_type="bug",
+            category="code",
+            implementation_domain="backend",
+            validation_criteria="Foreign claim paths remain isolated.",
+        )
+        for n in (1, 2)
+    ]
+    variables = SessionVariableManager(h.db)
+    variables.merge_variables(
+        h.foreign_session.id, {"claimed_tasks": {task.id: f"#{task.seq_num}" for task in tasks}}
+    )
+    stored = list(variables.get_variables(h.foreign_session.id)["claimed_tasks"])
+    # Each selection records a claim; selecting the last stored claim first makes
+    # claim order run against key order.
+    selections = [stored[1], stored[0], stored[1]] if reclaim else [stored[1], stored[0]]
+    for task_id in selections:
+        variables.merge_variables(h.foreign_session.id, {"active_task_id": task_id})
+    by_id = {task.id: task for task in tasks}
+    return by_id[selections[-2]], by_id[selections[-1]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reclaim", [False, True])
+@pytest.mark.parametrize("starts", [(1.0, 1.0), (2.0, 1.0), (1.0, 2.0)])
+async def test_rule3_names_the_latest_live_start_then_the_later_claim(
+    guard_harness: GuardHarness, starts: tuple[float, float], reclaim: bool
+) -> None:
+    h = guard_harness
+    earlier, later = _claim_two_foreign_tasks(h, reclaim=reclaim)
+    root = str(h.repo.resolve())
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {
+                task.id: {root: ["foreign.txt"]} for task in (earlier, later)
+            },
+            "task_live_edit_starts": {
+                earlier.id: {root: {"foreign.txt": starts[0]}},
+                later.id: {root: {"foreign.txt": starts[1]}},
+            },
+        },
+    )
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    result = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    assert result.decision == "block"
+    reason = result.reason or ""
+    # The latest live start owns the path; an equal start goes to the later claim.
+    named, other = (earlier, later) if starts[0] > starts[1] else (later, earlier)
+    assert f"task #{named.seq_num}" in reason
+    assert f"task #{other.seq_num}" not in reason
+
+
 @pytest.mark.asyncio
 async def test_rule3_names_live_owner_from_another_project(
     guard_harness: GuardHarness,

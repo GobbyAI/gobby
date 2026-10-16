@@ -29,6 +29,9 @@ def shell_command_segments(command: str) -> list[list[str]]:
     return [list(segment) for segment in parse_shell_command(command).segments]
 
 
+# Close evaluation asks about the same command from many angles; caching by the
+# exact string parses each distinct command once. The result is frozen.
+@functools.lru_cache(maxsize=8192)
 def parse_shell_command(command: str) -> ParsedShellCommand:
     """Tokenize a shell command while preserving control operators."""
     try:

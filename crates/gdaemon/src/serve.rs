@@ -30,9 +30,9 @@ use crate::front_door::auth::AuthState;
 use crate::front_door::auth::{KeyResolver, PostgresKeyResolver};
 use crate::front_door::compare::CompareLog;
 use crate::front_door::health::BackendState;
-#[cfg(unix)]
-use crate::front_door::routes::unimplemented_families;
 use crate::front_door::routes::{FAMILIES, RouteTable};
+#[cfg(unix)]
+use crate::front_door::routes::{terminal_route_latch, unimplemented_families};
 #[cfg(unix)]
 use crate::front_door::tls;
 use crate::front_door::{FrontDoor, FrontDoorState};
@@ -161,7 +161,8 @@ pub fn run() -> Result<()> {
                 "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
             );
         }
-        Some((secret, auth, ports, pool))
+        let terminals = terminal_route_latch(&bootstrap.front_door.routes)?;
+        Some((secret, auth, ports, pool, terminals))
     };
     let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
     if let Some(loaded) = &tls {
@@ -180,7 +181,7 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        let Some((secret, auth, (backend_http, backend_ws), pool)) = native else {
+        let Some((secret, auth, (backend_http, backend_ws), pool, terminals)) = native else {
             let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
@@ -241,6 +242,7 @@ pub fn run() -> Result<()> {
             supervisor,
             shutdown,
             bootstrap.clone(),
+            terminals,
             home.to_owned(),
         ));
         let mut owner_result = None;
@@ -285,9 +287,12 @@ async fn owner_run(
     supervisor: crate::lifecycle::backend::BackendSupervisor,
     shutdown: tokio::sync::watch::Receiver<bool>,
     bootstrap: HubDatabaseBootstrap,
+    terminals: gobby_terminals::family::RouteLatch,
     home: std::path::PathBuf,
 ) -> Result<()> {
-    state.run(supervisor, shutdown, bootstrap, home).await
+    state
+        .run(supervisor, shutdown, bootstrap, terminals, home)
+        .await
 }
 
 /// Load front-door bootstrap; the contained corpus uses the unsupervised entry.

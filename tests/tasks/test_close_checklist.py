@@ -429,6 +429,7 @@ def _run(
         completed_at=BASE_TIME + timedelta(seconds=order),
         order=order,
         workdir=workdir,
+        output="1 passed in 0.01s" if outcome == "success" else None,
     )
 
 

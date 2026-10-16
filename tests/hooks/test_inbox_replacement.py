@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -249,7 +250,7 @@ def test_receipt_sweep_cannot_replace_active_drain_claim(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("owner", ["previous", "previous-drain"])
+@pytest.mark.parametrize("owner", ["previous", "previous-drain", "previous-drain-unique"])
 def test_orphan_claim_restores_in_one_pass(tmp_path: Path, owner: str) -> None:
     path = tmp_path / "n-1-original.json"
     claimed = path.with_name(f"{path.name}.{owner}.claimed.tmp")
@@ -292,6 +293,44 @@ def test_invalid_claim_quarantines_under_original_name(tmp_path: Path) -> None:
         json.loads((quarantine / f"{path.name}.meta.json").read_text())["reason"] == "invalid_json"
     )
     assert not path.exists()
+
+
+@pytest.mark.unit
+def test_replaced_file_skips_quarantine_without_failure_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "n-1-original.json"
+    path.write_text("invalid original")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
+    replacement = tmp_path / "replacement.tmp"
+    replacement.write_text("new receipt")
+    replacement.replace(path)
+    with caplog.at_level(logging.WARNING, logger=inbox_envelopes.__name__):
+        inbox_envelopes.quarantine_or_warn(
+            path, reason="invalid_json", detail="test", expected_signature=signature
+        )
+    assert path.read_text() == "new receipt"
+    assert not caplog.records
+
+
+@pytest.mark.unit
+def test_overlapping_quarantine_claims_preserve_each_file(tmp_path: Path) -> None:
+    path = tmp_path / "n-1-original.json"
+    path.write_text("invalid original")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
+    with inbox_envelopes.claim_inbox_file(path, signature) as original:
+        assert original is not None
+        path.write_text("invalid replacement")
+        assert inbox_envelopes.load_envelope(path) is None
+        # A classifier quarantining the replacement must leave the first
+        # claimer's bytes intact for its pending no-clobber restoration.
+        assert original.read_text() == "invalid original"
+    assert path.read_text() == "invalid original"
+    quarantine = inbox_envelopes.get_hook_quarantine_dir(tmp_path)
+    assert (quarantine / path.name).read_text() == "invalid replacement"
+    assert not list(tmp_path.glob("*.claimed.tmp"))
 
 
 @pytest.mark.unit

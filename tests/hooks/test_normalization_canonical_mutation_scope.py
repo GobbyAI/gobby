@@ -17,7 +17,11 @@ from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _substitution_end
-from gobby.hooks._normalization_tools import _set_canonical_tool_metadata, normalize_tool_fields
+from gobby.hooks._normalization_tools import (
+    _set_canonical_tool_metadata,
+    normalize_tool_display_fields,
+    normalize_tool_fields,
+)
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit
@@ -1504,6 +1508,28 @@ def test_git_checkout_probes_disable_fsmonitor(tmp_path: Path) -> None:
     assert run.call_count == 2
     for call in run.call_args_list:
         assert "core.fsmonitor=false" in call.args[0]
+
+
+def test_display_normalization_never_probes_git(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    command = f"git -C {tmp_path} checkout missing.py"
+    probes = [
+        subprocess.CompletedProcess(["git"], 1, stdout=b""),
+        subprocess.CompletedProcess(["git"], 0, stdout=b"missing.py\0"),
+    ]
+    with patch("gobby.hooks._normalization_git.subprocess.run", side_effect=probes) as run:
+        canonical = normalize_tool_fields({"tool_name": "Bash", "tool_input": {"command": command}})
+    assert run.call_count == 2
+    assert canonical["canonical_tool_kind"] == "write"
+
+    with patch("gobby.hooks._normalization_git.subprocess.run") as run:
+        display = normalize_tool_display_fields(
+            {"tool_name": "Bash", "tool_input": {"command": command}}
+        )
+    run.assert_not_called()
+    assert display["tool_input"] == {"command": command}
+    assert display["command"] == command
+    assert "canonical_tool_kind" not in display
 
 
 @pytest.mark.parametrize(

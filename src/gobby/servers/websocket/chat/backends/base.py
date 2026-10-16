@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.ai.endpoints import parse_endpoint_model_selector
-from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.normalization import normalize_tool_display_fields
 from gobby.llm.context_windows import resolve_context_window
 
 if TYPE_CHECKING:
@@ -403,7 +403,7 @@ class ManagedChatSessionBase:
         }
         if isinstance(is_error, bool):
             payload["is_error"] = is_error
-        normalized_payload = normalize_tool_fields(dict(payload))
+        normalized_payload = normalize_tool_display_fields(dict(payload))
         for key in ("mcp_server", "mcp_tool"):
             value = normalized_payload.get(key)
             if isinstance(value, str) and value:

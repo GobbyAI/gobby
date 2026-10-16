@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use anyhow::{Context, Result};
-use gobby_core::bootstrap::{HubDatabaseBootstrap, RunMode};
+use gobby_core::bootstrap::{HubDatabaseBootstrap, RouteBackend, RunMode};
 use gobby_core::postgres_pool::Pool;
 use std::{
     path::{Path, PathBuf},
@@ -105,6 +105,16 @@ impl RuntimeState {
         config
             .environment
             .insert("GOBBY_FRONT_DOOR_SECRET".into(), secret.into());
+        // The route serve.rs latched from this bootstrap; the backend refuses a
+        // bootstrap that names another route as restart-required.
+        let route = match crate::front_door::routes::terminal_route(&bootstrap.front_door.routes) {
+            RouteBackend::Proxy => "proxy",
+            RouteBackend::Native => "native",
+            RouteBackend::Compare => "compare",
+        };
+        config
+            .environment
+            .insert("GOBBY_TERMINAL_ROUTE".into(), route.into());
         let supervisor = BackendSupervisor::with_lease(lease.clone(), claim, config);
         let state = Arc::new(Self {
             mode: bootstrap.mode,
@@ -120,6 +130,7 @@ impl RuntimeState {
         mut supervisor: BackendSupervisor,
         mut shutdown: watch::Receiver<bool>,
         bootstrap: HubDatabaseBootstrap,
+        terminals: gobby_terminals::family::RouteLatch,
         home: std::path::PathBuf,
     ) -> Result<()> {
         loop {
@@ -146,7 +157,8 @@ impl RuntimeState {
                     continue;
                 }
             }
-            let services = crate::state_services::ActiveServices::start(&bootstrap, &home).await?;
+            let services =
+                crate::state_services::ActiveServices::start(&bootstrap, &terminals, &home).await?;
             let outcome = supervisor.run(shutdown.clone()).await;
             let drain = outcome
                 .as_ref()

@@ -23,7 +23,7 @@ from gobby.adapters.acp_client import (
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.srt_runtime import prepare_sandbox_launch
-from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.normalization import normalize_tool_display_fields
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -119,7 +119,7 @@ def droid_tool_name_adapter(raw_tool_name: str) -> str:
     """Normalize Droid MCP tool names into Gobby's canonical form."""
     if raw_tool_name == "Execute":
         return "Bash"
-    normalized = normalize_tool_fields({"tool_name": raw_tool_name})
+    normalized = normalize_tool_display_fields({"tool_name": raw_tool_name})
     tool_name = normalized.get("tool_name")
     return tool_name if isinstance(tool_name, str) and tool_name else raw_tool_name
 
@@ -368,7 +368,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 raw_name = event.data.get("tool_name") or event.data.get("name") or "unknown"
                 tool_name = self._tool_name_adapter()(str(raw_name))
                 tool_input = event.data.get("tool_input") or event.data.get("input") or {}
-                normalized = normalize_tool_fields(
+                normalized = normalize_tool_display_fields(
                     {
                         "tool_name": tool_name,
                         "tool_input": tool_input if isinstance(tool_input, dict) else {},

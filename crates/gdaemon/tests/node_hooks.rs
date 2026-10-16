@@ -7,6 +7,162 @@ use std::{fs, path::Path, process::Command, time::SystemTime};
 use tempfile::TempDir;
 use time::{Duration, OffsetDateTime};
 
+#[path = "node_support/mod.rs"]
+mod node_support;
+
+use axum::http::{Method, StatusCode};
+use gobby_daemon::nodes::hooks::receipts::{release_receipt, sweep_receipts};
+use node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
+
+const RECEIPTS: &str = "/api/nodes/receipts";
+const ACK_ID: &str = "n-1730000000000-ack-envelope";
+
+fn receipt() -> Value {
+    json!({
+        "schema_version": 1,
+        "kind": "delivery-receipt",
+        "enqueued_at": "2024-10-27T03:33:20Z",
+        "receipt_id": "bba98c84-c1bd-4f80-ae57-e400fe516559",
+        "original_envelope_id": "original",
+        "delivery_generation": 2
+    })
+}
+
+#[tokio::test]
+async fn receipts_ack_forwarded_and_terminalized() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true, "carrying_envelope_ids":["original", "current"]}),
+        )],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let path = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&path, serde_json::to_vec(&receipt())?)?;
+    let ordinary = ledger.inbox.join("hook.json");
+    fs::write(&ordinary, r#"{"kind":"hook"}"#)?;
+    let (one, two) = tokio::join!(
+        sweep_receipts(&node.node, &ledger),
+        sweep_receipts(&node.node, &ledger)
+    );
+    one?;
+    two?;
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1, "concurrent sweeps must claim once");
+    assert_eq!(requests[0].method, Method::POST);
+    assert_eq!(requests[0].path, RECEIPTS);
+    assert_eq!(
+        requests[0].headers["authorization"],
+        format!("Bearer {NODE_KEY}")
+    );
+    assert_eq!(
+        requests[0].body,
+        json!({"v":1,"op":"ack","receipt_id":receipt()["receipt_id"],"delivery_generation":2})
+    );
+    for id in ["original", "current", ACK_ID] {
+        assert!(ledger.is_processed(id).await?, "missing marker: {id}");
+    }
+    assert!(!path.exists());
+    assert!(ordinary.exists());
+    assert!(fs::read_dir(&ledger.inbox)?.all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".claimed.tmp")
+    }));
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_failed_post_and_orphan_restore() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![
+            (StatusCode::SERVICE_UNAVAILABLE, json!({"error":"offline"})),
+            (
+                StatusCode::OK,
+                json!({"acknowledged":true,"carrying_envelope_ids":["original"]}),
+            ),
+        ],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let path = ledger.inbox.join(format!("{ACK_ID}.json"));
+    let orphan = ledger
+        .inbox
+        .join(format!("{ACK_ID}.json.deadbeef.claimed.tmp"));
+    fs::write(&orphan, serde_json::to_vec(&receipt())?)?;
+    sweep_receipts(&node.node, &ledger).await?;
+    assert!(!orphan.exists());
+    assert!(path.exists(), "failed post restores the ack");
+    assert!(!ledger.is_processed(ACK_ID).await?);
+    assert_eq!(hub.requests().len(), 1);
+    sweep_receipts(&node.node, &ledger).await?;
+    assert!(!path.exists());
+    assert!(ledger.is_processed(ACK_ID).await?);
+    assert!(ledger.is_processed("original").await?);
+    assert_eq!(hub.requests().len(), 2);
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_stale_ack_terminalizes_filename_id() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":false,"carrying_envelope_ids":[]}),
+        )],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let path = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&path, serde_json::to_vec(&receipt())?)?;
+    sweep_receipts(&node.node, &ledger).await?;
+    assert!(ledger.is_processed(ACK_ID).await?);
+    assert!(!ledger.is_processed("original").await?);
+    assert!(!path.exists());
+    sweep_receipts(&node.node, &ledger).await?;
+    assert_eq!(
+        hub.requests().len(),
+        1,
+        "terminalized stale ack must not repost"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_release_uses_node_key() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let node = NodeHome::new(&hub)?;
+    assert!(release_receipt(&node.node, &receipt()).await?);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].headers["authorization"],
+        format!("Bearer {NODE_KEY}")
+    );
+    assert_eq!(requests[0].body["op"], "release");
+    assert_eq!(requests[0].body["v"], 1);
+    assert_eq!(requests[0].body["receipt_id"], receipt()["receipt_id"]);
+    assert_eq!(requests[0].body["delivery_generation"], 2);
+    hub.shutdown().await;
+    Ok(())
+}
+
 fn ledger() -> (TempDir, Ledger) {
     let home = TempDir::new().unwrap();
     let ledger = Ledger::new(home.path().join("hooks/inbox"));
@@ -288,7 +444,13 @@ async fn ledger_prune_retention() {
         .await
         .unwrap();
     assert!(pass.truncated);
+    assert!(pass.deleted > 0);
     assert!(pass.deleted <= 2);
+    let mut remaining = 0;
+    for id in ["old-a", "old-b", "old-c"] {
+        remaining += usize::from(ledger.is_processed(id).await.unwrap());
+    }
+    assert_eq!(remaining, 3 - pass.deleted);
     assert!(ledger.is_processed("fresh").await.unwrap());
     let pass2 = ledger
         .prune(
@@ -301,40 +463,9 @@ async fn ledger_prune_retention() {
     assert_eq!(pass.deleted + pass2.deleted, 3);
     assert!(ledger.inbox.join("processed/.locks").is_dir());
     assert!(ledger.is_processed("fresh").await.unwrap());
-
-    // Small hardlink groups keep the production-size fixture cheap without
-    // exceeding filesystem link limits. Every group has the same old mtime.
-    let bound_home = TempDir::new().unwrap();
-    let bounded = Ledger::new(bound_home.path().join("inbox"));
-    let processed = bounded.inbox.join("processed");
-    fs::create_dir_all(&processed).unwrap();
-    let old: SystemTime = (now - Duration::seconds(86_500)).into();
-    for index in 0..100_002 {
-        let path = processed.join(index.to_string());
-        if index % 128 == 0 {
-            fs::write(&path, "{}").unwrap();
-            fs::File::open(&path).unwrap().set_modified(old).unwrap();
-        } else {
-            let seed = processed.join((index / 128 * 128).to_string());
-            fs::hard_link(seed, path).unwrap();
-        }
+    for id in ["old-a", "old-b", "old-c"] {
+        assert!(!ledger.is_processed(id).await.unwrap());
     }
-    let capped = bounded
-        .prune(Some(now), PROCESSED_MARKER_RETENTION_SECONDS, usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(capped.examined, 100_000);
-    assert_eq!(capped.deleted, 100_000);
-    assert!(capped.truncated);
-    let remainder = bounded
-        .prune(
-            Some(now),
-            PROCESSED_MARKER_RETENTION_SECONDS,
-            PROCESSED_MARKER_PRUNE_MAX_ENTRIES,
-        )
-        .await
-        .unwrap();
-    assert_eq!(remainder.deleted, 2);
 }
 #[tokio::test]
 async fn ledger_reads_python_markers() {

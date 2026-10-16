@@ -110,10 +110,15 @@ class TranscriptEdit:
     source_confirmed_at: datetime | None = None
     source_created: bool = False
     source_fragment: str | None = None
+    #: The text a Python Edit replaced with ``source_fragment``.
+    source_replaced: str | None = None
     python_stub: tuple[str, tuple[str, ...]] | None = None
     #: Inert declarations an Edit added around its verbatim-preserved anchor.
     python_added_source: str | None = None
     source_unchanged: bool = False
+    checkout_root: str | None = None
+    #: Off-task owner edits still invalidate GREEN, but cannot prove a TDD cycle.
+    task_attributed: bool = True
 
 
 @dataclass(frozen=True)

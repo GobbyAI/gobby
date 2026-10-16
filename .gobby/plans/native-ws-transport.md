@@ -4,7 +4,7 @@ Plan artifact: `.gobby/plans/native-ws-transport.md`
 
 **Plan ID:** native-ws-transport
 **Root task:** #21558 — Native WS transport in gdaemon.
-**Status:** canonical narrative with Adv4's M1; Adv2 consensus 43c0f7fa; evidence refreshed against 0.5.0 on 2026-10-08; Adv1 delta review PASS with nit N1 repaired, N1 recheck pending; PD review, Josh approval and expansion pending.
+**Status:** canonical narrative with Adv4's M1 for A1 to A3; D1 materialized as P2 (B1 to B3) by the #23881 spec on 2026-10-16, re-anchored at 0.5.0 `7ba471a18c`; M1 entries for B1 to B3 are writer-proposed and await Adversary re-derivation, Orchestrator review and Josh approval.
 
 ## C1 Scope and Decision Record
 `kind: framing`
@@ -125,6 +125,237 @@ Use immutable shared frame bytes per batch. Bound each client's queue to 16 pend
 
 **Verification (planned):** `cargo test -p gobby-daemon --test ws_broker --test ws_envelope_golden`; fake time and in-memory writers, no live server. `tdd: true`, implementation_domain backend.
 
+## P2: Auth-integrated private bridge and native WS activation
+`kind: framing`
+
+This phase materializes the D1 fixed specification (#23881) as three implementation leaves, re-anchored at 0.5.0 `7ba471a18c` on 2026-10-16. Gates are met: A1 #23878, A2 #23879 and A3 #23880 are closed, #23519 closed 2026-10-09 and #23523's live activation closed 2026-10-11 with a valid receipt.
+
+Two landings since the D1 draft change its runtime anchors. #23457 (`fde8c6182d`) moved daemon lifecycle into gdaemon and deleted `src/gobby/runner_front_door.py`. gdaemon is now the long-lived parent: `serve.rs` mints the per-boot front-door secret (E32), `RuntimeState::prepare` hands it to the Python backend as `GOBBY_FRONT_DOOR_SECRET` (E33), `BackendChild::spawn` delivers a fresh per-spawn supervisor token through `TokenSlot` (E34, E48), `BackendSupervisor::supervise` respawns Python and publishes `BackendStatus` on a watch channel (E35), and Python exits when the supervisor pipe closes (E36). Python incarnations come and go under one gdaemon boot; the reverse no longer happens. #24444 added per-family `front_door.routes` proxy/native/compare backends and the compare log; it registers no WS family.
+
+Decision record (the Orchestrator confirms or overrides when applying this to #23881):
+
+1. Native WS state lives in gdaemon for its whole boot. Each Python incarnation binds once from `WebSocketServer.start`; there is no child monitor, incarnation counter or notification registration (the old item 8 machinery had no home after #23457).
+2. Process-pair proof for every private route is the loopback peer, the per-boot secret in `X-Gobby-Front-Door` (constant time), and, on the gdaemon routes, the current supervisor token in `X-Gobby-Backend-Token` checked with `TokenSlot::authorize`. A valid user key or cookie alone opens nothing private. Lane 1 (LM1 gobby#15990, 2026-10-16) agreed to reusing the header and token and treats the auth entry points below as stable; Security gobby#16011 confirms.
+3. gdaemon mints a fresh random 128-bit generation on each accepted bind. An accepted bind retires the previous generation, any change on the runtime `BackendStatus` watch retires the current one, and a generation is never reused.
+4. No `front_door.routes` family is added for application WS. Native transport is unconditional wherever `gdaemon serve` runs (`front_door.enabled`); Python-only mode (`front_door.enabled: false`) keeps today's Python listeners and fanout. The `terminal_ws` latch is untouched, and terminal messages ride the bridge as opaque application frames. Rejected: a `ws` family with proxy/native/compare, because C1 decision 6 forbids a new toggle and byte-comparing stateful streams has no meaning.
+5. Python is in native mode exactly when both `supervisor_write_token()` and `GOBBY_FRONT_DOOR_SECRET` are non-empty; only `gdaemon serve` supplies both.
+6. The private leg is itself a WebSocket from gdaemon to Python `/_gobby/ws/bridge`. Python's first frame is exactly one text `bridge_ready` control. After it, frames map one-to-one (text to text, binary to binary, close to close), with no outer JSON envelope and no base64. Trusted context travels as headers on the private upgrade, built from an allowlist. This supersedes the old item 4 record format: WebSocket framing already separates text from binary, and the first-frame rule stops spoofing.
+7. Path claims:
+   - HTTP listener: `/ws` and `/ws/{path}` upgrades become native browser entry. `/api/nodes/channel` keeps its existing native handling, and every other upgrade, including `/__vite_hmr` and `/__vite_hmr/{path}` (E45), keeps the existing splice.
+   - Direct WS listener: every upgrade path becomes native direct entry, because Python's `websockets` listener ignored the path. Non-upgrade requests on it get a native 426.
+   - Reserved `/_gobby/` prefix on both listeners: POST `/_gobby/ws/bind` and `/_gobby/ws/publish` are native. Any other `/_gobby/` path returns 404 and is never forwarded.
+   - Node mode (`Door::Node`) keeps its relay unchanged.
+8. In native mode Python does not start its `websockets` listener, and both public listeners target the backend HTTP port. `backend_ports` stays unchanged in gcore and Python. Rejected: dropping its WS member, because a gobby-core change forces patch bumps of gcode, ghook and gclient for no behavior change.
+9. The native public handshake negotiates no extension and no subprotocol. Python offered permessage-deflate (E49); message payloads stay unchanged.
+10. Python publishes to `http://127.0.0.1:{daemon_port}`, or `http://[::1]:{daemon_port}` when `bind_host` is an IPv6 literal. gdaemon always serves a loopback listener for the daemon port and allows plaintext from loopback peers.
+11. A failed or ambiguous publish fails that generation in Python and closes its bridge legs concurrently within one second. The publisher then rebinds immediately, then every five seconds until success or shutdown. No application batch is retried or replayed.
+12. Bridge admission calls only existing AuthService entry points:
+   - Direct entry requires `AuthService.verify_ws_identity` to return a user ID, applying `AuthMixin._authenticate`'s three checks in order with their exact status and body (E52), as a refusal before 101.
+   - Browser entry uses `AuthService.is_request_authenticated` on a reconstructed `websocket` scope. Break-glass is therefore ineligible (E40), and a managed bearer on `/ws` is refused by the capability matrix before the cookie is consulted (E39). Refusal is 101, then close 4401 "Authentication required".
+   - No verifier is added and none is retired.
+
+**Granularity:** three outcomes. B1 adds the Python bridge and publisher modules, inert until wired. B2 adds gdaemon's native transport and private endpoints, unwired. B3 activates both together, because switching admission, dispatch and publication separately loses or duplicates events. B1 and B2 are independently testable against fakes and land without changing live behavior. B3 carries seven acceptance items and seven production files because activation is one atomic switch; its runtime machinery lives in B1's and B2's new files.
+
+### B1 Python private bridge and native publisher [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/websocket/native_bridge.py`
+- `src/gobby/servers/websocket/native_publish.py`
+- `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`
+- `tests/servers/test_native_ws_bridge.py`
+- `tests/servers/test_native_ws_publish.py`
+- `docs/contracts/parity-ledger-status.d/websocket-chat-voice-ui.json::*` — scope-reason: add the `/_gobby/ws/bridge` row as proxied
+- `docs/contracts/parity-ledger.md`
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: `_mount_ws_endpoint` keeps its signature; the bridge mount happens inside it.
+- `tests/servers/test_ws_asgi_endpoint.py` — no-edit-reason: browser `/ws` welcome and auth-close behavior is unchanged in B1; bridge coverage lives in the new bridge tests.
+
+**Research context:** gdaemon now supervises Python. It mints the per-boot secret (E32), passes it as `GOBBY_FRONT_DOOR_SECRET` (E33), and delivers a per-spawn supervisor token that Python reads with `supervisor_write_token()` (E34, E36). Native mode is exactly "both values non-empty", and `native_publisher_from_environment()` returns `None` otherwise. Python-only mode is unchanged.
+
+Browser `/ws` today accepts first and then authenticates with `is_request_authenticated` (close 4401), or closes 1013 when no WS server exists (E50). The direct listener refuses before upgrade: 401 when Authorization is missing, 401 when it is not Bearer, and 403 when no front-door identity is present (E52). `AuthService._legacy_rejection` orders break-glass, then front-door identity, then bearer classification, then cookie (E39). `break_glass_admits` requires an `http` scope (E40). `verified_front_door_identity` compares the secret in constant time and requires all three IDs (E41). `WebSocketServer._handle_connection` registers the client, sends `connection_established`, rebroadcasts pending interactions, and cleans up once (E12). `ASGIWebSocketAdapter` is the adapter shape to mirror: `user_id`, `latency`, `remote_address`, `subscriptions`, `send`, `close` and async iteration (E20). The parity ledger is generated from registered routes; a new route without a shard entry fails `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+Implementation:
+
+1. **Bridge route** (`mount_native_bridge(app, server)`, new). `native_bridge.py` exports it, and `_mount_ws_endpoint` calls it so `/_gobby/ws/bridge` is mounted unconditionally next to `/ws`. It first checks that the actual transport peer (the ASGI `client` of the private connection) is a loopback address, before reading any `X-Gobby-*` header or reconstructing the original client scope. A non-loopback peer, no publisher, a missing or wrong `X-Gobby-Front-Door`, or an `X-Gobby-WS-Generation` other than the publisher's current non-failed generation, the route closes 1008 before running any handler and sends no `bridge_ready`.
+2. **Trusted context.** `X-Gobby-WS-Entry` (`direct` or `browser`) selects the entry mode. `X-Gobby-WS-Path` (raw path and query), `X-Forwarded-For` and `X-Forwarded-Proto` rebuild a Starlette `websocket` scope. That scope keeps only Authorization, Cookie, `X-Gobby-Break-Glass`, Origin, User-Agent, `X-Gobby-Front-Door` and the three `X-Gobby-*-Id` identity headers, with `client` taken from `X-Forwarded-For`. Each gdaemon-synthesized header (front-door secret, generation, entry, path, the two forwarded headers and the three identity IDs) must appear at most once, compared case-insensitively; a duplicate closes 1008 before admission.
+3. **Admission.**
+   - Direct: apply `AuthMixin._authenticate`'s three checks with `AuthService.verify_ws_identity`.
+   - Browser: `AuthService.is_request_authenticated(reconstructed)`. The browser `user_id` keeps today's `local-web-<8 hex>` form.
+   - Refusals: send `{"type":"bridge_ready","version":1,"generation":G,"admitted":false,...}` with `status` and `body` for direct, or `close_code` 4401 and `reason` "Authentication required" for browser, then close.
+   - Admission: send `{"type":"bridge_ready","version":1,"generation":G,"admitted":true}` as the first frame, then run `server.handle_connection(NativeBridgeAdapter)`.
+4. **`NativeBridgeAdapter`** (new) mirrors `ASGIWebSocketAdapter`: text and binary pass through unchanged, `subscriptions` starts as an initialized empty set for both entries (Rust alone filters), and close and cleanup run once. The adapter registers its leg with the publisher's generation registry and unregisters on exit.
+5. **`NativePublisher`** (new) has `start`, `bind`, `publish(message, frames)`, `fail_generation` and `stop`.
+   - `bind` POSTs `{"max_message_size","ping_interval","ping_timeout"}` (taken from `WebSocketConfig`; 4 KiB body bound) to `/_gobby/ws/bind` with the secret and token headers and a two-second deadline. It returns the generation.
+   - `publish` POSTs `{"generation","filter","frames"}`. Frames are encoded exactly as `BroadcastMixin.broadcast` encodes them (`json_dumps(frame)` per frame, or `[json_dumps(message)]`, E44). It enforces a 128 MiB encoded-body bound before sending, uses one existing `httpx.AsyncClient` with a two-second deadline, never retries, and sends even when no client is connected.
+   - Any timeout, transport error or non-204 response atomically marks the generation failed, drops later publishes, and closes that generation's registered legs concurrently with 1011 within one second (`asyncio.wait_for` around the gathered closes). It then schedules a rebind: immediately, then every five seconds until success or `stop`. Closing a failed generation never touches legs of a newer one.
+   - The publish URL follows decision 10.
+6. **Ledger.** Add `WS transport /_gobby/ws/bridge` as `proxied`, noting that it is the private bridge into Python application handlers and retires with #21574.
+
+**Acceptance:**
+
+- B1.1 - The bridge refuses a non-loopback transport peer (checked before any header is read or the client scope is rebuilt), a missing or wrong pair secret, an absent, failed or stale generation, and Python-only mode before any application handler runs or any `bridge_ready` frame is sent. test: `tests/servers/test_native_ws_bridge.py::test_bridge_requires_pair_proof_and_current_generation`.
+- B1.2 - Admission matches each entry's existing credential owner on the reconstructed context:
+  - Direct: missing Authorization gives 401, non-Bearer 401, a managed bearer 403, cookie-only 401, and operator identity is admitted.
+  - Browser: operator identity is admitted, a managed bearer with a valid cookie gets 4401, a valid cookie is admitted, an invalid cookie gets 4401, break-glass with a valid cookie is admitted through the cookie only, and break-glass alone gets 4401.
+  - Identity headers without the secret are ignored.
+  test: `tests/servers/test_native_ws_bridge.py::test_bridge_admission_matrix_matches_entry_owners`.
+- B1.3 - Exactly one `bridge_ready` precedes the unchanged `connection_established` welcome. Pending interactions, text and binary bytes pass through exactly. A client text frame typed `bridge_ready` reaches the handler as an application message, and connection cleanup runs once. test: `tests/servers/test_native_ws_bridge.py::test_bridge_preserves_application_connection_lifecycle`.
+- B1.4 - The publisher binds with proof and settings within two seconds and publishes one request per broadcast, with frames byte-identical to Python's encoding, including when no client is connected. The 128 MiB bound is checked before sending. test: `tests/servers/test_native_ws_publish.py::test_publisher_binds_and_publishes_encoded_frames`.
+- B1.5 - A timed-out, failed or blackholed publish fails only its generation, closes that generation's legs within one second and never retries the batch. It then rebinds immediately and every five seconds, and leaves newer-generation legs untouched. test: `tests/servers/test_native_ws_publish.py::test_ambiguous_publish_retires_generation_without_retry`.
+
+**Verification (planned):** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_native_ws_bridge.py tests/servers/test_native_ws_publish.py tests/servers/test_ws_asgi_endpoint.py tests/test_parity_ledger.py`, with a fake publish server and synthetic secret and token. No daemon and no real credentials are used. Live behavior is unchanged until B3 wires the publisher. `tdd: true`, implementation_domain backend.
+
+### B2 gdaemon native transport and private endpoints (depends: A3) [category: code]
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/websocket/mod.rs::*` — scope-reason: register the transport and publish modules and update the module doc that today says no listener or auth dependency
+- `crates/gdaemon/src/websocket/transport.rs`
+- `crates/gdaemon/src/websocket/publish.rs`
+- `crates/gdaemon/tests/native_ws_transport.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bump the managed gdaemon version pin by 0.0.1 in step with Cargo.toml
+
+**Research context:** A2 landed `SubscriptionState`, `EntryMode` and `Inbound`. A3 landed `BroadcastBroker` with `register(id, entry, sink, cleanup)`, `receive` (consumes controls and returns application text), `publish(filter, &Batch)` (filter, then enqueue, retiring overflow; E43), `reply`, `disconnect` and `Batch::new` (64 MiB bound). The broker sink type is `tokio_tungstenite::tungstenite::Message`.
+
+gdaemon already depends on tokio-tungstenite 0.29 with `handshake` and axum 0.8 with `ws` (E53), so no dependency is added. `nodes/channel.rs` is the in-crate client precedent (`client_async_with_config`, E42). The public upgrade must use tungstenite types to feed the broker: take the hyper upgrade (as `front_door/ws.rs::splice_over` does), answer 101 with `derive_accept_key`, and wrap the stream with `WebSocketStream::from_raw_socket(.., Role::Server, config)`. `TokenSlot::authorize` gives the constant-time current-incarnation check, returning `NoBackend` with no live child (E48).
+
+Front-door `authenticate` strips identity headers, passes `gobby-agent-v1.` bearers through unstamped, and stamps user, machine and key IDs plus the secret for operator keys (E37). Python's direct-listener refusal bodies are E52. Decisions 2, 3, 6, 9 and 10 in the P2 framing apply.
+
+Implementation (new symbols):
+
+1. **`NativeWs`** (in `transport.rs`) holds the shared broker, the secret, an optional `TokenSlot`, the backend HTTP address, and the current `Binding { generation, settings }` behind a short lock.
+2. **`NativeWs::accept(request, entry, peer)`:**
+   - Unbound: direct returns the existing `health::unavailable` 503, and browser answers 101 then closes 1013 "WebSocket server unavailable".
+   - Otherwise open the private leg to `ws://{backend}/_gobby/ws/bridge` within two seconds. gdaemon builds the private header map from scratch: each synthesized header is set exactly once, and every public header whose name matches a synthesized or allowlisted name in any letter case is dropped, never appended. Its headers are exactly `X-Gobby-Front-Door`, `X-Gobby-WS-Generation`, `X-Gobby-WS-Entry`, `X-Gobby-WS-Path`, the observed `X-Forwarded-For` and `X-Forwarded-Proto`, any stamped `X-Gobby-User-Id`, `X-Gobby-Machine-Id` and `X-Gobby-Key-Id`, and the public Authorization, Cookie, `X-Gobby-Break-Glass`, Origin and User-Agent.
+   - Await the first private frame within two seconds. It must be text `bridge_ready`, version 1, with the current generation. Anything else, or a timeout, fails closed exactly as unbound.
+   - Direct refusal returns that status and body as an HTTP response without 101. Browser refusal answers 101 and then closes 4401 "Authentication required".
+   - Admission answers 101 and registers the public sink in the broker under the entry mode.
+3. **Pump.**
+   - Public text goes through `broker.receive`; returned application text is forwarded as text, and public binary is forwarded as binary.
+   - Private text and binary become `broker.reply` batches. Later private text typed `bridge_ready` is application data.
+   - Either side's close or EOF closes the other within one second with the same code (1011 when none) and calls `broker.disconnect` once.
+   - The public `max_message_size` comes from the bound settings (oversize closes 1009). The private leg allows `MAX_QUEUED_BYTES`.
+   - Keepalive pings every `ping_interval` seconds; no pong within `ping_timeout` closes 1011.
+4. **`publish.rs`** handles POST `/_gobby/ws/bind` and `/_gobby/ws/publish`.
+   - Proof: a loopback peer, the secret and the token. Failure returns 403.
+   - Bind takes a body of at most 4 KiB, mints a 128-bit random hex generation, retires the previous generation's public connections with 1012, and returns `{"generation"}`.
+   - Publish requires the current generation (otherwise 409) and a body of at most 128 MiB (otherwise 413 before buffering past the bound). Each frame must be at most `max_message_size` and the batch must pass `Batch::new`; oversize returns 413. A malformed body returns 400. On success it enqueues once with `broker.publish` and returns 204.
+5. **`NativeWs::retire_on_backend_change(watch::Receiver<BackendStatus>)`** retires the current generation on every change.
+6. **`NativeWs::shutdown()`** stops admission and closes every public connection with 1001 within one second.
+7. **Version.** Bump gdaemon by `0.0.1` in `Cargo.toml`, `Cargo.lock` and `version_pins.py`. Keep `transport.rs` and `publish.rs` each under 850 lines.
+
+**Acceptance:**
+
+- B2.1 - The public 101 carries the correct accept key with no extension or subprotocol, and the private upgrade carries only the allowlisted headers, each synthesized header exactly once even when the public request repeats it or varies its letter case. Text and binary bytes relay exactly in both directions. Subscribe and unsubscribe are consumed by the broker, with acknowledgements ahead of newly selected events, and never forwarded; direct replies are unfiltered. test: `crates/gdaemon/tests/native_ws_transport.rs::native_leg_relays_frames_and_consumes_controls`.
+- B2.2 - Readiness is one-time and entry-specific:
+  - Direct refusal returns the bridge's HTTP status and body without 101.
+  - Browser refusal is 101 and then 4401.
+  - Missing, late, repeated, malformed or wrong-generation readiness, or a two-second timeout, fails closed.
+  - A later application frame typed `bridge_ready` reaches the public client.
+  test: `crates/gdaemon/tests/native_ws_transport.rs::bridge_readiness_is_one_time_and_entry_specific`.
+- B2.3 - Bind and publish admit only a loopback peer presenting both the secret and the current token:
+  - Each bind mints a fresh generation and retires the previous generation's connections with 1012, and a backend status change retires the current generation.
+  - Publish enqueues once.
+  - A stale generation gets 409, oversize input 413, a malformed body 400, and failed proof 403.
+  test: `crates/gdaemon/tests/native_ws_transport.rs::bind_and_publish_admit_only_the_current_pair`.
+- B2.4 - The A1 envelope corpus and the terminal golden corpus replay byte-identically through the native transport against a stub bridge. test: `crates/gdaemon/tests/native_ws_transport.rs::terminal_and_envelope_corpora_replay_native`.
+- B2.5 - Failures are bounded:
+  - Unbound entry and backend connect failures or timeouts end within two seconds.
+  - An oversize public message closes 1009, and ping timeout closes 1011.
+  - Private EOF closes the public side within one second, and public close closes the private side.
+  - Shutdown closes 1001 within one second.
+  - The broker entry count returns to zero.
+  test: `crates/gdaemon/tests/native_ws_transport.rs::failures_are_bounded_and_leave_no_residue`.
+
+**Verification (planned):** `cargo nextest run -p gobby-daemon --test native_ws_transport --test ws_broker --test ws_envelope_golden` under an RM grant and the host watcher, with in-process stub bridges, ephemeral loopback ports and synthetic secret and token. No daemon is started. The modules stay unwired until B3, so live behavior is unchanged. `tdd: true`, implementation_domain backend.
+
+### B3 Native WS activation (depends: B1, B2) [category: code]
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: add the shared NativeWs and listener kind to FrontDoorState and dispatch reserved, application and HMR upgrades in FrontDoor::handle
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: one shared NativeWs across both public listeners, backend HTTP target for both, listener kind on PublicListener, backend-status watch task and shutdown drain
+- `crates/gdaemon/src/state.rs::*` — scope-reason: keep the supervisor TokenSlot on RuntimeState for the private-route proof
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: retarget splice tests from /ws to the HMR path now that /ws is native
+- `crates/gdaemon/tests/native_ws_transport.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bump the managed gdaemon version pin by 0.0.1 in step with Cargo.toml
+- `src/gobby/servers/websocket/server.py::*` — scope-reason: native-mode publisher attribute and start/stop branches that bind instead of serving the websockets listener
+- `src/gobby/servers/websocket/broadcast.py::*` — scope-reason: route BroadcastMixin.broadcast to the native publisher before local fanout in native mode
+- `src/gobby/runner_init/servers.py::init_servers`
+- `tests/e2e/test_native_ws_transport.py`
+- `docs/contracts/native-ws-transport.md`
+- `docs/contracts/parity-ledger-status.d/websocket-chat-voice-ui.json::*` — scope-reason: flip the WS transport `/ws`, `/ws/{path:path}`, subscribe and unsubscribe rows to delegated
+- `docs/contracts/parity-ledger.md`
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: the mounted endpoint keeps its signature; B1 already added the bridge mount.
+- `src/gobby/runner_init/__init__.py` — no-edit-reason: keeps the init_servers re-export and signature.
+- `src/gobby/runner.py` — no-edit-reason: calls init_servers with the same arguments; the publisher attaches inside it.
+- `tests/config/test_restart_config_consumers.py` — no-edit-reason: restart config consumers are untouched; init_servers keeps its signature.
+- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: without both native environment values the publisher is None and startup is unchanged.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: the runner initialization and lifecycle contract stays intact.
+- `src/gobby/runner_lifecycle_subsystems.py` — no-edit-reason: `_start_websocket_server` already records start() failure as a subsystem failure (E51).
+- `crates/gdaemon/src/front_door/ws.rs` — no-edit-reason: splice and splice_over keep serving non-application upgrades unchanged.
+- `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: it replays the terminal corpus through splice_over directly, which B3 keeps.
+- `tests/servers/test_ws_asgi_endpoint.py` — no-edit-reason: Python-only mode keeps browser welcome and 4401 behavior.
+- `tests/servers/websocket/test_broadcast.py` — no-edit-reason: Python-only fanout is unchanged; native routing is covered by B1 and B3 tests.
+- `tests/servers/test_websocket_subscriptions.py` — no-edit-reason: Python-only controls stay A1's oracle.
+- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: subscription selectors keep parity.
+
+**Research context:** `FrontDoor::handle` runs `observe_peer`, then the node or backend split, then the native lease admin routes, then backend status refusal, `authenticate`, `/api/nodes/channel`, and machine routes, and finally splices every upgrade (E38). `serve_with_runtime` builds one `FrontDoorState` per `PublicListener { listener, backend }` (E47). `serve.rs::run` binds the daemon port toward backend HTTP and the WS port toward backend WS (E32). `RuntimeState` holds the `BackendStatus` receiver (E33), and `BackendConfig.write_token` is the supervisor `TokenSlot` (E34). `WebSocketServer.start` serves `websockets` with `process_request=self._authenticate` (E49) and is awaited by `_start_websocket_server`, which records failure (E51). `BroadcastMixin.broadcast` returns early with no Python clients (E44). In Python-only mode the ledger rows `WS transport /ws`, `WS transport /ws/{path:path}`, `WS message subscribe` and `WS message unsubscribe` are `proxied`, blocked on #21558; `delegated` means natively served (precedent: gmcp-stdio 1.7.8). Decisions 1 to 12 in the P2 framing apply.
+
+Implementation:
+
+1. **`FrontDoorState`** gains `native_ws: Arc<NativeWs>` and `ws_listener: bool`. `FrontDoorState::new` builds an unbound `NativeWs` with no `TokenSlot`, so bind is refused in tests. `serve_with_runtime` overrides both fields per listener from one shared instance, which holds the runtime `TokenSlot` (kept on `RuntimeState` by `prepare`).
+2. **Dispatch in `FrontDoor::handle`**, backend door only:
+   - Immediately after the node split, a `/_gobby/` path goes to the B2 publish handlers for POST bind or publish, or to 404 otherwise. This runs before `authenticate`, because `authenticate` strips `X-Gobby-Front-Door`.
+   - At today's upgrade branch, a direct-listener upgrade on any path, or an HTTP-listener upgrade on `/ws` or `/ws/...`, calls `native_ws.accept` with the matching entry mode. Every other upgrade keeps `ws::splice`.
+   - A non-upgrade request on the direct listener returns 426 with `Upgrade: websocket`.
+3. **`serve.rs`** targets backend HTTP for both listeners and spawns `retire_on_backend_change` from the runtime receiver. On the shutdown signal it awaits `native_ws.shutdown()` before `serve_doors` returns.
+4. **Python wiring.**
+   - `init_servers` attaches `native_publisher_from_environment(websocket_config)` to `WebSocketServer.native_publisher`.
+   - `WebSocketServer.start` binds through the publisher instead of calling `serve()` when the publisher exists, and raises on bind failure so the existing subsystem failure path reports it. `stop` stops the publisher.
+   - In native mode `BroadcastMixin.broadcast` hands the encoded frames to `publisher.publish` and skips local fanout, ahead of the `self.clients` early return.
+   - Python-only mode is byte-for-byte unchanged.
+5. **Proxy path.** The production application splice path for `/ws` and the direct listener is removed. No proxy fallback and no retiring verifier remains.
+6. **Ledger.** Mark the four rows `delegated`, citing B3's tests, and regenerate with `uv run python scripts/generate_parity_ledger.py`. `ping` and application message rows stay `proxied`.
+7. **Contract.** Write `docs/contracts/native-ws-transport.md`: entry modes and path claims, the private header allowlist and `bridge_ready` schema, bind and publish proof, status codes and limits, generation and retirement rules, close codes, credential owners, and the Orchestrator-run cutover proof (binary-set promotion through `promote_workspace_binary_set`).
+8. **Version.** Bump gdaemon by `0.0.1` again.
+
+**Acceptance:**
+
+- B3.1 - Listener dispatch:
+  - HTTP `/ws` and `/ws/x` are native browser entry, and every direct-listener path is native direct entry, sharing one `NativeWs`.
+  - `/__vite_hmr` keeps the splice, and `/api/nodes/channel` is unchanged.
+  - Other `/_gobby/` paths return 404 without forwarding, and non-upgrade requests on the direct listener return 426.
+  test: `crates/gdaemon/tests/native_ws_transport.rs::application_paths_are_native_and_hmr_is_proxy`.
+- B3.2 - Through the isolated supervised daemon:
+  - Operator keys are admitted on both entries.
+  - An invalid or revoked key with a valid cookie is refused at the front door, and a managed bearer with a valid cookie is denied on both entries.
+  - Break-glass with a valid cookie is admitted on browser entry only, through the cookie.
+  - A valid cookie alone is admitted on browser entry and refused on direct entry.
+  - Forged identity, entry, path, generation, forwarded or bridge headers are ignored, including duplicated and letter-case-variant copies.
+  - A public `/_gobby/ws/bridge` request gets 404, and bind or publish without proof is refused.
+  test: `tests/e2e/test_native_ws_transport.py::test_credential_ownership_and_private_channel_refusal`.
+- B3.3 - Native-mode Python binds from `start()` before ready with no client, serves no `websockets` listener, and has exactly one fanout owner; Python-only mode is unchanged. Killing the idle Python backend retires its generation, and the respawned backend binds a new generation and restores admission without a manual bind. A stale-token bind is refused. test: `tests/e2e/test_native_ws_transport.py::test_backend_respawn_rebinds_and_single_fanout`.
+- B3.4 - Reconnect after a backend restart starts from the entry mode's initial subscription state. Message limits, backend failure and daemon stop are bounded (public close 1001 within one second), and no client, handler or lease residue remains. test: `tests/e2e/test_native_ws_transport.py::test_failure_reconnect_and_shutdown_are_bounded`.
+- B3.5 - Native gterm direct access and a running terminal survive daemon loss and restart, independently of the native WS listener. test: `tests/e2e/test_native_ws_transport.py::test_gterm_remains_available_without_daemon`.
+- B3.6 - The contract documents entry modes, the public and private frame boundary, credential owners, proofs, limits, failure semantics and the cutover proof, and states that no retired verifier or application proxy fallback remains. file: `docs/contracts/native-ws-transport.md`.
+- B3.7 - The four transport and control rows are `delegated`, and the committed ledger equals its regeneration. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+**Verification (planned):**
+- `cargo nextest run -p gobby-daemon --test native_ws_transport --test front_door` (RM grant and host watcher).
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_native_ws_transport.py tests/servers/test_native_ws_bridge.py tests/servers/test_native_ws_publish.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_app_factory_vite_proxy.py tests/servers/test_websocket_subscriptions.py tests/terminals/test_composer_proof_events.py tests/test_parity_ledger.py tests/test_runner_backend.py` (RM START and DONE).
+- The e2e tests use `tests/e2e/conftest.py`'s isolated `daemon_instance` with temporary home, test hub and ephemeral ports. They never read operator token or bootstrap files and never contact the running daemon. No full pytest run.
+- Production activation is the Orchestrator's announced cutover; this leaf runs none.
+- `tdd: true`, implementation_domain fullstack.
+
 ## D1 Auth-integrated private bridge and native WS activation (depends: A1, A2, A3)
 `kind: deferred`
 
@@ -146,60 +377,7 @@ deferral:
 
 At expansion, the Orchestrator creates this planning tail under #21558 with `needs-planning` and `deferred-from:native-ws-transport:D1`, then records explicit blocked-by edges to #23519, #23523 and the A1/A2/A3 implementation leaves. Verify the resulting dependency rows; neither a prose wait nor a manifest external edge suffices. Replace the placeholder with that real task ref and validate/hash again. Before implementing the tail, verify #23519's landed interface and #23523's separate completed live-activation receipt, materialize this fixed specification as implementation leaf coverage, and obtain normal plan approval. The native-WS production cutover still belongs to the Orchestrator; #23523 activates auth, not this WS implementation. Do not create a parallel authentication plan or drop either external edge.
 
-Targets for that gated implementation:
-- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
-- `crates/gdaemon/src/front_door/ws.rs::*` — scope-reason: replace application WS splice dispatch with native external transport while retaining development HMR splice
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: instantiate one shared native WS state and drain it on shutdown across both public listeners
-- `crates/gdaemon/Cargo.toml`
-- `crates/Cargo.lock`
-- `crates/gdaemon/src/websocket/transport.rs`
-- `crates/gdaemon/src/websocket/publish.rs`
-- `crates/gdaemon/src/websocket/mod.rs::*` — scope-reason: register the gated runtime integration modules and constructor
-- `src/gobby/servers/websocket/native_bridge.py`
-- `src/gobby/servers/websocket/native_publish.py`
-- `src/gobby/servers/websocket/server.py::WebSocketServer._handle_connection`
-- `src/gobby/servers/websocket/server.py::WebSocketServer._handle_message`
-- `src/gobby/servers/websocket/server.py::WebSocketServer.start`
-- `src/gobby/servers/websocket/broadcast.py::BroadcastMixin.broadcast`
-- `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`
-- `src/gobby/runner_init/servers.py::init_servers`
-- `src/gobby/runner.py::run_gobby`
-- `src/gobby/runner_front_door.py::*` — scope-reason: add the child-incarnation notification registration/state and bounded replacement notification to the existing monitor, with disarm cancellation; preserve its spawn/backoff policy
-- `tests/test_runner_front_door.py::*` — scope-reason: extend the existing child/runner harness for notification, idle-respawn, failed-bind and shutdown races
-- `tests/servers/test_native_ws_bridge.py`
-- `tests/servers/test_native_ws_publish.py`
-- `tests/e2e/test_native_ws_transport.py`
-- `crates/gdaemon/tests/native_ws_transport.rs`
-- `crates/gdaemon/tests/ws_golden_proxy.rs::corpus_replays_byte_equal_through_proxy`
-- `docs/contracts/native-ws-transport.md`
-
-**Granularity:** this is one gated activation outcome, not a monolithic replacement of application handlers. The pure codec/broker state machines were separated into A2/A3. Private bridge admission, native external dispatch and publication must activate together; otherwise one class of replies or broadcasts silently disappears. Move the additional runtime machinery into the listed new files. The current WS server is 805 lines, runner initialization 710, and Rust serve 390; leave existing production files below 850 and every hand-maintained production file below 1,000. Tests are exempt. Resweep exact symbols and consumers after #23519; an observed symbol rename is a fresh anchor correction, not permission to invent source.
-
-Consumers unchanged (current baseline, to recheck when this tail is materialized):
-- `src/gobby/servers/app_factory.py` — no-edit-reason: retain the mounted endpoint's public function signature and re-export while the front door takes external ownership.
-- `src/gobby/runner_init/__init__.py` — no-edit-reason: retain the init_servers re-export and signature.
-- `tests/servers/test_app_factory_ui_modes.py` — no-edit-reason: the Python-only UI mounts remain available under the existing isolated mode.
-- `tests/servers/test_ws_asgi_endpoint.py` — no-edit-reason: browser welcome/auth-close behavior is preserved; additional native/private-route coverage is owned by the new tests.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: the runner initialization/lifecycle contract stays intact.
-- `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: existing connection cleanup behavior is preserved and extended by the new bridge tests.
-- `tests/servers/websocket/test_broadcast.py` — no-edit-reason: existing producer signatures and Python characterization remain unchanged outside activated native mode.
-- `tests/servers/test_websocket_subscriptions.py` — no-edit-reason: supported Python controls remain unchanged and supply A1's oracle.
-- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: existing supported subscription/event selectors retain parity.
-
-These verified existing paths are baseline literal-sweep coverage, not a claim that overlay graph usages were exhaustive. Any consumer whose assumptions differ after #23519 must move into the integration Targets before its implementation plan is finalized.
-
-**Research context:** E1/E2 place both public listeners in the current Rust front door and route every upgrade through splice; E19 proves its backend request and byte copy. E11 identifies the application dispatch table that stays in Python. E12 identifies Python's registration, welcome, pending interactions and disconnect cleanup; its welcome fields must survive exactly. E13 shows browser handshake-first admission with cookie authentication and close 4401; E14 shows the current direct bearer rejection shapes. E20 distinguishes browser subscription initialization; E22 preserves Authorization-before-cookie precedence and HTTP-only break-glass eligibility. #23519's authoritative task description supersedes the bearer verifier: `GOBBY_FRONT_DOOR_SECRET`, native operator key resolution, preserved managed/break-glass headers and Python front-door identity callback are planned there. The bridge uses that landed contract without recreating token-file helpers. The separate #23523 card confirms live activation is a needs-planning tail after the key-cutover leaves, not a consequence of #23519 closing. E6 proves why raw publication frames and direct replies need separate paths; E9 fixes the terminal corpus location. E10/E15 define existing transport limits/startup; E25 supplies the existing enabled switch and E26 anchors HTTP-before-subsystem binding. E27/E28 identify the sole child-respawn monitor and its disarm cancellation; E29 anchors runner wiring, E30 successful child startup, and E31 the one-time WS subsystem start. E16 supplies the existing WebSocket dependency and E18 the gclient entry path.
-
-Implementation specification:
-
-1. Native dispatch claims application upgrades on the configured public WS listener and the HTTP listener's `/ws` and `/ws/{path}` application paths. Preserve the direct listener's root entry and gclient's `/ws` entry (E18). Other public HTTP upgrades, including Vite HMR, retain splice behavior. Both application entry points share one broker, not one per listener. HTTP route dispatch and existing TLS/loopback policy remain intact.
-2. Operator bearer/API keys pass exactly once through #23519's native front-door resolver. Managed `gobby-agent-v1` bearers remain for Python's existing managed-capability policy, not for an operator-key verifier. Strip all caller-supplied identity/bridge-control headers before creating trusted private context. Preserve the original public entry mode, scope type `websocket`, path/query, scheme and front-door-observed peer, plus Authorization presence/classification, original managed or otherwise unconsumed Authorization, original Cookie, and original break-glass header. Carry resolved operator user/machine/key IDs separately from caller credentials. Never replace the original WS scope/peer with the private bridge's loopback HTTP location. The pair secret authenticates this context; a client cannot select its entry mode, rewrite its public path or fabricate operator IDs.
-3. Mount the backend-only application bridge at `/_gobby/ws/bridge` on the existing private Python HTTP/ASGI server, authenticated with the per-boot front-door secret. Both Rust public entry modes use this one backend HTTP address from existing backend-port resolution; do not select the direct listener's old Python WS target for the bridge. The dedicated Python WS listener supplies only the existing Python-only mode, not a second private admission path. Public paths with the reserved bridge prefix are refused rather than proxied. The bridge checks the secret in constant time, then applies the original entry's existing credential owner/precedence using the trusted original context. Direct entry uses #23519's front-door WS identity admission and requires resolved operator identity; cookies cannot turn direct-entry managed/rejected Authorization into operator admission. Browser entry uses AuthService's request admission on a reconstructed original `websocket` scope: verified operator identity first; otherwise original managed Authorization policy before cookie; cookie is checked only by this bridge. The current managed route matrix excludes `/ws`, so managed+cookie is rejected on both entry modes rather than falling through to cookie. Break-glass remains HTTP-only and cannot gain WS eligibility from the bridge's private transport. A valid cookie with an otherwise ineligible break-glass header admits only the browser cookie path; direct still refuses. Invalid/revoked operator keys remain front-door refusals even with a valid cookie. No raw operator key is checked again in Python, and no private metadata turns a rejected credential into a resolved identity.
-4. Establish one bounded private connection per external client, with version-1 private JSON outer records: `channel: control` versus `channel: application`. Application records carry a text payload unchanged or a base64-encoded binary payload with an explicit encoding field; decoding restores exact original bytes. Admission has exactly one pre-application readiness phase. Only its first authenticated `control/bridge_ready` record supplies admission, settings and opaque transport ID; repeated/late readiness, unknown controls or forged context fail the bridge closed. A public application frame whose JSON contains `type: bridge_ready` stays inside an `application` record and is never consumed as private control. No private outer record reaches the public socket. The adapter feeds current Python handlers, preserves welcome/client/conversation IDs and pending interactions, and invokes their cleanup once. It receives the trusted entry mode for the subscription initialization in A2; Rust alone consumes subscribe/unsubscribe. Application text/binary payloads and close semantics remain opaque. Logical Python bridge clients bypass the old broadcast fanout, while their direct replies remain unfiltered. No application handler or broker registration runs before admission; browser accept-then-4401 and direct pre-upgrade HTTP refusals remain entry-specific. Bound encoded private records before allocation and decoded application bytes against the configured maximum; malformed base64, unknown encodings and unsupported private versions terminate the bridge.
-5. Add the explicit internal publish channel at `/_gobby/ws/publish` on the front door. It admits only loopback paired-Python requests with the same per-boot secret; valid user bearer/cookie credentials alone are insufficient. Handle it separately from generic user authentication and refuse public forwarding. Rust creates a fresh random generation ID at each native transport boot, independent of the pair secret reused across child respawns. The endpoint has two private operations: `bind` installs the paired Python transport settings and returns that generation; `publish` accepts one batch containing a filter object and the already encoded frame strings from `BroadcastMixin.broadcast(message, frames=...)`, plus that bound generation. Bind has the same loopback/secret checks, a two-second deadline and bounded configuration body; it needs no external client. Public admission remains closed until bind succeeds. Bridge readiness must match the bound settings and generation, rather than supplying global configuration for the first time. Cap the total frame bytes at A3's 64 MiB bound and each public frame at the configured message-size bound. Account for JSON escaping separately with a bounded encoded HTTP body limit of 128 MiB. The receiver rejects wrong generations, wrong secrets, malformed/oversize batches and non-loopback callers. It enqueues once into A3 and never reserializes the public frames.
-6. The Python publisher uses an existing asynchronous HTTP client with a two-second deadline and bounded request size; no durable queue and no retry after an ambiguous response. Forward publication even when Python has no direct public clients. Reuse the existing `front_door.enabled` choice: Python-only mode keeps its current fanout; an enabled native front door has exactly one native fanout owner and never broadcasts through both. Native readiness failure refuses admission and never falls back to an application splice or Python fanout. No new proxy/native/compare toggle is introduced. On a failed/ambiguous publish, atomically mark that generation failed and stop publication to it. The reachable actuator is the local registry of that generation's paired application bridge legs: close them concurrently within a one-second bound, terminating their adapter handlers even when the publish HTTP channel is blackholed. Rust's independent private-leg reader treats closure/EOF as retirement and closes its public connection within one further second through A3. No invalidation HTTP request or functioning publish response is needed. Cleanup remains once-only; an old generation cannot close a new generation. Test the full two-second publish plus two-second retirement bound. Clients reconnect/reconcile through existing paths; never claim delivery or replay an ambiguous batch.
-7. Rust uses the existing workspace WebSocket dependency/version family (gclient already uses tokio-tungstenite 0.26), rather than hand-writing RFC frame parsing. The new module negotiates only implemented extensions, supports masked text/binary/continuation frames, ping/pong and close, and preserves current max-message size and ping settings supplied by authenticated publisher bind and checked by bridge readiness. Until the bridge configuration is ready, admission fails closed. A missing backend is a bounded unavailable/1013 outcome; never transparently reconnect an application bridge and replay its side effects. Cancellation closes the private and public legs and releases broker/handler state.
-8. Wire the publisher and native bridge in the existing runner initialization and WS server. Perform the initial private bind from `WebSocketServer.start`, after the existing lifecycle has bound Python HTTP (E26), never synchronously during constructor initialization or front-door child startup. Bind succeeds before the WS subsystem reports ready; failure reports a bounded subsystem failure and keeps native admission closed. In `run_gobby`, immediately after assigning `active.front_door_child` (E29) and before `active.run`, register the publisher with the existing child monitor. Registration exposes the current successful child incarnation; a monotonically increasing local incarnation counter identifies each successful `FrontDoorChild.start`, independently of PID reuse. The initial publisher start binds that current incarnation. After each successful replacement `start` returns in `_watch` (E27/E30), the monitor invokes the registered async publisher notification without requiring clients or publications. There is no second polling loop. Before publisher startup, retain only the latest incarnation; after startup, serialize notifications with initial bind and attempt exactly one authenticated two-second bind for each current incarnation. Retire the old publication state/bridge legs before installing the replacement. Commit a bind result only if its incarnation is still current and shutdown has not begun; late old results cannot overwrite or close new state. Duplicate notifications are idempotent. A replacement during initial or pending bind supersedes that attempt and triggers its own bounded bind. The replacement remains unavailable until this path succeeds. Bind failure is surfaced through the existing subsystem failure/logging path, keeps that incarnation unavailable, and never escapes to kill the respawn monitor or restarts a healthy child. No application batch is retried. `disarm` unregisters notifications and cancels pending binds on their owning loop; publisher shutdown awaits cancellation before retiring state. A failed generation cannot be reused or receive replayed publication; rebinding a distinct generation does not retry any failed application batch. Preserve current producer entry points, attention epoch/sequence values and caller-owned ordering locks. Shutdown stops admission, retires the broker and drains/closes bounded writers before listener teardown; it never kills gterm or its host. Remove the production application splice path after parity, while retaining the explicit HMR proxy. Any mode switch is the Orchestrator's announced cutover using the repository binary-set promotion contract; this planning seat does not run it.
+Materialized 2026-10-16 as P2 (B1, B2, B3) from the #23881 spec, re-anchored at 0.5.0 `7ba471a18c`. Implementation Targets, research context, decisions and tests live in those sections; the obligations below remain this deferral's coverage record and map to them: D1.1 -> B3.1; D1.2 -> B1.1, B1.2, B3.2; D1.3 -> B1.3, B2.2; D1.4 -> B1.4, B1.5, B2.3, B3.3; D1.5 -> B2.4; D1.6 -> B2.5, B3.4; D1.7 -> B3.5; D1.8 -> B3.6, B3.7. #23881 closes when B1 to B3 close.
 
 Obligations retained for the deferred task:
 
@@ -211,8 +389,6 @@ Obligations retained for the deferred task:
 - D1.6 - Message limits, ping/close, backpressure, backend failure, reconnect and shutdown are bounded and leave no client/handler/lease residue. test: `tests/e2e/test_native_ws_transport.py::test_failure_reconnect_and_shutdown_are_bounded`.
 - D1.7 - Native gterm direct access and a running terminal survive daemon loss/restart independently of the new WS listener. test: `tests/e2e/test_native_ws_transport.py::test_gterm_remains_available_without_daemon`.
 - D1.8 - The public/internal frame boundary, credential owners, limits, failure semantics and cutover proof are documented; no retired verifier or application proxy fallback remains active. file: `docs/contracts/native-ws-transport.md`.
-
-**Focused verification (planned):** isolated tests with temporary homes, synthetic secrets, test-hub database and ephemeral ports. Run the new bridge/publish tests, current subscription and terminal-golden Python harnesses, the new native transport e2e file, Rust native transport and shared-corpus tests. Run `tests/test_runner_front_door.py` for real monitor notification, idle respawn, failed rebind and disarm coverage. Run `tests/servers/test_ws_asgi_endpoint.py` and `tests/servers/test_app_factory_vite_proxy.py` for existing entry/HMR behavior, and the composer-proof tests for subscription consumers. Sweep every changed production/test consumer before finalizing targets. No full pytest run. Integration tests must not open the operator's token/bootstrap files or contact the running daemon. Implementation requires TDD RED/GREEN/final GREEN, scoped lint/type/test audits and source-based acceptance review.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -228,6 +404,8 @@ Obligations retained for the deferred task:
 2026-10-08: Refresh by W4 gobby#15528 on LM7's direction: the Downstream paragraph in C1 names what unblocks #21562, #21568 and #23219; E1 is re-cited at 0.5.0 `3987d09dcc4311a1ebda7d58a47d885a9413560a` with #23519's landed auth surface in E2, E14 and E22; the status line is current. No acceptance item changed. Plan Adversary gobby#15401 reviews this delta.
 
 2026-10-09: N1 repair by Plan Writer gobby#15860 on LM7's assignment. Adv1 gobby#15401's delta review of 41884d6ebc passed with one nit, N1: the C1 Downstream paragraph overstated readiness. It now says D1's activation and the closure of #21558 remove the WS prerequisite from #21562, #21568 and #23219, while #21560 still blocks #21562 and #21568, #23214, #23216, #23217 and #23218 still block #23219, and #23219 keeps its needs-planning hold. "A1 to A3 alone unblock none" is preserved. The status line records Adv1's PASS. No acceptance item, Target or M1 entry changed. Adv1 rechecks N1.
+
+2026-10-16: #23881 spec by Lane 8 developer gobby#16915 on the Orchestrator's assignment via LM8. Gates confirmed: A1 #23878, A2 #23879, A3 #23880, #23519 and #23523 closed. Re-anchoring found #23457 (`fde8c6182d`) deleted `src/gobby/runner_front_door.py` and inverted process ownership (gdaemon supervises Python), so E27 to E30 are retired and the old item 8 monitor machinery is replaced by per-incarnation bind with supervisor-token proof (P2 decisions 1 to 3). #24444's route families add no WS family (decision 4). The private leg drops the JSON outer record and base64 in favour of one-to-one WebSocket framing after a single first-frame `bridge_ready` (decision 6). gdaemon already carries tokio-tungstenite 0.29 (E53), superseding E16's 0.26. D1's eight obligations are kept and mapped to B1 to B3; the parity ledger rows are a new Target. LM1 gobby#15990 agreed to the auth seam and pair proof. Security gobby#16011 and Lane 8 reviewer gobby#16912 review; no M1 derivation, expansion, restart or main-checkout write has occurred.
 
 ## E1 Source evidence
 `kind: framing`
@@ -267,6 +445,31 @@ The following are hash-verified `gcode evidence` reads on the main checkout at 0
 - E29 — `src/gobby/runner.py::run_gobby`, excerpt `65e4106e84f6a189659d1cf182568e9548f788fa3901d2865a4088986ade60b3`: `498| runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)` and `501| active.front_door_child = front_door` anchor publisher/child wiring before run.
 - E30 — `src/gobby/runner_front_door.py::FrontDoorChild.start`, excerpt `d7fe7c5cc571a1ea4405cd3071430e5fe1eefad06894db71d103820cf8fe6b14`: `133| self._spawn()` and `135| self._wait_until_serving()` establish a successfully serving child incarnation.
 - E31 — `src/gobby/runner_lifecycle_subsystems.py::_start_websocket_server`, excerpt `3c271e658b5a8562acd3a23e5087c70ad5fb22020aacf03303f2c32c4dd6cfd7`: `593| runner._websocket_task = asyncio.create_task(` and `594| runner.websocket_server.start(), name="websocket-server"` anchor one initial WS startup, not a child-respawn trigger.
+
+Re-anchor 2026-10-16 (gobby#16915) at 0.5.0 `7ba471a18c4d547c18114fda21adb30acb0eb1d9` through `gcode evidence` on the lane-8 worktree (byte-identical to that commit). E27, E28 and E30 are retired: `src/gobby/runner_front_door.py` was deleted by `fde8c6182d` (#23457). E29's FrontDoorChild wiring no longer exists. E2 is superseded by E38, E16 by E53 and E22 by E39 to E41.
+
+- E32 — `crates/gdaemon/src/serve.rs` lines 135-240, excerpt `d149840d511310b0d2f3cb5db8b81d55867b053fe96c28003ec6a40f90945e3b`: `136| rand::thread_rng().fill_bytes(&mut secret);`, `211| crate::state::RuntimeState::prepare(&bootstrap, home, &secret, pool.clone())?`, `236| let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;`, `237| listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);`.
+- E33 — `crates/gdaemon/src/state.rs::RuntimeState::prepare`, excerpt `46b37e09f102e097145b08e175476845132bd328ea4dca252ef5565404bee749`: `107| .insert("GOBBY_FRONT_DOOR_SECRET".into(), secret.into());` and `123| backend: supervisor.subscribe(),`.
+- E34 — `crates/gdaemon/src/lifecycle/backend.rs::BackendChild::spawn`, excerpt `b0563ec0b142578225dfb932b29045be9a04d5397ce7817a6ce03a6ad3b87e24`: `348| rand::thread_rng().fill_bytes(&mut token);`, `351| let write_token = config.write_token.install(token.clone());`, `352| match (&writer).write_all(format!("{token}\n").as_bytes()) {`.
+- E35 — `crates/gdaemon/src/lifecycle/backend.rs::BackendSupervisor::supervise`, excerpt `35c61d95e8201fe82f505cad4dfbe74cfa22d7ad97c1adb36351b2a0020047f4`: `194| let mut backend = BackendChild::spawn(&self.config)?;`, `197| self.state.send_replace(BackendStatus::Starting { pid });`, `208| status = backend.child.wait() => break status?,`, `262| self.state.send_replace(BackendStatus::Backoff { delay });`.
+- E36 — `src/gobby/runner_backend.py::watch_supervisor`, excerpt `65431cd83b441c57ec5318e9bb1ca97c98f58bceb30070a5057168f6423956ed`: `94| value = os.environ.get("GOBBY_SUPERVISOR_FD")` and `136| on_eof()`.
+- E37 — `crates/gdaemon/src/front_door/auth.rs::AuthState::authenticate`, excerpt `3d0de92eedf12c7e483b4f09c799de1f7ae9add649fc584f6cf205386e0cdf0d`: `117| headers.remove(name);`, `130| if bearer.starts_with("gobby-agent-v1.") {`, `144| self.secret.as_str(),`.
+- E38 — `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, excerpt `cf8ccd687896735079dbbd54228c62dfd416955bb7d82100c6c154bc5d9d27d6`: `105| observe_peer(request.headers_mut(), peer, https);`, `123| node.relay.splice(request, *ws_listener).await`, `134| if crate::lease::admin_api::is_route(request.uri().path()) {`, `181| if let Err(response) = backend_state.auth.authenticate(request.headers_mut()).await {`, `184| if request.uri().path() == "/api/nodes/channel"`, `192| if ws::is_upgrade(request.headers()) {`, `193| ws::splice(&state, request).await`.
+- E39 — `src/gobby/servers/auth_service.py::AuthService._legacy_rejection`, excerpt `48440f857e5f7cc0ed3a7099c327ed44dd4a98c77e7bc43dc01f35d87962a926`: `340| if self.break_glass_admits(request):`, `342| if self.verified_front_door_identity(request) is not None:`, `350| claims = self._classify_agent_token(request, parts[1])`, `353| session_token = request.cookies.get(_SESSION_COOKIE)`.
+- E40 — `src/gobby/servers/auth_service.py::AuthService.break_glass_admits`, excerpt `5bf3690b982536697aaf350db307dd84734dcf9a1b61f220aef08ad807d158d8`: `385| if request.scope.get("type") != "http" or request.client is None:` and `387| if not is_loopback_host(request.client.host):`.
+- E41 — `src/gobby/servers/auth_service.py::verified_front_door_identity`, excerpt `48164dbe61c11d85aa37ee017da4eefe81ca8340f170944b9cc06b23c86fe583`: `197| if not secrets.compare_digest(supplied.encode(), secret.encode()):` and `202| if not user_id or not machine_id or not key_id:`.
+- E42 — `crates/gdaemon/src/nodes/channel.rs` lines 300-360, excerpt `5ab4d3ceded594d0488168bc7ac6d945d81a65558f35b56025fd61b7b8aea12d`: `349| tokio_tungstenite::client_async_with_config(request, stream, None).await?;`.
+- E43 — `crates/gdaemon/src/websocket/broker.rs::BroadcastBroker::publish`, excerpt `e9352eddbf09e7f5810b40fb4e6c8a6fec0973e88014b275cdaa02244971d6a5`: `277| .filter(|(_, entry)| entry.state.matches_broadcast(filter) && !entry.link.push(batch))` and `281| retire(&mut entries, id, Retirement::Overflow);`.
+- E44 — `src/gobby/servers/websocket/broadcast.py::BroadcastMixin.broadcast`, excerpt `72f3b2ac1de123c1b2b14b9c645ef7be72270320c99cea28fba82f2301b55902`: `189| if not self.clients:`, `193| payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]`, `201| if self._is_subscribed(websocket, message):`.
+- E45 — `src/gobby/servers/_app_ui.py::_mount_vite_hmr_proxy`, excerpt `7e17b610326428f6c06bba728b917563aea127488feb5dc0ec4062b140109844`: `178| @app.websocket("/__vite_hmr")` and `182| @app.websocket("/__vite_hmr/{path:path}")`.
+- E46 — `src/gobby/runner_backend.py::backend_bind`, excerpt `71f6a60e293a31125b7e855b46f374643bd4de0c7d5e21de8710d4e7c60c7450`: `33| if bootstrap.front_door.enabled or "GOBBY_SUPERVISOR_FD" in os.environ:` and `34| http, ws = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)`.
+- E47 — `crates/gdaemon/src/serve.rs::serve_with_runtime`, excerpt `bc84e04476bcad7ff462db6780088ac0d81eab8307d03ff3a1f4a3ee7119b789`: `426| for PublicListener { listener, backend } in listeners {`, `432| ..FrontDoorState::new(backend, BackendState::Down, auth.clone())`, `434| let table = RouteTable::new(FAMILIES, routes, &state);`.
+- E48 — `crates/gterminals/src/write_api.rs::TokenSlot::authorize`, excerpt `5d92ac7d3f8eb2ff10972c4e1dd7682068886191fcde41592b78002aead1185f`: `39| let current = current.as_deref().ok_or(WriteRefused::NoBackend)?;` and `42| Some(presented) if constant_time_eq(presented.as_bytes(), current.as_bytes()) => Ok(()),`.
+- E49 — `src/gobby/servers/websocket/server.py::WebSocketServer.start`, excerpt `c6893053d5da62735866bdb7d8e6bd5f772bc416ee91d6b1e2411a312e11e79f`: `711| self._server = await serve(`, `715| process_request=self._authenticate,`, `719| compression="deflate",`.
+- E50 — `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`, excerpt `c2279c93d1ad91b5cbb4a55830a0b36094770054bb703275bf4ec7bd1664db5d`: `55| await adapter.accept()`, `58| await adapter.close(code=1013, reason="WebSocket server unavailable")`, `62| server.auth_service.is_request_authenticated,`, `66| await adapter.close(code=4401, reason="Authentication required")`.
+- E51 — `src/gobby/runner_lifecycle_subsystems.py::_start_websocket_server`, excerpt `3c271e658b5a8562acd3a23e5087c70ad5fb22020aacf03303f2c32c4dd6cfd7`: `609| runner.websocket_server.start(), name="websocket-server"` and `612| lambda task: _record_websocket_startup_result(task, tracker)`.
+- E52 — `src/gobby/servers/websocket/auth.py::AuthMixin._authenticate`, excerpt `6801c26a7fba0bb3b3629d031283ba12caf6c35fc50efacd4b558339755e670d`: `50| b"Unauthorized: Missing Authorization header\n",`, `62| b"Unauthorized: Expected Bearer token\n",`, `76| b"Forbidden: Invalid token\n",`.
+- E53 — `crates/gdaemon/Cargo.toml` lines 20-30, excerpt `afc1953cd0ad6f9a7d9fcd9b0fd95c9bf764fb18811a99bfd82c68296d782f33`: `24| axum = { version = "0.8", default-features = false, features = ["ws"] }` and `26| tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }`.
 
 ## Q1 Planning validation
 `kind: verification`

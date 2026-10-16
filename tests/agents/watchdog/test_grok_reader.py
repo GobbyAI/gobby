@@ -372,6 +372,93 @@ async def test_earlier_malformed_record_invalidates_later_completed_turn(tmp_pat
     assert snapshot.has_conclusive_turn_completed is False
 
 
+def _turn_completed() -> dict[str, object]:
+    return _update(
+        "turn_completed",
+        method="_x.ai/session/update",
+        prompt_id="prompt-id",
+        stop_reason="end_turn",
+    )
+
+
+async def test_malformed_record_before_the_latest_turn_does_not_block_its_completion(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "earlier-turn-malformed.jsonl"
+    _write(
+        path,
+        [
+            {"method": "session/update", "params": []},
+            _update("user_message_chunk", content={"text": "new turn"}),
+            _turn_completed(),
+        ],
+    )
+
+    snapshot = await GrokTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.last_malformed_line_num is None
+    assert snapshot.turn_started_event is not None
+    assert snapshot.turn_started_event.line_num == 2
+    assert snapshot.has_conclusive_turn_completed is True
+
+
+async def test_new_turn_forgets_a_tool_call_left_open_by_the_previous_turn(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "open-tool-then-new-turn.jsonl"
+    _write(
+        path,
+        [
+            _update("user_message_chunk", content={"text": "first"}),
+            _update("tool_call", toolCallId="call-1"),
+            _update("user_message_chunk", content={"text": "second"}),
+        ],
+    )
+
+    snapshot = await GrokTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.has_open_tool_call is False
+    assert [event.payload_type for event in snapshot.tail] == ["user_message_chunk"]
+
+
+async def test_cold_read_decodes_from_the_latest_turn_and_matches_an_incremental_read(
+    tmp_path: Path,
+) -> None:
+    earlier_turns = [
+        record
+        for _ in range(20)
+        for record in (
+            _update("user_message_chunk", content={"text": "earlier"}),
+            _update("agent_thought_chunk", content={"text": "thinking"}),
+            _turn_completed(),
+        )
+    ]
+    latest_turn = [
+        _update("user_message_chunk", content={"text": "latest"}),
+        _update("tool_call", toolCallId="call-1"),
+        _update("tool_call_update", toolCallId="call-1"),
+        _update("agent_message_chunk", content={"text": "done"}),
+        _turn_completed(),
+    ]
+    records: list[dict[str, object] | str] = ["{broken", *earlier_turns, *latest_turn]
+    path = tmp_path / "long.jsonl"
+    path.write_text("", encoding="utf-8")
+    incremental = GrokTranscriptWatchdogReader()
+    for record in records:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write((record if isinstance(record, str) else json.dumps(record)) + "\n")
+        await incremental.read(str(path))
+
+    with patch("gobby.agents.watchdog._scan.json.loads", wraps=json.loads) as loads:
+        cold = await GrokTranscriptWatchdogReader().read(str(path))
+
+    assert loads.call_count < len(latest_turn) * 2
+    assert cold == await incremental.read(str(path))
+    assert cold.turn_started_event is not None
+    assert cold.turn_started_event.line_num == len(records) - len(latest_turn) + 1
+    assert cold.has_conclusive_turn_completed is True
+
+
 async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:
     path = tmp_path / "empty.jsonl"
     path.write_text("", encoding="utf-8")

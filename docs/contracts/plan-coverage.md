@@ -860,6 +860,7 @@ preserved. A reuse that commits first is what a later claim or close observes.
   edge that would add one is listed under `skipped_edges` and is not written.
   New and reused leaves may still depend on those leaves. Closed obsolete
   leaves are not matches; a later apply may create a new leaf for that section.
+  Coverage QA ignores their covers labels for both matching and invalid-label checks.
   A placeholder deferral is reused when the prior run's `deferral_task_map`
   still names a live task, so a second holder is not created. A reused open
   holder gains the amended spec's blocker edges; its text is not refreshed.

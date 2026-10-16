@@ -22,6 +22,7 @@ from functools import cached_property, lru_cache
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
+from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.tasks.command_equivalence import (
     pytest_targets,
     run_location,
@@ -411,6 +412,12 @@ def uncovered_pytest_paths(
     tree covers only when that tree holds the close ``candidate`` commit's bytes for the
     test and every changed path (#23653).
     """
+    runs = tuple(
+        run
+        for run in runs
+        if runner_reported_success((run.output or "") + "\n")
+        and not runner_reported_failures(run.output)
+    )
     if close_root is None:
         covered: list[str] = []
         for run in runs:

@@ -756,15 +756,21 @@ def retire_stale_pre_commit_store_spare(path: Path) -> Path | None:
     return retired
 
 
-def shutdown_pre_commit_store_spare() -> None:
-    """Drain replenishment and remove the daemon's complete and partial spares."""
+def shutdown_pre_commit_store_spare(timeout: float | None = None) -> None:
+    """Drain replenishment and remove the daemon's complete and partial spares.
+
+    A replenisher still copying after ``timeout`` keeps its spares; the next
+    daemon's startup sweep retires them.
+    """
     global _pre_commit_spare_root, _pre_commit_spare_thread
 
     with _pre_commit_spare_lock:
         worker = _pre_commit_spare_thread
         managed_root = _pre_commit_spare_root
     if worker is not None and worker is not threading.current_thread():
-        worker.join()
+        worker.join(timeout)
+        if worker.is_alive():
+            return
     if managed_root is not None:
         for path in pre_commit_store_spare_paths(managed_root):
             try:

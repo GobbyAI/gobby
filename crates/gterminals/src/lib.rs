@@ -16,11 +16,13 @@
 pub mod control;
 pub mod family;
 pub mod frames;
+pub mod hold;
 pub mod host;
 pub mod leases;
 pub mod reconcile;
 pub mod repository;
 pub mod write;
+pub mod write_api;
 pub mod ws_protocol;
 
 /// The family key in bootstrap `front_door.routes`.

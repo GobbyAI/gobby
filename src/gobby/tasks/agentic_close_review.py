@@ -9,12 +9,16 @@ from typing import Any
 
 from gobby.config.feature_base import candidate_runtime_entries, parse_feature_candidate
 from gobby.config.tasks import TaskValidationConfig
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import (
     TaskCloseReview,
     TaskCloseReviewErrorClass,
     TerminalTaskCloseReviewStatus,
 )
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.terminals.session_pane import session_pane
 from gobby.utils.datetime import utc_now
 
 TASK_CLOSE_REVIEWER_AGENT = "task-close-reviewer"
@@ -57,6 +61,22 @@ def reviewer_spawn_overrides(
     if entry.reasoning_effort is not None:
         overrides["reasoning_effort"] = entry.reasoning_effort
     return overrides
+
+
+def reviewer_placement(
+    db: HubDatabase, caller_session_id: str | None, task_ref: str
+) -> dict[str, Any] | None:
+    """Return the spawn ``placement`` that splits the reviewer beside the closing session.
+
+    The reviewer opens to the right of the caller's own pane, in the caller's tab.
+    None means the caller has no workspace pane, and the reviewer launches unplaced.
+    """
+    session = SessionManager(db).get(caller_session_id) if caller_session_id else None
+    target = session_pane(WorkspaceManager(db), session) if session else None
+    if target is None or target.pane is None:
+        return None
+    title = f"Close review {task_ref}"
+    return {"split": {"pane": target.pane.id, "axis": "right", "title": title}}
 
 
 def build_agentic_review_prompt(
@@ -189,8 +209,8 @@ def build_agentic_review_prompt(
 
 
 # The wake contract references blockers; it never re-carries the bulk evidence the
-# close payload already reported. The blocking reasons and outstanding_finding_count
-# are that reference, and the persisted review row keeps the evidence itself.
+# close payload already reported. The blocking reasons, outstanding findings and their
+# count are that reference, and the persisted review row keeps the evidence itself.
 _BULK_CLOSE_RESULT_SECTIONS = frozenset(
     {
         "verdict",
@@ -260,7 +280,9 @@ def build_terminal_review_payload(
             else ["Call close_task again to start a fresh review attempt."]
         )
     if status == "invalid":
-        result["outstanding_finding_count"] = len(blocking_reasons)
+        # Findings only: criterion gaps travel in criterion_gaps and the
+        # reviewer's summary in review_feedback, never in this count.
+        result["outstanding_finding_count"] = len(result.get("outstanding_findings") or [])
         result["remediation_guidance"] = (
             "Address every listed blocking reason, validate the complete fix set, and commit the "
             "complete fix set before one resubmission."

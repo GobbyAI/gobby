@@ -263,7 +263,9 @@ async def test_invalid_completion_timestamp_disables_recovery_and_is_redacted(
     assert _SECRET not in json.dumps(snapshot.to_log_dict())
 
 
-async def test_earlier_malformed_record_invalidates_later_completed_turn(tmp_path: Path) -> None:
+async def test_malformed_record_before_the_latest_turn_does_not_block_its_completion(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "multi-turn-malformed.jsonl"
     _write(
         path,
@@ -277,9 +279,70 @@ async def test_earlier_malformed_record_invalidates_later_completed_turn(tmp_pat
 
     snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
 
-    assert snapshot.last_malformed_line_num == 1
-    assert snapshot.latest_turn_kind == "completed"
+    assert snapshot.last_malformed_line_num is None
+    assert snapshot.turn_started_event is not None
+    assert snapshot.turn_started_event.line_num == 2
+    assert snapshot.has_conclusive_turn_completed is True
+
+
+async def test_malformed_record_inside_the_latest_turn_still_blocks_its_completion(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "latest-turn-malformed.jsonl"
+    _write(
+        path,
+        [
+            _user_record(),
+            _assistant_record(),
+            _user_record(),
+            {"type": "assistant", "message": None, "timestamp": _TIMESTAMP},
+            _turn_duration_record(),
+        ],
+    )
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.last_malformed_line_num == 4
     assert snapshot.has_conclusive_turn_completed is False
+
+
+async def test_cold_read_decodes_from_the_latest_turn_and_matches_an_incremental_read(
+    tmp_path: Path,
+) -> None:
+    earlier_turns: list[dict[str, object] | str] = [
+        record
+        for _ in range(20)
+        for record in (_user_record(), _assistant_record("thinking"), _turn_duration_record())
+    ]
+    latest_turn: list[dict[str, object] | str] = [
+        _user_record(),
+        _assistant_record("tool_use"),
+        _user_record([{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]),
+        _assistant_record(),
+        _turn_duration_record(),
+    ]
+    records = [
+        _api_error_record(_AUTH_401_TEXT, error="authentication_failed", status=401),
+        "{broken",
+        *earlier_turns,
+        *latest_turn,
+    ]
+    path = tmp_path / "long.jsonl"
+    path.write_text("", encoding="utf-8")
+    incremental = ClaudeTranscriptWatchdogReader()
+    for record in records:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write((record if isinstance(record, str) else json.dumps(record)) + "\n")
+        await incremental.read(str(path))
+
+    with patch("gobby.agents.watchdog._scan.json.loads", wraps=json.loads) as loads:
+        cold = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert loads.call_count < len(latest_turn) * 2
+    assert cold == await incremental.read(str(path))
+    assert cold.turn_started_event is not None
+    assert cold.turn_started_event.line_num == len(records) - len(latest_turn) + 1
+    assert cold.has_conclusive_turn_completed is True
 
 
 async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:

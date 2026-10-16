@@ -136,7 +136,9 @@ def _run(test: AcceptanceTest, order: int, *, red: bool) -> TranscriptValidation
     )
 
 
-def _exception_cycle(declaration: str) -> tuple[AcceptanceTest, TranscriptEvidence]:
+def _exception_cycle(
+    declaration: str, module_path: str = "src/feature.py"
+) -> tuple[AcceptanceTest, TranscriptEvidence]:
     source = (
         "import pytest\n"
         "from feature import CronSessionError, run\n\n"
@@ -151,12 +153,12 @@ def _exception_cycle(declaration: str) -> tuple[AcceptanceTest, TranscriptEviden
         body=source,
     )
     stub = replace(
-        _edit("src/feature.py", 2, declaration + "\ndef run():\n    return None\n"),
+        _edit(module_path, 2, declaration + "\ndef run():\n    return None\n"),
         tool_name="Edit",
         python_added_source=declaration,
     )
     return test, TranscriptEvidence(
-        edits=(_edit(test.path, 1, source), stub, _edit("src/feature.py", 4)),
+        edits=(_edit(test.path, 1, source), stub, _edit(module_path, 4)),
         validation_runs=(_run(test, 3, red=True), _run(test, 5, red=False)),
     )
 
@@ -164,6 +166,17 @@ def _exception_cycle(declaration: str) -> tuple[AcceptanceTest, TranscriptEviden
 @pytest.mark.parametrize("base", ["RuntimeError", "Exception", "ValueError"])
 def test_exception_declaration_stub_red(base: str) -> None:
     test, evidence = _exception_cycle(f"class CronSessionError({base}):\n    pass\n")
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed, result.findings
+    assert result.red_runs == (f"pytest {test.reference} -q",)
+
+
+def test_package_export_stub_red() -> None:
+    test, evidence = _exception_cycle(
+        "class CronSessionError(RuntimeError):\n    pass\n", "src/feature/__init__.py"
+    )
 
     result = evaluate_tdd_evidence((test,), evidence)
 
@@ -247,7 +260,7 @@ def test_exception_already_raised_in_confirmed_module_is_not_stub(behavior: str 
     assert not result.red_runs
 
 
-def _move_cycle() -> tuple[AcceptanceTest, TranscriptEvidence]:
+def _move_cycle(module_path: str = "src/feature.py") -> tuple[AcceptanceTest, TranscriptEvidence]:
     source = "from feature import payload\n\ndef test_feature():\n    assert payload()['seat']\n"
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
@@ -256,8 +269,8 @@ def _move_cycle() -> tuple[AcceptanceTest, TranscriptEvidence]:
         body=source,
     )
     moved = "def payload():\n    return {'kind': 'base'}\n"
-    before_test = replace(_edit("src/feature.py", 0, moved), source_created=True)
-    repeated_write = _edit("src/feature.py", 2, moved)
+    before_test = replace(_edit(module_path, 0, moved), source_created=True)
+    repeated_write = _edit(module_path, 2, moved)
     cleanup = replace(
         _edit("src/old.py", 3),
         tool_name="Edit",
@@ -279,14 +292,15 @@ def _move_cycle() -> tuple[AcceptanceTest, TranscriptEvidence]:
             _edit(test.path, 1, source),
             repeated_write,
             cleanup,
-            _edit("src/feature.py", 5),
+            _edit(module_path, 5),
         ),
         validation_runs=(red, _run(test, 6, red=False)),
     )
 
 
-def test_unchanged_move_red() -> None:
-    test, evidence = _move_cycle()
+@pytest.mark.parametrize("module_path", ["src/feature.py", "src/feature/__init__.py"])
+def test_unchanged_move_red(module_path: str) -> None:
+    test, evidence = _move_cycle(module_path)
 
     result = evaluate_tdd_evidence((test,), evidence)
 
