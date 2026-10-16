@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import posixpath
 import re
@@ -22,6 +23,9 @@ _TOKEN = re.compile(
 )
 
 
+# Equivalence checks reparse the same command per comparison; caching by the
+# exact string parses each distinct command once. The result is frozen.
+@functools.lru_cache(maxsize=8192)
 def parse_validation_shell(command: str) -> ParsedShellCommand:
     """Parse the supported exit-preserving shell subset, retaining quoted literals.
 
