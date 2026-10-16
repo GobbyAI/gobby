@@ -455,6 +455,9 @@ step_workflow:
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
         the commit moves you to submit. Close only from submit, after your Lane
         Manager releases the task.
+        If the assigned task needs no changes, close it here with reason
+        already_implemented and evidence in changes_summary; the ordinary close
+        checklist still applies. No candidate or manual step-variable write is needed.
         For an Orchestrator-directed handoff, use escalate_task with a reason
         starting exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
@@ -469,7 +472,14 @@ step_workflow:
       on_mcp_before:
         - *assigned_handoff_guard
         - *handoff_de_escalate_guard
-        - *handoff_close_guard
+        - <<: *handoff_close_guard
+          when: >-
+            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
+            and not (
+              tool_input.get('reason') == 'already_implemented'
+              and tool_input.get('task_id') is not None
+              and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            )
       on_mcp_success:
         - *record_land_handoff
         - *release_handoff_binding
@@ -482,6 +492,139 @@ step_workflow:
         - *clear_handoff_task_ref
         - *forget_closed_handoff
         - *forget_observed_closed_handoff
+        # Closing the claimed task resets the loop for the next claim. The
+        # first handler matches the task; the rest key off its reset so the
+        # task ids clear last.
+        - &release_closed_binding
+          server: gobby-tasks
+          tool: close_task
+          when: >-
+            tool_input.get('task_id') is not None
+            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and (
+              tool_output.get('closed') is True
+              or (tool_output.get('result') or {}).get('closed') is True
+            )
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - &reset_closed_completion
+          server: gobby-tasks
+          tool: close_task
+          when: &task_closed >-
+            not vars.get('task_claimed')
+            and (
+              tool_output.get('closed') is True
+              or (tool_output.get('result') or {}).get('closed') is True
+            )
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - &reset_closed_skills_loaded
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - &reset_closed_skills_routed
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - &reset_closed_candidate
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - &reset_closed_bounce
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: bounced
+          value: false
+        - &clear_closed_task_id
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - &clear_closed_task_ref
+          server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
+        # A reviewed close returns close_review_required and the reviewer closes
+        # the task out of band, so reading the closed task drives the same reset.
+        # The offload envelope of a large card keeps id and state.
+        - &release_observed_closed_binding
+          server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - &reset_observed_closed_completion
+          server: gobby-tasks
+          tool: get_task
+          when: &task_read_closed >-
+            not vars.get('task_claimed')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - &reset_observed_closed_skills_loaded
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - &reset_observed_closed_skills_routed
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - &reset_observed_closed_candidate
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - &reset_observed_closed_bounce
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: bounced
+          value: false
+        - &clear_observed_closed_task_id
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - &clear_observed_closed_task_ref
+          server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
         - server: gobby-tasks
           tool: link_commit
           when: *own_task
@@ -566,123 +709,22 @@ step_workflow:
           action: set_variable
           variable: candidate_sent
           value: true
-        # Closing the claimed task resets the loop for the next claim. The
-        # first handler matches the task; the rest key off its reset so the
-        # task ids clear last.
-        - server: gobby-tasks
-          tool: close_task
-          when: >-
-            tool_input.get('task_id') is not None
-            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and (
-              tool_output.get('closed') is True
-              or (tool_output.get('result') or {}).get('closed') is True
-            )
-          action: set_variable
-          variable: task_claimed
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: &task_closed >-
-            not vars.get('task_claimed')
-            and (
-              tool_output.get('closed') is True
-              or (tool_output.get('result') or {}).get('closed') is True
-            )
-          action: set_variable
-          variable: implementation_complete
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: additional_skills_loaded
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: skills_routed
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: candidate_sent
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: bounced
-          value: false
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: assigned_task_id
-          value: null
-        - server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: assigned_task_ref
-          value: null
-        # A reviewed close returns close_review_required and the reviewer closes
-        # the task out of band, so reading the closed task drives the same reset.
-        # The offload envelope of a large card keeps id and state.
-        - server: gobby-tasks
-          tool: get_task
-          when: >-
-            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
-            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
-          action: set_variable
-          variable: task_claimed
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: &task_read_closed >-
-            not vars.get('task_claimed')
-            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
-          action: set_variable
-          variable: implementation_complete
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: additional_skills_loaded
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: skills_routed
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: candidate_sent
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: bounced
-          value: false
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: assigned_task_id
-          value: null
-        - server: gobby-tasks
-          tool: get_task
-          when: *task_read_closed
-          action: set_variable
-          variable: assigned_task_ref
-          value: null
+        - *release_closed_binding
+        - *reset_closed_completion
+        - *reset_closed_skills_loaded
+        - *reset_closed_skills_routed
+        - *reset_closed_candidate
+        - *reset_closed_bounce
+        - *clear_closed_task_id
+        - *clear_closed_task_ref
+        - *release_observed_closed_binding
+        - *reset_observed_closed_completion
+        - *reset_observed_closed_skills_loaded
+        - *reset_observed_closed_skills_routed
+        - *reset_observed_closed_candidate
+        - *reset_observed_closed_bounce
+        - *clear_observed_closed_task_id
+        - *clear_observed_closed_task_ref
       transitions:
         - to: implement
           when: "vars.bounced"
