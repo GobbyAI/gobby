@@ -2513,6 +2513,7 @@ Consumers unchanged:
 - `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/config/test_config_sessions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/config/test_daemon_sandbox.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_decisions_config.py` — no-edit-reason: it builds `DaemonConfig` with only `ai` set and never sets `max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/config/test_feature_base.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/config/test_files_home.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/config/test_indexing_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -4195,6 +4196,12 @@ Verification planned:
   gobby#16983's F7 on the terminal plan). 1.2 now blocks terminal 2.6 for
   hub-node priority, and the Orchestrator wires the edge when this plan
   expands.
+- 2026-10-16: Drift repair after #24272 (Hook ingress) closed (Plan Writer
+  gobby#16490). Under route A, 2.2 now counts as executed. Standard
+  validation then reported one new consumer of 2.5's `DaemonConfig` target:
+  `tests/config/test_decisions_config.py`, added by #24243 at 635f7c8417. It
+  builds `DaemonConfig` with only `ai` set, so it joins 2.5's Consumers
+  unchanged with a no-edit reason. No other section changes.
 
 ## V2: Verification
 `kind: verification`
