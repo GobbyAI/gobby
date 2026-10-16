@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::handshake::{
     AGENT_RUN_HEADER, CALLER_PROJECT_HEADER, CapabilityClaims, MANAGED_EXECUTION_HEADER,
-    SESSION_HEADER,
+    SESSION_HEADER, url_host_port,
 };
 use super::*;
 use crate::local_token::AUTHORIZATION_HEADER;
@@ -328,6 +328,36 @@ fn bootstrap_daemon_url_configuration_error_from_process_and_request() {
             assert_eq!(error.exit_status(), 2);
             assert!(!error.is_retryable_presentation());
         }
+    }
+}
+
+#[test]
+fn bracketed_ipv6_daemon_url_without_port_uses_default_port() {
+    let default = crate::bootstrap::DEFAULT_DAEMON_PORT;
+    for (url, host) in [
+        ("http://[::1]", "::1"),
+        ("http://[::1]/", "::1"),
+        ("http://127.0.0.1", "127.0.0.1"),
+    ] {
+        assert_eq!(
+            url_host_port(url),
+            Ok((host.to_string(), default)),
+            "url={url}"
+        );
+    }
+    assert_eq!(
+        url_host_port("http://[::1]:61000"),
+        Ok(("::1".to_string(), 61000))
+    );
+    for url in ["http://[::1", "http://[::1]x", "http://[::1]:"] {
+        let error = url_host_port(url).expect_err("malformed bracketed daemon url");
+        assert_eq!(
+            error,
+            GrantError::BootstrapConfig("invalid daemon url".into()),
+            "url={url}"
+        );
+        assert_eq!(error.exit_status(), 2);
+        assert!(!error.is_retryable_presentation());
     }
 }
 
