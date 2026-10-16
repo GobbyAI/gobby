@@ -17,6 +17,47 @@ use node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
 const RECEIPTS: &str = "/api/nodes/receipts";
 const ACK_ID: &str = "n-1730000000000-ack-envelope";
 
+#[tokio::test]
+async fn ingress_forwards_and_finalizes() -> anyhow::Result<()> {
+    use axum::{body::Body, http::Request};
+    use gobby_daemon::front_door::FrontDoor;
+
+    let hub = FakeHub::start().await?;
+    let response = json!({"decision":"allow", "reason":"node hook accepted"});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, response.clone())]);
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    let payload = json!({"hook_type":"pre_tool_use", "response_capability":"hook-response.v1"});
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("x-gobby-envelope-id", "ingress-envelope")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&payload)?))?;
+    let answer = FrontDoor::node(node.node.clone(), false)
+        .handle(request, "127.0.0.1:12345".parse()?, false)
+        .await;
+    assert_eq!(answer.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(answer.into_body(), 1024 * 1024).await?;
+    assert_eq!(bytes.as_ref(), serde_json::to_vec(&response)?);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::POST);
+    assert_eq!(requests[0].path, "/api/hooks/execute");
+    assert_eq!(requests[0].headers["x-gobby-envelope-id"], "ingress-envelope");
+    assert_eq!(requests[0].headers["authorization"], format!("Bearer {NODE_KEY}"));
+    assert_eq!(requests[0].body, payload);
+    let marker = ledger.marker("ingress-envelope").await?;
+    assert!(marker.is_some(), "successful ingress must finalize its claim");
+    let marker = marker.unwrap();
+    assert_eq!(marker["status"], "processed");
+    assert_eq!(marker["response"], response);
+    assert_eq!(marker["hook_type"], "pre_tool_use");
+    hub.shutdown().await;
+    Ok(())
+}
+
 fn receipt() -> Value {
     json!({
         "schema_version": 1,
