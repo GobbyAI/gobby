@@ -873,6 +873,7 @@ class CommunicationsManager:
         payload.pop("webhook_secret", None)
         payload["active"] = channel.name in self._adapters
         payload["init_error"] = self._channel_init_errors.get(channel.name)
+        payload.update(self._lifecycle.retry_status(channel.name))
         return payload
 
     def list_channels(self) -> list[ChannelConfig]:
