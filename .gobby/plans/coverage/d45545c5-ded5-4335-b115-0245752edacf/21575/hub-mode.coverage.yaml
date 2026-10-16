@@ -1,11 +1,11 @@
 header:
   plan_id: hub-mode
-  plan_hash: 8123a69451949ae32af2884f22bd019a0e8af4c97f425d42e2fa56565c9df799
+  plan_hash: 056ccd5f874e7d39c1f23bca627898795dc841dda0a4f662812b48b54c4db079
   root_task_ref: '21575'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-15T16:07:57Z'
+  generated_at: '2026-10-16T12:29:41Z'
   task_tree_source: db
-  task_tree_source_hash: 7b088394eaf6477401f4dfe3c7e8b248745534dda12322442da0e52dc1f79340
+  task_tree_source_hash: 724b55a1e346b388cb63621195dd95b906ade0e9c058fa1a93f97901a5bac074
   evidence_summary: []
   evidence: []
 rows:

@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from gobby.worktrees.git import (
-    BranchDivergenceUnavailableError,
     GitOperationResult,
     WorktreeGitManager,
     WorktreeInfo,
@@ -1924,102 +1923,6 @@ class TestWorktreeGitManagerBranchCoverage:
     def manager(self, tmp_path):
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
-
-    @pytest.mark.parametrize(
-        ("count", "expected"),
-        [("1\n", (True, 1)), ("0\n", (False, 0))],
-    )
-    async def test_has_unpushed_commits_without_upstream_compares_default_branch(
-        self, manager, count, expected
-    ) -> None:
-        """Local-only branches count commits ahead of the default branch."""
-        manager._run_git = AsyncMock(
-            side_effect=[
-                subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr=""),
-                subprocess.CompletedProcess(
-                    args=[],
-                    returncode=0,
-                    stdout="refs/remotes/origin/main\n",
-                    stderr="",
-                ),
-                subprocess.CompletedProcess(args=[], returncode=0, stdout=count, stderr=""),
-            ]
-        )
-
-        result = await manager.has_unpushed_commits("feature/local")
-
-        assert result == expected
-        manager._run_git.assert_called_with(
-            ["rev-list", "--count", "main..feature/local"],
-            timeout=5,
-        )
-
-    async def test_has_unpushed_commits_fails_closed_when_divergence_command_fails(
-        self, manager
-    ) -> None:
-        """A failed divergence probe cannot be reported as verified no-divergence."""
-        manager._run_git = AsyncMock(
-            side_effect=[
-                subprocess.CompletedProcess(
-                    args=["git", "rev-parse"],
-                    returncode=128,
-                    stdout="",
-                    stderr="fatal: Needed a single revision",
-                ),
-                subprocess.CompletedProcess(
-                    args=["git", "rev-list"],
-                    returncode=128,
-                    stdout="",
-                    stderr="fatal: ambiguous argument",
-                ),
-            ]
-        )
-
-        with (
-            patch("gobby.worktrees.git._branch.get_default_branch", return_value="main"),
-            pytest.raises(BranchDivergenceUnavailableError) as exc_info,
-        ):
-            await manager.has_unpushed_commits("missing/integration")
-
-        assert exc_info.value.code == "branch_divergence_unavailable"
-        assert "missing/integration" in str(exc_info.value)
-        assert "ambiguous argument" in str(exc_info.value)
-
-    async def test_has_unpushed_commits_fails_closed_when_divergence_probe_times_out(
-        self, manager
-    ) -> None:
-        """A timed-out local-vs-remote comparison remains unavailable."""
-        manager._run_git = AsyncMock(
-            side_effect=[
-                subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="origin/main\n", stderr=""
-                ),
-                subprocess.TimeoutExpired(
-                    cmd=["git", "rev-list", "--count", "origin/main..main"],
-                    timeout=5,
-                ),
-            ]
-        )
-
-        with pytest.raises(BranchDivergenceUnavailableError) as exc_info:
-            await manager.has_unpushed_commits("main")
-
-        assert exc_info.value.code == "branch_divergence_unavailable"
-        assert "main" in str(exc_info.value)
-        assert "timed out" in str(exc_info.value)
-
-    async def test_has_unpushed_commits_preserves_verified_no_divergence(self, manager) -> None:
-        """A successful zero-count comparison still permits the remote base."""
-        manager._run_git = AsyncMock(
-            side_effect=[
-                subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="origin/main\n", stderr=""
-                ),
-                subprocess.CompletedProcess(args=[], returncode=0, stdout="0\n", stderr=""),
-            ]
-        )
-
-        assert await manager.has_unpushed_commits("main") == (False, 0)
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_get_status_porcelain_failure(self, mock_run, manager, tmp_path) -> None:

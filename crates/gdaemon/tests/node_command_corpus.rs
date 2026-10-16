@@ -1,7 +1,18 @@
 use std::fs;
 use std::path::PathBuf;
 
-use gobby_daemon::node_commands::round_trip_json;
+use gobby_daemon::node_commands::{CONTRACT_VERSION, round_trip_json};
+
+/// Requests and node bodies carry `v`; answers and the stale refusal do not.
+const VERSIONED_KINDS: &[&str] = &[
+    "command",
+    "reply",
+    "checkout",
+    "report",
+    "prompt_delivery_failure",
+    "code_index_warning",
+    "terminate",
+];
 
 fn corpus_messages() -> Vec<serde_json::Value> {
     let path =
@@ -27,6 +38,12 @@ fn corpus_round_trips() {
         let name = message["name"].as_str().expect("name");
         let kind = message["kind"].as_str().expect("kind");
         let raw = message["json"].as_str().expect("json");
+        let value: serde_json::Value = serde_json::from_str(raw).expect("message json");
+        if VERSIONED_KINDS.contains(&kind) {
+            assert_eq!(value["v"].as_u64(), Some(CONTRACT_VERSION), "{name}");
+        } else {
+            assert!(value.get("v").is_none(), "{name} carries v");
+        }
         let encoded = round_trip_json(kind, raw).unwrap_or_else(|error| {
             panic!("{name} failed to decode: {error}");
         });

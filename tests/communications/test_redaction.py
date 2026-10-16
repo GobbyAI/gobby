@@ -16,6 +16,48 @@ pytestmark = pytest.mark.unit
 SECRET = "abcdefghijklmnopqrstuvwxyz0123"
 
 
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_telegram_bot_urls_are_redacted(prefix: str) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    redacted = redact_and_bound(f"Request failed: {url}", 512)
+    assert redacted == f"Request failed: https://api.telegram.org/{prefix}<redacted>/getMe"
+    assert token not in redacted
+    assert SECRET not in redacted
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["https://t.me/botfather", "https://example.com/botguide", "ordinary /bot text"],
+)
+def test_non_token_bot_text_is_preserved(text: str) -> None:
+    assert redact_and_bound(text, 512) == text
+    assert redact_for_attachment(text) == text
+
+
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_attachment_bot_url_is_redacted_before_byte_cap(
+    prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    expected = f"https://api.telegram.org/{prefix}<redacted>/getMe"
+    monkeypatch.setattr("gobby.communications.redaction.MAX_LOG_ATTACHMENT_BYTES", len(expected))
+    assert redact_for_attachment(url) == expected
+
+
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_bot_url_secret_straddling_bound_is_redacted_first(prefix: str) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    max_chars = url.index(token) + 10
+    redacted = redact_and_bound(url, max_chars)
+    assert "123456789" not in redacted
+    assert SECRET not in redacted
+    assert len(redacted) <= max_chars
+    assert redacted.endswith(TRUNCATION_MARKER)
+
+
 def test_short_text_is_redacted_without_truncation() -> None:
     text = f"errors.log: api_key={SECRET}"
 

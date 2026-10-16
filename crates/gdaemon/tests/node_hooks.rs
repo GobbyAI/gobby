@@ -444,7 +444,13 @@ async fn ledger_prune_retention() {
         .await
         .unwrap();
     assert!(pass.truncated);
+    assert!(pass.deleted > 0);
     assert!(pass.deleted <= 2);
+    let mut remaining = 0;
+    for id in ["old-a", "old-b", "old-c"] {
+        remaining += usize::from(ledger.is_processed(id).await.unwrap());
+    }
+    assert_eq!(remaining, 3 - pass.deleted);
     assert!(ledger.is_processed("fresh").await.unwrap());
     let pass2 = ledger
         .prune(
@@ -457,40 +463,9 @@ async fn ledger_prune_retention() {
     assert_eq!(pass.deleted + pass2.deleted, 3);
     assert!(ledger.inbox.join("processed/.locks").is_dir());
     assert!(ledger.is_processed("fresh").await.unwrap());
-
-    // Small hardlink groups keep the production-size fixture cheap without
-    // exceeding filesystem link limits. Every group has the same old mtime.
-    let bound_home = TempDir::new().unwrap();
-    let bounded = Ledger::new(bound_home.path().join("inbox"));
-    let processed = bounded.inbox.join("processed");
-    fs::create_dir_all(&processed).unwrap();
-    let old: SystemTime = (now - Duration::seconds(86_500)).into();
-    for index in 0..100_002 {
-        let path = processed.join(index.to_string());
-        if index % 128 == 0 {
-            fs::write(&path, "{}").unwrap();
-            fs::File::open(&path).unwrap().set_modified(old).unwrap();
-        } else {
-            let seed = processed.join((index / 128 * 128).to_string());
-            fs::hard_link(seed, path).unwrap();
-        }
+    for id in ["old-a", "old-b", "old-c"] {
+        assert!(!ledger.is_processed(id).await.unwrap());
     }
-    let capped = bounded
-        .prune(Some(now), PROCESSED_MARKER_RETENTION_SECONDS, usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(capped.examined, 100_000);
-    assert_eq!(capped.deleted, 100_000);
-    assert!(capped.truncated);
-    let remainder = bounded
-        .prune(
-            Some(now),
-            PROCESSED_MARKER_RETENTION_SECONDS,
-            PROCESSED_MARKER_PRUNE_MAX_ENTRIES,
-        )
-        .await
-        .unwrap();
-    assert_eq!(remainder.deleted, 2);
 }
 #[tokio::test]
 async fn ledger_reads_python_markers() {

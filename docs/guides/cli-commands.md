@@ -933,8 +933,9 @@ gobby clones delete CLONE
 `clones spawn` supports `--workflow`, `--reasoning-effort`,
 `--reasoning-required/--no-reasoning-required`, and `--json`.
 
-Clone creation uses an existing remote branch by default; MCP `use_local=True`
-provides full local cloning and new-branch creation. Clone mutations report
+Clone creation clones the local repository and starts the new branch at the
+selected commit; an omitted `--base` uses the caller's HEAD. MCP `remote_url`
+shallow-clones an external repository instead. Clone mutations report
 domain failures with a nonzero exit status in text and JSON modes. Worktree
 `--source` forwards the supported `source_branch` argument; omitted source uses
 the stored base. See [worktree and clone behavior](./worktrees.md).

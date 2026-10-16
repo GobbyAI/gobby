@@ -198,6 +198,12 @@ fn grant_errors_stable_contract() {
             2,
         ),
         (
+            GrantError::BootstrapConfig("invalid daemon url".into()),
+            "bootstrap_config",
+            "bootstrap configuration error: invalid daemon url",
+            2,
+        ),
+        (
             GrantError::Io("disk".into()),
             "io",
             "grant io error: disk",
@@ -225,6 +231,29 @@ fn grant_errors_stable_contract() {
     assert_eq!(payload["error"], "daemon_required");
     assert_eq!(payload["message"], "daemon required");
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn invalid_daemon_url_syntax_reports_bootstrap_config() {
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    write_home(home.path());
+    write_project(project.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    for url in ["http://127.0.0.1:bad", "http://:60887"] {
+        let output = isolated_gcode_with_env(
+            home.path(),
+            project.path(),
+            &["status"],
+            &[("GOBBY_DAEMON_URL", url)],
+        );
+        let payload = parse_error_payload(&output);
+        assert_eq!(payload["error"], "bootstrap_config", "{url}");
+        assert_eq!(
+            payload["message"],
+            "bootstrap configuration error: invalid daemon url"
+        );
+        assert_eq!(output.status.code(), Some(2));
+    }
 }
 
 #[test]

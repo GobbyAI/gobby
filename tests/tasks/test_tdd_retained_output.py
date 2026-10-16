@@ -300,6 +300,95 @@ def _rust_cycle(
     return sorted(records, key=lambda record: str(record["timestamp"]))
 
 
+@pytest.mark.parametrize("reader", ["Read", "tail", "grep"])
+def test_explicit_background_green_is_bound_to_original_nextest_run(
+    tmp_path: Path, reader: str
+) -> None:
+    _retain(tmp_path / "tasks/job.output", _nextest_file("expected 2"), NOTICE)
+    records = _rust_cycle(tmp_path)
+    records = [
+        row
+        for row in records
+        if str(row["timestamp"]) < (START + timedelta(seconds=12)).isoformat()
+    ]
+    output_path = tmp_path / "tasks/green.output"
+    records += _pair(
+        12,
+        "Bash",
+        {"command": NEXTEST, "run_in_background": True, "description": "GREEN tests"},
+        "Command running in background with ID: green. Output is being written to: "
+        f"{output_path}. You will be notified when it completes. "
+        "To check interim output, use Read on that file path.",
+    )
+    records.append(
+        _queued(
+            14,
+            "<task-notification><task-id>green</task-id><tool-use-id>call-12</tool-use-id>"
+            f"<output-file>{output_path}</output-file><status>completed</status>"
+            '<summary>Background command "GREEN tests" completed (exit code 0)</summary>'
+            "</task-notification>",
+        )
+    )
+    output = (
+        "PASS [ 0.001s] (1/1) feature::golden replays_corpus\n"
+        "Summary [ 0.001s] 1 tests run: 1 passed, 0 skipped\n\n[exited with code 0]"
+    )
+    if reader == "Read":
+        records += _pair(15, "Read", {"file_path": str(output_path)}, _numbered(output))
+    elif reader == "tail":
+        records += _pair(15, "Bash", {"command": f"tail -n 8 {output_path}"}, output)
+    else:
+        records += _pair(
+            15,
+            "Bash",
+            {"command": f"grep -E 'PASS|Summary' {output_path}"},
+            "\n".join(line for line in output.splitlines() if "PASS" in line or "Summary" in line),
+        )
+    records.append(
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "timestamp": (START + timedelta(seconds=20)).isoformat(),
+        }
+    )
+    result = _rust_result(tmp_path, records)
+    assert result.passed, result.findings
+    assert result.green_runs == (NEXTEST,)
+
+
+def test_explicit_background_red_survives_compaction(tmp_path: Path) -> None:
+    output_path = tmp_path / "tasks/job.output"
+    _retain(output_path, _nextest_file("expected 2"), NOTICE)
+    records = _rust_cycle(tmp_path)
+    result_row = next(row for row in records if row.get("toolUseResult"))
+    content = result_row["message"]["content"][0]
+    content["content"] = (
+        "Command running in background with ID: job. Output is being written to: "
+        f"{output_path}. You will be notified when it completes."
+    )
+    records += _pair(
+        5,
+        "Bash",
+        {"command": f"grep -E 'FAIL|Summary' {output_path}"},
+        "\n".join(
+            line
+            for line in _nextest_file("expected 2").splitlines()
+            if "FAIL" in line or "Summary" in line
+        ),
+    )
+    records.append(
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "timestamp": (START + timedelta(seconds=20)).isoformat(),
+        }
+    )
+    records.sort(key=lambda row: str(row["timestamp"]))
+    result = _rust_result(tmp_path, records)
+    assert result.passed, result.findings
+    assert result.red_runs == (NEXTEST,)
+
+
 def _python_result(tmp_path: Path, *, production_at: float = 10) -> TddEvidenceResult:
     records = _write(tmp_path, 1, PY_TEST)
     records += _pair(2, "Bash", {"command": PYTEST}, _compacted(), error=True)

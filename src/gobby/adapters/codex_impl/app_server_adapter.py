@@ -424,7 +424,8 @@ class CodexAdapter(BaseAdapter):
         Returns:
             Decision dict: {"decision": "accept"} or {"decision": "decline"}
         """
-        hook_event = self._translate_approval_event(method, params)
+        # Canonical tool normalization can run Git; keep it off the event loop.
+        hook_event = await asyncio.to_thread(self._translate_approval_event, method, params)
         if not hook_event:
             logger.warning("Approval request %s could not be translated; failing closed", method)
             return self._fail_closed_approval_response(method)

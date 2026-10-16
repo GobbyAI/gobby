@@ -20,7 +20,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
+from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 
 
@@ -192,7 +192,6 @@ async def test_worktree_spawn_uses_target_repository(
             "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
             return_value=agent_body,
         ),
-        patch.object(target_git_manager, "has_unpushed_commits", return_value=(True, 1)),
         patch.object(
             WorktreeIsolationHandler,
             "_generate_worktree_path",
@@ -274,7 +273,6 @@ async def test_target_worktree_records_target_base_sha(
     )
 
     with (
-        patch.object(target_git_manager, "has_unpushed_commits", return_value=(True, 1)),
         patch.object(
             WorktreeIsolationHandler,
             "_generate_worktree_path",
@@ -293,7 +291,7 @@ async def test_target_worktree_records_target_base_sha(
     assert _git(worktree_path, "rev-parse", "HEAD") == target_sha
 
 
-async def test_worktree_spawn_fails_closed_when_base_divergence_is_unavailable(
+async def test_worktree_spawn_fails_closed_when_base_is_unavailable(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     tmp_path: Path,
@@ -333,13 +331,6 @@ async def test_worktree_spawn_fails_closed_when_base_divergence_is_unavailable(
             return_value=agent_body,
         ),
         patch.object(
-            target_git_manager,
-            "has_unpushed_commits",
-            side_effect=BranchDivergenceUnavailableError(
-                "target-base", "git rev-list timed out after 5 seconds"
-            ),
-        ),
-        patch.object(
             WorktreeIsolationHandler,
             "_generate_worktree_path",
             return_value=str(worktree_path),
@@ -353,12 +344,13 @@ async def test_worktree_spawn_fails_closed_when_base_divergence_is_unavailable(
                 "task_id": f"#{task.seq_num}",
                 "checkout_mode": "worktree",
                 "branch_name": "agent/unsafe-base",
+                "base_branch": "missing-base",
             },
         )
 
     assert result["success"] is False
-    assert result["error_code"] == "branch_divergence_unavailable"
-    assert "target-base" in result["error"]
+    assert result["error_code"] == "base_ref_unavailable"
+    assert "missing-base" in result["error"]
     assert not worktree_path.exists()
     assert worktree_storage.get_by_branch(target_project.project.id, "agent/unsafe-base") is None
     stored_task = task_manager.get_task(task.id)
@@ -545,7 +537,8 @@ async def test_reused_worktree_uses_target_manager_and_repo_path(
     prepare_kwargs = prepare_args.kwargs
     assert prepare_kwargs["git_manager"] is target_git_manager
     assert prepare_kwargs["main_repo_path"] == target_project.root_path
-    assert prepare_kwargs["spawn_config"].base_branch == "target-base"
+    # An omitted base stays unresolved; isolation selects the fork commit itself
+    assert prepare_kwargs["spawn_config"].base_branch is None
     startup_git_manager.get_current_branch.assert_not_called()
 
 

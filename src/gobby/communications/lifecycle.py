@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import re
 import uuid
-from dataclasses import replace
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from asyncio import sleep as _sleep
+from contextlib import suppress
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Literal
+
+import httpx
 
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.inbound_mode import channel_for_adapter_init, should_poll
 from gobby.communications.models import ChannelConfig
+from gobby.communications.polling import RETRY_BASE_SECONDS, RETRY_MAX_SECONDS
+from gobby.communications.redaction import redact_and_bound
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -38,6 +46,37 @@ def _get_adapter_class(channel_type: str) -> type[BaseChannelAdapter] | None:
     return _lookup_adapter_class(channel_type)
 
 
+def _transient_init_failure(error: Exception) -> bool:
+    if isinstance(
+        error, httpx.NetworkError | httpx.TimeoutException | ConnectionError | TimeoutError
+    ):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code == 429 or 500 <= error.response.status_code < 600
+    return isinstance(error, OSError) and error.errno in {
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTDOWN,
+        errno.EHOSTUNREACH,
+        errno.ECONNRESET,
+        errno.ECONNREFUSED,
+        errno.ECONNABORTED,
+        errno.ETIMEDOUT,
+        errno.EPIPE,
+    }
+
+
+@dataclass
+class _InitRetry:
+    channel_id: str
+    attempts: int
+    next_retry_at: datetime
+
+
+class _ActivationSuperseded(Exception):
+    """An update or shutdown superseded activation without cancelling its caller."""
+
+
 class AdapterLifecycleOperations:
     """Coordinates adapter startup, shutdown, channel mutation, and status."""
 
@@ -45,28 +84,155 @@ class AdapterLifecycleOperations:
         self._manager = manager
         self._adapter_generations: dict[str, int] = {}
         self._config_update_locks: dict[str, asyncio.Lock] = {}
+        self._retry_tasks: dict[str, asyncio.Task[None]] = {}
+        self._retry_state: dict[str, _InitRetry] = {}
+        self._stopping = False
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
         manager = self._manager
+        self._stopping = False
         await self.ensure_gobby_chat_channel()
 
         channels = await asyncio.to_thread(manager._store.list_channels, enabled_only=True)
         for channel in channels:
-            try:
-                await self.activate_channel(channel)
+            if await self._activate_or_retry(channel):
                 logger.info(
                     "Communications: initialized channel %r (%s)",
                     channel.name,
                     channel.channel_type,
                 )
-            except Exception as e:
-                logger.exception("Failed to initialize channel %r: %s", channel.name, e)
         logger.info("CommunicationsManager started (%s channels active)", len(manager._adapters))
+
+    def retry_status(self, name: str) -> dict[str, Any]:
+        state = self._retry_state.get(name)
+        task = self._retry_tasks.get(name)
+        pending = task is not None and not task.done()
+        return {
+            "retry_pending": pending,
+            "retry_attempts": state.attempts if state else 0,
+            "next_retry_at": state.next_retry_at.isoformat() if pending and state else None,
+        }
+
+    def _record_init_failure(
+        self,
+        name: str,
+        error: Exception,
+        operation: Literal["startup", "add", "update"],
+        *,
+        emit_log: bool,
+    ) -> None:
+        # Exception messages/URLs can contain bot tokens or proxy credentials.
+        detail = str(error)
+        detail = redact_and_bound(detail or type(error).__name__, 512)
+        self._manager._channel_init_errors[name] = detail
+        if not emit_log:
+            return
+        if operation == "startup":
+            # Raw traceback text can repeat a secret-bearing request URL.
+            logger.exception("Failed to initialize channel %r: %s", name, detail, exc_info=False)
+        elif operation == "add":
+            logger.error("Failed to initialize adapter for new channel %r: %s", name, detail)
+        else:
+            logger.error("Failed to initialize adapter for updated channel %r: %s", name, detail)
+
+    async def _activate_or_retry(
+        self, channel: ChannelConfig, operation: Literal["startup", "add", "update"] = "startup"
+    ) -> bool:
+        if channel.name in self._manager._adapters or channel.name in self._retry_tasks:
+            return channel.name in self._manager._adapters
+        generation = self._adapter_generations.get(channel.id, 0)
+        try:
+            await self.activate_channel(channel)
+        except _ActivationSuperseded:
+            return False
+        except Exception as error:
+            if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
+                return False
+            self._record_init_failure(channel.name, error, operation, emit_log=True)
+            if _transient_init_failure(error) and channel.enabled:
+                self._retry_state[channel.name] = _InitRetry(
+                    channel_id=channel.id,
+                    attempts=1,
+                    next_retry_at=datetime.now(UTC) + timedelta(seconds=RETRY_BASE_SECONDS),
+                )
+                self._retry_tasks[channel.name] = asyncio.create_task(
+                    self._retry_activation(channel, generation, operation),
+                    name=f"channel-init:{channel.name}",
+                )
+            return False
+        return True
+
+    async def _retry_activation(
+        self,
+        channel: ChannelConfig,
+        generation: int,
+        operation: Literal["startup", "add", "update"],
+    ) -> None:
+        name = channel.name
+        delay = RETRY_BASE_SECONDS
+        try:
+            while not self._stopping:
+                await _sleep(delay)
+                if generation != self._adapter_generations.get(channel.id, 0):
+                    return
+                try:
+                    current = await asyncio.to_thread(
+                        self._manager._store.get_channel_by_name, name
+                    )
+                    if current is None or current.id != channel.id or not current.enabled:
+                        return
+                    if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
+                        return
+                    await self.activate_channel(current)
+                except _ActivationSuperseded:
+                    return
+                except Exception as error:
+                    transient = _transient_init_failure(error) or is_pool_unavailable(error)
+                    self._record_init_failure(name, error, operation, emit_log=not transient)
+                    if not transient:
+                        return
+                    delay = min(delay * 2, RETRY_MAX_SECONDS)
+                    state = self._retry_state[name]
+                    state.attempts += 1
+                    state.next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+                else:
+                    return
+        finally:
+            if self._retry_tasks.get(name) is asyncio.current_task():
+                self._retry_tasks.pop(name, None)
+                self._retry_state.pop(name, None)
+
+    async def _cancel_retry(self, name: str) -> None:
+        task = self._retry_tasks.get(name)
+        interrupted = False
+        if task is not None:
+            task.cancel()
+            # Drain cleanup without forwarding a second cancellation into the child.
+            while not task.done():
+                try:
+                    await asyncio.wait([task])
+                except asyncio.CancelledError:
+                    interrupted = True
+            with suppress(asyncio.CancelledError):
+                task.result()
+            if self._retry_tasks.get(name) is task:
+                self._retry_tasks.pop(name, None)
+        self._retry_state.pop(name, None)
+        if interrupted:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
         manager = self._manager
+        self._stopping = True
+        tasks = list(self._retry_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._retry_tasks.clear()
+        self._retry_state.clear()
         manager._polling_manager.stop_all()
         for name, adapter in list(manager._adapters.items()):
             try:
@@ -80,11 +246,22 @@ class AdapterLifecycleOperations:
 
     async def init_adapter(self, channel: ChannelConfig) -> BaseChannelAdapter:
         """Lookup adapter class from registry, instantiate, and initialize."""
-        manager = self._manager
         adapter_cls = _get_adapter_class(channel.channel_type)
         if adapter_cls is None:
             raise ValueError(f"No adapter registered for channel type {channel.channel_type!r}")
         adapter = adapter_cls()
+        try:
+            await self._initialize_adapter(channel, adapter)
+        except BaseException:
+            with suppress(Exception):
+                await adapter.shutdown()
+            raise
+        return adapter
+
+    async def _initialize_adapter(
+        self, channel: ChannelConfig, adapter: BaseChannelAdapter
+    ) -> None:
+        manager = self._manager
         adapter_generation = self._adapter_generations.get(channel.id, 0)
 
         def on_rate_limit(duration: float, is_global: bool = False, cid: str = channel.id) -> None:
@@ -157,25 +334,40 @@ class AdapterLifecycleOperations:
                 raise ValueError(f"Webhook secret for channel {channel.name!r} is not configured")
             init_channel = replace(init_channel, webhook_secret=resolved_webhook_secret)
         await adapter.initialize(init_channel, resolve_secret_ref)
-        return adapter
 
     async def activate_channel(self, channel: ChannelConfig) -> BaseChannelAdapter:
         """Initialize a channel adapter and publish active runtime state."""
         manager = self._manager
+        generation = self._adapter_generations.get(channel.id, 0)
         self._configure_rate_limit(channel, channel.config_json)
         adapter = await self.init_adapter(channel)
-        manager._adapters[channel.name] = adapter
-        manager._channel_by_name[channel.name] = channel
-        await manager._restore_telegram_targets(channel)
-        if channel.name == "gobby_chat" and manager._websocket_broadcast is not None:
-            self.set_websocket_broadcast(manager._websocket_broadcast)
-        manager._channel_init_errors.pop(channel.name, None)
-        self._start_polling_if_needed(channel.name, channel, adapter)
+        try:
+            if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
+                raise _ActivationSuperseded
+            manager._adapters[channel.name] = adapter
+            manager._channel_by_name[channel.name] = channel
+            await manager._restore_telegram_targets(channel)
+            if self._stopping or generation != self._adapter_generations.get(channel.id, 0):
+                raise _ActivationSuperseded
+            if channel.name == "gobby_chat" and manager._websocket_broadcast is not None:
+                self.set_websocket_broadcast(manager._websocket_broadcast)
+            manager._channel_init_errors.pop(channel.name, None)
+            self._start_polling_if_needed(channel.name, channel, adapter)
+        except BaseException:
+            if manager._adapters.get(channel.name) is adapter:
+                manager._adapters.pop(channel.name, None)
+                manager._channel_by_name.pop(channel.name, None)
+            with suppress(Exception):
+                await adapter.shutdown()
+            raise
         return adapter
 
     async def deactivate_channel(self, name: str, channel: ChannelConfig | None = None) -> None:
         """Shutdown an active adapter and clear runtime state."""
         manager = self._manager
+        if channel is not None:
+            self._adapter_generations[channel.id] = self._adapter_generations.get(channel.id, 0) + 1
+        await self._cancel_retry(name)
         adapter = manager._adapters.pop(name, None)
         cached_channel = manager._channel_by_name.pop(name, None)
         manager._channel_init_errors.pop(name, None)
@@ -236,12 +428,8 @@ class AdapterLifecycleOperations:
 
         await asyncio.to_thread(manager._store.create_channel, channel_config)
 
-        try:
-            await self.activate_channel(channel_config)
+        if await self._activate_or_retry(channel_config, "add"):
             logger.info("Added channel %r (%s)", name, channel_type)
-        except Exception as e:
-            manager._channel_init_errors[name] = str(e)
-            logger.error("Failed to initialize adapter for new channel %r: %s", name, e)
 
         return channel_config
 
@@ -331,6 +519,11 @@ class AdapterLifecycleOperations:
             current_names = [
                 name for name, cached in manager._channel_by_name.items() if cached.id == updated.id
             ]
+            current_names.extend(
+                name
+                for name, state in self._retry_state.items()
+                if state.channel_id == updated.id and name not in current_names
+            )
             if updated.name not in current_names:
                 current_names.append(updated.name)
 
@@ -340,11 +533,7 @@ class AdapterLifecycleOperations:
         if not updated.enabled:
             return updated
 
-        try:
-            await self.activate_channel(updated)
-        except Exception as e:
-            manager._channel_init_errors[updated.name] = str(e)
-            logger.error("Failed to initialize adapter for updated channel %r: %s", updated.name, e)
+        await self._activate_or_retry(updated, "update")
 
         return updated
 
@@ -365,6 +554,7 @@ class AdapterLifecycleOperations:
                 "supports_polling": adapter.supports_polling,
                 "is_polling": manager._polling_manager.is_polling(name),
                 "init_error": None,
+                **self.retry_status(name),
             }
 
         channels = manager._store.list_channels(enabled_only=False)
@@ -379,6 +569,7 @@ class AdapterLifecycleOperations:
             "active": False,
             "enabled": db_channel.enabled,
             "init_error": manager._channel_init_errors.get(name),
+            **self.retry_status(name),
         }
 
     def _configure_rate_limit(self, channel: ChannelConfig, config: dict[str, Any]) -> None:

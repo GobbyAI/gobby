@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
 from gobby.utils.terminal_output import redact_terminal_output
 
 TRUNCATION_MARKER = "\n…(truncated)"
+_BOT_URL_TOKEN = re.compile(
+    r"(https?://api\.telegram\.org/(?:file/)?bot)[^/\s?#\"'<>\\]+", re.IGNORECASE
+)
 
 
 def redact_and_bound(text: str, max_chars: int) -> str:
@@ -15,7 +20,7 @@ def redact_and_bound(text: str, max_chars: int) -> str:
     """
     if max_chars <= len(TRUNCATION_MARKER):
         raise ValueError(f"max_chars must exceed {len(TRUNCATION_MARKER)}")
-    redacted = redact_terminal_output(text)
+    redacted = redact_terminal_output(_BOT_URL_TOKEN.sub(r"\1<redacted>", text))
     if len(redacted) <= max_chars:
         return redacted
     return redacted[: max_chars - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
@@ -31,7 +36,7 @@ def redact_for_attachment(text: str) -> str | None:
     ``MAX_LOG_ATTACHMENT_BYTES``; the caller omits the attachment rather than
     sending a cut log.
     """
-    redacted = redact_terminal_output(text)
+    redacted = redact_terminal_output(_BOT_URL_TOKEN.sub(r"\1<redacted>", text))
     if len(redacted.encode("utf-8")) > MAX_LOG_ATTACHMENT_BYTES:
         return None
     return redacted

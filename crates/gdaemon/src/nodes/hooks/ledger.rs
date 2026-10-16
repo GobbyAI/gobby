@@ -23,6 +23,21 @@ pub const STOP_REPLAY_EPOCH_FILENAME: &str = ".stop_replay_epoch";
 const OWNER_CREATE_TIME_MATCH_SECONDS: f64 = 1.0;
 const PRUNE_ENTRIES_PER_LOCK_HOLD: usize = 64;
 
+fn pass_bound(max: usize) -> usize {
+    max.min(PROCESSED_MARKER_PRUNE_MAX_ENTRIES)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pass_bound;
+
+    #[test]
+    fn prune_pass_bound() {
+        assert_eq!(pass_bound(usize::MAX), 100_000);
+        assert_eq!(pass_bound(2), 2);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Ledger {
     pub inbox: PathBuf,
@@ -313,7 +328,7 @@ impl Ledger {
             Ok(prune(
                 &directory,
                 seconds(reference(now)) - retention,
-                max.min(PROCESSED_MARKER_PRUNE_MAX_ENTRIES),
+                pass_bound(max),
             ))
         })
         .await

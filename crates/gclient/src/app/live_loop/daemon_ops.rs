@@ -186,6 +186,16 @@ pub(super) fn apply_ops(
     }
 }
 
+/// A roster agent's own tab carries its label; a shell's stays untitled.
+fn agent_tab_title(workspace: &Workspace<LiveDaemon>, terminal_id: &str) -> Option<String> {
+    workspace
+        .sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.terminal_id == terminal_id)
+        .map(|agent| agent.definition_label())
+}
+
 /// Show `terminal_id`, already on the roster, per `placement`: through the
 /// daemon when the window views its workspace, so the event that adds the
 /// pane places it and this window follows; else on the chrome directly.
@@ -207,14 +217,8 @@ pub(super) fn place_live_terminal(
         None,
         project_override,
     ) {
-        // A roster agent's own tab carries its label; a shell's stays untitled.
         if let WorkspaceOp::TabCreate { title, .. } = &mut op {
-            *title = workspace
-                .sidebar()
-                .agents
-                .iter()
-                .find(|agent| agent.terminal_id == terminal_id)
-                .map(|agent| agent.definition_label());
+            *title = agent_tab_title(workspace, terminal_id);
         }
         workspace.expect_placement(terminal_id);
         issue_op(workspace, outcomes, op, Some(terminal_id.to_owned()));
@@ -565,7 +569,7 @@ pub(super) fn move_focused_pane_to_tab(
             workspace: model.workspace.id.clone(),
             project_id: project_id.to_owned(),
             worktree_id: source.worktree_id.clone(),
-            title: None,
+            title: agent_tab_title(workspace, &terminal_id),
             terminal_id: None,
             cwd: None,
             node: None,

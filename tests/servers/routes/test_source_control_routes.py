@@ -1999,7 +1999,6 @@ def test_create_client_worktree(
     git_manager.repo_path = "/repo"
     git_manager.get_current_branch = AsyncMock(return_value="main")
     git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-    git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
     git_manager.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True, error=None))
     worktree = MagicMock(
         id="wt-client",

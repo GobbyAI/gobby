@@ -19,6 +19,7 @@ from gobby.tasks.close_test_coverage import (
     related_python_source_tests_in_pool,
     uncovered_pytest_paths,
     uncovered_vitest_related_paths,
+    unread_background_runs,
 )
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
@@ -130,6 +131,19 @@ class CloseChecklist:
         }
 
 
+def _required_python_tests(
+    changed_tests: Iterable[str], source_tests: Mapping[str, tuple[str, ...]]
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                *_pytest_module_paths(changed_tests),
+                *(test for tests in source_tests.values() for test in tests),
+            )
+        )
+    )
+
+
 def evaluate_validation_commands(
     *,
     task_category: str | None,
@@ -148,7 +162,11 @@ def evaluate_validation_commands(
     checkout, so it neither credits nor fails this task, unless it ran identical
     copies of the changed tests. A copy must match ``candidate_commit_sha`` when given.
     """
-    from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
+    from gobby.tasks.validation_diagnostics import (
+        excluded_validation_records,
+        gap_covering_records,
+        observed_message,
+    )
 
     paths = tuple(changed_paths)
     changed_tests = _changed_python_test_paths(paths)
@@ -161,14 +179,7 @@ def evaluate_validation_commands(
         evidence, foreign = drop_foreign_runs(evidence, changed_tests, close_root, paths, candidate)
         if candidate is not None and evidence.off_task_author_runs:
             source_tests = related_python_source_tests_in_pool(paths, base_dir=close_root)
-            required_tests = tuple(
-                dict.fromkeys(
-                    (
-                        *_pytest_module_paths(changed_tests),
-                        *(test for tests in source_tests.values() for test in tests),
-                    )
-                )
-            )
+            required_tests = _required_python_tests(changed_tests, source_tests)
             evidence = credit_off_task_author_runs(evidence, required_tests, paths, candidate)
     gate = _evaluate_validation_commands(
         task_category=task_category,
@@ -206,8 +217,14 @@ def evaluate_validation_commands(
                     "categories": [],
                 }
             )
+    gap_records = gap_covering_records(records, gate.details)
     records.sort(
-        key=lambda record: (str(record["completed_at"]), int(record["order"])), reverse=True
+        key=lambda record: (
+            id(record) in gap_records,
+            str(record["completed_at"]),
+            int(record["order"]),
+        ),
+        reverse=True,
     )
     relevant = records
     if gaps:
@@ -335,14 +352,7 @@ def _evaluate_validation_commands(
     ]
     confined_paths, confinement_audit = confinement_credit(
         runs=credited,
-        required_paths=tuple(
-            dict.fromkeys(
-                (
-                    *_pytest_module_paths(changed_python_test_paths),
-                    *(test for tests in source_tests.values() for test in tests),
-                )
-            )
-        ),
+        required_paths=_required_python_tests(changed_python_test_paths, source_tests),
         changed_paths=changed_paths,
         candidate=candidate,
         context=confinement_context,
@@ -584,11 +594,22 @@ def _evaluate_validation_commands(
         passing_runs, declined, close_root, changed_paths, candidate
     ):
         details["pytest_copy_differing_paths"] = list(differing)
+    if unread := unread_background_runs(
+        passing_runs,
+        declined,
+        close_root=close_root,
+        changed_paths=changed_paths,
+        candidate=candidate,
+    ):
+        details["pytest_unread_background_runs"] = [
+            {"command": run.command, "output_path": run.background_output_path} for run in unread
+        ]
     coverage_failures = coverage_failure_messages(
         uncovered_pytest,
         uncovered_sources,
         uncovered_web,
         differing_paths=differing,
+        unread_runs=unread,
         close_root=close_root,
     )
     unmet.extend(coverage_failures)

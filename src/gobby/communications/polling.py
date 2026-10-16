@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+RETRY_BASE_SECONDS = 5
+RETRY_MAX_SECONDS = 300
+
 
 class PollingManager:
     """Manages background polling loops for non-webhook channels."""
@@ -95,8 +98,8 @@ class PollingManager:
         """
         consecutive_failures = 0
         traceback_logged = False
-        max_backoff = 300  # 5 minutes max backoff
-        base_backoff = 5  # start with 5 seconds backoff
+        max_backoff = RETRY_MAX_SECONDS
+        base_backoff = RETRY_BASE_SECONDS
 
         while True:
             try:

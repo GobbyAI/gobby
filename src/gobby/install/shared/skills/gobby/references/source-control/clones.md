@@ -6,10 +6,13 @@ Discover `gobby-clones:list_clones`, `get_clone`, `get_clone_by_task` and
 `get_clone_stats`. Inspect the exact row, task link and machine ownership.
 
 1. Prefer a worktree unless a separate object store and remote state are needed.
-2. `create_clone` requires a branch and path. Remote cloning uses the requested
-   branch with shallow depth by default; that branch must exist at the source.
-   `use_local=true` instead makes a full local clone from the base branch and
-   creates the requested branch, preserving unpushed local commits.
+2. `create_clone` requires a branch and path. Without `remote_url` it clones the
+   local repository and starts the requested branch at one selected commit: the
+   caller's HEAD when `base_branch` is omitted (detached HEAD is refused), a local
+   branch, or `origin/<branch>` after a fetch. Unpushed local commits carry over.
+   With `remote_url` it shallow-clones that external repository at the requested
+   branch, which must exist there. The result reports `base_commit_sha` and
+   `index_source` (`local`, or `cold` for an external clone).
    The path must resolve below `~/.gobby/clones`, for example
    `~/.gobby/clones/feature-auth`; creation and deletion reject paths outside it.
 3. Supply the intended task and source. Task references are resolved before Git
@@ -38,6 +41,7 @@ need an authorized history fetch before a merge can find its ancestry.
 
 Operator `gobby clones` commands include list, create, spawn, sync, merge and
 delete. Their JSON mutation output preserves failure exit status. CLI creation
-does not expose every MCP option; consult the live schema for local/full cloning.
+does not expose every MCP option; consult the live schema for base and external
+cloning.
 
 See [clones](../../../../../../../../docs/guides/worktrees.md#clones).
