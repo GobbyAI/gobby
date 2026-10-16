@@ -571,13 +571,15 @@ def unwrap_env_tokens(
     if not tokens or not _matches_command_token(tokens[0], "env"):
         return None
     cursor = 1
-    changes: list[str] = []
+    directory: str | None = None
+    operand_boundary = False
     while cursor < len(tokens):
         token = tokens[cursor]
-        if token == "--":
+        if token in {"--", "-"}:
             cursor += 1
+            operand_boundary = True
             break
-        if token in {"-", "-i", "--ignore-environment"}:
+        if token in {"-i", "--ignore-environment"}:
             cursor += 1
             continue
         option, equals, value = token.partition("=")
@@ -592,19 +594,19 @@ def unwrap_env_tokens(
             if not value:
                 return None
             if option in {"-C", "--chdir"}:
-                changes.append(value)
+                directory = value  # env changes directory once, using the last -C.
             continue
         if token.startswith("-"):
             return None
         break
     while cursor < len(tokens) and _looks_like_env_assignment(tokens[cursor]):
         cursor += 1
-    if cursor < len(tokens) and tokens[cursor] == "--":
+    if not operand_boundary and cursor < len(tokens) and tokens[cursor] == "--":
         cursor += 1
     if cursor >= len(tokens) or tokens[cursor].startswith("-"):
         return None
-    if directories is not None:
-        directories.extend(changes)
+    if directories is not None and directory is not None:
+        directories.append(directory)
     return tokens[cursor:]
 
 

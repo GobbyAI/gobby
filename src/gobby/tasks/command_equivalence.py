@@ -548,6 +548,8 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
     for env_directory in env_directories:
         location = posixpath.normpath(posixpath.join(location, env_directory))
     words = list(core.segments[0]) if len(core.segments) == 1 else list(parsed.segments[-1])
+    if words and posixpath.basename(words[0]) == "env":
+        return None  # An unproven env invocation cannot attribute repository coverage.
     directory = _drop_neutral_uv_options(words)[1].get("--directory", ".")
     return posixpath.normpath(posixpath.join(location, directory))
 
