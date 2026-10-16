@@ -2557,8 +2557,12 @@ Consumers unchanged:
 Executors run focused verification after each leaf and the complete matrix before native cutover:
 
 1. `cargo fmt --all -- --check` and the repository Rust lint/type gate for every changed crate.
-2. `cargo nextest run -p gobby-terminals`, including the `tmux_write.rs` contract (2.5); focused
-   `-p gobby-daemon` integration tests for family composition and shutdown.
+2. `cargo nextest run -p gobby-terminals`, including the `tmux_write.rs` contract (2.11), the
+   `inventory.rs` reads (2.14), and one `host_lifecycle.rs` run with `GOBBY_TERMINALS_TEST_GDAEMON`
+   and `GOBBY_TERMINALS_TEST_GTERM` set to freshly built gdaemon and gterm binaries, so the five
+   restored real-gdaemon tests execute (2.13.7); focused `-p gobby-daemon` integration tests for
+   family composition, shutdown, and the `front_door.rs` route and handler tests (2.6, 2.9, 2.13,
+   2.14).
 3. With isolated `DATABASE_URL` and `GOBBY_TEST_PROTECT=1`, run the changed Python test files only:
    backend ingress/selection, spawn executor, agent definitions, terminal routes/WS, host shutdown,
    workspace storage and ops, the coordinator client, and native lifecycle acceptance. Never run the full pytest suite.
@@ -2568,8 +2572,10 @@ Executors run focused verification after each leaf and the complete matrix befor
 5. Run the M1 restart test before #21558 is available; it must exercise the Rust owner lifecycle
    directly and prove that M1 has no terminal-WS dependency.
 6. After #21558, run the isolated native route cutover with real gdaemon/gterm/gclient and the
-   three fallback simulations. Capture host pid/epoch, terminal id/backend/reason, message id,
-   and pre/post-restart I/O as evidence.
+   fail-closed host-unavailable simulations (2.13.4): each typed host reason refuses the spawn
+   with no row, process, or message, and the next spawn after re-adoption uses gterm. Capture host
+   pid/epoch, terminal id/backend, typed host reason, message id, and pre/post-restart I/O as
+   evidence.
 7. Audit `git diff` for the implementation commits: no change under `crates/gterminal/`, no
    production/runtime change under `crates/gclient/src/`, no gclient edit except
    `crates/gclient/tests/client_loop.rs`, and no change under
@@ -2577,7 +2583,7 @@ Executors run focused verification after each leaf and the complete matrix befor
    field, and every terminal inventory producer emits backend.
 8. Re-run a bounded source-agnostic consumer sweep for backend selection and inventory fields.
    This is the whole-plan `edge-case-coverage` / `acceptance-observability` check: every producer,
-   special value, error subtype, failure boundary, tmux runtime operation, and display consumer
+   special value, error subtype, failure boundary, tmux write operation, and display consumer
    named above must have a passing test. In particular, no separately invoked hook leaves a
    process, pending/live row, lease, or lifecycle publication without its paired settlement.
 
