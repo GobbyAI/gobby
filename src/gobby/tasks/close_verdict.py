@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Literal, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from gobby.tasks.criteria_contract import is_external_criterion
 
@@ -65,6 +66,9 @@ class CloseCriterionVerdict:
 
 @dataclass(frozen=True)
 class CloseFinding:
+    # Owners reference and dispute a finding by this id, so it survives every
+    # reparse of the persisted verdict unchanged.
+    id: str
     path: str
     start_line: int
     end_line: int
@@ -75,6 +79,7 @@ class CloseFinding:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "path": self.path,
             "start_line": self.start_line,
             "end_line": self.end_line,
@@ -190,6 +195,7 @@ def _coerce_findings(value: object) -> tuple[CloseFinding, ...]:
         "documentation",
         "other",
     }
+    seen_ids: set[str] = set()
     for index, raw in enumerate(value, start=1):
         if not isinstance(raw, Mapping):
             raise CloseVerdictParseError(f"finding {index} must be an object")
@@ -220,8 +226,13 @@ def _coerce_findings(value: object) -> tuple[CloseFinding, ...]:
             raise CloseVerdictParseError(
                 f"finding {index} suggested_fix must be null or a non-empty string"
             )
+        finding_id = _finding_id(raw.get("id"), index, raw)
+        if finding_id in seen_ids:
+            raise CloseVerdictParseError(f"finding {index} repeats id {finding_id}")
+        seen_ids.add(finding_id)
         findings.append(
             CloseFinding(
+                id=finding_id,
                 path=path.strip(),
                 start_line=start_line,
                 end_line=end_line,
@@ -232,6 +243,27 @@ def _coerce_findings(value: object) -> tuple[CloseFinding, ...]:
             )
         )
     return tuple(findings)
+
+
+def _finding_id(value: object, index: int, raw: Mapping[str, Any]) -> str:
+    """Keep a submitted id; otherwise derive one that every reparse reproduces."""
+    if value is not None:
+        if not isinstance(value, str) or not value.strip():
+            raise CloseVerdictParseError(f"finding {index} id must be a non-empty string")
+        return value.strip()
+    content = json.dumps(
+        [
+            index,
+            raw.get("path"),
+            raw.get("start_line"),
+            raw.get("end_line"),
+            raw.get("severity"),
+            raw.get("category"),
+            raw.get("description"),
+        ],
+        sort_keys=True,
+    )
+    return str(uuid5(NAMESPACE_URL, f"gobby:close-finding:{content}"))
 
 
 def _coerce_payload(payload: object) -> Mapping[str, Any]:

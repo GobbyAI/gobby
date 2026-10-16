@@ -189,8 +189,8 @@ def build_agentic_review_prompt(
 
 
 # The wake contract references blockers; it never re-carries the bulk evidence the
-# close payload already reported. The blocking reasons and outstanding_finding_count
-# are that reference, and the persisted review row keeps the evidence itself.
+# close payload already reported. The blocking reasons, outstanding findings and their
+# count are that reference, and the persisted review row keeps the evidence itself.
 _BULK_CLOSE_RESULT_SECTIONS = frozenset(
     {
         "verdict",
@@ -260,7 +260,9 @@ def build_terminal_review_payload(
             else ["Call close_task again to start a fresh review attempt."]
         )
     if status == "invalid":
-        result["outstanding_finding_count"] = len(blocking_reasons)
+        # Findings only: criterion gaps travel in criterion_gaps and the
+        # reviewer's summary in review_feedback, never in this count.
+        result["outstanding_finding_count"] = len(result.get("outstanding_findings") or [])
         result["remediation_guidance"] = (
             "Address every listed blocking reason, validate the complete fix set, and commit the "
             "complete fix set before one resubmission."
