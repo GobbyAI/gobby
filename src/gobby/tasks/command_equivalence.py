@@ -456,6 +456,25 @@ def _pytest_reporting_option(option: str) -> bool:
     return name in _PYTEST_REPORTING_OPTIONS or name.startswith("-r")
 
 
+def pytest_collection_target(command: str) -> str | None:
+    """Return one complete file explicitly selected by a collection-only command.
+
+    Reporting options are already removed by ``_path_scope``. Other selection or
+    execution options, directory scopes, node IDs and multiple files fail closed.
+    """
+    scoped = _path_scope(command, allow_outside=True)
+    if scoped is None:
+        return None
+    prefix, paths = scoped
+    if "pytest" not in prefix or len(paths) != 1:
+        return None
+    options = prefix[prefix.index("pytest") + 1 :]
+    if not options or any(option not in {"--co", "--collect-only"} for option in options):
+        return None
+    path = paths[0]
+    return path if path.endswith(".py") and "::" not in path else None
+
+
 def pytest_targets(command: str) -> tuple[str, ...] | None:
     """Return path targets for a pytest command.
 

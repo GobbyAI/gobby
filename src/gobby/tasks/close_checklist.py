@@ -587,8 +587,23 @@ def _evaluate_validation_commands(
     ]
     uncovered_pytest: tuple[str, ...] = ()
     if pytest_required_paths:
-        uncovered_pytest = covers(pytest_required_paths)
+        normally_uncovered = covers(pytest_required_paths)
+        uncovered_pytest = tuple(
+            path
+            for path in uncovered_pytest_paths(
+                [run for run in credited if run.outcome == "success"],
+                pytest_required_paths,
+                close_root=close_root,
+                changed_paths=changed_paths,
+                candidate=candidate,
+                collection_paths=pytest_required_paths,
+            )
+            if path not in confined_paths
+        )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
+        details["pytest_collection_credited_paths"] = [
+            path for path in normally_uncovered if path not in uncovered_pytest
+        ]
     declined = (*uncovered_pytest, *(t for tests in uncovered_sources.values() for t in tests))
     if differing := copy_differing_paths(
         passing_runs, declined, close_root, changed_paths, candidate
