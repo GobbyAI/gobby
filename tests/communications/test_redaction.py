@@ -16,6 +16,28 @@ pytestmark = pytest.mark.unit
 SECRET = "abcdefghijklmnopqrstuvwxyz0123"
 
 
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_telegram_bot_urls_are_redacted(prefix: str) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    redacted = redact_and_bound(f"Request failed: {url}", 512)
+    assert redacted == f"Request failed: https://api.telegram.org/{prefix}<redacted>/getMe"
+    assert token not in redacted
+    assert SECRET not in redacted
+
+
+@pytest.mark.parametrize("prefix", ["bot", "file/bot"])
+def test_bot_url_secret_straddling_bound_is_redacted_first(prefix: str) -> None:
+    token = "123456789:" + SECRET
+    url = f"https://api.telegram.org/{prefix}{token}/getMe"
+    max_chars = url.index(token) + 10
+    redacted = redact_and_bound(url, max_chars)
+    assert "123456789" not in redacted
+    assert SECRET not in redacted
+    assert len(redacted) <= max_chars
+    assert redacted.endswith(TRUNCATION_MARKER)
+
+
 def test_short_text_is_redacted_without_truncation() -> None:
     text = f"errors.log: api_key={SECRET}"
 
