@@ -25,6 +25,7 @@ from gobby.hooks._python_mutation_targets import (
     _literal_path_call,
     _mutation_call_targets,
     _python_attribute_name,
+    _resolve_literal_imports,
 )
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.utils.python_source import parse_agent_source
@@ -706,6 +707,7 @@ def _classify_python_source_evidence(
         tree = parse_agent_source(script)
     except SyntaxError:
         return _PythonExecutionClassification.INDETERMINATE, None
+    _resolve_literal_imports(tree)
     binding_counts = _binding_counts(tree)
     rebound_names = frozenset(binding_counts)
     imported_bindings = _imported_bindings(tree)

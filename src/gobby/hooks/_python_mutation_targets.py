@@ -1,6 +1,7 @@
 """Which inline-Python calls mutate the filesystem, and the literal paths they name."""
 
 import ast
+import re
 from collections.abc import Mapping
 
 _OPEN_READ_MODES = frozenset({"r", "rb", "rt", "br", "tr"})
@@ -24,8 +25,15 @@ _PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS: Mapping[str, tuple[int, ...]] = {
     "shutil.copytree": (1,),
     "shutil.move": (1,),
     "shutil.rmtree": (0,),
+    "shutil.unpack_archive": (1,),
 }
-_PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(_PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS)
+_ARCHIVE_MODULES = frozenset({"tarfile", "zipfile"})
+_MODULE_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+_TARFILE_OPEN_CALLS = frozenset({"tarfile.open", "tarfile.TarFile", "tarfile.TarFile.open"})
+# `r`, then `r:` (random access) or `r|` (stream) with an optional compression.
+_TARFILE_READ_MODES = frozenset(
+    {"r"} | {f"r{kind}{codec}" for kind in ":|" for codec in ("", "*", "gz", "bz2", "xz", "zst")}
+)
 _PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
     {
         "chmod",
@@ -88,6 +96,59 @@ def _imported_bindings(tree: ast.AST) -> Mapping[str, str] | None:
                     return None
                 bindings[bound_name] = canonical_name
     return bindings
+
+
+class _LiteralImports(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self.packages: dict[str, None] = {}
+
+    def visit_Call(self, node: ast.Call) -> ast.expr:
+        self.generic_visit(node)
+        module = _literal_import_module(node)
+        if module is None:
+            return node
+        package = module.partition(".")[0]
+        self.packages[package] = None
+        return ast.copy_location(ast.Name(id=package, ctx=ast.Load()), node)
+
+
+def _literal_import_module(node: ast.Call) -> str | None:
+    """The module named by a plain ``__import__('pkg.mod')`` call, else None."""
+    if not (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "__import__"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return None
+    module = _literal_string(node.args[0])
+    return module if module is not None and _MODULE_NAME.fullmatch(module) else None
+
+
+def _resolve_literal_imports(tree: ast.Module) -> None:
+    """Rewrite each ``__import__('pkg.mod')`` as the ``pkg`` it returns, imported up front.
+
+    The call returns its top-level package just as ``import pkg.mod`` binds
+    ``pkg``, so the rewritten tree meets the same import, alias and rebinding
+    checks. Any other mention of ``__import__`` (a computed name, ``fromlist``,
+    a rebinding of the builtin) leaves the tree untouched and stays an escape.
+    """
+    mentions = sum(
+        item == "__import__"
+        for node in ast.walk(tree)
+        for _, value in ast.iter_fields(node)
+        for item in (value if isinstance(value, list) else [value])
+    )
+    calls = sum(
+        isinstance(node, ast.Call) and _literal_import_module(node) is not None
+        for node in ast.walk(tree)
+    )
+    if not calls or mentions != calls:
+        return
+    transformer = _LiteralImports()
+    transformer.visit(tree)
+    tree.body[:0] = [ast.Import(names=[ast.alias(name=name)]) for name in transformer.packages]
+    ast.fix_missing_locations(tree)
 
 
 def _canonical_imported_name(
@@ -194,6 +255,18 @@ def _mutation_call_targets(
         ):
             # `Path(...).open('w')` writes the receiver; a read mode falls through.
             return (receiver_literal,) if receiver_literal is not None else ()
+        # `extract` is a common name, so it counts only beside an archive import.
+        if node.func.attr == "extractall" or (
+            node.func.attr == "extract"
+            and any(
+                name.partition(".")[0] in _ARCHIVE_MODULES for name in imported_bindings.values()
+            )
+        ):
+            return _extraction_destination(node, imported_bindings, path_value_names)
+    if call_name in _TARFILE_OPEN_CALLS:
+        if _is_read_only_open_call(node, modes=_TARFILE_READ_MODES):
+            return None
+        return _literal_path_arguments(node, (0,), imported_bindings, path_value_names)
     if call_name == "open" or (call_name or "").endswith(".open"):
         if _is_read_only_open_call(node):
             return None
@@ -220,7 +293,9 @@ def _mutation_call_targets(
     return None
 
 
-def _is_read_only_open_call(node: ast.Call, *, mode_index: int = 1) -> bool:
+def _is_read_only_open_call(
+    node: ast.Call, *, mode_index: int = 1, modes: frozenset[str] = _OPEN_READ_MODES
+) -> bool:
     """Allow ``open(...)`` only when the mode is absent or a literal read mode.
 
     ``mode_index`` is 1 for the builtin (``open(path, mode)``) and 0 for the
@@ -234,7 +309,28 @@ def _is_read_only_open_call(node: ast.Call, *, mode_index: int = 1) -> bool:
             mode = keyword.value
     if mode is None:
         return True
-    return isinstance(mode, ast.Constant) and mode.value in _OPEN_READ_MODES
+    return isinstance(mode, ast.Constant) and mode.value in modes
+
+
+def _extraction_destination(
+    node: ast.Call,
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> tuple[str, ...]:
+    """Return an archive extraction's literal destination; empty when it is not literal.
+
+    ``extractall(path)`` and ``extract(member, path)`` default to the working
+    directory, which is not a literal target either.
+    """
+    index = 0 if isinstance(node.func, ast.Attribute) and node.func.attr == "extractall" else 1
+    destination = node.args[index] if len(node.args) > index else None
+    for keyword in node.keywords:
+        if keyword.arg == "path":
+            destination = keyword.value
+    literal = (
+        _literal_path(destination, imported_bindings, path_value_names) if destination else None
+    )
+    return (literal,) if literal is not None else ()
 
 
 def _is_read_only_zipfile_call(node: ast.Call) -> bool:

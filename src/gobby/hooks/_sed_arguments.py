@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
 from gobby.hooks._normalization_shell import _contains_unexpanded_shell_reference
+from gobby.hooks._sed_expansion import expand_sed_program, sed_literal_bindings
 
 _LONG_OPTIONS = (
     "--expression",
@@ -31,6 +32,9 @@ class _SedOperands:
     programs: tuple[str, ...]
     unresolved: bool
     inplace: bool
+    # A program came from expanding bound or arithmetic values, so its text is
+    # trusted for write commands but not for scope or line windows.
+    expanded: bool = False
 
 
 def _sed_file_operands(
@@ -44,6 +48,7 @@ def _sed_file_operands(
     explicit_script = False
     unresolved_script = False
     inplace = False
+    expanded = False
     after_options = False
     index = 1
 
@@ -51,6 +56,22 @@ def _sed_file_operands(
         return _contains_unexpanded_shell_reference(value) and not (
             raw_parts is not None and _raw_shell_word_is_literal(raw_parts[source_index])
         )
+
+    def add_program(value: str, source_index: int) -> bool:
+        """Record the program sed receives; True when it stays unresolved."""
+        nonlocal expanded
+        if not unresolved(value, source_index):
+            programs.append(value)
+            return False
+        # An attached value (`-e"$p"`) shares its raw word with the option.
+        expansion = (
+            expand_sed_program(raw_parts[source_index], sed_literal_bindings.get())
+            if raw_parts is not None and parts[source_index] == value
+            else None
+        )
+        programs.append(value if expansion is None else expansion[0])
+        expanded |= expansion is not None
+        return expansion is None
 
     while index < len(parts):
         source_index = index
@@ -72,11 +93,12 @@ def _sed_file_operands(
                     index += 1
                 if option != "--line-length":
                     explicit_script = True
+                    if option == "--expression":
+                        unresolved_script |= add_program(value, source_index)
+                        continue
                     unresolved_script |= unresolved(value, source_index)
                     if option == "--file" and value:
                         script_files.append(value)
-                    elif option == "--expression":
-                        programs.append(value)
             continue
         if not after_options and word.startswith("-") and word != "-":
             for offset, option in enumerate(word[1:], start=1):
@@ -95,11 +117,12 @@ def _sed_file_operands(
                         value = parts[index]
                         index += 1
                     explicit_script = True
+                    if option == "e":
+                        unresolved_script |= add_program(value, source_index)
+                        break
                     unresolved_script |= unresolved(value, source_index)
-                    if option == "f" and value:
+                    if value:
                         script_files.append(value)
-                    elif option == "e":
-                        programs.append(value)
                     break
                 if option in "iI":
                     inplace = True
@@ -121,8 +144,7 @@ def _sed_file_operands(
         positional_indices.append(source_index)
     inputs = positional if explicit_script else positional[1:]
     if not explicit_script and positional:
-        unresolved_script |= unresolved(positional[0], positional_indices[0])
-        programs.append(positional[0])
+        unresolved_script |= add_program(positional[0], positional_indices[0])
     return _SedOperands(
-        tuple(inputs), tuple(script_files), tuple(programs), unresolved_script, inplace
+        tuple(inputs), tuple(script_files), tuple(programs), unresolved_script, inplace, expanded
     )

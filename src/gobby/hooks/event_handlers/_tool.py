@@ -117,6 +117,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
             except ValueError as exc:
                 return HookResponse(decision="block", reason=str(exc))
+            try:
+                self._snapshot_opaque_program_dirt(event, session_id)
+            except Exception as e:
+                self.logger.warning("Failed to snapshot opaque program dirt: %s", e, exc_info=True)
 
         return HookResponse(decision="allow")
 
@@ -361,6 +365,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            # A failed program may still have written; rule 3 ignores exit codes too.
+            if self._session_manager:
+                try:
+                    self._record_opaque_program_writes(event, session_id)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to attribute opaque program writes: %s", e, exc_info=True
+                    )
+
             db = getattr(self._session_manager, "db", None)
             if db is not None:
                 TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
@@ -419,6 +432,81 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
 
+        if input_data.get("canonical_structured_mutation") is True and not file_paths:
+            self.logger.warning(
+                "Successful structured mutation had no attributable file paths",
+                extra={
+                    "event": "file_mutation_attribution_unavailable",
+                    "session_id": session_id,
+                    "tool_name": input_data.get("tool_name"),
+                    "mcp_server": input_data.get("mcp_server"),
+                    "mcp_tool": input_data.get("mcp_tool"),
+                },
+            )
+        self._record_file_paths(event, session_id, file_paths)
+
+    @staticmethod
+    def _opaque_program_checkout(event: HookEvent) -> str | None:
+        """The checkout a tool call's unclassifiable program runs in, if it runs one."""
+        from gobby.workflows.task_claim_state import effective_tool_cwd
+
+        data = event.data
+        if (
+            data.get("canonical_opaque_program") is not True
+            and data.get("canonical_script_execution") is not True
+        ):
+            return None
+        cwd = effective_tool_cwd(event.cwd, data)
+        root = checkout_root(Path(cwd)) if cwd is not None else None
+        return os.fspath(root) if root is not None else None
+
+    def _snapshot_opaque_program_dirt(self, event: HookEvent, session_id: str) -> None:
+        """Record the checkout's dirt before a bound call runs an unclassifiable program."""
+        from gobby.workflows.opaque_write_attribution import checkout_dirty_paths
+
+        db = getattr(self._session_manager, "db", None)
+        root = self._opaque_program_checkout(event)
+        if db is None or root is None:
+            return
+        bindings = TaskToolBindings(SessionVariableManager(db), session_id)
+        if bindings.started_at(event) is None:
+            return
+        dirty = run_coro_blocking(
+            checkout_dirty_paths(root), self._event_loop, self.logger, label="opaque_dirt_baseline"
+        )
+        if isinstance(dirty, set):
+            bindings.record_dirty_baseline(event, root, dirty)
+
+    def _record_opaque_program_writes(self, event: HookEvent, session_id: str) -> None:
+        """Attribute the dirt an unclassifiable program left to the session and claim that ran it."""
+        from gobby.workflows.opaque_write_attribution import opaque_program_writes
+
+        db = getattr(self._session_manager, "db", None)
+        root = self._opaque_program_checkout(event)
+        if db is None or root is None:
+            return
+        variable_manager = SessionVariableManager(db)
+        # Without a start-time snapshot, the program's dirt and older dirt look alike.
+        baseline = TaskToolBindings(variable_manager, session_id).take_dirty_baseline(event, root)
+        if baseline is None:
+            return
+        paths = run_coro_blocking(
+            opaque_program_writes(
+                db,
+                variable_manager.get_variables(session_id),
+                session_id=session_id,
+                checkout_root=root,
+                baseline=baseline,
+            ),
+            self._event_loop,
+            self.logger,
+            label="opaque_program_writes",
+        )
+        if isinstance(paths, list) and paths:
+            self._record_file_paths(event, session_id, paths)
+
+    def _record_file_paths(self, event: HookEvent, session_id: str, file_paths: list[str]) -> None:
+        """Attribute written ``file_paths`` to the session and its tool-start task."""
         from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
 
         db = getattr(self._session_manager, "db", None)
@@ -447,18 +535,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if repo_relative_path not in checkout_paths:
                 checkout_paths.append(repo_relative_path)
 
-        structured_mutation = input_data.get("canonical_structured_mutation") is True
-        if structured_mutation and not file_paths:
-            self.logger.warning(
-                "Successful structured mutation had no attributable file paths",
-                extra={
-                    "event": "file_mutation_attribution_unavailable",
-                    "session_id": session_id,
-                    "tool_name": input_data.get("tool_name"),
-                    "mcp_server": input_data.get("mcp_server"),
-                    "mcp_tool": input_data.get("mcp_tool"),
-                },
-            )
         if not committable_paths:
             return
 

@@ -95,6 +95,9 @@ def classify_base_command(
                     else "low"
                 ),
             )
+        if _runs_program_file(interpreter, interpreter_args):
+            # Its writes are unknowable before it runs; they are attributed afterwards.
+            return _ShellSegmentMetadata("execute", extra={"canonical_opaque_program": True})
 
     if cmd == "curl":
         writes_file, paths = _curl_output_paths(parts)
@@ -200,3 +203,25 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
         paths=tuple(_rebase_shell_paths(items, cwd)),
         loop_binding_variable=variable,
     )
+
+
+def _runs_program_file(interpreter: str, args: list[str]) -> bool:
+    """Whether an interpreter runs a script file or module rather than stdin or nothing."""
+    if interpreter not in {"python", "python3", "node", "ruby"}:
+        return False
+    words = iter(args)
+    for arg in words:
+        if arg == "--":
+            return next(words, None) is not None
+        if arg == "-" or not arg.startswith("-"):
+            return arg != "-"
+        if interpreter in {"python", "python3"} and not arg.startswith("--"):
+            # ``-m`` runs a module; ``-W``/``-X`` take the next word unless attached.
+            for position, letter in enumerate(arg[1:], start=1):
+                if letter == "m":
+                    return True
+                if letter in "WX":
+                    if position == len(arg) - 1:
+                        next(words, None)
+                    break
+    return False
