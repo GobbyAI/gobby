@@ -14,6 +14,7 @@ from pytest_mock import MockerFixture
 
 from gobby.tasks import acceptance_artifacts as artifacts_module
 from gobby.tasks.acceptance_artifacts import (
+    AcceptanceArtifactResult,
     AcceptanceTest,
     evaluate_acceptance_artifacts,
     malformed_test_reference_findings,
@@ -1049,6 +1050,43 @@ def test_feature() -> None:
     assert result.passed is False
     assert any("tautological assertion" in finding for finding in result.findings)
     assert all("test_feature" in finding for finding in result.findings)
+
+
+def _python_helper_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
+) -> AcceptanceArtifactResult:
+    body = f"""
+def test_feature(receipt) -> None:
+    {helper}(receipt, expected="ok")
+"""
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    return evaluate_acceptance_artifacts(
+        criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
+        repo_path=str(tmp_path),
+        commit_shas=["linked"],
+    )
+
+
+@pytest.mark.parametrize("helper", ["_assert_ok", "__assert_ok"])
+def test_underscore_prefixed_assert_helper_counts_as_assertion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
+) -> None:
+    result = _python_helper_result(monkeypatch, tmp_path, helper)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize("helper", ["_check_ok", "_ok_assert"])
+def test_non_assert_private_helper_still_flagged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
+) -> None:
+    result = _python_helper_result(monkeypatch, tmp_path, helper)
+
+    assert result.passed is False
+    assert result.findings == (
+        "tests/test_feature.py::test_feature: contains no executable assertion",
+    )
 
 
 def test_rust_format_constant_placebo_is_rejected(

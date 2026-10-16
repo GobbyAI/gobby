@@ -749,7 +749,7 @@ def _python_test_findings(test: AcceptanceTest) -> list[str]:
                 _is_static_expression(arg) for arg in node.args
             ):
                 findings.append(f"{test.reference}: assertion compares only constant values")
-            if called.startswith("assert") or called in {"fail", "raises"}:
+            if called.lstrip("_").startswith("assert") or called in {"fail", "raises"}:
                 has_assertion = True
         if not isinstance(node, ast.Assert):
             continue
