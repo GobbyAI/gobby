@@ -6,14 +6,75 @@ import pytest
 
 from gobby.plans.coverage import (
     COVERS_LABEL_REGEX,
+    CoverageReport,
+    CoverageStatus,
     CoversRecord,
     InvalidCoversLabelError,
+    TaskTreeSource,
+    evaluate,
     parse_covers_label,
     validate_covers,
 )
 from gobby.plans.parser import AcceptanceItem, ArtifactKind, Kind, PlanDocument, PlanSection
 
 pytestmark = pytest.mark.unit
+
+
+def _leaf_coverage(label: str, state: str, closed_reason: str | None) -> CoverageReport:
+    return evaluate(
+        plan=_plan_doc(),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "state": "open"},
+            {
+                "ref": "#2",
+                "parent_ref": "#1",
+                "labels": [label],
+                "validation_criteria": "Proves src/gobby/plans/parser.py.",
+                "state": state,
+                "closed_reason": closed_reason,
+            },
+        ],
+    )
+
+
+@pytest.mark.parametrize("label", ["covers:plan:A1:A1.9", "covers:plan:A9:A9.1", "covers:bad"])
+def test_closed_obsolete_leaf_dangling_label_is_ignored(label: str) -> None:
+    report = _leaf_coverage(label, "closed", "obsolete")
+
+    assert not report.has_invalid
+    assert [(row.item_id, row.status, row.leaves) for row in report.rows] == [
+        ("A1.1", CoverageStatus.missing, ())
+    ]
+
+
+def test_closed_obsolete_leaf_does_not_cover_live_item() -> None:
+    report = _leaf_coverage("covers:plan:A1:A1.1", "closed", "obsolete")
+
+    assert report.has_missing
+    assert len(report.rows) == 1
+    assert report.rows[0].status is CoverageStatus.missing
+    assert report.rows[0].leaves == ()
+
+
+@pytest.mark.parametrize(
+    ("state", "closed_reason"),
+    [("open", None), ("open", "obsolete"), ("closed", "completed"), ("closed", "duplicate")],
+)
+@pytest.mark.parametrize("label", ["covers:plan:A1:A1.9", "covers:plan:A9:A9.1", "covers:bad"])
+def test_dangling_label_on_non_obsolete_leaf_stays_invalid(
+    state: str, closed_reason: str | None, label: str
+) -> None:
+    report = _leaf_coverage(label, state, closed_reason)
+
+    assert report.has_invalid
+    invalid_rows = [row for row in report.rows if row.status is CoverageStatus.invalid]
+    assert len(invalid_rows) == 1
+    assert invalid_rows[0].leaves[0].leaf_task_ref == "#2"
 
 
 def _item(
