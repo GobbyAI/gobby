@@ -20,9 +20,17 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
     every consumer can compare positions.
     """
     streams: list[list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]]] = []
+    author_run_ids = {
+        id(run) for evidence in evidence_sets for run in evidence.off_task_author_runs
+    }
     for evidence in evidence_sets:
         items: list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]] = [
-            (run.completed_at, run) for run in (*evidence.validation_runs, *evidence.command_runs)
+            (run.completed_at, run)
+            for run in (
+                *evidence.validation_runs,
+                *evidence.command_runs,
+                *evidence.off_task_author_runs,
+            )
         ]
         items.extend((edit.timestamp, edit) for edit in evidence.edits)
         items.sort(key=lambda item: item[1].order)
@@ -31,6 +39,7 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
 
     cursors = [0] * len(streams)
     runs: list[TranscriptValidationRun] = []
+    author_runs: list[TranscriptValidationRun] = []
     edits: list[TranscriptEdit] = []
     position = 0
     while True:
@@ -46,13 +55,15 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
         cursors[index] += 1
         position += 1
         if isinstance(item, TranscriptValidationRun):
-            runs.append(replace(item, order=position))
+            target = author_runs if id(item) in author_run_ids else runs
+            target.append(replace(item, order=position))
         else:
             edits.append(replace(item, order=position))
 
     return TranscriptEvidence(
         validation_runs=tuple(run for run in runs if run.categories),
         command_runs=tuple(run for run in runs if not run.categories),
+        off_task_author_runs=tuple(author_runs),
         excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
         edits=tuple(edits),
         task_claims=tuple(claim for evidence in evidence_sets for claim in evidence.task_claims),
