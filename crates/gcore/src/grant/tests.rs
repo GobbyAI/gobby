@@ -362,6 +362,29 @@ fn bracketed_ipv6_daemon_url_without_port_uses_default_port() {
 }
 
 #[test]
+fn unbracketed_ipv6_daemon_url_is_configuration_error() {
+    for url in [
+        "http://::1",
+        "http://::1/",
+        "http://fe80::1",
+        "http://::1:61000",
+    ] {
+        let error = url_host_port(url).expect_err("unbracketed ipv6 daemon url");
+        assert_eq!(
+            error,
+            GrantError::BootstrapConfig("invalid daemon url".into()),
+            "url={url}"
+        );
+        assert_eq!(error.exit_status(), 2);
+        assert!(!error.is_retryable_presentation());
+    }
+    assert_eq!(
+        url_host_port("http://127.0.0.1:61000"),
+        Ok(("127.0.0.1".to_string(), 61000))
+    );
+}
+
+#[test]
 fn invalid_daemon_url_syntax_is_configuration_error() {
     let harness = Harness::new();
     let _env = PoisonedEnv::apply(&harness.home.join("unused-bootstrap.json"));
