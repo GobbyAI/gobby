@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
+VALIDATION_LAUNCHER_HEADS = frozenset({"setsid", "ionice", "unbuffer", "chronic", "arch"})
 _EVIDENCE_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # env followed directly by an assignment; option forms such as `env -u` stay unstripped.
 _EVIDENCE_ENV_COMMAND_PREFIX = re.compile(r"(?:\S*/)?env\s+(?=[A-Za-z_][A-Za-z0-9_]*=)")
@@ -239,7 +240,7 @@ def _iter_validation_matches(
         return
 
     wrapper_rules = _iter_wrapper_rules(detection_config)
-    parsed = parse_shell_command(command)
+    parsed = parse_shell_command(strip_validation_shell_escape(command))
     for segment_index, segment in enumerate(parsed.segments):
         normalized_segments = _normalize_segments(list(segment), wrapper_rules)
         for nested_index, normalized in enumerate(normalized_segments):
@@ -462,6 +463,10 @@ def _apply_wrapper_rule(
     tokens: list[str],
     wrappers: list[ValidationCommandWrapper],
 ) -> tuple[list[list[str]], str, tuple[str, ...]] | None:
+    launcher = Path(tokens[0]).name.lower() if tokens else ""
+    if launcher in VALIDATION_LAUNCHER_HEADS:
+        inner = unwrap_validation_launcher_tokens(tokens)
+        return ([inner], launcher, ()) if inner is not None else None
     matches = sorted(
         _matching_wrapper_prefixes(tokens, wrappers),
         key=lambda match: (-len(match[2]), match[0]),
@@ -576,8 +581,66 @@ def _unwrap_env_tokens(tokens: list[str]) -> list[str] | None:
     return tokens[cursor:]
 
 
+def strip_validation_shell_escape(command: str) -> str:
+    """Remove one provider CLI shell-escape prefix, never an inner shell operator."""
+    stripped = command.lstrip()
+    return (
+        stripped[1:].lstrip()
+        if stripped.startswith("!") and not stripped.startswith("!!")
+        else command
+    )
+
+
+def unwrap_validation_launcher_tokens(tokens: list[str]) -> list[str] | None:
+    """Unwrap only the supported command-executing grammar of these launchers."""
+    if not tokens:
+        return None
+    executable = Path(tokens[0]).name.lower()
+    if executable not in VALIDATION_LAUNCHER_HEADS:
+        return None
+    flags = {
+        "setsid": {"-w", "--wait", "-c", "--ctty"},
+        "ionice": {"-t", "--ignore"},
+        "unbuffer": {"-p"},
+        "chronic": {"-v"},
+        "arch": {"-arm64", "-arm64e", "-x86_64", "-x86_64h", "-i386"},
+    }[executable]
+    index = 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token in flags:
+            index += 1
+            continue
+        option, equals, value = token.partition("=")
+        if executable != "ionice":
+            return None
+        if option in {"-c", "--class", "-n", "--classdata"}:
+            if not equals:
+                index += 1
+                if index >= len(tokens):
+                    return None
+                value = tokens[index]
+        elif token[:2] in {"-c", "-n"} and len(token) > 2:
+            option, value = token[:2], token[2:]
+        else:
+            return None
+        allowed = (
+            {"0", "1", "2", "3", "none", "realtime", "best-effort", "idle"}
+            if option in {"-c", "--class"}
+            else {str(level) for level in range(8)}
+        )
+        if value not in allowed:
+            return None
+        index += 1
+    return tokens[index:] or None
+
+
 def normalize_validation_evidence_command(command: str) -> str:
     """Remove exit-preserving prefixes, unwrapping nice and env in any order and nesting."""
+    command = strip_validation_shell_escape(command)
     cursor = _evidence_skip_whitespace(command, 0)
     while True:
         next_cursor = _evidence_consume_cd_prefix(command, cursor)
@@ -612,7 +675,11 @@ def normalize_validation_evidence_command(command: str) -> str:
         tokens = list(parsed.segments[0])
         changed = False
         for _ in range(_MAX_WRAPPER_NORMALIZATION_DEPTH):
-            inner = _unwrap_nice_tokens(tokens) or _unwrap_env_tokens(tokens)
+            inner = (
+                _unwrap_nice_tokens(tokens)
+                or _unwrap_env_tokens(tokens)
+                or unwrap_validation_launcher_tokens(tokens)
+            )
             if inner is None:
                 break
             tokens, changed = inner, True

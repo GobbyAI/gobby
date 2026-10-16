@@ -15,9 +15,12 @@ from typing import Any, Literal
 
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.config.validation_detection import (
+    VALIDATION_LAUNCHER_HEADS,
     is_validation_command,
     normalize_validation_evidence_command,
     resolve_validation_detection_config,
+    strip_validation_shell_escape,
+    unwrap_validation_launcher_tokens,
 )
 from gobby.config.validation_outcomes import runner_reported_failures
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
@@ -183,7 +186,7 @@ def unregistered_execution_reason(
     command: str, project_path: str | None = None, *, workdir: str | None = None
 ) -> str | None:
     """Require known validation semantics for interpreter and launcher criteria."""
-    parsed = parse_validation_shell(command)
+    parsed = parse_validation_shell(strip_validation_shell_escape(command))
     initial_directory = workdir or project_path
     directory = Path(initial_directory) if initial_directory is not None else None
     for segment in parsed.segments:
@@ -305,9 +308,13 @@ def _bun_script_argument(arguments: tuple[str, ...], directory: Path | None) -> 
 def _tracked_script(script: str, project_path: str | None, directory: Path | None) -> bool:
     if not project_path or directory is None or script == "-":
         return False
-    root = Path(project_path).resolve()
-    path = directory / script
     try:
+        checkout = Path(os.path.abspath(project_path))
+        root = checkout.resolve(strict=True)
+        path = Path(os.path.abspath(directory / script))
+        # Resolve the checkout alias only; symlinks inside it remain untrusted.
+        if path.is_relative_to(checkout):
+            path = root / path.relative_to(checkout)
         resolved = path.resolve(strict=True)
         relative = resolved.relative_to(root)
         if not resolved.is_file() or resolved != Path(os.path.abspath(path)):
@@ -510,6 +517,11 @@ def _first_executable(
             if arguments and arguments[0].startswith("-"):
                 return None
             tokens = arguments
+        elif executable in VALIDATION_LAUNCHER_HEADS:
+            launcher_tokens = unwrap_validation_launcher_tokens([tokens[0], *arguments])
+            if launcher_tokens is None:
+                return None
+            tokens = tuple(launcher_tokens)
         elif executable == "nice":
             return None  # Normalization already removed every proven nice prefix.
         else:
