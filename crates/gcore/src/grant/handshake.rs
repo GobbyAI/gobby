@@ -414,7 +414,9 @@ pub(super) fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantErro
         ),
         None => (hostport.to_string(), crate::bootstrap::DEFAULT_DAEMON_PORT),
     };
-    if host.is_empty() {
+    // A colon left in the host is an unbracketed IPv6 literal, whose port
+    // cannot be told apart from the address.
+    if host.is_empty() || host.contains(':') {
         return Err(GrantError::BootstrapConfig(
             "invalid daemon url".to_string(),
         ));
