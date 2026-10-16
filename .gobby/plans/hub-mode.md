@@ -475,6 +475,7 @@ manifest.
 | 1.2 | node-halves 2.7 (Command dispatch over the node channel) | blocks | Both change `crates/gdaemon/src/nodes/channel.rs`: 1.2 `hub_channel`, node-halves 2.7 `run_client`. |
 | 1.2 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.2 checks `v` against the `CONTRACT_VERSION` that node-halves 3.1 sets to 2. |
 | 1.2 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 reuses 1.2's route when it ports the hub's callers to Rust. |
+| 1.2 | terminal 2.6 (#24570, Loopback write route over the Rust coordinator, in `.gobby/plans/daemon-side-gterm-adoption-and-terminal-ws.md`) | blocks | Both change `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, and following node-halves 1.5 alone does not order them; the Orchestrator ruled 1.2 first on 2026-10-16 for hub-node priority. 1.2 has no leaf until this plan expands, and the Orchestrator wires this edge at that expansion. |
 | 1.3 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.3 builds `v` from `CONTRACT_VERSION`. |
 | 1.4 | node-halves 1.3 (Hub routes for node replay decisions and receipts) | blocked by | Both add a router in `src/gobby/servers/_app_routes.py::register_routes`. |
 | 1.4 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.4's routes check `v` against `CONTRACT_VERSION`. |
@@ -4186,6 +4187,14 @@ Verification planned:
   1.5, three `DaemonConfig` tests in 2.5, and
   `tests/servers/test_source_control_worktrees.py` in 4.4, each added to its
   section's verification command where it is re-run.
+- 2026-10-16: Cross-plan edge added on Orchestrator gobby#15977's ruling
+  (Plan Writer gobby#16490). Terminal plan 2.6 (#24570, Loopback write route
+  over the Rust coordinator) and this plan's 1.2 both change
+  `FrontDoor::handle`. After the Orchestrator flipped node-halves 1.5 to block
+  terminal 2.6, the shared predecessor no longer ordered the two (Adversary
+  gobby#16983's F7 on the terminal plan). 1.2 now blocks terminal 2.6 for
+  hub-node priority, and the Orchestrator wires the edge when this plan
+  expands.
 
 ## V2: Verification
 `kind: verification`
