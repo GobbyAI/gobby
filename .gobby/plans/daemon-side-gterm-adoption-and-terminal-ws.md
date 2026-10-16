@@ -3158,12 +3158,12 @@ Executors run focused verification after each leaf and the complete matrix befor
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+  validation_criteria: '1.9.1: Migration 457 adds nullable `workspace_panes.role`
     with the non-empty and byte-ceiling check, and every schema identity carrier agrees:
     `cargo test -p gobby-core --lib grant::tests` without features, `cargo test -p
     gobby-core --features postgres --test schema_contract`, and `cargo test -p gobby-core
     --features postgres --test catalog_manifest_freshness` run without `UPDATE_GCORE_SCHEMA_MANIFEST`
-    all pass. file: `crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql`.
+    all pass. file: `crates/gcore/assets/schema/migrations/457_workspace_pane_role.sql`.
 
     1.9.2: `create_tab` and `add_pane` persist a supplied role, every pane read returns
     it, and an omitted role stores NULL. test: `tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null`.
