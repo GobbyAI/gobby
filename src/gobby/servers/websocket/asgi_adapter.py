@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -12,11 +13,11 @@ from websockets.exceptions import ConnectionClosedError
 class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
     """Expose a Starlette WebSocket through the interface used by WebSocketServer."""
 
-    def __init__(self, websocket: WebSocket, *, user_id: str) -> None:
+    def __init__(self, websocket: WebSocket, *, user_id: str, remote_address: Any = None) -> None:
         self._websocket = websocket
         self.user_id = user_id
         self.latency = 0.0
-        self.remote_address = websocket.client
+        self.remote_address = websocket.client if remote_address is None else remote_address
         self.subscriptions: set[str] = set()
         self.accepted = False
         self.closed = False
