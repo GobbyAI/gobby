@@ -121,6 +121,8 @@ struct EnvGuard {
     port: Option<OsString>,
     agent_api_token: Option<OsString>,
     managed_bootstrap: Option<OsString>,
+    agent_run_id: Option<OsString>,
+    managed_execution_id: Option<OsString>,
 }
 
 impl EnvGuard {
@@ -135,11 +137,14 @@ impl EnvGuard {
             port: std::env::var_os("GOBBY_PORT"),
             agent_api_token: std::env::var_os(crate::local_token::AGENT_API_TOKEN_ENV),
             managed_bootstrap: std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
+            agent_run_id: std::env::var_os("GOBBY_AGENT_RUN_ID"),
+            managed_execution_id: std::env::var_os("GOBBY_MANAGED_EXECUTION_ID"),
         };
         // SAFETY: these tests serialize env mutation through TEST_ENV_LOCK,
         // and EnvGuard restores the original values while still holding
-        // that lock. Daemon URL, port, and agent-token overrides are cleared
-        // so ambient values cannot leak into bootstrap-derived assertions.
+        // that lock. Daemon URL, port, agent-token, and managed-run overrides
+        // are cleared so ambient values cannot leak into bootstrap-derived
+        // or grant assertions.
         unsafe {
             std::env::set_var("HOME", home);
             std::env::set_var("GOBBY_HOME", home.join(".gobby"));
@@ -147,6 +152,8 @@ impl EnvGuard {
             std::env::remove_var("GOBBY_PORT");
             std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
             std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
+            std::env::remove_var("GOBBY_AGENT_RUN_ID");
+            std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
         }
         guard
     }
@@ -164,6 +171,8 @@ impl Drop for EnvGuard {
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
                 ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", &self.managed_bootstrap),
+                ("GOBBY_AGENT_RUN_ID", &self.agent_run_id),
+                ("GOBBY_MANAGED_EXECUTION_ID", &self.managed_execution_id),
                 (
                     crate::local_token::AGENT_API_TOKEN_ENV,
                     &self.agent_api_token,
