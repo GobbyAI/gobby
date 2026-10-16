@@ -244,6 +244,7 @@ async def derive_close_transcript_evidence(
     evidence: list[TranscriptEvidence] = []
     from gobby.workflows.task_claim_state import (
         other_task_edited_checkout_paths,
+        task_checkout_paths_in_window,
         task_edited_checkout_history_paths,
         task_edited_checkout_paths,
     )
@@ -274,6 +275,7 @@ async def derive_close_transcript_evidence(
         task_checkout_paths = task_edited_checkout_paths(
             variables, task_id
         ) | task_edited_checkout_history_paths(variables, task_id)
+        owner_pairs = task_checkout_paths
         paths_by_root: dict[str, set[str]] = {}
         for root, path in task_checkout_paths:
             paths_by_root.setdefault(root, set()).add(path)
@@ -284,6 +286,14 @@ async def derive_close_transcript_evidence(
             )
         # Scratch edits must not invalidate the earlier worker's clean runs.
         task_checkout_paths = frozenset(committable_pairs)
+        owner_pairs_outside_window = False
+        if (
+            session_id == owner_session_id
+            and (start := _evidence_epoch(effective_window)) is not None
+        ):
+            scoped_pairs = task_checkout_paths_in_window(variables, task_id, owner_pairs, start)
+            owner_pairs_outside_window = not task_checkout_paths.issubset(scoped_pairs)
+            task_checkout_paths &= scoped_pairs
         task_links: list[dict[str, Any]] | None = None
         window_end: float | None = None
         if session_id not in required:
@@ -305,6 +315,7 @@ async def derive_close_transcript_evidence(
         if (
             session_id == owner_session_id
             and owner_used_commit_fallback
+            and not owner_pairs_outside_window
             and not any(path in task_edited_files for _, path in task_checkout_paths)
         ):
             # Only the owner's commit-recovery attribution proves these task files

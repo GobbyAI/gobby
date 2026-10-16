@@ -341,7 +341,13 @@ async def test_close_uses_only_target_task_checkout_paths_for_linked_session() -
                 "/work/task-259-supply": ["docs/replenishment.md"],
             },
             "task-260": {"/work/task-260": ["docs/replenishment.md"]},
-        }
+        },
+        "task_edited_checkout_times": {
+            "task": {
+                root: {"docs/replenishment.md": datetime(2026, 8, 27, 1, 1, tzinfo=UTC).timestamp()}
+                for root in ("/work/task-259-runbook", "/work/task-259-supply")
+            }
+        },
     }
     seen_paths: list[frozenset[tuple[str, str]]] = []
 
@@ -564,7 +570,12 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
     if owner_other_task_ledger:
         # The owner may edit the same path for B, with or without an A ledger.
         owner_checkouts["other-task"] = {str(tmp_path): [relative_path]}
-    owner_variables: dict[str, Any] = {"task_edited_file_checkouts": owner_checkouts}
+    owner_variables: dict[str, Any] = {
+        "task_edited_file_checkouts": owner_checkouts,
+        "task_edited_file_times": {
+            "task": {relative_path: (start + timedelta(seconds=30)).timestamp()}
+        },
+    }
     if legacy_other_task == "linked_after_history":
         owner_variables["task_edited_file_checkouts_history_started_at"] = (
             start - timedelta(seconds=60)
@@ -1109,7 +1120,12 @@ async def test_linked_implementer_test_edits_survive_a_partial_owner_ledger(
     )
     ctx.session_var_manager.get_variables.side_effect = {
         IMPLEMENTER: {implementer_ledger: {"task": {str(tmp_path): [test_path]}}},
-        QA: {"task_edited_file_checkouts": {"task": {str(tmp_path): [owner_path]}}},
+        QA: {
+            "task_edited_file_checkouts": {"task": {str(tmp_path): [owner_path]}},
+            "task_edited_file_times": {
+                "task": {owner_path: (start + timedelta(hours=9)).timestamp()}
+            },
+        },
     }.get
 
     with (
@@ -1559,6 +1575,12 @@ async def test_codex_precompact_tdd_survives_later_task_editing_the_same_paths(
             "other-task": {str(tmp_path): [test_path, production_path]},
         },
         "task_edited_file_checkouts_history_started_at": start.timestamp(),
+        "task_edited_file_times": {
+            "task": {
+                test_path: (start + timedelta(seconds=10)).timestamp(),
+                production_path: (start + timedelta(seconds=30)).timestamp(),
+            }
+        },
         "task_selection_history": [
             {"epoch": start.isoformat(), "task_id": "task"},
             {"epoch": (start + timedelta(seconds=60)).isoformat(), "task_id": "other-task"},
