@@ -328,6 +328,9 @@ Consumers unchanged:
 - `tests/terminals/acceptance/conftest.py` — no-edit-reason: It builds terminal-runtime requests and reads no removed TerminalConfig field.
 - `tests/terminals/test_composition_roots.py` — no-edit-reason: Composition reads TerminalConfig as a whole and no removed field.
 - `tests/test_runner_lifecycle_processes.py` — no-edit-reason: Runner lifecycle supplies explicit shutdown intent and reads no removed config field.
+- `tests/e2e/conftest.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads no removed field.
+- `tests/terminals/test_host_upgrade.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads no removed field.
+- `tests/terminals/test_input_grant_rebind.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads no removed field.
 
 **Acceptance:**
 
@@ -666,6 +669,19 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/spawn_agent/test_spawn_project_context.py` — no-edit-reason: It builds the registry and passes no backend argument.
 - `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py` — no-edit-reason: It builds the registry and passes no backend argument.
 - `tests/terminals/test_web_spawn.py` — no-edit-reason: Its calls omit the new lifetime keyword, which defaults to run.
+- `tests/e2e/conftest.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads neither removed field.
+- `tests/terminals/test_host_upgrade.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads neither removed field.
+- `tests/terminals/test_input_grant_rebind.py` — no-edit-reason: It builds a default `TerminalConfig()` and reads neither removed field.
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: It builds the registry and calls `spawn_agent_impl` with no backend argument, and it asserts the materialized run lifetime.
+- `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py` — no-edit-reason: It builds the registry and patches `_load_agent_body` and `spawn_agent_impl` by their unchanged names.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_scope_proxy.py` — no-edit-reason: It builds the registry and patches `_load_agent_body` by its unchanged name.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_worktree_reference_resolution.py` — no-edit-reason: It builds the registry and patches `_load_agent_body` by its unchanged name.
+- `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: It calls `spawn_agent_impl` and builds the registry with no backend argument.
+- `tests/agents/test_agents_sync.py` — no-edit-reason: Its agent bodies carry no `terminal_backend`, so `_load_agent_body` loads them unchanged.
+- `tests/agents/test_sandbox_network.py` — no-edit-reason: It calls `spawn_agent_impl` with no backend argument.
+- `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py` — no-edit-reason: It calls `spawn_agent_impl` with no backend argument.
+- `tests/agents/test_spawn_native_only.py` — no-edit-reason: It calls `resolve_terminal_services` with a request that carries no backend selector.
+- `tests/workflows/test_agent_workflow_runtime_cleanup.py` — no-edit-reason: It records `SpawnAgentAction` instances and reads no removed backend field.
 
 **Acceptance:**
 
@@ -770,6 +786,9 @@ Consumers unchanged:
 - `tests/agents/test_run_completion.py` — no-edit-reason: Run completion consumes terminal lifecycle and is unchanged by optional fallback evidence.
 - `tests/agents/watchdog/test_close_review_parked_caller.py` — no-edit-reason: Watchdog promotion fixtures retain the compatible repository signature.
 - `tests/terminals/test_web_spawn.py` — no-edit-reason: Its native-host fixtures never reach the fallback decision.
+- `tests/agents/test_spawn_native_only.py` — no-edit-reason: It pins the native-only resolution, which runs before the fallback decision.
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: It calls `_runtime_spawn` with a native-host plan that never reaches the fallback decision.
+- `tests/servers/test_terminal_ws_attach_honesty.py` — no-edit-reason: It calls `_runtime_spawn` with a native-host plan that never reaches the fallback decision.
 
 **Acceptance:**
 
