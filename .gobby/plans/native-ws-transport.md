@@ -4,7 +4,7 @@ Plan artifact: `.gobby/plans/native-ws-transport.md`
 
 **Plan ID:** native-ws-transport
 **Root task:** #21558 — Native WS transport in gdaemon.
-**Status:** canonical narrative with Adv4's M1 for A1 to A3; D1 materialized as P2 (B1 to B3) by the #23881 spec on 2026-10-16, re-anchored at 0.5.0 `7ba471a18c`; M1 entries for B1 to B3 await Adversary derivation, then Orchestrator review and Josh approval.
+**Status:** canonical narrative. P2 (B1 to B3) implements #23881 from its 2026-10-16 spec, re-anchored at 0.5.0 `7ba471a18c`, and replaces the retired D1 deferral. The Adversary derives M1 for A1 to A3 and B1 to B3; Orchestrator review and Josh approval precede expansion.
 
 ## C1 Scope and Decision Record
 `kind: framing`
@@ -19,12 +19,12 @@ Decisions confirmed by the Orchestrator through LM7 on 2026-10-06, 18:42 CT, and
 4. The private Python bridge alone validates the browser `gobby_session` cookie using the retained AuthService cookie path. No third client credential verifier is added. Existing credential precedence from #23519 applies when a request contains multiple credentials.
 5. The same per-boot front-door secret authenticates daemon-to-daemon control traffic. This is internal process-pair trust, not an alternative bearer or cookie admission path. A valid user API key or cookie alone cannot open the private bridge or publish events.
 6. Public frame fields and terminal golden bytes remain unchanged. Subscription acknowledgement `events` arrays represent sets: corpus comparison sorts only that array, matching Python's existing unordered set output. No other array, payload field, or wire bytes are normalized.
-7. Codec and broker work can proceed independently. Auth-integrated implementation is a typed deferred tail blocked by #23519 and #23523 — Live activation of the key cutover — plus A1/A2/A3. Both landed source and the separate live-auth activation must be proved before that tail starts. There is no fallback implementation of the retiring local-token verifier.
+7. Codec and broker work (A1 to A3) proceeds independently. Auth-integrated implementation is P2 (B1 to B3), which follows A1 to A3, #23519 (Shared-token cutover) and #23523 (Live activation of the key cutover). Both external tasks closed before P2 was written, with landed source and a separate live-auth activation receipt. There is no fallback implementation of the retiring local-token verifier.
 8. No live restart, binary promotion, push, spawn, or main-checkout write is authorized by this planning assignment. Implementation activation later belongs to the Orchestrator's announced window.
 
 Entry mode describes the public transport, not the credential or the user's UI: `direct` is the dedicated public WS listener; `browser` is the HTTP listener's ASGI `/ws` entry, including bearer clients using that path. Direct begins with an absent subscription attribute; browser begins with initialized-empty subscriptions. Reconnect preserves the entry mode and resets its state, never a previous subscription set.
 
-Downstream: #21562 (Sessions and transcripts), #21568 (Remaining route families) and #23219 (terminal WS operations, relay, and family cutover) are blocked by #21558 itself. The epic closes only after D1's deferred tail lands, so D1's native activation, with gdaemon serving `:60888` and the HTTP `/ws` entry, and the closure of #21558 remove the WS prerequisite from all three. Their other blockers still apply: #21562 and #21568 also wait on #21560 (Tasks family), and #23219 also waits on #23214 (Rust tmux runtime parity), #23216 (terminal WS codec and golden replay), #23217 (native ownership cutover) and #23218 (input-grant finalization) and keeps its `needs-planning` hold. A1 to A3 alone unblock none of them.
+Downstream: #21562 (Sessions and transcripts), #21568 (Remaining route families) and #23219 (terminal WS operations, relay, and family cutover) are blocked by #21558 itself. The epic closes only after P2 lands, so P2's native activation (B3), with gdaemon serving `:60888` and the HTTP `/ws` entry, and the closure of #21558 remove the WS prerequisite from all three. Their other blockers still apply: #21562 and #21568 also wait on #21560 (Tasks family), and #23219 also waits on #23214 (Rust tmux runtime parity), #23216 (terminal WS codec and golden replay), #23217 (native ownership cutover) and #23218 (input-grant finalization) and keeps its `needs-planning` hold. A1 to A3 alone unblock none of them.
 
 Native gterm operation without a daemon is an invariant. Nothing in this plan changes gterm, gclient, JSON-lines control, bincode frames, or their independent connection paths. Future hub-to-node relays may consume the frozen envelope, but no relay, replay log, durable event bus, or node protocol is introduced here.
 
@@ -128,9 +128,21 @@ Use immutable shared frame bytes per batch. Bound each client's queue to 16 pend
 ## P2: Auth-integrated private bridge and native WS activation
 `kind: framing`
 
-This phase materializes the D1 fixed specification (#23881) as three implementation leaves, re-anchored at 0.5.0 `7ba471a18c` on 2026-10-16. Gates are met: A1 #23878, A2 #23879 and A3 #23880 are closed, #23519 closed 2026-10-09 and #23523's live activation closed 2026-10-11 with a valid receipt.
+This phase implements #23881 (Auth-integrated private bridge and native WS activation) as three implementation leaves, re-anchored at 0.5.0 `7ba471a18c` on 2026-10-16. Gates are met: A1 #23878, A2 #23879 and A3 #23880 are closed, #23519 closed 2026-10-09 and #23523's live activation closed 2026-10-11 with a valid receipt. Because both external tasks are closed, the B leaves carry no external blocked-by edge.
 
-Two landings since the D1 draft change its runtime anchors. #23457 (`fde8c6182d`) moved daemon lifecycle into gdaemon and deleted `src/gobby/runner_front_door.py`. gdaemon is now the long-lived parent: `serve.rs` mints the per-boot front-door secret (E32), `RuntimeState::prepare` hands it to the Python backend as `GOBBY_FRONT_DOOR_SECRET` (E33), `BackendChild::spawn` delivers a fresh per-spawn supervisor token through `TokenSlot` (E34, E48), `BackendSupervisor::supervise` respawns Python and publishes `BackendStatus` on a watch channel (E35), and Python exits when the supervisor pipe closes (E36). Python incarnations come and go under one gdaemon boot; the reverse no longer happens. #24444 added per-family `front_door.routes` proxy/native/compare backends and the compare log; it registers no WS family.
+Coverage note: P2 replaces the former D1 deferral, which is retired. This plan carries no deferral and expansion creates no tail task. D1's eight obligations are covered as follows:
+- Native application entry points with HMR proxied (D1.1): B2.7, B3.1.
+- Credential ownership and private-channel refusal (D1.2): B1.1, B1.2, B3.2.
+- Connection lifecycle and first-frame readiness (D1.3): B1.3, B2.2, B2.9.
+- Single fanout, ambiguous publication and generation lifecycle (D1.4): B1.4 to B1.8, B2.3, B2.6, B2.8, B3.3, B3.8.
+- Corpus replay (D1.5): B2.4.
+- Bounded failure, reconnect and shutdown (D1.6): B2.5, B3.4.
+- gterm independence (D1.7): B3.5.
+- Contract documentation (D1.8): B3.6, B3.7.
+
+#23881 closes when B1 to B3 close.
+
+Two landings since the deferred draft of this work change its runtime anchors. #23457 (`fde8c6182d`) moved daemon lifecycle into gdaemon and deleted `src/gobby/runner_front_door.py`. gdaemon is now the long-lived parent: `serve.rs` mints the per-boot front-door secret (E32), `RuntimeState::prepare` hands it to the Python backend as `GOBBY_FRONT_DOOR_SECRET` (E33), `BackendChild::spawn` delivers a fresh per-spawn supervisor token through `TokenSlot` (E34, E48), `BackendSupervisor::supervise` respawns Python and publishes `BackendStatus` on a watch channel (E35), and Python exits when the supervisor pipe closes (E36). Python incarnations come and go under one gdaemon boot; the reverse no longer happens. #24444 added per-family `front_door.routes` proxy/native/compare backends and the compare log; it registers no WS family.
 
 Decision record. Decisions 1 and 4 to 11 are decided by the Orchestrator's ruling of 2026-10-16 05:44 CDT. Decisions 2, 3 and 12 were confirmed by Security gobby#16011 on rev 2 (receipt `5ada6c18`) and again on rev 4 (receipt `b1d59137`), and accepted by the Orchestrator. Decision 13, added in rev 3, passed Lane 8 review by gobby#16912 and the Security rev 4 confirmation, and is decided by the Orchestrator's confirmation of 2026-10-16 06:25 CDT. Decision 14 is decided under the Orchestrator's NWS-F6 rulings of 2026-10-16 06:26 and 06:27 CDT; its values are new admission limits covered by plan approval.
 
@@ -413,40 +425,6 @@ Implementation:
 - Production activation is the Orchestrator's announced cutover; this leaf runs none.
 - `tdd: true`, implementation_domain fullstack.
 
-## D1 Auth-integrated private bridge and native WS activation (depends: A1, A2, A3)
-`kind: deferred`
-
-```yaml
-deferral:
-  task_ref: "#23881"
-  reason: "The native upgrade/auth seam is owned by #23519 and its live activation by the separate #23523. This tail requires both external tasks plus A1/A2/A3 before implementation; an isolated source landing alone does not establish activated auth. The fixed spec below introduces no fallback retiring verifier."
-  owner: "Lane 8 Terminal port, coordinated with Lane 1"
-  original_acceptance_items:
-    - D1.1
-    - D1.2
-    - D1.3
-    - D1.4
-    - D1.5
-    - D1.6
-    - D1.7
-    - D1.8
-```
-
-At expansion, the Orchestrator creates this planning tail under #21558 with `needs-planning` and `deferred-from:native-ws-transport:D1`, then records explicit blocked-by edges to #23519, #23523 and the A1/A2/A3 implementation leaves. Verify the resulting dependency rows; neither a prose wait nor a manifest external edge suffices. Replace the placeholder with that real task ref and validate/hash again. Before implementing the tail, verify #23519's landed interface and #23523's separate completed live-activation receipt, materialize this fixed specification as implementation leaf coverage, and obtain normal plan approval. The native-WS production cutover still belongs to the Orchestrator; #23523 activates auth, not this WS implementation. Do not create a parallel authentication plan or drop either external edge.
-
-Materialized 2026-10-16 as P2 (B1, B2, B3) from the #23881 spec, re-anchored at 0.5.0 `7ba471a18c`. Implementation Targets, research context, decisions and tests live in those sections; the obligations below remain this deferral's coverage record and map to them: D1.1 -> B2.7, B3.1; D1.2 -> B1.1, B1.2, B3.2; D1.3 -> B1.3, B2.2, B2.9; D1.4 -> B1.4, B1.5, B1.6, B1.7, B1.8, B2.3, B2.6, B2.8, B3.3, B3.8; D1.5 -> B2.4; D1.6 -> B2.5, B3.4; D1.7 -> B3.5; D1.8 -> B3.6, B3.7. #23881 closes when B1 to B3 close.
-
-Obligations retained for the deferred task:
-
-- D1.1 - Both application entry points use native Rust upgrade/lifecycle and one broker; HMR remains proxied. test: `crates/gdaemon/tests/native_ws_transport.rs::application_paths_are_native_and_hmr_is_proxy`.
-- D1.2 - Operator key verification has only the #23519 owner; managed admission/cookie policy retains original WS context. Both entry modes cover managed+valid cookie (deny), operator identity+cookie (operator admission), break-glass+cookie (browser cookie admission only), rejected key+cookie (deny), cookie-only entry differences, forged peer/path/mode/identity and missing/stale pair proof. test: `tests/e2e/test_native_ws_transport.py::test_credential_ownership_and_private_channel_refusal`.
-- D1.3 - Welcome, direct replies, text/binary bytes and once-only cleanup remain exact. Private readiness is exactly the first private frame: a missing, malformed, wrong-generation or late first frame fails closed, every later private frame passes through as opaque application data (including one identical to readiness) without changing admission or generation, and no private controls leak. test: `tests/servers/test_native_ws_bridge.py::test_bridge_preserves_application_connection_lifecycle`.
-- D1.4 - Native fanout occurs once, direct replies bypass filtering and ambiguous publication never retries. A blackholed HTTP publish channel retires only the affected generation through local bridge-leg closure within the stated bound, including an old/new generation race. Initial binding without any clients succeeds after HTTP startup; failed binding keeps admission closed, and child respawn requires a distinct authenticated generation. An isolated idle-child crash with no clients or publications must drive the real monitor notification and restore admission without a manually invoked bind. Failed rebind, crash during initial bind, duplicate/stale notification and shutdown races must remain closed or preserve only the current generation. test: `tests/servers/test_native_ws_publish.py::test_single_fanout_owner_and_ambiguous_publish`.
-- D1.5 - Both runtimes replay the shared event corpus and the existing terminal corpus remains byte-identical through native transport. test: `crates/gdaemon/tests/native_ws_transport.rs::terminal_and_envelope_corpora_replay_native`.
-- D1.6 - Message limits, ping/close, backpressure, backend failure, reconnect and shutdown are bounded and leave no client/handler/lease residue. test: `tests/e2e/test_native_ws_transport.py::test_failure_reconnect_and_shutdown_are_bounded`.
-- D1.7 - Native gterm direct access and a running terminal survive daemon loss/restart independently of the new WS listener. test: `tests/e2e/test_native_ws_transport.py::test_gterm_remains_available_without_daemon`.
-- D1.8 - The public/internal frame boundary, credential owners, limits, failure semantics and cutover proof are documented; no retired verifier or application proxy fallback remains active. file: `docs/contracts/native-ws-transport.md`.
-
 ## V1 Plan Changelog
 `kind: framing`
 
@@ -467,6 +445,8 @@ Obligations retained for the deferred task:
 2026-10-16: Consensus reached between Plan Writer gobby#16490 and Adversary gobby#16983 on the P2 (B1 to B3) narrative reviewed at `a4a702f8b36ec6476bbbf26cce752eff8e282ced` (plan sha256 `86392cb4441b8e97b66e5896ca04a4b3f4baf97faca8ce12870675c81fcb501e`), which is gobby#16915's rev 5. NWS-F1 to NWS-F6 are closed. F1: all 14 P2 decisions are recorded as decided. F2: typed text and binary broker frames on one FIFO. F3: readiness is exactly the first private frame. F4, merged with gobby#16912's L1: generation changes commit under one binding lock, and rev 4 added Security gobby#16011's token recheck inside that lock. F5: the handshake is validated before any bridge. F6: the publisher queue is bounded by decision 14, with drain, failure and stop accounting and B1.8 regression coverage. Lane 8 reviewer gobby#16912 passed rev 3 and rev 5. Security gobby#16011 confirmed rev 4 (receipt `b1d59137`), and rev 5 changed no auth surface. The Adversary derives M1 for B1 to B3 from the commit that adds this entry. Orchestrator review and Josh approval follow before expansion.
 
 2026-10-16: Renewed consensus between Plan Writer gobby#16490 and Adversary gobby#16983 on the unchanged narrative of `d0116de93a23a20f304d90027804706a3175c1fb`. `derive_plan_handoff_manifest` rejected those bytes because the old M1 had no entries for B1, B2 or B3. Following the stale-manifest recovery route (memory `f5577ae0`), the Writer withdrew the entire superseded `## M1 Task Manifest` block, A1 to A3 entries included; its bytes remain in Git history at `d0116de93a`. No narrative section changed. The Adversary derives and applies a fresh M1 for A1 to A3 and B1 to B3 from the commit that adds this entry.
+
+2026-10-16: ORC-1 repair by Plan Writer gobby#16490 after the Orchestrator's review of stamped `a6ab15d0`. D1 still read as a live deferral, which contradicted P2 and would have led expansion to treat it as a deferred tail beside B1 to B3. The D1 deferred section is removed, and its obligation mapping moves into the P2 framing as a coverage note. Decision 7, the C1 Downstream paragraph and the status line now name P2. #23519 and #23523 are closed, so the B leaves need no external edge. No B section, acceptance item, Target or decision changed. The stale M1 stays in place through this commit; it is withdrawn and re-derived after Lane 8 reviewer gobby#16912 checks this delta and the Adversary agrees.
 
 ## E1 Source evidence
 `kind: framing`
