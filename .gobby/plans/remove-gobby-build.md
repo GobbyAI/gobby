@@ -95,7 +95,7 @@ Per phase and leaf:
   - 5.1, #23859 **Bundled skills teach no build, stage or automation column**: changes. 2.3 already made three of its sentence edits, so those edits and the `plan/overview.md` Target go, and 5.1.3 checks `annotate/SKILL.md` instead.
   - 5.2, #23860 **Guides, contracts and root docs teach no build, stage or dispatcher**: stands.
 - P6, #23844 **P6: Schema drop**: changes.
-  - 6.1, #23861 **Migration 465 drops the build and stage tables and the automation columns**: changes. Migrations 465 to 468 are taken, so it becomes migration 469, and its title becomes "Migration 469 drops the build and stage tables and the automation columns". It also carries the gdaemon release bump.
+  - 6.1, #23861 **Migration 465 drops the build and stage tables and the automation columns**: changes. Migrations 465 to 470 are taken, so it becomes migration 471, and its title becomes "Migration 471 drops the build and stage tables and the automation columns". It also carries the gdaemon release bump.
 
 The spawn cap is settled: Decision Record item 7 landed in 1.1, and nothing in this plan reopens it.
 
@@ -1737,19 +1737,19 @@ Audits (each anchor follows its heading):
 
 After P5 nothing reads or writes the build and stage tables or the automation columns. 6.1 drops them in one gcore migration with its derived carriers (Decision Record items 5 and 10 to 12). The Orchestrator then runs the single rebuild, promotion and restart (Constraints).
 
-### 6.1 Migration 469 drops the build and stage tables and the automation columns (depends: 5.2) [category: code]
+### 6.1 Migration 471 drops the build and stage tables and the automation columns (depends: 5.2) [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/469_retire_build_and_stages.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register migration 469
+- `crates/gcore/assets/schema/migrations/471_retire_build_and_stages.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register migration 471
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated derived carrier without the dropped objects
 - `crates/gcore/assets/schema/seed.manifest.json::*` — scope-reason: drop the two stage seed tables
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the embedded schema identity moves to 469
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the embedded schema identity moves to 471
 - `crates/gcore/src/schema/verify.rs::*` — scope-reason: drop the live-mutable fields of the two stage seed tables
-- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: the 460 test applies through 460 only, and a new test covers 469
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest embedded asset is 469
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: the reported latest version is 469
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: the 460 test applies through 460 only, and a new test covers 471
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest embedded asset is 471
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: the reported latest version is 471
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated identity projection
 - `tests/contracts/http/runtime_handshake.json::*` — scope-reason: the handshake reports the new identity
 - `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: the grant fixture carries the new identity
@@ -1768,7 +1768,7 @@ Targets:
 
 **Granularity:** one outcome, the schema holds no build or stage table and no automation column. The migration, its registration and every carrier that hashes or lists the embedded assets change together, because the gcore contract tests fail on any partial set.
 
-`crates/gcore/assets/schema/baseline.sql` stays frozen; the migration carries the whole drop. `469_retire_build_and_stages.sql`:
+`crates/gcore/assets/schema/baseline.sql` stays frozen; the migration carries the whole drop. `471_retire_build_and_stages.sql`:
 
 ```sql
 DROP TABLE task_stage_states;
@@ -1806,10 +1806,10 @@ Dropping `task_stage_states` drops its three bucket triggers before their functi
 
 Carriers, following the 462 and 464 commits:
 
-- `assets.rs` appends an `EmbeddedMigration` for version 469 with its filename, the file's SHA-256 checksum and `include_str!`.
+- `assets.rs` appends an `EmbeddedMigration` for version 471 with its filename, the file's SHA-256 checksum and `include_str!`.
 - `seed.manifest.json` drops the `task_stages_registry` and `task_type_default_stages` keys; `projects` and `sessions` stay. `verify.rs`'s `is_live_mutable_seed_field` drops the same two arms.
 - Regenerate `catalog.manifest.json` with `UPDATE_GCORE_SCHEMA_MANIFEST=1 GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core --test catalog_manifest_freshness catalog_manifest_is_fresh_for_embedded_assets`, then rerun it without `UPDATE_GCORE_SCHEMA_MANIFEST`.
-- Read the new identity from `cargo run -p gobby-daemon --bin gdaemon -- schema version --json`. `bundle.rs` takes the new latest checksum, assets root hash and `latest_version: 469`; `schema_contract.rs` asserts version 469 and filename `469_retire_build_and_stages.sql`; `cli_contract.rs` asserts `latest_version` 469. Regenerate `schema_expected_identity.json` with `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/debug/gdaemon`, and update the identity fields in `runtime_handshake.json` and the five golden grant files.
+- Read the new identity from `cargo run -p gobby-daemon --bin gdaemon -- schema version --json`. `bundle.rs` takes the new latest checksum, assets root hash and `latest_version: 471`; `schema_contract.rs` asserts version 471 and filename `471_retire_build_and_stages.sql`; `cli_contract.rs` asserts `latest_version` 471. Regenerate `schema_expected_identity.json` with `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/debug/gdaemon`, and update the identity fields in `runtime_handshake.json` and the five golden grant files.
 - `runner_tests.rs`: `checkout_mode_migration_preserves_modes_and_agent_settings` replaces both of its full `SchemaRunner::new(...).apply()` calls with `SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..=migration_index])`, so it applies through 460 and still reads `checkout_mode`. New test `build_and_stage_retirement_rebuckets_tasks_and_drops_tables` applies through 468, inserts a task with an `in_progress` stage row (its bucket becomes `in_progress`), applies every migration, and asserts the six tables and four columns are gone, `refresh_task_state_bucket_from_stage()` is gone, the task's bucket is `ready`, and an `in_progress` bucket violates the check.
 - `scripts/flatten_schema.py`'s `_SEED_TABLES` drops the two stage tables. `scripts/schema_diff.py` drops `_STAGE_REGISTRY_DEFINITION_COLUMNS` and the two stage `SeedTableSpec` entries.
 - Split `scripts/schema_diff.py`: move `_split_sql_statements`, `_split_top_level_commas` and the scanners they call (`_skip_line_comment`, `_skip_block_comment`, `_skip_single_quoted_string`, `_skip_double_quoted_identifier`, `_dollar_quote_tag_at`, `_is_identifier_start` and `_is_identifier_continuation`, lines 82-203 and 218-250 today) unchanged into the new module `scripts/schema_sql_lexer.py`. `scripts/schema_diff.py` imports the two splitters back through the `if __package__` import form that `scripts/flatten_schema.py` uses, so every importer of `scripts.schema_diff` keeps its imports. With the stage removals the file ends near 710 lines.
@@ -1819,16 +1819,16 @@ Release: the new migration ships in the gdaemon binary, so this leaf's commit is
 
 **Research context:**
 
-- Carrier set from the 462 (`6926cd6352`) and 464 (`5596ae1394`) commits. The latest migration on 2026-10-13 is 468 (`3fa292372e`), and migrations 465 to 468 touch none of the objects this migration drops. If another migration lands before this leaf, take the next free version and move every 469 reference with it: the filename, `assets.rs`, the identity carriers, the tests and V2. The crate release policy puts the version bump in the release commit, and activation builds and promotes without authoring a commit (Orchestrator ruling, 2026-10-13), so the leaf carries the gdaemon bump. Migration 467's commit (`b776efac5f`) bumped in the leaf; 462 and 468 did not.
+- Carrier set from the 462 (`6926cd6352`) and 464 (`5596ae1394`) commits. The latest migration on 2026-10-13 is 468 (`3fa292372e`), and migrations 465 to 468 touch none of the objects this migration drops. Since then, #24445 landed 469 (`39eb1255af`) and #24617 holds 470, so the Orchestrator assigned 471 on 2026-10-16. If another migration lands before this leaf, take the next free version and move every 471 reference with it: the filename, `assets.rs`, the identity carriers, the tests and V2. The crate release policy puts the version bump in the release commit, and activation builds and promotes without authoring a commit (Orchestrator ruling, 2026-10-13), so the leaf carries the gdaemon bump. Migration 467's commit (`b776efac5f`) bumped in the leaf; 462 and 468 did not.
 - Inventory (2026-10-08): `p6/sweep_6.py` over `src/`, `tests/`, `scripts/` and `crates/gcore/` for the dropped tables, columns, index and functions, minus earlier-leaf Targets, plus `git grep` over `crates/`, `scripts/`, `tests/fixtures/`, `tests/contracts/` and `tests/runtime_grants/` for the four column names. `tests/scripts/test_schema_diff.py` stays because its `task_stage_states` hits are synthetic fixture SQL.
 - Large files: `scripts/schema_diff.py` (896 lines) needs the split above. `scripts/` is outside the code index, and the delete-lines proof needs a `::*` Target, which the validator refuses for an unindexed file. The moved block has no caller in `schema_diff.py` outside the two splitters, and its test module imports none of the moved names. `runner_tests.rs` is a test module and `verify.rs` has 722 lines.
 - Planned checks: `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract`; focused pytest on `tests/fixtures/test_postgres_db_reset.py`, `tests/install/test_version_pins.py`, `tests/scripts/`, `tests/storage/test_schema_contract.py`, `tests/runtime_grants/` and `tests/contracts/`; ruff and format check on `scripts/schema_diff.py`, `scripts/schema_sql_lexer.py` and `scripts/flatten_schema.py`.
 
 **Acceptance:**
 
-- 6.1.1 - Migration 469 drops the six build and stage tables, the four automation columns and the stage bucket function, and re-buckets stage-derived tasks to `ready`. file: `crates/gcore/assets/schema/migrations/469_retire_build_and_stages.sql`. test: `crates/gcore/src/schema/runner_tests.rs::build_and_stage_retirement_rebuckets_tasks_and_drops_tables`.
+- 6.1.1 - Migration 471 drops the six build and stage tables, the four automation columns and the stage bucket function, and re-buckets stage-derived tasks to `ready`. file: `crates/gcore/assets/schema/migrations/471_retire_build_and_stages.sql`. test: `crates/gcore/src/schema/runner_tests.rs::build_and_stage_retirement_rebuckets_tasks_and_drops_tables`.
 - 6.1.2 - The 460 migration test still proves its column rename by applying through 460 only. test: `crates/gcore/src/schema/runner_tests.rs::checkout_mode_migration_preserves_modes_and_agent_settings`.
-- 6.1.3 - The embedded identity, the catalog manifest and every identity carrier agree on 469. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+- 6.1.3 - The embedded identity, the catalog manifest and every identity carrier agree on 471. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 - 6.1.4 - Seed verification and the test reset know only the `projects` and `sessions` seed tables. behavior: "task_stages_registry" absent from `crates/gcore/assets/schema/seed.manifest.json`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset`.
 - 6.1.5 - The leaf releases gdaemon: its crate version is one patch above its version when the leaf started, and the managed binary pin matches it. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`. file: `crates/gdaemon/Cargo.toml`.
 
@@ -1843,7 +1843,7 @@ These are completion gates for the implementation. Except for plan validation, n
 - The web checks named in 2.1 and 4.1 must pass after those leaves.
 - `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract` must pass after 6.1.
 - `tests/skills/test_reference_library.py::test_reference_contract_3_2_1` must pass after every leaf that edits a skill, guide or audit.
-- After 6.1 lands, the Orchestrator's rebuild, promotion and restart must start the daemon at schema 469, and `gobby status` must report healthy.
+- After 6.1 lands, the Orchestrator's rebuild, promotion and restart must start the daemon at schema 471, and `gobby status` must report healthy.
 - A final sweep of `src/`, `tests/`, `web/src/`, `crates/gcore/src/` and the live guides for `gobby build`, `task_stage_states`, `allow_automation` and `submit_for_review` must classify every match. A match passes only when it is the history named in Context or a fixture, runtime primitive or test caller that a leaf's Research context lists as staying. Every other match is a retired surface and fails the gate.
 
 ## V1 Plan Changelog
@@ -1858,3 +1858,4 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-13: Plan Writer gobby#16740 refresh for #24318, **Refresh the Remove gobby build plan for Josh's approval**, against tip `14043ac8b8`. Context and Decision Record item 7 record what landed, and Refresh Reconciliation gives each leaf's disposition. 2.4, 2.5, 3.5 and 4.1 take the consumers that landed after 2026-10-08, 3.5 and 4.1 re-derive their delete-lines proofs, 3.2, 3.4, 4.2 and 5.1 drop or update text that has already changed, and 6.1 becomes migration 469. The stale M1 is withdrawn for re-derivation.
 - 2026-10-13: Plan Adversary gobby#16804 consensus on 8416a4897c22c2fbb0b8f96b7538cf4d82b7edc6 for #24318: PA-1 resolved (3.5 owns the `test_worker_safety_rules.py` task-enforcement count pin), no blocking finding remains.
 - 2026-10-13: Writer repair for the no-deferrals audit (memory 878d0c35) on the Orchestrator's ruling: 6.1 carries the gdaemon release bump (crate version, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`) instead of leaving it to activation, with acceptance 6.1.5. The two cross-references to `spawn-network-override` section D1 drop the word "deferred", since that section is the other plan's. Decision Record item 9's review-evidence remainder is with Josh for a decision, and M1 waits on his answer.
+- 2026-10-16: Writer renumber for #24318 on the Orchestrator's ruling: #24445 landed migration 469 and #24617 holds 470, so 6.1 and V2 move to migration 471. The next-free-version rule stays for later collisions.
