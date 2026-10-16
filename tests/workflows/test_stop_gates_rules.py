@@ -105,6 +105,7 @@ STOP_GATES_RULES = {
     "block-found-work-permission-deferral",
     "block-terminal-validation-failure",
     "block-unclaimed-found-work",
+    "clear-seat-idle-on-turn-start",
     "rearm-close-gates-on-session-start",
     "require-task-close",
     "require-step-completion",
@@ -1044,6 +1045,53 @@ class TestRequireStepCompletion:
 
         assert response.decision == "block"
         assert 'submit_for_review(stage_name="planning")' in (response.reason or "")
+
+    @staticmethod
+    def _idle_claim_variables() -> dict[str, object]:
+        """A standing seat back at claim with no task and no live wait (#24405)."""
+        return {
+            "is_spawned_agent": True,
+            "current_step": "claim",
+            "step_workflow_complete": False,
+            "task_claimed": False,
+            "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_declared_idle_seat_stops_at_claim_without_a_wait(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._idle_claim_variables()
+
+        undeclared = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert undeclared.decision == "block"
+        assert "[require-step-completion]" in (undeclared.reason or "")
+
+        variables["seat_idle"] = True
+        for _ in range(3):
+            idle = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+            assert idle.decision == "allow", idle.reason
+        assert variables["seat_idle"] is True
+
+    @pytest.mark.asyncio
+    async def test_message_or_assignment_rearms_the_idle_claim_gate(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {**self._idle_claim_variables(), "seat_idle": True}
+
+        # A message wakes the seat; its new turn ends idle, so the claim step re-prompts.
+        await engine.evaluate(_make_event(HookEventType.BEFORE_AGENT), SESSION_ID, variables)
+        assert variables["seat_idle"] is False
+        woken = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert woken.decision == "block"
+        assert "Current step: claim" in (woken.reason or "")
+
+        # A claimed assignment is never exempt, even under a stale idle declaration.
+        variables.update(seat_idle=True, task_claimed=True, current_step="route_skills")
+        assigned = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
+        assert assigned.decision == "block"
+        assert "Current step: route_skills" in (assigned.reason or "")
 
 
 class TestBeforeAgentResetsPlumbing:

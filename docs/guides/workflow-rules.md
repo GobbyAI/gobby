@@ -152,6 +152,12 @@ task-close rules in control.
 Active durable agent/task waits consume no attempts. Bundled stop-gate rules pair it with `max_stop_attempts`
 to prevent permanent stop blocking.
 
+A standing seat with no claimed task can go idle without a wait: setting the
+session variable `seat_idle` to true lets `require-step-completion` allow its
+stop, and the `clear-seat-idle-on-turn-start` rule clears it on the next turn
+start (a message or assignment). The exemption never applies while
+`task_claimed` is true.
+
 ### Turn-Start Reset
 
 On `turn_start`, the engine resets transient stop-cycle state such as:

@@ -429,6 +429,14 @@ async def test_developer_claim_binds_ref_without_a_task_read(temp_db: HubDatabas
     assert (run.step, run.vars["assigned_task_ref"]) == ("implement", "#103")
 
 
+async def test_developer_claim_admits_the_idle_declaration(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "claim"
+    declaration = {"name": "seat_idle", "value": True, "session_id": SESSION_ID}
+    assert await run.admits_native("mcp__gobby__set_variable", declaration)
+
+
 async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "developer")
     await run.load(*run.vars["required_skills"])

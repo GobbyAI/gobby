@@ -1,0 +1,13 @@
+tags: [stop-gates, enforcement, lifecycle, gobby, default]
+
+rules:
+  clear-seat-idle-on-turn-start:
+    description: "End a standing seat's idle declaration when a message or assignment starts a turn"
+    event: turn_start
+    enabled: true
+    priority: 5
+    when: "variables.get('seat_idle')"
+    effect:
+      type: set_variable
+      variable: seat_idle
+      value: false

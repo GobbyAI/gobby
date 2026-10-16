@@ -43,7 +43,7 @@ prompts:
 
     ## Messages
     Reach your Lane Manager, your reviewer and the Orchestrator through `gobby-agents:send_message`.
-    On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
+    On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness and blockers.
 
     ## Continuity
     Compact in place: under context pressure or between tasks after the close, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
@@ -147,7 +147,10 @@ step_workflow:
         Defer implementation and validation until implement. With no task assigned,
         report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
-        then wait_for_coordination(owner_session=<report target>, reply=true).
+        then go idle: call the top-level set_variable with name="seat_idle",
+        value=true and the default session scope, and end the turn. Do not
+        re-arm a wait; the next message or assignment starts a new turn and
+        ends idle.
       allowed_tools:
         - Bash
         - Read
@@ -155,6 +158,7 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
         - "gobby-tasks:de_escalate_task"
