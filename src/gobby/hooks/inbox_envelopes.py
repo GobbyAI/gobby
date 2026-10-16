@@ -46,7 +46,9 @@ def restore_inbox_claim(claimed: Path, path: Path) -> None:
 @contextmanager
 def claim_inbox_file(path: Path, expected: FileSignature) -> Iterator[Path | None]:
     """Claim only for removal, then verify we claimed the file that was read."""
-    claimed = path.with_name(f"{path.name}.{INBOX_CLAIM_OWNER}-drain{INBOX_CLAIM_SUFFIX}")
+    claimed = path.with_name(
+        f"{path.name}.{INBOX_CLAIM_OWNER}-drain-{uuid.uuid4().hex}{INBOX_CLAIM_SUFFIX}"
+    )
     try:
         path.rename(claimed)
     except FileNotFoundError:
@@ -77,11 +79,13 @@ def get_hook_quarantine_dir(inbox_dir: Path | None = None) -> Path:
 
 def quarantine_file(
     path: Path, *, reason: str, detail: str, expected_signature: FileSignature | None = None
-) -> bool:
-    """Move an unreadable or invalid inbox file into quarantine with metadata."""
+) -> bool | None:
+    """Quarantine invalid input; return None if its public path was replaced or removed."""
     if expected_signature is not None:
         with claim_inbox_file(path, expected_signature) as claimed:
-            return claimed is not None and quarantine_file(claimed, reason=reason, detail=detail)
+            if claimed is None:
+                return None
+            return quarantine_file(claimed, reason=reason, detail=detail)
     quarantine_dir = get_hook_quarantine_dir(path.parent)
     name = original_inbox_name(path)
     target = quarantine_dir / name
@@ -126,8 +130,9 @@ def quarantine_or_warn(
     path: Path, *, reason: str, detail: str, expected_signature: FileSignature | None = None
 ) -> None:
     """Best-effort quarantine with a warning when quarantine itself fails."""
-    if not quarantine_file(
-        path, reason=reason, detail=detail, expected_signature=expected_signature
+    if (
+        quarantine_file(path, reason=reason, detail=detail, expected_signature=expected_signature)
+        is False
     ):
         logger.warning(
             "Skipping hook inbox file %s after quarantine failed (reason=%s)",
