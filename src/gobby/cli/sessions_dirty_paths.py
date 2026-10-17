@@ -1,19 +1,30 @@
-"""Operator approval for a session's writes to unowned dirty paths."""
+"""Operator approval for a session's writes to unowned dirty paths, sent to the daemon.
+
+The daemon accepts the approval only when gdaemon verified the bootstrap operator
+API key at its front door. This client sends one request carrying that key and
+nothing else: no managed bearer, no X-Gobby identity headers, no proxy.
+"""
 
 from __future__ import annotations
 
-import getpass
-import sys
+from pathlib import Path
+from urllib.parse import quote
 
 import click
+import httpx
 
-from gobby.cli.runtime import require_cli_database
-from gobby.cli.utils import resolve_session_id
-from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
+from gobby.utils.daemon_url import DaemonUrlError, daemon_url
+from gobby.utils.local_token import read_local_api_token
+
+_LOGIN_HINT = "operator API key unavailable or unregistered; run: gobby auth login"
 
 
-def _interactive_terminal() -> bool:
-    return sys.stdin.isatty()
+def _refusal_detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text
+    return str(body.get("detail", body)) if isinstance(body, dict) else response.text
 
 
 @click.command("approve-dirty-paths")
@@ -29,28 +40,33 @@ def _interactive_terminal() -> bool:
 def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, ...]) -> None:
     """Let SESSION_REF write exactly PATHS, dirty with no live owner, in one checkout.
 
-    Operator only; the rule block-dirty-path-approval-cli refuses it to every
-    agent session. Each path stays approved only while its content matches what
-    it is now. A new approval replaces the session's earlier one for the checkout.
+    Operator only; the rule block-dirty-path-approval-cli refuses it to every agent
+    session. The daemon accepts the approval only from the bootstrap operator API
+    key, so run `gobby auth login` first. SESSION_REF is a session UUID or
+    <project>#N. Each path stays approved only while its content matches what it is
+    now. A new approval replaces the session's earlier one for the checkout.
     """
-    # Defense in depth: the rule is text matching, and an agent's Bash has no
-    # terminal. A pty can still be faked, so the operator credential check that
-    # Security names is the boundary.
-    if not _interactive_terminal():
-        raise click.ClickException(
-            "approve-dirty-paths runs only from an interactive terminal. Run it in your own shell."
-        )
-    session_id = resolve_session_id(session_ref)
+    token = read_local_api_token()
+    if token is None:
+        raise click.ClickException(_LOGIN_HINT)
+    checkout = str(Path(checkout_root).resolve())
     try:
-        fingerprints = record_dirty_path_approval(
-            require_cli_database(),
-            session_id,
-            checkout_root=checkout_root,
-            paths=paths,
-            approved_by=getpass.getuser(),
+        response = httpx.post(
+            f"{daemon_url()}/api/sessions/{quote(session_ref, safe='')}/dirty-path-approvals",
+            json={"checkout_root": checkout, "paths": list(paths)},
+            headers={"Authorization": f"Bearer {token}"},
+            trust_env=False,
+            timeout=30.0,
         )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"Approved for session {session_id} in {checkout_root}:")
-    for path, fingerprint in sorted(fingerprints.items()):
+    except (DaemonUrlError, httpx.HTTPError) as exc:
+        raise click.ClickException(f"daemon request failed: {exc}") from exc
+    if response.status_code == 401:
+        raise click.ClickException(_LOGIN_HINT)
+    if not response.is_success:
+        raise click.ClickException(
+            f"approval refused ({response.status_code}): {_refusal_detail(response)}"
+        )
+    body = response.json()
+    click.echo(f"Approved for session {body['session_id']} in {checkout}:")
+    for path, fingerprint in sorted(body["approvals"].items()):
         click.echo(f"  {path} ({fingerprint or 'absent'})")

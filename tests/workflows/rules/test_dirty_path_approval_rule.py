@@ -41,12 +41,21 @@ INVOCATIONS = (
     'a=approve-dirty-; b=paths; gobby sessions "$a$b" s7 a.txt',
     'eval "gobby sessions approve-dirty-paths s7 a.txt"',
     "sh -c 'gobby sessions $v s7 a.txt'",
+    'gobby sessions list --project "$(gobby sessions approve-dirty-paths s7 a.txt)"',
+    "gobby sessions list --project $P; a=approve-dirty-; b=paths; $g sessions $a$b s7 a.txt",
+)
+# Braces and globs that would name the approval, other gobby subcommands and quoted
+# arguments. The rule leaves them to the operator route's credential check and
+# never refuses them for their shape.
+ALLOWED = (
     'gobby sessions show "$SID"',
     'gobby sessions {approve-dirty-path"s",s7} a.txt',
     "gobby sessions approve-dirty-p?ths s7 a.txt",
     "gobby sessions approve-dirty-p[a]ths s7 a.txt",
-    'gobby sessions list --project "$(gobby sessions approve-dirty-paths s7 a.txt)"',
-    "gobby sessions list --project $P; a=approve-dirty-; b=paths; $g sessions $a$b s7 a.txt",
+    "gobby tasks show $TASK",
+    "gobby tasks show {a,b}",
+    "gobby tasks list --status *.md",
+    """gobby tasks create --data '{"title": "sessions $HOME"}'""",
 )
 
 
@@ -86,6 +95,7 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
         command: (await decide(command))[0]
         for command in (
             *INVOCATIONS,
+            *ALLOWED,
             'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"',
             "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt",
             "gobby sessions list",
@@ -97,6 +107,7 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
     assert "operator" in direct[1]
     assert decisions == {
         **dict.fromkeys(INVOCATIONS, "block"),
+        **dict.fromkeys(ALLOWED, "allow"),
         'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"': "allow",
         "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt": "allow",
         "gobby sessions list": "allow",

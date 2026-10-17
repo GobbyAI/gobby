@@ -387,6 +387,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/sessions/variables.py::set_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts."
   },
+  "HTTP POST /api/sessions/{session_ref}/dirty-path-approvals": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/sessions/dirty_paths.py::register_dirty_path_routes`; operator-only, admitted only with a verified front-door identity. Rust blocker: implement native operator approval with the front-door check. Owner: #21562 Sessions and transcripts."
+  },
   "HTTP PUT /api/agents/definitions/{definition_id}": {
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/agents.py::update_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees."
