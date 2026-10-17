@@ -120,7 +120,7 @@ def test_unlanded_or_dirty_tree_run_stays_uncredited(
         _git(close, "switch", "-c", "unlanded-descendant")
         _commit(close, 3)
         run_tree = close
-    gate = _gate(close, run_tree, candidate)
+    gate = _gate(integration if case == "side" else close, run_tree, candidate)
     assert gate.status == "failed", gate.message
     assert TEST in gate.details["pytest_uncovered_paths"]
     assert reason in gate.message
@@ -139,6 +139,23 @@ def test_exact_candidate_bytes_keep_credit_after_docs_only_commit(
     assert gate.details["pytest_uncovered_paths"] == []
 
 
+@pytest.mark.parametrize("case", ["dirty", "advanced"])
+def test_unlanded_candidate_root_run_keeps_credit(
+    repository: tuple[Path, Path, str], case: str
+) -> None:
+    _integration, close, _landed = repository
+    _git(close, "switch", "-c", "unlanded-candidate")
+    candidate = _commit(close, 2)
+    if case == "dirty":
+        (close / SOURCE).write_text("VALUE = 99\n")
+    else:
+        _commit(close, 3)
+    gate = _gate(close, close, candidate)
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert gate.details["python_source_uncovered_tests"] == {}
+
+
 def test_landed_intermediate_commit_credits_detached_run_checkout(
     repository: tuple[Path, Path, str], tmp_path: Path
 ) -> None:
@@ -153,9 +170,8 @@ def test_landed_intermediate_commit_credits_detached_run_checkout(
 
 
 @pytest.mark.parametrize("kind", ["staged", "untracked", "unstaged"])
-@pytest.mark.parametrize("same_root", [False, True])
 def test_dirty_integration_never_earns_landed_tree_credit(
-    repository: tuple[Path, Path, str], kind: str, same_root: bool
+    repository: tuple[Path, Path, str], kind: str
 ) -> None:
     integration, close, candidate = repository
     _commit(integration, 2)
@@ -165,7 +181,7 @@ def test_dirty_integration_never_earns_landed_tree_credit(
         (integration / SOURCE).write_text("VALUE = 99\n")
         if kind == "staged":
             _git(integration, "add", SOURCE)
-    gate = _gate(integration if same_root else close, integration, candidate)
+    gate = _gate(close, integration, candidate)
     assert gate.status == "failed", gate.message
     assert TEST in gate.details["pytest_uncovered_paths"]
     assert "run checkout is dirty" in gate.message

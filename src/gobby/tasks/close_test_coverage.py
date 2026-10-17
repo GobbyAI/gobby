@@ -669,13 +669,13 @@ def _runs_test(
 ) -> bool:
     """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
 
-    With a candidate, differing bytes require a clean landed integration descendant,
-    including in ``root``. Exact candidate bytes retain copy credit independently.
+    A tree other than ``root`` must hold the candidate's bytes for ``test`` and every
+    changed path, or be a clean checkout between a landed candidate and the integration tip.
     """
     for tree in _target_trees(target, test):
-        if tree == root and copy_only:
-            continue
-        if tree == root and candidate is None:
+        if tree == root:
+            if copy_only:
+                continue
             return True
         if all(_same_bytes(tree, root, path, candidate) for path in (test, *changed_paths)):
             return True
