@@ -216,7 +216,13 @@ def targets_not_found_for_request(
         session = ctx.session_manager.get(resolved_session) if resolved_session else None
         machine_id = ctx.checkout_machine_id(project_id, session_id)
         primary = ctx.get_project_repo_path(project_id, machine_id)
-        workspace = getattr(session, "workspace_path", None)
+        # The caller's overlay belongs to its own project. A coordinator creating
+        # work elsewhere validates targets against that project's registered root.
+        workspace = (
+            getattr(session, "workspace_path", None)
+            if session is not None and session.project_id == project_id
+            else None
+        )
         repo_path = primary
         if workspace and (not primary or os.path.realpath(workspace) != os.path.realpath(primary)):
             repo_path = resolve_operation_root(

@@ -349,7 +349,7 @@ async def test_review_rejects_task_from_another_project() -> None:
         {"task_id": TASK_ID, "changes_summary": "Completed work.", "session_id": SESSION_ID},
     )
 
-    assert result["error"] == "task_not_found"
+    assert result["error"] == "cross_project_task_forbidden"
     memory_manager.search_memories.assert_not_awaited()
 
 

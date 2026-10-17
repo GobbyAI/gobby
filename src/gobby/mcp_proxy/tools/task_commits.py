@@ -11,6 +11,7 @@ Provides tools for linking git commits to tasks:
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -35,6 +36,7 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
+from gobby.tasks.lifecycle_access import CrossProjectTaskForbidden, resolve_lifecycle_task
 from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -226,10 +228,25 @@ def create_commit_registry(
         if not author_session_id:
             return {"error": "No session context available; a receipt needs a calling session."}
         try:
-            resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
+            caller = session_manager.get(author_session_id) if session_manager is not None else None
+            caller_project_id = (
+                caller.project_id if caller is not None else get_current_project_id()
+            )
+            if caller_project_id is None:
+                return {"error": "No project context available."}
+            current_task = await asyncio.to_thread(
+                resolve_lifecycle_task,
+                task_manager,
+                task_id,
+                project_id=caller_project_id,
+                caller_session_id=author_session_id,
+                sessions=session_manager,
+            )
+        except CrossProjectTaskForbidden as e:
+            return {"error": str(e)}
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
-        task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+        task_and_repo_path = _get_task_and_repo_path(current_task.id, task_id, project_path)
         if isinstance(task_and_repo_path, dict):
             return task_and_repo_path
         current_task, repo_path = task_and_repo_path
@@ -275,7 +292,10 @@ def create_commit_registry(
             "properties": {
                 "task_id": {
                     "type": "string",
-                    "description": "Task reference: #N, N (seq_num), path (1.2.3), or UUID",
+                    "description": (
+                        "Task reference: #N, N, path, <project>#N, or UUID; "
+                        "foreign tasks require coordinator authority"
+                    ),
                 },
                 "kind": {
                     "type": "string",
