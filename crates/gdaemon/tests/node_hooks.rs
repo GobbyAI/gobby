@@ -628,6 +628,46 @@ async fn receipts_ack_forwarded_and_terminalized() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true,"carrying_envelope_ids":["original"]}),
+        )],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let non_file = ledger.inbox.join("000-directory.json");
+    fs::create_dir(&non_file)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        symlink("missing-receipt", ledger.inbox.join("001-dangling.json"))?;
+        let unreadable = ledger.inbox.join("002-unreadable.json");
+        // Malformed bytes are also ignored when tests run with permission bypass.
+        fs::write(&unreadable, b"unreadable receipt")?;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0))?;
+    }
+    let valid = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&valid, serde_json::to_vec(&receipt())?)?;
+
+    sweep_receipts(&node.node, &ledger).await?;
+
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(hub.requests()[0].body["receipt_id"], receipt()["receipt_id"]);
+    assert!(ledger.is_processed(ACK_ID).await?);
+    assert!(ledger.is_processed("original").await?);
+    assert!(!valid.exists());
+    assert!(non_file.is_dir(), "bad entries must not be removed");
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn receipts_failed_post_and_orphan_restore() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
     hub.script(

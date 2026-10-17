@@ -25,7 +25,7 @@ pub async fn sweep_receipts(node: &NodeServices, ledger: &Ledger) -> Result<()> 
     let inbox = ledger.inbox.clone();
     let paths = tokio::task::spawn_blocking(move || receipt_paths(&inbox)).await??;
     for path in paths {
-        let Some(claim) = tokio::task::spawn_blocking(move || Claim::take(path)).await?? else {
+        let Ok(Some(claim)) = tokio::task::spawn_blocking(move || Claim::take(path)).await? else {
             continue;
         };
         let envelope_id = claim
@@ -123,8 +123,10 @@ fn receipt_paths(inbox: &Path) -> io::Result<Vec<PathBuf>> {
         Err(error) => return Err(error),
     };
     for entry in entries {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
         let name = entry.file_name();
@@ -140,18 +142,18 @@ fn receipt_paths(inbox: &Path) -> io::Result<Vec<PathBuf>> {
             && claim_owner.bytes().all(|byte| byte.is_ascii_hexdigit())
             && original.ends_with(".json")
         {
-            rename_if_present(&entry.path(), &inbox.join(original))?;
+            // Leave a failed orphan recovery for a later pass, without blocking its peers.
+            let _ = rename_if_present(&entry.path(), &inbox.join(original));
         }
     }
-    fs::read_dir(inbox)?
-        .filter_map(|entry| match entry {
-            Ok(entry) if entry.path().extension().is_some_and(|ext| ext == "json") => {
-                Some(Ok(entry.path()))
-            }
-            Ok(_) => None,
-            Err(error) => Some(Err(error)),
+    Ok(fs::read_dir(inbox)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && entry.path().extension().is_some_and(|ext| ext == "json")
         })
-        .collect()
+        .map(|entry| entry.path())
+        .collect())
 }
 
 fn rename_if_present(from: &Path, to: &Path) -> io::Result<()> {
