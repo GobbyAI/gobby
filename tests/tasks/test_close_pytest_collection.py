@@ -75,16 +75,9 @@ def _gate(
     )
 
 
-@pytest.mark.parametrize(
-    ("launcher", "output"),
-    [
-        ("uv run pytest", "1 test collected in 0.01s"),
-        ("uv run rtk pytest", "1 test collected in 0.01s"),
-        ("rtk uv run pytest", "Pytest: 1 test collected in 0.01s"),
-    ],
-)
-def test_guarded_collection_credits_changed_file(root: Path, launcher: str, output: str) -> None:
-    gate = _gate(root, _run(f"{launcher} {TEST} --collect-only -q", output))
+def test_guarded_collection_credits_changed_file(root: Path) -> None:
+    # The RTK proxy preserves this raw summary by declining the lossy rewrite.
+    gate = _gate(root, _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected in 0.01s"))
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
 
@@ -138,3 +131,58 @@ def test_collection_never_credits_unguarded_sibling(root: Path) -> None:
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     return tmp_path
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        GUARDED + "pytestmark: list = []\n",
+        GUARDED.replace(
+            '_GRANT = "OPERATOR_AUTHORIZED"',
+            '_GRANT = "OPERATOR_AUTHORIZED"\n_GRANT: str | None = None',
+        ),
+        GUARDED + "pytestmark *= 0\n",
+        GUARDED + "if True:\n    pytestmark = []\n",
+        GUARDED + "markers = pytestmark\nmarkers.clear()\n",
+        GUARDED + "pytestmark, other = [], None\n",
+        GUARDED.replace("pytestmark = [", "markers = pytestmark = ["),
+        GUARDED.replace(
+            '_GRANT = "OPERATOR_AUTHORIZED"',
+            '_GRANT = "OPERATOR_AUTHORIZED"\nif True:\n    _GRANT = None',
+        ),
+    ],
+    ids=[
+        "annotated-marker",
+        "annotated-grant",
+        "augmented-marker",
+        "conditional-marker",
+        "alias-mutation",
+        "unpacked-marker",
+        "chained-alias",
+        "conditional-grant",
+    ],
+)
+def test_collection_rejects_ambiguous_guard_bindings(root: Path, source: str) -> None:
+    gate = _gate(
+        root, _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected in 0.01s"), source
+    )
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+
+
+def test_non_test_category_never_credits_ordinary_file(root: Path) -> None:
+    gate = _gate(
+        root,
+        _run(f"uv run pytest {TEST} -q", "1 passed in 0.01s"),
+        "def test_live():\n    assert True\n",
+    )
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+
+
+@pytest.mark.parametrize("version", ["0.51.0", "1.0.1"])
+def test_lossy_rtk_collection_output_never_earns_credit(root: Path, version: str) -> None:
+    output = (
+        Path(__file__).parents[1] / f"fixtures/rtk/pytest-collection-{version}.txt"
+    ).read_text()
+    gate = _gate(root, _run(f"rtk uv run pytest {TEST} --collect-only -q", output))
+    assert gate.details["pytest_uncovered_paths"] == [TEST]

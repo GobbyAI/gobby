@@ -29,29 +29,58 @@ def collection_target(run: TranscriptValidationRun) -> str | None:
     return pytest_collection_target(run.core_command or run.command)
 
 
+def _isolated_binding(module: ast.Module, name: str, allowed: tuple[ast.AST, ...]) -> bool:
+    """Reject other references, aliases or bindings, including nested writes."""
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id == name and node not in allowed:
+            return False
+        if (
+            isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.ExceptHandler,
+                    ast.MatchAs,
+                    ast.MatchStar,
+                ),
+            )
+            and node.name == name
+        ):
+            return False
+        if isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) == name:
+            return False
+    return True
+
+
 def declares_operator_guard(source: str) -> bool:
     """Recognize a module-wide pytestmark environment-grant skip condition.
 
     The declaration is ``pytestmark = [..., pytest.mark.skipif(
     os.environ.get("ENV_NAME") != GRANT, ...)]``, or that skipif alone.
     GRANT must be a nonempty literal string or an unambiguous module string
-    constant. This matches the existing operator-proof declaration; arbitrary
+    constant. Each binding must be a single plain module assignment; any other
+    reference or binding (including aliases and conditional writes) fails closed.
+    This matches the existing operator-proof declaration; arbitrary
     truthy skip conditions and observed skips never establish admission.
     """
     try:
         module = ast.parse(source)
     except SyntaxError:
         return False
-    assignments: dict[str, list[ast.expr]] = {}
+    assignments: dict[str, ast.Assign] = {}
     for node in module.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    assignments.setdefault(target.id, []).append(node.value)
-    markers = assignments.get("pytestmark", [])
-    if len(markers) != 1:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assignments[target.id] = node
+    declaration = assignments.get("pytestmark")
+    if declaration is None or not _isolated_binding(
+        module, "pytestmark", (declaration.targets[0],)
+    ):
         return False
-    marker = markers[0]
+    marker = declaration.value
     values = marker.elts if isinstance(marker, (ast.List, ast.Tuple)) else [marker]
     for value in values:
         if not isinstance(value, ast.Call) or ast.unparse(value.func) != "pytest.mark.skipif":
@@ -76,10 +105,12 @@ def declares_operator_guard(source: str) -> bool:
             continue
         grant = condition.comparators[0]
         if isinstance(grant, ast.Name):
-            bindings = assignments.get(grant.id, [])
-            if len(bindings) != 1:
+            binding = assignments.get(grant.id)
+            if binding is None or not _isolated_binding(
+                module, grant.id, (binding.targets[0], grant)
+            ):
                 continue
-            grant = bindings[0]
+            grant = binding.value
         if isinstance(grant, ast.Constant) and isinstance(grant.value, str) and grant.value:
             return True
     return False

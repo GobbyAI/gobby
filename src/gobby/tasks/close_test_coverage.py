@@ -405,7 +405,6 @@ def uncovered_pytest_paths(
     close_root: str | None = None,
     changed_paths: Sequence[str] = (),
     candidate: CloseCandidate | None = None,
-    collection_paths: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """Return changed tests no successful pytest run targets.
 
@@ -413,10 +412,25 @@ def uncovered_pytest_paths(
     the run's location: a target in ``close_root`` covers as before, and one in another
     tree covers only when that tree holds the close ``candidate`` commit's bytes for the
     test and every changed path (#23653).
-    ``collection_paths`` is an explicit changed-file allow-list; related source tests
-    never receive the operator-admission collection exception.
     """
-    runs = tuple(runs)
+    runs = tuple(
+        run
+        for run in runs
+        if runner_reported_success((run.output or "") + "\n")
+        and not runner_reported_failures(run.output)
+    )
+    return _uncovered_by(runs, changed_python_tests, close_root, changed_paths, candidate)
+
+
+def collection_credited_pytest_paths(
+    runs: Iterable[TranscriptValidationRun],
+    changed_python_tests: tuple[str, ...],
+    *,
+    close_root: str | None = None,
+    changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
+) -> tuple[str, ...]:
+    """Credit only guarded changed files; ordinary execution coverage stays separate."""
     collected: set[str] = set()
     if close_root is not None:
         root = os.path.realpath(close_root)
@@ -426,24 +440,12 @@ def uncovered_pytest_paths(
             if target is None or location is None:
                 continue
             resolved = os.path.normpath(os.path.join(root, location, target))
-            for test in collection_paths:
+            for test in changed_python_tests:
                 if _runs_test(
                     resolved, test, root, changed_paths, candidate
                 ) and operator_guard_file(Path(root) / test):
                     collected.add(test)
-    passing = tuple(
-        run
-        for run in runs
-        if runner_reported_success((run.output or "") + "\n")
-        and not runner_reported_failures(run.output)
-    )
-    return tuple(
-        test
-        for test in _uncovered_by(
-            passing, changed_python_tests, close_root, changed_paths, candidate
-        )
-        if test not in collected
-    )
+    return tuple(test for test in changed_python_tests if test in collected)
 
 
 def unread_background_runs(
