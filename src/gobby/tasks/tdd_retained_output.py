@@ -16,10 +16,15 @@ import sqlite3
 import stat
 import zlib
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from gobby.integrations.rtk import platform_paths
-from gobby.tasks.transcript_background import background_job_receipt, output_as_of
+from gobby.tasks.transcript_background import (
+    background_job_receipt,
+    output_as_of,
+    recovered_deliveries,
+)
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
 #: Claude writes the job file's ``[exited with code N]`` trailer just after it
@@ -38,10 +43,12 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
     """The run's retained full output, or None when any provenance check fails.
 
     Only output the transcript delivered before ``production_at`` is matched; a
-    later Read, tail or Monitor of the job's own file counts for nothing.
+    later Read, tail or Monitor of the job's own file counts for nothing. Every
+    recovered delivery before the cutoff must appear in it; a run with none checks
+    its as-of output.
     """
-    run = output_as_of(run, production_at)
-    if run.outcome != "failure" or not run.output:
+    as_of = output_as_of(run, production_at)
+    if as_of.outcome != "failure" or not as_of.output:
         return None
     if run.background_output_path is not None:
         retained = _job_output(run, production_at)
@@ -49,9 +56,31 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
         retained = _recall_artifact(run, production_at)
     else:
         return None
-    if retained is None or not _contains_delivered(run, run.output, retained):
+    if retained is None:
         return None
+    pieces = [(d.text or "", d.truncated) for d in recovered_deliveries(run, production_at)]
+    for text, truncated in pieces or [(as_of.output, as_of.output_truncated)]:
+        if not _contains_delivered(text, truncated, retained):
+            return None
     return retained
+
+
+def delivered_proof_runs(
+    run: TranscriptValidationRun, production_at: datetime
+) -> list[TranscriptValidationRun]:
+    """Each pre-cutoff delivery proved alone, then the authenticated full output.
+
+    Deliveries are never joined: a newline between two reads would make unrelated
+    lines adjacent to a failure section.
+    """
+    runs = [
+        replace(run, output=delivery.text, output_truncated=delivery.truncated)
+        for delivery in recovered_deliveries(run, production_at)
+    ]
+    retained = retained_red_output(run, production_at)
+    if retained is not None:
+        runs.append(replace(run, output=retained))
+    return runs
 
 
 def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | None:
@@ -134,8 +163,8 @@ def _recall_artifact(run: TranscriptValidationRun, production_at: datetime) -> s
     return data.decode("utf-8", errors="replace")
 
 
-def _contains_delivered(run: TranscriptValidationRun, delivered: str, retained: str) -> bool:
-    """Every line the transcript delivered appears in the retained output."""
+def _contains_delivered(delivered: str, truncated: bool, retained: str) -> bool:
+    """Every line one delivery carried appears in the retained output."""
     lines = delivered.splitlines()
     receipt = background_job_receipt(delivered)
     if receipt is not None:
@@ -143,7 +172,7 @@ def _contains_delivered(run: TranscriptValidationRun, delivered: str, retained: 
         lines = lines[1:]
         if lines and lines[0].strip() == receipt["job"]:
             lines = lines[1:]
-    if lines and run.output_truncated:
+    if lines and truncated:
         lines = lines[:-1]
     available = [line.strip() for line in retained.splitlines()]
     exact = set(available)
@@ -163,4 +192,4 @@ def _contains_delivered(run: TranscriptValidationRun, delivered: str, retained: 
     return verified
 
 
-__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "retained_red_output"]
+__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "delivered_proof_runs", "retained_red_output"]

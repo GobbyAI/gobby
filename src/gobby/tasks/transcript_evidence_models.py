@@ -45,6 +45,8 @@ class OutputDelivery:
     truncated: bool
     #: A Monitor event extends the delivered output; a launch, Read or tail replaces it.
     appends: bool
+    #: The Bash command, ``Read <path>`` or ``Monitor <id>`` that delivered this output.
+    reader: str | None = None
 
 
 @dataclass(frozen=True)

@@ -29,9 +29,9 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
-from gobby.tasks.tdd_retained_output import retained_red_output
+from gobby.tasks.tdd_retained_output import delivered_proof_runs
 from gobby.tasks.tdd_stub_revert import has_stub_revert_proof
-from gobby.tasks.transcript_background import output_as_of
+from gobby.tasks.transcript_background import output_as_of, unread_reason
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -357,32 +357,37 @@ def _find_red_run(
                 binding_cache,
                 first_non_test_edit,
             )
-            retained = (
-                retained_red_output(run, production_at)
-                if production_at is not None and not cached[0]
-                else None
-            )
-            if retained is not None:
-                proof = _red_run_proof(
-                    test,
-                    evidence,
-                    replace(run, output=retained),
-                    core_command,
-                    require_not_implemented,
-                    parse_cache,
-                    binding_cache,
-                    first_non_test_edit,
-                )
-                cached = proof if proof[0] else cached
+            if production_at is not None and not cached[0]:
+                for proof_run in delivered_proof_runs(run, production_at):
+                    proof = _red_run_proof(
+                        test,
+                        evidence,
+                        proof_run,
+                        core_command,
+                        require_not_implemented,
+                        parse_cache,
+                        binding_cache,
+                        first_non_test_edit,
+                    )
+                    if proof[0]:
+                        cached = proof
+                        break
             if red_cache is not None:
                 red_cache[key] = cached
         matched, reason = cached
         if matched:
             return run, None
+        if not reason and run.background_output_path is not None and rejection is None:
+            reason = unread_reason(run, production_at, _rust_node(test))
         if reason is None:
             continue
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
+
+
+def _rust_node(test: AcceptanceTest) -> str:
+    """The full module path nextest names a Rust test by, else its symbol."""
+    return "::".join((*(test.rust_module or ()), test.symbol))
 
 
 def _red_run_proof(
@@ -565,7 +570,12 @@ def _has_named_red_failure(
         return True, ""
     if test.path.endswith(".py"):
         return False, reason
-    symbols = (test.symbol, test.symbol.replace(".", "::"), test.symbol.replace("::", "."))
+    symbols = (
+        test.symbol,
+        test.symbol.replace(".", "::"),
+        test.symbol.replace("::", "."),
+        _rust_node(test),
+    )
     lines = output.splitlines()
     section_node: str | None = None
     for index, line in enumerate(lines):
