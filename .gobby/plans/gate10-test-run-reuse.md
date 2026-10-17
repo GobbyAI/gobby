@@ -168,8 +168,8 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   credit).** No deliverable depends on it. Records carry the child's exit code and
   never parse output. Deliverable 2.4 teaches the transcript path that
   `gdaemon run ... --` is exit-preserving; that is new work here, not a fix #24535
-  owns. If #24535 changes `_first_executable` or the wrapper rules first, 2.4 merges
-  onto its result. Historical: Release Manager packets kept `RTK_DISABLED=1` until
+  owns. #24535 has landed, and #24627 (`93b369cc0a`) later moved the launcher
+  resolver into `validation_launchers.py`, which 2.4 targets. Historical: Release Manager packets kept `RTK_DISABLED=1` until
   #24535 landed. It has been live since 2026-10-15 20:28 CDT.
 - **Operator rulings (Josh, 2026-10-15).** 18:45 slot limit; 19:06-19:07 rtk hard
   requirement (seats never rerun without rtk to satisfy a gate). 20:41: the
@@ -182,9 +182,10 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   is promoted through `promote_workspace_binary_set`. A gcore asset change (1.1)
   reaches `gcode`, `gdaemon`, `ghook`, `gclient` and the `gobby-terminals` library.
   Installing a new gdaemon needs a global restart announcement and a quiet window.
-- **Monolith ceiling.** `transcript_outcomes.py` (893 lines) and
-  `validation_detection.py` (957 lines, after #24507, #24608 and #24535) are above the 850-line heuristic, so 2.4
-  moves code out of both before adding to them. `_lifecycle_close.py` (929 lines) is
+- **Monolith ceiling.** `validation_detection.py` (957 lines, after #24507, #24608 and
+  #24535) is above the 850-line heuristic, so 2.4 moves its wrapper rules out before
+  adding to them. `transcript_outcomes.py` (570 lines since #24627) and
+  `validation_launchers.py` (335 lines) are below it. `_lifecycle_close.py` (929 lines) is
   not targeted: reuse records reach the gate through `load_confinement_context`.
 - **Test isolation.** Python tests use the isolated test hub
   (`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
@@ -224,12 +225,12 @@ is a shared Target across 1.1, 2.2 and 2.3, ordered by dependencies.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`
-- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 472
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 472 in the embedded asset list
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 472
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 472
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 472
+- `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 470
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 470 in the embedded asset list
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 470
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 470
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 470
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated expected schema identity
 - `crates/gcore/Cargo.toml`
 - `crates/gcode/Cargo.toml`
@@ -240,11 +241,11 @@ Targets:
 
 Research context. Migrations live under `crates/gcore/assets/schema/migrations/`;
 the latest is `469_config_active_state.sql` (#24445, `39eb1255af`), and
-`468_terminal_host_epochs.sql` landed with its carriers in `3fa292372e`. The
-Orchestrator's migration ledger (2026-10-16 18:19 CDT) reserves 470 for #24617 (Host
-e2e harness) and 471 for #23861, and assigns 472 to this deliverable. Next-free rule:
-if 472 is taken when 1.1 is implemented, use the next free number and update every
-carrier below to match. The derived-carriers lint requires every carrier listed above in the
+`468_terminal_host_epochs.sql` landed with its carriers in `3fa292372e`. Migration
+numbers are contiguous and taken at landing, with no reservations (Orchestrator
+ruling 2026-10-17 09:21 CDT): this deliverable takes the next free number on the
+tip, 470 as of 0.5.0 `f770f3317d`. If another migration lands first, renumber to the
+new next free number and update every carrier below to match. The derived-carriers lint requires every carrier listed above in the
 same deliverable. Follow 468's grant pattern: `REVOKE ALL ... FROM PUBLIC` and grant
 to `gobby_daemon_runtime`, the role both gdaemon and the Python daemon use; the
 Python gate needs SELECT, gdaemon needs SELECT, INSERT and DELETE.
@@ -277,8 +278,8 @@ patch version of each listed binary crate and `gobby-core`, and update `Cargo.lo
 
 **Acceptance:**
 
-- 1.1.1 - Migration 472 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`.
-- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 472, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 1.1.1 - Migration 470 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`.
+- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 470, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 1.1.3 - `gobby-core` and every dependent shipped binary carry a patch-version bump with `Cargo.lock` updated. file: `Cargo.lock`.
 
 ## P2: Bounded-run launcher
@@ -522,9 +523,8 @@ own. It forwards SIGINT and SIGTERM by closing the request, which 2.2 drains as
 `kind: deliverable`
 
 Targets:
-- `src/gobby/tasks/transcript_outcomes.py::_first_executable`
-- `src/gobby/tasks/transcript_outcomes.py::_launcher_arguments`
-- `src/gobby/tasks/transcript_launchers.py`
+- `src/gobby/tasks/validation_launchers.py::first_executable`
+- `src/gobby/tasks/validation_launchers.py::_launcher_arguments`
 - `src/gobby/config/validation_detection.py::default_validation_wrapper_rules`
 - `src/gobby/config/validation_detection.py::_wrapper_rule`
 - `src/gobby/config/validation_detection.py::_iter_wrapper_rules`
@@ -537,10 +537,12 @@ Targets:
 - `tests/tasks/test_close_checklist.py::*` — scope-reason: adds the end-to-end launcher credit case for Gate 10
 
 Research context. Transcript credit resolves a command's executable through
-`transcript_outcomes.py::_first_executable`, which unwraps `timeout`, `gtimeout`,
-`time`, `exec`, `command`, `xargs`, `stdbuf`, `sudo` and `caffeinate` with
-`_launcher_arguments` (flag and value-option tables, stopping at `--`). A run whose
-executable resolves is not wrapped, so `timeout 300 uv run pytest x` credits today.
+`validation_launchers.py::first_executable`, which #24627 (`93b369cc0a`) moved out of
+`transcript_outcomes.py`; `transcript_outcomes.py` imports it and calls it at both
+credit sites. It unwraps `timeout`, `gtimeout`, `time`, `exec`, `command`, `xargs`,
+`stdbuf`, `sudo` and `caffeinate` with `_launcher_arguments` (flag and value-option
+tables, stopping at `--`). A run whose executable resolves is not wrapped, so
+`timeout 300 uv run pytest x` credits today.
 Add `gdaemon` with first argument `run` as a launcher: flags none, value options
 `--bound` and `--term-grace`, terminated by the required `--`. Other `gdaemon`
 subcommands stay unresolved. The launcher's 124 is a failure outcome, as with
@@ -554,13 +556,16 @@ delimiter. Add `_wrapper_rule("gdaemon-run", "gdaemon run", "delimiter",
 criterion `uv run pytest x`. Any Target under `src/gobby/config/` requires the
 `runtime_config_contract.json` carrier.
 
-Both files are above the 850-line heuristic (893 and 957 lines). Move
-`_launcher_arguments` and its option tables from `transcript_outcomes.py` into the
-new `src/gobby/tasks/transcript_launchers.py`, imported by `_first_executable`
-(its only caller). Move `default_validation_wrapper_rules` and `_wrapper_rule` from
-`validation_detection.py` into the new `src/gobby/config/validation_wrappers.py`,
-imported by `_iter_wrapper_rules` (the only caller of
-`default_validation_wrapper_rules`). Both files end smaller than they start.
+`validation_detection.py` is above the 850-line heuristic (957 lines). Move
+`default_validation_wrapper_rules` and `_wrapper_rule` from it into the new
+`src/gobby/config/validation_wrappers.py`, imported by `_iter_wrapper_rules` (the only
+caller of `default_validation_wrapper_rules`), so it ends smaller than it starts.
+The `gdaemon run` launcher entry goes into `validation_launchers.py` (335 lines)
+in place, beside the existing launchers.
+
+Consumers unchanged:
+- `src/gobby/tasks/transcript_outcomes.py` — no-edit-reason: both credit sites call `first_executable` and take the resolved child executable unchanged.
+- `src/gobby/tasks/command_equivalence.py` — no-edit-reason: `run_location` calls `first_executable` with a `directories` list, so a launcher run's location now resolves through its child as intended; `gdaemon run` has no directory options, so the list stays empty.
 
 The launcher's 124 trailer line must not count as retained failure output, so add
 `gdaemon run: .*` to `tdd_retained_output.py::_GENERATED_LINE_RE`.
@@ -575,7 +580,7 @@ tests/tasks/test_close_checklist.py -q`.
 - 2.4.2 - Criterion matching treats "gdaemon run --bound 300 -- uv run pytest x" as "uv run pytest x". test: `tests/config/test_validation_detection.py::test_gdaemon_run_delimiter_wrapper_unwraps_child`.
 - 2.4.3 - A passing launcher pytest run of a changed test, also behind `rtk`, earns the same Gate 10 credit as the bare run, and exit 124 is an unresolved failure. test: `tests/tasks/test_close_checklist.py::test_gdaemon_run_pytest_earns_bare_run_credit`.
 - 2.4.4 - The launcher trailer line is generated output, not retained failure text. test: `tests/tasks/test_tdd_retained_output.py::test_gdaemon_run_trailer_is_generated_line`.
-- 2.4.5 - `transcript_outcomes.py` and `validation_detection.py` each end below their starting line counts, with the moved code in the two new modules. file: `src/gobby/tasks/transcript_launchers.py`. file: `src/gobby/config/validation_wrappers.py`.
+- 2.4.5 - `validation_detection.py` ends below its starting line count, with the wrapper rules in the new `validation_wrappers.py`. file: `src/gobby/config/validation_wrappers.py`.
 
 ### 2.5 rtk rewrites inside the launcher [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -1020,3 +1025,334 @@ that rewritten launcher must exit non-zero and write a `failed` record.
     lines.
   - The 3.2 and 3.3 figures now read 848 lines for `close_checklist.py` and 946
     for `close_test_coverage.py`.
+- 2026-10-16: After the 22:16 restart, the adversary bounced the d47d014 stamp:
+  #24627 (`93b369cc0a`) moved the launcher resolver into
+  `validation_launchers.py` as the public `first_executable`. With the
+  Orchestrator's 23:32 CDT GO:
+  - 2.4 now targets `validation_launchers.py::first_executable` and
+    `::_launcher_arguments`, and drops the planned `transcript_launchers.py`
+    extraction.
+  - 2.4 names `transcript_outcomes.py` and `command_equivalence.py` as unchanged
+    consumers.
+  - 2.4.5 keeps only the `validation_detection.py` wrapper-rule move.
+  - The Constraints monolith line now lists only `validation_detection.py`
+    (957), and the #24535 line now points at #24627.
+- 2026-10-17: The Orchestrator's 09:21 CDT ruling dropped migration reservations:
+  numbers are contiguous and taken at landing. #24548 was renumbered to 470, so
+  coverage row 1.1.1 went invalid against the plan's 472. With the Orchestrator's
+  10:08 CDT GO, 1.1 now uses migration 470 throughout, and its research context
+  states the no-reservation rule in place of the 18:19 ledger.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Validation run record table
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Migration 470 creates `validation_run_records` with
+    the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
+    SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`.
+
+    1.1.2: The schema catalog, asset registry, grant bundle and expected identity
+    carry migration 470, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+    file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+
+    1.1.3: `gobby-core` and every dependent shipped binary carry a patch-version bump
+    with `Cargo.lock` updated. file: `Cargo.lock`.'
+  labels:
+  - covers:gate10-test-run-reuse:1.1:1.1.1
+  - covers:gate10-test-run-reuse:1.1:1.1.2
+  - covers:gate10-test-run-reuse:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Persist the SRT wrap prefix on managed runs
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: The persisted sandbox metadata carries `wrap_prefix`
+    equal to the argv prefix `SandboxLaunch.wrap` produces for an enforced SRT launch,
+    and an empty list otherwise, from both the spawn and the resume writer. file:
+    `src/gobby/agents/spawn_executor_support.py`. test: `tests/agents/test_spawn_executor_support.py::test_persisted_sandbox_metadata_carries_wrap_prefix`.'
+  labels:
+  - covers:gate10-test-run-reuse:2.1:2.1.1
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: gdaemon bounded-run service
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: '2.2.1: The shared group helper TERMs, waits with the leader
+    unreaped, KILLs and reaps an owned group, and `BackendChild` drains through it
+    with unchanged behavior; the existing `shutdown_sends_term_then_bounded_kill`
+    and `exited_backend_leaves_no_process_group_descendant` lifecycle tests still
+    pass. file: `crates/gdaemon/src/lifecycle/group.rs`. test: `crates/gdaemon/src/lifecycle/group.rs::tests::drain_terms_then_kills_owned_group`.
+
+    2.2.2: A request without a valid managed capability, with a forged signature,
+    or for a provider-native run is refused before any spawn. test: `crates/gdaemon/tests/bounded_run.rs::refuses_unmanaged_forged_and_provider_native_callers`.
+
+    2.2.3: A token minted by Python''s `issue_agent_api_token` verifies in gdaemon.
+    test: `crates/gdaemon/tests/bounded_run.rs::verifies_python_minted_capability`.
+
+    2.2.4: An SRT-enforced run''s child argv starts with the persisted wrap prefix,
+    and a sandbox-disabled run''s argv is unwrapped. test: `crates/gdaemon/tests/bounded_run.rs::wraps_child_in_caller_srt_policy`.
+
+    2.2.5: A cwd outside the token project''s checkouts and worktrees is refused,
+    and so is a discovered `repo_root` that is not exactly a registered checkout or
+    worktree root. test: `crates/gdaemon/tests/bounded_run.rs::refuses_cwd_outside_project_checkouts`.
+
+    2.2.6: A fourth concurrent hub run waits until a hub slot frees, whether it is
+    pytest in "uv run pytest", "python -m pytest" or "rtk pytest" form or "npx playwright
+    test". "rtk proxy uv run pytest", ".venv/bin/pytest", "uv run --frozen pytest"
+    and "ionice -c3 uv run pytest x" each take a hub slot. A second concurrent "cargo
+    nextest" or "cargo clippy" waits for the single heavy slot without consuming a
+    hub slot, and "cargo +nightly clippy", "arch -arm64 cargo nextest run" and "sh
+    -c ''cargo clippy''" take the heavy slot. "cargo fmt", "cargo +nightly fmt", "mypy",
+    "ruff" and "git status" run without a slot. A run whose bound ends in the queue
+    records `timed_out` unspawned. test: `crates/gdaemon/tests/bounded_run.rs::admits_hub_and_heavy_pools_and_bounds_queue_wait`.
+
+    2.2.7: At the bound a TERM-ignoring group is TERMed, then KILLed after the grace
+    window and reaped; nothing outside the group is signalled; the outcome is `timed_out`.
+    test: `crates/gdaemon/tests/bounded_run.rs::bound_terms_then_kills_only_the_run_group`.
+
+    2.2.8: The snapshot captures uncommitted and untracked-unignored changes, leaves
+    the real index and HEAD unchanged, runs its git argv behind the run''s wrap prefix
+    with an absolute daemon-resolved git, explicit `--git-dir` and `--work-tree`,
+    and `core.fsmonitor=false`. A request env carrying `GIT_DIR`, `GIT_WORK_TREE`
+    or `GIT_CONFIG_*`, a `PATH`-shadowed `git`, and a repository `core.worktree` pointing
+    elsewhere change neither tree id; the last refuses the run. A mid-run edit makes
+    `tree_start` differ from `tree_end` and the record not reusable. test: `crates/gdaemon/tests/bounded_run.rs::snapshots_tree_in_caller_sandbox_without_touching_index`.
+
+    2.2.9: Records carry identity from the verified token, the argv, outcome and exit
+    code (128+N for a signal death), `executable`, `python_version` and `gdaemon_identity`.
+    Each reusability rule above, including the environment denylist, interpreter resolution
+    and targets escaping `repo_root`, refuses with its reason. Insert prunes rows
+    older than 14 days. test: `crates/gdaemon/tests/bounded_run.rs::records_outcome_identity_and_reusability`.'
+  labels:
+  - covers:gate10-test-run-reuse:2.2:2.2.1
+  - covers:gate10-test-run-reuse:2.2:2.2.2
+  - covers:gate10-test-run-reuse:2.2:2.2.3
+  - covers:gate10-test-run-reuse:2.2:2.2.4
+  - covers:gate10-test-run-reuse:2.2:2.2.5
+  - covers:gate10-test-run-reuse:2.2:2.2.6
+  - covers:gate10-test-run-reuse:2.2:2.2.7
+  - covers:gate10-test-run-reuse:2.2:2.2.8
+  - covers:gate10-test-run-reuse:2.2:2.2.9
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: '`gdaemon run` launcher client'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: Output passes through byte for byte on both streams
+    and the launcher exits with the child''s exit code. test: `crates/gdaemon/tests/bounded_run_cli.rs::passes_output_and_exit_code_through`.
+
+    2.3.2: A bound expiry exits 124 with exactly one `gdaemon run:` stderr line. test:
+    `crates/gdaemon/tests/bounded_run_cli.rs::exits_124_with_one_trailer_line`.
+
+    2.3.3: A missing token, refused caller or unreachable daemon exits 125 with one
+    `gdaemon run:` stderr line and spawns nothing. test: `crates/gdaemon/tests/bounded_run_cli.rs::exits_125_on_launcher_failure`.
+
+    2.3.4: `gdaemon run` appears in the CLI contract with required `--bound` and `--`.
+    test: `crates/gdaemon/tests/cli_contract.rs::cli_contract_lists_run_subcommand`.'
+  labels:
+  - covers:gate10-test-run-reuse:2.3:2.3.1
+  - covers:gate10-test-run-reuse:2.3:2.3.2
+  - covers:gate10-test-run-reuse:2.3:2.3.3
+  - covers:gate10-test-run-reuse:2.3:2.3.4
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Transcript gates credit launcher runs
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `gdaemon run --bound N [--term-grace G] -- <cmd>` resolves
+    to `<cmd>`''s executable and is credited unwrapped; a missing `--` or another
+    gdaemon subcommand stays unresolved. test: `tests/tasks/test_transcript_outcomes.py::test_gdaemon_run_launcher_resolves_child_executable`.
+
+    2.4.2: Criterion matching treats "gdaemon run --bound 300 -- uv run pytest x"
+    as "uv run pytest x". test: `tests/config/test_validation_detection.py::test_gdaemon_run_delimiter_wrapper_unwraps_child`.
+
+    2.4.3: A passing launcher pytest run of a changed test, also behind `rtk`, earns
+    the same Gate 10 credit as the bare run, and exit 124 is an unresolved failure.
+    test: `tests/tasks/test_close_checklist.py::test_gdaemon_run_pytest_earns_bare_run_credit`.
+
+    2.4.4: The launcher trailer line is generated output, not retained failure text.
+    test: `tests/tasks/test_tdd_retained_output.py::test_gdaemon_run_trailer_is_generated_line`.
+
+    2.4.5: `validation_detection.py` ends below its starting line count, with the
+    wrapper rules in the new `validation_wrappers.py`. file: `src/gobby/config/validation_wrappers.py`.'
+  labels:
+  - covers:gate10-test-run-reuse:2.4:2.4.1
+  - covers:gate10-test-run-reuse:2.4:2.4.2
+  - covers:gate10-test-run-reuse:2.4:2.4.3
+  - covers:gate10-test-run-reuse:2.4:2.4.4
+  - covers:gate10-test-run-reuse:2.4:2.4.5
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: rtk rewrites inside the launcher
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: `gdaemon run --bound 300 -- pytest x` is rewritten
+    to `gdaemon run --bound 300 -- rtk pytest x` with the prefix preserved byte for
+    byte. test: `tests/workflows/test_proxy_hooks.py::test_rtk_rewrites_inside_gdaemon_run_launcher`.
+
+    2.5.2: A rejected inner rewrite leaves the whole launcher command unchanged, and
+    an inner `rtk` command is not rewritten twice. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_keeps_command_on_rejection`.
+
+    2.5.3: "gdaemon run --bound 300 -- uv run pytest --collect-only tests/x.py" is
+    left unchanged, so the collection summary reaches Gate 10. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_skips_inner_collection`.'
+  labels:
+  - covers:gate10-test-run-reuse:2.5:2.5.1
+  - covers:gate10-test-run-reuse:2.5:2.5.2
+  - covers:gate10-test-run-reuse:2.5:2.5.3
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Unbounded-input classifier
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '3.1.1: Against the real tree, `tests/tasks/test_criterion_commands.py`
+    is eligible, and `tests/agents/test_plan_adversary_no_edits_on_reject.py` is refused
+    with a reason naming the `repo_root` fixture it requests through its local `agent`
+    fixture. test: `tests/tasks/test_validation_reuse_classifier.py::test_real_root_chain_leaves_plain_module_eligible`.
+
+    3.1.2: Every disposition pin matches the current tree, and an edited exempted
+    unit or a lazily imported module refuses every module with `infrastructure_pin_stale`.
+    test: `tests/tasks/test_validation_reuse_classifier.py::test_disposition_pins_are_current_and_fail_closed`.
+
+    3.1.3: A site in `m`, in a helper, in an undispositioned autouse fixture or hook,
+    or in a fixture requested directly, through `usefixtures` or transitively, refuses
+    `m`. A site in an unrequested fixture does not. test: `tests/tasks/test_validation_reuse_classifier.py::test_sites_in_executed_units_refuse`.
+
+    3.1.4: A non-literal `getfixturevalue`, an unresolvable fixture name, `cache`,
+    a non-literal `indirect`, and a non-literal dynamic import each refuse `m`; direct
+    `parametrize` argnames are not fixture requests, while `indirect=True` and literal
+    `indirect=[...]` argnames are. test: `tests/tasks/test_validation_reuse_classifier.py::test_unresolvable_and_dynamic_requests_refuse`.'
+  labels:
+  - covers:gate10-test-run-reuse:3.1:3.1.1
+  - covers:gate10-test-run-reuse:3.1:3.1.2
+  - covers:gate10-test-run-reuse:3.1:3.1.3
+  - covers:gate10-test-run-reuse:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Reuse key and evaluation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '3.1'
+  validation_criteria: '3.2.1: A one-line edit to a source file reuses every target
+    module whose closure excludes it and refuses those that import it, directly, transitively
+    or through a package `__init__` file. test: `tests/tasks/test_validation_reuse.py::test_edit_outside_closure_keeps_credit`.
+
+    3.2.2: An edit to a conftest in the chain, a `pytest_plugins` module or a `patch("gobby...")`
+    string target refuses the module. test: `tests/tasks/test_validation_reuse.py::test_conftest_plugin_and_patch_target_join_closure`.
+
+    3.2.3: Deleting an imported module, a chain conftest or a package `__init__` file
+    without editing the importer, renaming a conftest, adding a shadowing module at
+    an import position, and editing a bare-name sibling helper in a directory without
+    a package `__init__` file each refuse the module; an unparseable closure file
+    refuses it. test: `tests/tasks/test_validation_reuse.py::test_deletion_rename_shadow_and_sibling_join_key`.
+
+    3.2.4: A changed non-Python path, an environment-set path, a different Python
+    version or a different gdaemon identity voids reuse for every module. test: `tests/tasks/test_validation_reuse.py::test_data_env_python_and_gdaemon_identity_void_all_reuse`.
+
+    3.2.5: A same-key failing record refuses the module even when it is not reusable
+    (a node-id or `-k` run), while a failure under a different key does not cancel
+    a pass. test: `tests/tasks/test_validation_reuse.py::test_failing_record_under_key_cancels_pass`.
+
+    3.2.6: A transcript pytest failure naming the module after the passing record''s
+    start refuses it, even when a later unrelated edit made that failure stale for
+    Gate 10. test: `tests/tasks/test_validation_reuse.py::test_later_transcript_failure_cancels_pass`.
+
+    3.2.7: A pruned tree, an unknown candidate, non-reusable passing records, a target
+    escaping `repo_root` and more than 50 matching records all fail closed. test:
+    `tests/tasks/test_validation_reuse.py::test_reuse_fails_closed`.
+
+    3.2.8: A rebase that changes only modules outside a test''s closure keeps its
+    credit at the new candidate. test: `tests/tasks/test_validation_reuse.py::test_rebase_recomputes_keys_at_candidate`.'
+  labels:
+  - covers:gate10-test-run-reuse:3.2:3.2.1
+  - covers:gate10-test-run-reuse:3.2:3.2.2
+  - covers:gate10-test-run-reuse:3.2:3.2.3
+  - covers:gate10-test-run-reuse:3.2:3.2.4
+  - covers:gate10-test-run-reuse:3.2:3.2.5
+  - covers:gate10-test-run-reuse:3.2:3.2.6
+  - covers:gate10-test-run-reuse:3.2:3.2.7
+  - covers:gate10-test-run-reuse:3.2:3.2.8
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Gate 10 consumes reuse credit and shows it
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '2.4'
+  validation_criteria: '3.3.1: `load_confinement_context` returns the project''s records
+    from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`.
+    test: `tests/tasks/test_validation_confinement.py::test_load_confinement_context_projects_run_records`.
+
+    3.3.2: After a one-line edit, Gate 10 passes with fresh runs for affected modules
+    and reuse for the rest, with no fresh run of the reused modules. test: `tests/tasks/test_close_checklist.py::test_gate10_reuses_unaffected_module_records`.
+
+    3.3.3: A fresh unresolved test failure still fails the gate even when every required
+    module has reuse credit. test: `tests/tasks/test_close_checklist.py::test_gate10_reuse_never_hides_fresh_failure`.
+
+    3.3.4: Gate details list every reused pass with record id, session, original start
+    and end time and tree, and every refusal with its reason; a module with collection
+    credit gets no reused pass entry. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
+
+    3.3.5: A criterion "uv run pytest <file>" command, also behind leading `DATABASE_URL=...
+    GOBBY_TEST_PROTECT=1` assignments, is satisfied with `status: "reused"` when its
+    module has reuse credit; a leading `PYTHONPATH=` assignment keeps it fresh-only.
+    A criterion with a node id, `-k` or an unlisted option stays unsatisfied without
+    a fresh run, as does a criterion one of whose modules lacks credit. test: `tests/tasks/test_close_checklist.py::test_gate10_criterion_pytest_command_accepts_reuse`.'
+  labels:
+  - covers:gate10-test-run-reuse:3.3:3.3.1
+  - covers:gate10-test-run-reuse:3.3:3.3.2
+  - covers:gate10-test-run-reuse:3.3:3.3.3
+  - covers:gate10-test-run-reuse:3.3:3.3.4
+  - covers:gate10-test-run-reuse:3.3:3.3.5
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Document the launcher and reuse
+  category: docs
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '3.3'
+  validation_criteria: '4.1.1: The tasks guide states when a daemon record keeps Gate
+    10 credit, the refusal rules and where reused passes are shown. behavior: "reused_test_credit"
+    in `docs/guides/tasks.md`.
+
+    4.1.2: The CLI guide documents `gdaemon run` syntax, exit codes 124 and 125, the
+    3-slot hub pool for pytest and Playwright e2e, and the 1-slot heavy pool for cargo.
+    behavior: "gdaemon run" in `docs/guides/cli-commands.md`.
+
+    4.1.3: The sandboxing guide states the caller-policy wrap, the provider-native
+    refusal and the `setsid` limit. behavior: "gdaemon run" in `docs/guides/sandboxing.md`.'
+  labels:
+  - covers:gate10-test-run-reuse:4.1:4.1.1
+  - covers:gate10-test-run-reuse:4.1:4.1.2
+  - covers:gate10-test-run-reuse:4.1:4.1.3
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: tech-writer
+```

@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT, build_agentic_review_prompt
 from gobby.tasks.close_receipts import (
@@ -508,7 +509,9 @@ def receipt_tool(temp_db: HubDatabase) -> Iterator[Any]:
     """The real record_close_receipt MCP tool with Git resolution stubbed."""
     from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
-    registry = create_commit_registry(task_manager=LocalTaskManager(temp_db))
+    registry = create_commit_registry(
+        task_manager=LocalTaskManager(temp_db), session_manager=SessionManager(temp_db)
+    )
     with (
         patch(
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",

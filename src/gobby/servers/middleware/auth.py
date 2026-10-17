@@ -93,7 +93,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if decision.allowed:
             token = bind_decision(
                 decision,
-                require_hub_database(self.server.services.database),
+                require_hub_database(services.database),
             )
             try:
                 return await call_next(request)

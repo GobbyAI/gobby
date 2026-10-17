@@ -14,6 +14,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-dirty-path-approval-cli"
+EXPANSION_RULE = "block-gobby-cli-expansion"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
@@ -32,6 +33,30 @@ INVOCATIONS = (
     'gobby sessions approve-dirty-path"s" s7 a.txt',
     "bash -c 'gobby sessions approve-dirty-paths s7 a.txt'",
     'echo "$(gobby sessions approve-dirty-paths s7 a.txt)"',
+    "a=approve-dirty-; b=paths; gobby sessions $a$b s7 --checkout /repo a.txt",
+    "a=approve-dirty-; b=paths; gobby 'sessions' $a$b s7 a.txt",
+    'a=approve-dirty-; b=paths; gobby "sessions" $a$b s7 a.txt',
+    "a=approve-dirty-; b=paths; gobby se\\ssions $a$b s7 a.txt",
+    "a=approve-dirty-; b=paths; gobby sess'ions' $a$b s7 a.txt",
+    'a=approve-dirty-; b=paths; gobby sessions "$a$b" s7 a.txt',
+    'eval "gobby sessions approve-dirty-paths s7 a.txt"',
+    "sh -c 'gobby sessions $v s7 a.txt'",
+    'gobby sessions list --project "$(gobby sessions approve-dirty-paths s7 a.txt)"',
+    "gobby sessions list --project $P; a=approve-dirty-; b=paths; $g sessions $a$b s7 a.txt",
+)
+# Braces and globs that would name the approval, other gobby subcommands and quoted
+# arguments. The rule leaves them to the operator route's credential check and
+# never refuses them for their shape.
+ALLOWED = (
+    'gobby sessions show "$SID"',
+    'gobby sessions {approve-dirty-path"s",s7} a.txt',
+    "gobby sessions approve-dirty-p?ths s7 a.txt",
+    "gobby sessions approve-dirty-p[a]ths s7 a.txt",
+    "gobby tasks show $TASK",
+    "gobby tasks show {a,b}",
+    "gobby tasks list --status *.md",
+    """gobby tasks create --data '{"title": "sessions $HOME"}'""",
+    "gcode search-content 'approve-dirty-paths'",
 )
 
 
@@ -51,11 +76,13 @@ def _bash_event(command: str) -> HookEvent:
     [{"is_spawned_agent": True}, {}],
     ids=["spawned", "interactive"],
 )
-async def test_dirty_path_approval_cli_is_blocked_for_every_session(
+async def test_dirty_path_approval_rules_match_criterion_4_scope(
     temp_db: HubDatabase, variables: dict[str, object]
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
-    temp_db.execute("DELETE FROM rule_definitions WHERE name != %s", (RULE_NAME,))
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s)", (RULE_NAME, EXPANSION_RULE)
+    )
     engine = RuleEngine(temp_db)
 
     async def decide(command: str) -> tuple[str, str]:
@@ -69,16 +96,22 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
         command: (await decide(command))[0]
         for command in (
             *INVOCATIONS,
+            *ALLOWED,
             'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"',
             "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt",
             "gobby sessions list",
+            "gobby sessions list --project $PROJECT",
+            "uv run gobby sessions list --project $PROJECT",
         )
     }
 
     assert "operator" in direct[1]
     assert decisions == {
         **dict.fromkeys(INVOCATIONS, "block"),
+        **dict.fromkeys(ALLOWED, "allow"),
         'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"': "allow",
         "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt": "allow",
         "gobby sessions list": "allow",
+        "gobby sessions list --project $PROJECT": "allow",
+        "uv run gobby sessions list --project $PROJECT": "allow",
     }

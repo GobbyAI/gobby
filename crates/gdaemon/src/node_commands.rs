@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::value::RawValue;
 
 /// The contract version every frame and node body carries as `v`.
-pub const CONTRACT_VERSION: u64 = 2;
+pub const CONTRACT_VERSION: u64 = 3;
 
 const LIST_LIMIT: usize = 1000;
 const EVENT_LIMIT: usize = 100;
@@ -46,6 +46,9 @@ literal_string!(ReplyTag, "reply");
 literal_string!(SpawnCommandName, "agent.spawn");
 literal_string!(CancelCommandName, "agent.cancel");
 literal_string!(WriteCommandName, "terminal.write");
+literal_string!(WorkspaceMergeName, "workspace.merge");
+literal_string!(WorkspaceRemoveName, "workspace.remove");
+literal_string!(CheckoutStatusName, "checkout.status");
 literal_string!(StaleReportCode, "stale_report");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,8 +267,11 @@ pub struct SpawnWorkspace {
 #[serde(deny_unknown_fields)]
 struct SpawnWorkspaceFields {
     mode: SpawnMode,
+    #[serde(deserialize_with = "Option::deserialize")]
     path: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     branch_name: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     base_branch: Option<String>,
 }
 
@@ -299,29 +305,42 @@ pub struct SpawnMonitor {
 pub struct SpawnPayload {
     pub run_id: String,
     pub session_id: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub parent_session_id: Option<String>,
     pub project_id: String,
     pub terminal_id: String,
     pub agent_depth: u64,
     pub max_agent_depth: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub workflow_name: Option<String>,
     pub provider: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
     pub prompt: String,
     pub provider_args: Vec<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub reasoning_effort: Option<String>,
     pub sandbox: Sandbox,
     pub timeout_seconds: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub title: Option<String>,
     pub source_root: String,
     pub workspace: SpawnWorkspace,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub agent_name: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub api_base: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub api_token: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub codex_oss_provider: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub resume_session_id: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub execution_mode: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub code_index_preflight: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub task_id: Option<String>,
     pub extra_env: BTreeMap<String, String>,
     pub codex_config_overrides: Vec<String>,
@@ -384,12 +403,90 @@ pub struct WriteCommand {
     pub payload: WritePayload,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMode {
+    Worktree,
+    Clone,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergePayload {
+    pub project_id: String,
+    pub mode: WorkspaceMode,
+    pub path: String,
+    pub branch_name: String,
+    pub target_branch: String,
+    pub source_root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovePayload {
+    pub project_id: String,
+    pub mode: WorkspaceMode,
+    pub path: String,
+    pub branch_name: String,
+    pub source_root: String,
+    pub force: bool,
+    pub force_delete_branch: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub merged_into: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusPayload {
+    pub project_id: String,
+    pub root_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergeCommand {
+    #[serde(rename = "type")]
+    pub frame_type: CommandTag,
+    #[serde(deserialize_with = "positive_u64")]
+    pub v: u64,
+    pub request_id: String,
+    pub command: WorkspaceMergeName,
+    pub payload: MergePayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveCommand {
+    #[serde(rename = "type")]
+    pub frame_type: CommandTag,
+    #[serde(deserialize_with = "positive_u64")]
+    pub v: u64,
+    pub request_id: String,
+    pub command: WorkspaceRemoveName,
+    pub payload: RemovePayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusCommand {
+    #[serde(rename = "type")]
+    pub frame_type: CommandTag,
+    #[serde(deserialize_with = "positive_u64")]
+    pub v: u64,
+    pub request_id: String,
+    pub command: CheckoutStatusName,
+    pub payload: StatusPayload,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommandFrame {
     Spawn(Box<SpawnCommand>),
     Cancel(CancelCommand),
     Write(WriteCommand),
+    Merge(MergeCommand),
+    Remove(RemoveCommand),
+    Status(StatusCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,12 +505,64 @@ pub struct StoppedResult {
 #[serde(deny_unknown_fields)]
 pub struct EmptyResult {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeOutcome {
+    Merged,
+    AlreadyMerged,
+    Conflict,
+    TargetDirty,
+    Busy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoveOutcome {
+    Removed,
+    Dirty,
+    Unmerged,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergeResult {
+    pub outcome: MergeOutcome,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub merge_sha: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub target_head_sha: Option<String>,
+    pub conflicted_files: Vec<String>,
+    pub dirty_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveResult {
+    pub outcome: RemoveOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusResult {
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub current_branch: Option<String>,
+    pub branch_count: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub ahead: Option<u64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub behind: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ReplyResult {
     Accepted(AcceptedResult),
     Stopped(StoppedResult),
     Empty(EmptyResult),
+    Merge(MergeResult),
+    Remove(RemoveResult),
+    Status(StatusResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +570,7 @@ pub enum ReplyResult {
 pub struct ErrorBody {
     pub code: String,
     pub message: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub stage: Option<Stage>,
 }
 
@@ -477,6 +627,7 @@ pub struct ReportWorkspace {
     pub mode: ReportMode,
     pub path: String,
     pub branch_name: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub base_branch: Option<String>,
 }
 
@@ -510,6 +661,7 @@ pub struct PaneAttention {
 #[serde(deny_unknown_fields)]
 pub struct PaneComposer {
     pub state: ComposerState,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub line: Option<String>,
 }
 
@@ -517,6 +669,7 @@ pub struct PaneComposer {
 #[serde(deny_unknown_fields)]
 pub struct PaneQuota {
     pub provider: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub reset_time: Option<String>,
 }
 
@@ -527,16 +680,20 @@ pub struct PaneIdle {
     pub turn_in_flight: bool,
     pub unsubmitted_input: bool,
     pub queued_message_prompt: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub capacity_message: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub quota: Option<PaneQuota>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportPane {
+    #[serde(deserialize_with = "Option::deserialize")]
     pub attention: Option<PaneAttention>,
     pub injections: u64,
     pub composer: PaneComposer,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub idle: Option<PaneIdle>,
     pub tail: String,
 }
@@ -587,8 +744,11 @@ pub struct ReportAgent {
     pub pid: u64,
     pub locator: String,
     pub locator_key: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub workspace: Option<ReportWorkspace>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub pane: Option<ReportPane>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub sandbox: Option<ReportSandbox>,
 }
 
@@ -598,9 +758,12 @@ pub struct ReportExit {
     pub run_id: String,
     pub terminal_id: String,
     pub launched: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub exit_code: Option<i64>,
     pub reason: ExitReason,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub workspace: Option<ReportWorkspace>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub sandbox: Option<ReportSandbox>,
 }
 
@@ -609,6 +772,7 @@ pub struct ReportExit {
 pub struct ReportBody {
     #[serde(deserialize_with = "positive_u64")]
     pub v: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub hub_epoch: Option<u64>,
     #[serde(deserialize_with = "positive_u64")]
     pub revision: u64,
@@ -636,6 +800,7 @@ pub struct PromptDeliveryFailureBody {
     pub run_id: String,
     pub code: String,
     pub detail: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub pane: Option<String>,
 }
 
@@ -688,6 +853,7 @@ pub struct TerminateBody {
     pub cause: TerminateCause,
     pub detail: String,
     pub pane_tail: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub checkpoint: Option<TerminateCheckpoint>,
 }
 

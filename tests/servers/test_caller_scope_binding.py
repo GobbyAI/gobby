@@ -8,11 +8,13 @@ import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -24,6 +26,7 @@ from gobby.runtime_grants import encode_grant_header
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
+from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.agents import LocalAgentRunManager
@@ -746,3 +749,35 @@ def test_websocket_messages_bind_connection_user(
         assert report["off_loop"] is off_loop
         assert report["outcome"] == "ok"
         assert report["machine_id"] == machine_id
+
+
+def test_allowed_request_without_database_is_refused() -> None:
+    """An allowed request whose services lack a database does not run unbound."""
+    called = False
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True, user_id=TEST_USER_ID)
+    server = cast(
+        HTTPServer,
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=run_db,
+            services=SimpleNamespace(),
+        ),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    with pytest.raises(AttributeError, match="database"):
+        TestClient(app).get("/api/tasks")
+
+    assert called is False

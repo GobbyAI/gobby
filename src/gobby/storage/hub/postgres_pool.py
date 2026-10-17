@@ -91,7 +91,12 @@ _POOL_UNAVAILABLE_MESSAGE_MARKERS = (
     "connection is closed",
     "connection not open",
     "server closed the connection unexpectedly",
+    "ssl syscall error",
+    "could not receive data from server",
+    "could not send data to server",
     "connection refused",
+    "connection timed out",
+    "no connection to the server",
 )
 
 
@@ -102,9 +107,10 @@ class RuntimeRoleMismatchError(RuntimeError):
 def is_pool_unavailable(exc: BaseException) -> bool:
     """Classify an exception as a transient hub pool outage.
 
-    Matches PoolTimeout and psycopg operational failures whose message
-    indicates dead or unavailable pool connections, including causes wrapped
-    by ``raise ... from ...``.
+    Matches PoolTimeout and retryable psycopg connection, transaction, resource,
+    shutdown and session-expiry SQLSTATEs. DatabaseDropped is permanent. Only
+    SQLSTATE-less operational failures use known connection-outage messages;
+    unknown messages stay permanent. Includes causes wrapped by ``raise ... from ...``.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -113,9 +119,18 @@ def is_pool_unavailable(exc: BaseException) -> bool:
         if isinstance(current, PoolTimeout):
             return True
         if isinstance(current, psycopg.OperationalError):
-            message = str(current).lower()
-            if any(marker in message for marker in _POOL_UNAVAILABLE_MESSAGE_MARKERS):
-                return True
+            if current.sqlstate:
+                if current.sqlstate.startswith(("08", "40", "53")) or current.sqlstate in {
+                    "57P01",  # AdminShutdown
+                    "57P02",  # CrashShutdown
+                    "57P03",  # CannotConnectNow
+                    "57P05",  # IdleSessionTimeout
+                }:
+                    return True
+            else:
+                message = str(current).lower()
+                if any(marker in message for marker in _POOL_UNAVAILABLE_MESSAGE_MARKERS):
+                    return True
         current = current.__cause__ or current.__context__
     return False
 

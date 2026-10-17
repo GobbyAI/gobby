@@ -4,7 +4,8 @@ A task's carriers follow its claim: a path any session's task edit ledger
 attributes to a task this session holds (``tasks.claimed_by_session_id``) is
 this session's own. An operator approval names exact paths in one checkout for
 one session, and holds for each path only while it keeps the content it had
-when approved. Only the operator CLI writes the reserved approval variable.
+when approved. Only the operator route writes the reserved approval variable: the
+daemon's dirty-path-approvals endpoint, which admits only a verified operator API key.
 """
 
 from __future__ import annotations

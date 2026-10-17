@@ -439,7 +439,7 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.hide_tab_bar_when_single_tab = !prefs.hide_tab_bar_when_single_tab;
         }
         SettingsRow::SidebarWidth => {
-            let (min, max) = (chrome.sidebar.min_width, chrome.sidebar.max_width);
+            let (min, max) = chrome.sidebar.width_bounds();
             let width = usize::from(prefs.sidebar_width)
                 .saturating_add_signed(delta)
                 .clamp(usize::from(min), usize::from(max));

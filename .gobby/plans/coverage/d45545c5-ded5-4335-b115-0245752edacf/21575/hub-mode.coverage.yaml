@@ -3,9 +3,9 @@ header:
   plan_hash: 056ccd5f874e7d39c1f23bca627898795dc841dda0a4f662812b48b54c4db079
   root_task_ref: '21575'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T12:29:41Z'
+  generated_at: '2026-10-17T20:42:37Z'
   task_tree_source: db
-  task_tree_source_hash: 724b55a1e346b388cb63621195dd95b906ade0e9c058fa1a93f97901a5bac074
+  task_tree_source_hash: bf606a9997b22b83e4464b1892e3ce272368d400bd42a367a8918cc77baee3f9
   evidence_summary: []
   evidence: []
 rows:
@@ -72,43 +72,67 @@ rows:
 - section_id: '1.2'
   item_id: 1.2.1
   plan_node_hash: 75db03b457fa0853f951897d614578677a72accf415c96147d2cf91e81f7378a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::command_round_trips
   deferral_target: null
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.2
   plan_node_hash: 3d739edf0ed70952dbc6ef27b04f7946b3feb30911c9034dd8b0a7ea3a3d2de2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::offline_and_timeout
   deferral_target: null
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.3
   plan_node_hash: 101b2d59c0189ab6c7e84937db7c0d29bd7271c52d73b9c8012d31d30a005b11
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::pending_commands_end_with_channel
   deferral_target: null
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.4
   plan_node_hash: fee03444ece1a0e8e99a6878ef041b8d004d76ca1464741e23d2cf5b44b9ed87
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::admission_is_loopback_and_secret
   deferral_target: null
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.5
   plan_node_hash: 6547e067ca588916b23fe9c9aec31de2c4ab8c8f4f4b2d90267219eacc652658
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing
   deferral_target: null
   detail: ''
 - section_id: '1.2'
   item_id: 1.2.6
   plan_node_hash: 7b4f552c9d00890a82374cf4533feb14e03b7745c72e837018f673141e53c58c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24594'
+    validation_criteria_snippet: '1.2.1: A fake node on a live channel receives the
+      command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_rou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::connected_lists_live_channels
   deferral_target: null
   detail: ''
 - section_id: '1.3'
@@ -258,50 +282,85 @@ rows:
 - section_id: '1.4'
   item_id: 1.4.7
   plan_node_hash: 45adc9bc9518ec59b18410b538ed13bb9bfd2c7bfc61355470bdc19736161c21
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24270'
+    validation_criteria_snippet: '1.4.1: A key-authenticated checkout registration
+      stores a `project_checkouts` row for the key''s machine and the body''s root,
+      a path that does not exist on the ...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_reported_workspace_moves_updated_at
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.1
   plan_node_hash: 1690f1db1e6bf57c2bfd2701e8373e0d1722d677ea066d3aee1bc49a6633f6b5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/hub/test_caller_scope.py::test_require_machine_owned
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.2
   plan_node_hash: 5cea74e022728e1bbccee2b27480f10fc259fea055f6b4b64b6f0ca5fd23c097
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/hub/test_caller_scope.py::test_binding_reaches_child_tasks
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.3
   plan_node_hash: a7b396396e7d8739463fc13fe29fee1d90db648ae4977a80a8ebfd8c6bf27bf9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/servers/test_caller_scope_binding.py::test_authenticate_resolves_caller_user
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.4
   plan_node_hash: 934c19a570fcc73490ba7af2eb434a2aa2096772891f316d1cdddc90bb9f354e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/servers/test_caller_scope_binding.py::test_http_request_binds_resolved_user
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.5
   plan_node_hash: bbd48363d94892b5c9263d1500366c3c040468efc18434cca36bf254d7b770ee
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/servers/test_caller_scope_binding.py::test_http_ownership_matrix
   deferral_target: null
   detail: ''
 - section_id: '1.5'
   item_id: 1.5.6
   plan_node_hash: 0785ba31417db42a92851cdbcdb99abf03b65546d821b5d031a47c405a50894c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24595'
+    validation_criteria_snippet: '1.5.1: `require_machine_owned` returns for an unbound
+      context without reading the database and returns for a bound user that owns
+      the machine. It raises `NodeC...'
+    matched_artifact_ref: tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user
   deferral_target: null
   detail: ''
 - section_id: '2.1'
@@ -542,8 +601,13 @@ rows:
 - section_id: '2.3'
   item_id: 2.3.6
   plan_node_hash: 06c8a6ab3a83cb4bb4ec7448489200394fd32548241e18c18a53cbbf263d6383
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24273'
+    validation_criteria_snippet: '2.3.1: Through a fake node client, a write to another
+      machine''s terminal sends one `terminal.write` with the request''s kind, data,
+      and submit, and returns `Del...'
+    matched_artifact_ref: tests/hub/test_remote_terminal_write.py::test_write_needs_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '2.4'
@@ -604,8 +668,12 @@ rows:
 - section_id: '2.4'
   item_id: 2.4.6
   plan_node_hash: 565eda8531311dd0e4e5e92e606c28851ea4d2210d9c2c3484b814b1d6b24e9d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24274'
+    validation_criteria_snippet: '2.4.1: Killing another machine''s run sends `agent.cancel`
+      with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_can...'
+    matched_artifact_ref: tests/hub/test_remote_cancel.py::test_cancel_needs_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '2.5'
@@ -683,7 +751,7 @@ rows:
 - section_id: '2.5'
   item_id: 2.5.7
   plan_node_hash: db85be4de0a1b747762793a581d1991e215867ef671be7144c180b5a58e3e30b
-  status: invalid
+  status: covered
   leaves:
   - leaf_task_ref: '#24275'
     validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
@@ -779,15 +847,25 @@ rows:
 - section_id: '2.5'
   item_id: 2.5.15
   plan_node_hash: b7ce7b2ac95f47cace6272f0cef2ea8481a7962eb1a593a1a226ce0b748edc90
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_remote_resolvers_skip_hub_srt_install
   deferral_target: null
   detail: ''
 - section_id: '2.5'
   item_id: 2.5.16
   plan_node_hash: f885f3eb43085df372e0cc5f6c67f5271de799bd59b759cce070dedab38474ab
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24275'
+    validation_criteria_snippet: '2.5.1: Through a fake node client, a spawn from
+      a session on another machine sends exactly one command, `agent.spawn`, to that
+      machine, and its session, run, a...'
+    matched_artifact_ref: tests/hub/test_remote_spawn.py::test_spawn_needs_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '2.6'
@@ -877,15 +955,25 @@ rows:
 - section_id: '2.6'
   item_id: 2.6.8
   plan_node_hash: fc0251cc3f33401e89a1b57095f2c582f63086f5559be20277aed94f7af06512
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_hookless_exit_settles_from_exit_code
   deferral_target: null
   detail: ''
 - section_id: '2.6'
   item_id: 2.6.9
   plan_node_hash: 2ca1e3c3e4dd7c5c1a4dd2367cb780210885ea90fb3dd603fde71e1a64a79634
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24276'
+    validation_criteria_snippet: '2.6.1: A report listing a pending run''s agent promotes
+      its terminal live with the entry''s locator and the report''s `host_epoch` and
+      records `pid` and `terminal...'
+    matched_artifact_ref: tests/hub/test_remote_reconcile.py::test_node_session_end_counts_forwarded_turns
   deferral_target: null
   detail: ''
 - section_id: '3.1'
@@ -1031,350 +1119,592 @@ rows:
 - section_id: '3.3'
   item_id: 3.3.6
   plan_node_hash: df732186ac8368190c1e8e1ba70dcb3ec7a5daa01ab0875e709663986c7fc2cb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24279'
+    validation_criteria_snippet: '3.3.1: Through a fake node client, responding to
+      another machine''s entry sends one `terminal.write` with the answer to that
+      machine''s terminal, clears the entr...'
+    matched_artifact_ref: tests/servers/test_attention_remote_respond.py::test_respond_needs_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.1
   plan_node_hash: 914432d32c4a220ffd69a14f09729f29a5462a55732ac74f5aca2fe64797f2c7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24596'
+    validation_criteria_snippet: '4.1.1: `CONTRACT_VERSION` is 3 in the Rust models,
+      and the corpus''s `workspace.merge`, `workspace.remove` and `checkout.status`
+      commands and one reply per outc...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_parity.rs::v3_commands_round_trip
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.2
   plan_node_hash: ffa9724e9e11052c84a89a1deb21b386887e3cedee23dc4abd09388d391e7043
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24596'
+    validation_criteria_snippet: '4.1.1: `CONTRACT_VERSION` is 3 in the Rust models,
+      and the corpus''s `workspace.merge`, `workspace.remove` and `checkout.status`
+      commands and one reply per outc...'
+    matched_artifact_ref: tests/hub/test_node_command_parity.py::test_v3_commands_round_trip
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.3
   plan_node_hash: c640cba644c411cd9158c85a3e8d67eff9b05d4ad28a925bd550e7dde8b1b406
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24596'
+    validation_criteria_snippet: '4.1.1: `CONTRACT_VERSION` is 3 in the Rust models,
+      and the corpus''s `workspace.merge`, `workspace.remove` and `checkout.status`
+      commands and one reply per outc...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_parity.rs::invalid_messages_fail
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.4
   plan_node_hash: e5bdac7de7ecf187126b8fe549d6f7dca0c27cf8db700d8440a98f302c7ae724
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24596'
+    validation_criteria_snippet: '4.1.1: `CONTRACT_VERSION` is 3 in the Rust models,
+      and the corpus''s `workspace.merge`, `workspace.remove` and `checkout.status`
+      commands and one reply per outc...'
+    matched_artifact_ref: tests/hub/test_node_command_parity.py::test_invalid_messages_fail
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.5
   plan_node_hash: 3fc37eab25085a87c1dbc2ff465fbc9caf0c370488073e9e1e7ee2ae86176a7d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24596'
+    validation_criteria_snippet: '4.1.1: `CONTRACT_VERSION` is 3 in the Rust models,
+      and the corpus''s `workspace.merge`, `workspace.remove` and `checkout.status`
+      commands and one reply per outc...'
+    matched_artifact_ref: docs/contracts/node-commands.md
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.1
   plan_node_hash: 775f86fc98b631ccd0131d7ebce0f1dfc094778d2086254ef16b97d5f63489e8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::merge_lands_in_node_checkout
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.2
   plan_node_hash: e79c6437c2af030ebdefa548fce00dcbbc94ae066535eb17b10ad94fdd300338
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::clone_merge_uses_temporary_ref
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.3
   plan_node_hash: f51506ef73de334f6145c94d4af8f9a4f012cf7ef34ec1c1c0d1987bce3c134e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::merge_refusals_change_nothing
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.4
   plan_node_hash: ea195f23cbd85c2a56cd8800cf6fe3e8b63efcc55dc48625e08cb646efcce2ca
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::conflict_aborts_and_restores
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.5
   plan_node_hash: 44207a2610f43f55bd8b0e38a427890f575bad8140b1e208b5f0d8a50eb382eb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::busy_while_in_use
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.6
   plan_node_hash: 47286a42de6ddff149f9b1a4cd9726ed10f95d9d0b25f3e1787f295b4b768f71
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::remove_outcomes
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.7
   plan_node_hash: 0247e40dc012791a9958ca288d836386724e8d79e15fe1c5f6f75e6d7cb3703e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::paths_outside_node_roots_refused
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.8
   plan_node_hash: feab1d0d6573af3f40c521e7fa20df45de20cf42d7edd71bcb92b53741e95e0b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24597'
+    validation_criteria_snippet: '4.2.1: A worktree merge lands a `--no-ff` merge
+      commit on the target in the node''s checkout, restores the checkout''s original
+      branch, and answers `merged` with...'
+    matched_artifact_ref: crates/gdaemon/tests/node_workspace_finish.rs::remove_missing_path_through_dispatch
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.1
   plan_node_hash: a848ed36ea46ae770dff31511710d69c91e0cc4c05e9d528124b34e129da7cc7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_remote_merge_marks_row_merged
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.2
   plan_node_hash: 69f53e4c185ef2fc53137f35a88a68b65de8e68148a8dbf1c3a30c5a58df0355
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_remote_merge_refusals_keep_row
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.3
   plan_node_hash: ef40358122ec075e48bfdb9aaee117ade3bfebfb3438a2726d5806dbd46d0501
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_remote_delete_follows_node_outcome
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.4
   plan_node_hash: f369b1f35f928559db4f599b8271e347eacbd904510df5a949c7c66c8615a6de
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.5
   plan_node_hash: 2855901c275c6bc8f8a1984a719d95e5d2edbf99d5f3e7bea6b7e6e2df36f7c4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_list_tools_take_machine_id
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.6
   plan_node_hash: 6f3407faed730d7270b45a960861ae87ee8b4c339d8d8af496286f4bc93379c7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_offline_and_other_tools_refuse
   deferral_target: null
   detail: ''
 - section_id: '4.3'
   item_id: 4.3.7
   plan_node_hash: 9166d5bdc0075ddd3960cbfaca9ba752395e588eabe9978cef3943cdc0ef651e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24598'
+    validation_criteria_snippet: '4.3.1: `merge_worktree` with a prefix of a node''s
+      row sends one `workspace.merge` with the row''s path and branch, the target,
+      and that machine''s checkout root,...'
+    matched_artifact_ref: tests/hub/test_remote_workspaces.py::test_workspace_tools_need_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '4.4'
   item_id: 4.4.1
   plan_node_hash: 3a4f3c005caa0dc0b1eef8ac58cdfd2e47fef90b92b147c849134b66ad537cc7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24599'
+    validation_criteria_snippet: '4.4.1: `GET /worktrees` and `GET /clones` with a
+      node''s `machine_id` list that machine''s rows, and without it this machine''s.
+      test: `tests/servers/test_remote_...'
+    matched_artifact_ref: tests/servers/test_remote_workspace_routes.py::test_list_routes_take_machine_id
   deferral_target: null
   detail: ''
 - section_id: '4.4'
   item_id: 4.4.2
   plan_node_hash: 4e566cd964102d0aae483c3eb5ab6b4ea973bbb2293eaf2444a49b6b7b1331bb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24599'
+    validation_criteria_snippet: '4.4.1: `GET /worktrees` and `GET /clones` with a
+      node''s `machine_id` list that machine''s rows, and without it this machine''s.
+      test: `tests/servers/test_remote_...'
+    matched_artifact_ref: tests/servers/test_remote_workspace_routes.py::test_delete_routes_finish_through_node
   deferral_target: null
   detail: ''
 - section_id: '4.4'
   item_id: 4.4.3
   plan_node_hash: df6bfcf7ba7abbfdd521a0ff4c8b61bfb68601848691166661c3cbcf91d5de41
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24599'
+    validation_criteria_snippet: '4.4.1: `GET /worktrees` and `GET /clones` with a
+      node''s `machine_id` list that machine''s rows, and without it this machine''s.
+      test: `tests/servers/test_remote_...'
+    matched_artifact_ref: tests/servers/test_remote_workspace_routes.py::test_sync_route_keeps_ownership_refusal
   deferral_target: null
   detail: ''
 - section_id: '4.4'
   item_id: 4.4.4
   plan_node_hash: cca93be5a6a2194ea9daab7f00178c299fc95e0a8e5ba50e9ba3381f1edf4597
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24599'
+    validation_criteria_snippet: '4.4.1: `GET /worktrees` and `GET /clones` with a
+      node''s `machine_id` list that machine''s rows, and without it this machine''s.
+      test: `tests/servers/test_remote_...'
+    matched_artifact_ref: tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '4.5'
   item_id: 4.5.1
   plan_node_hash: 56ed9b6e91ac6e77bc1a0014242293b98fcc17c3e3ed1a75d8d8341ab8451ece
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24600'
+    validation_criteria_snippet: '4.5.1: An expired merged node row of a closed task
+      gets one `workspace.remove` without force and is deleted on `removed`, whatever
+      its `agent_session_id`. test...'
+    matched_artifact_ref: tests/hub/test_remote_workspace_expiry.py::test_expired_node_rows_removed_through_node
   deferral_target: null
   detail: ''
 - section_id: '4.5'
   item_id: 4.5.2
   plan_node_hash: 32488baff9aae4dbbe8a04c7ac683d046d13d7e0141a9fb74e3df6735c973dd0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24600'
+    validation_criteria_snippet: '4.5.1: An expired merged node row of a closed task
+      gets one `workspace.remove` without force and is deleted on `removed`, whatever
+      its `agent_session_id`. test...'
+    matched_artifact_ref: tests/hub/test_remote_workspace_expiry.py::test_expiry_keeps_rows_the_node_refuses
   deferral_target: null
   detail: ''
 - section_id: '4.5'
   item_id: 4.5.3
   plan_node_hash: d91bc641e9fff41b309763019a4d5a16505b5821eb5e2092a59f98c6a3f77305
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24600'
+    validation_criteria_snippet: '4.5.1: An expired merged node row of a closed task
+      gets one `workspace.remove` without force and is deleted on `removed`, whatever
+      its `agent_session_id`. test...'
+    matched_artifact_ref: tests/hub/test_remote_workspace_expiry.py::test_loop_runs_remote_step
   deferral_target: null
   detail: ''
 - section_id: '4.6'
   item_id: 4.6.1
   plan_node_hash: 4ebab1a630edd3256888ddb4494a36209b382deaafefe8041fe2928fdedf7225
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24601'
+    validation_criteria_snippet: '4.6.1: For a checkout with three branches, the current
+      one tracking an upstream two ahead and one behind, `checkout.status` answers
+      `{current_branch, branch_co...'
+    matched_artifact_ref: crates/gdaemon/tests/node_checkout_status.rs::status_matches_local_fields
   deferral_target: null
   detail: ''
 - section_id: '4.6'
   item_id: 4.6.2
   plan_node_hash: 0e7b5db434a7ca41ba4bb532f1bd27bff0436ed597cebeca7e86b21095f96390
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24601'
+    validation_criteria_snippet: '4.6.1: For a checkout with three branches, the current
+      one tracking an upstream two ahead and one behind, `checkout.status` answers
+      `{current_branch, branch_co...'
+    matched_artifact_ref: crates/gdaemon/tests/node_checkout_status.rs::track_parser_matches_golden
   deferral_target: null
   detail: ''
 - section_id: '4.6'
   item_id: 4.6.3
   plan_node_hash: e1a399e7944fd62a6b1b79c11fc4ba423b07ee7642bbd6b2f62748c1d71d7366
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24601'
+    validation_criteria_snippet: '4.6.1: For a checkout with three branches, the current
+      one tracking an upstream two ahead and one behind, `checkout.status` answers
+      `{current_branch, branch_co...'
+    matched_artifact_ref: tests/hub/test_upstream_track_golden.py::test_golden_matches_python_parser
   deferral_target: null
   detail: ''
 - section_id: '4.6'
   item_id: 4.6.4
   plan_node_hash: d4e228cd1b4ced6326fdfa0fb687d4b1a06d063778fe568492b4a42df898fcd2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24601'
+    validation_criteria_snippet: '4.6.1: For a checkout with three branches, the current
+      one tracking an upstream two ahead and one behind, `checkout.status` answers
+      `{current_branch, branch_co...'
+    matched_artifact_ref: crates/gdaemon/tests/node_checkout_status.rs::status_refusals_change_nothing
   deferral_target: null
   detail: ''
 - section_id: '4.7'
   item_id: 4.7.1
   plan_node_hash: 4fdb90a4babed2d99982d8fbf614707d36a527432782295534435e2b3e96085a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24602'
+    validation_criteria_snippet: '4.7.1: `/api/projects?machine_id=<node>` lists only
+      projects with that node''s checkout, each with the node''s root, empty approval
+      rules, and null validation de...'
+    matched_artifact_ref: tests/servers/test_machine_scoped_projects.py::test_projects_for_node_machine
   deferral_target: null
   detail: ''
 - section_id: '4.7'
   item_id: 4.7.2
   plan_node_hash: 3082b80eb2e7fa8636ecda00c7210d8b702cf43920ef2387a7215a7020891e1a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24602'
+    validation_criteria_snippet: '4.7.1: `/api/projects?machine_id=<node>` lists only
+      projects with that node''s checkout, each with the node''s root, empty approval
+      rules, and null validation de...'
+    matched_artifact_ref: tests/servers/test_machine_scoped_projects.py::test_remote_status_cached
   deferral_target: null
   detail: ''
 - section_id: '4.7'
   item_id: 4.7.3
   plan_node_hash: 18acb6ba863e2144ae376db15ae4e7968fae7821b05a817dbc46363581a8fe33
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24602'
+    validation_criteria_snippet: '4.7.1: `/api/projects?machine_id=<node>` lists only
+      projects with that node''s checkout, each with the node''s root, empty approval
+      rules, and null validation de...'
+    matched_artifact_ref: tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state
   deferral_target: null
   detail: ''
 - section_id: '4.7'
   item_id: 4.7.4
   plan_node_hash: 6da28f768d4e3ab5b17f12e229c7ca704a4005903631b41a63f26fe2130bd059
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24602'
+    validation_criteria_snippet: '4.7.1: `/api/projects?machine_id=<node>` lists only
+      projects with that node''s checkout, each with the node''s root, empty approval
+      rules, and null validation de...'
+    matched_artifact_ref: tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged
   deferral_target: null
   detail: ''
 - section_id: '4.7'
   item_id: 4.7.5
   plan_node_hash: 05821d41ef76915b4a173918c1abfbd7ff464c5222ada2a7dd3aaea4e7a12425
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24602'
+    validation_criteria_snippet: '4.7.1: `/api/projects?machine_id=<node>` lists only
+      projects with that node''s checkout, each with the node''s root, empty approval
+      rules, and null validation de...'
+    matched_artifact_ref: tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine
   deferral_target: null
   detail: ''
 - section_id: '4.8'
   item_id: 4.8.1
   plan_node_hash: f1e467b2fb004e9e17c023e54453f5c6b9c7d91faec440660704754dcb3687b3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24603'
+    validation_criteria_snippet: '4.8.1: Selecting a node in the machine filter refetches
+      projects, statuses, and worktrees with that node''s `machine_id`, and the pane
+      shows the node''s projects...'
+    matched_artifact_ref: crates/gclient/tests/projects_machine_scope.rs::selecting_a_node_scopes_the_projects_pane
   deferral_target: null
   detail: ''
 - section_id: '4.8'
   item_id: 4.8.2
   plan_node_hash: b30177f0ac3001329df65b374ad296b2e4b05e6d9362648a8fbbb1749b9913c2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24603'
+    validation_criteria_snippet: '4.8.1: Selecting a node in the machine filter refetches
+      projects, statuses, and worktrees with that node''s `machine_id`, and the pane
+      shows the node''s projects...'
+    matched_artifact_ref: crates/gclient/tests/projects_machine_scope.rs::local_and_all_scope_to_this_machine
   deferral_target: null
   detail: ''
 - section_id: '4.8'
   item_id: 4.8.3
   plan_node_hash: edcfc895ffb0692240ff8efe792ce5dfa65bd43000013eb9dbca8681b7d5e74d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24603'
+    validation_criteria_snippet: '4.8.1: Selecting a node in the machine filter refetches
+      projects, statuses, and worktrees with that node''s `machine_id`, and the pane
+      shows the node''s projects...'
+    matched_artifact_ref: crates/gclient/tests/projects_machine_scope.rs::stale_scope_fetch_dropped
   deferral_target: null
   detail: ''
 - section_id: '4.8'
   item_id: 4.8.4
   plan_node_hash: edcf7c4a852dc7d4997039eee1d12664e1141c641ea3ee5e38c6a35e96245ef1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24603'
+    validation_criteria_snippet: '4.8.1: Selecting a node in the machine filter refetches
+      projects, statuses, and worktrees with that node''s `machine_id`, and the pane
+      shows the node''s projects...'
+    matched_artifact_ref: crates/gclient/tests/projects_machine_scope.rs::node_worktree_actions
   deferral_target: null
   detail: ''
 - section_id: '4.8'
   item_id: 4.8.5
   plan_node_hash: 7a1dcec4e88c59f139e372f1f14f40ac27fdd7acde6c227add3fdb6854464608
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24603'
+    validation_criteria_snippet: '4.8.1: Selecting a node in the machine filter refetches
+      projects, statuses, and worktrees with that node''s `machine_id`, and the pane
+      shows the node''s projects...'
+    matched_artifact_ref: crates/gclient/src/daemon/rest/tests.rs::machine_id_query_only_when_given
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.1
   plan_node_hash: e88465336cc073ed00e7d0a28741dd2dd40655011ee9372b16972be61be98789
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_node_registers_checkout
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.2
   plan_node_hash: 1ecd9d6daae2d99abf83dae9db76128a80e7fe11841704e81f3832527cf459a5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.3
   plan_node_hash: bbbe9148645b0015cea9e75e86b05c0ddaf8750f7c2a114c8974396ff748ba0b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_terminal_write_reaches_each_provider
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.4
   plan_node_hash: 97c2479bd83211776a98f718f6faa2cac8725686d6ccce1f5834c848c57459f5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_attention_respond_reaches_each_provider
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.5
   plan_node_hash: b56eb78ff5f7439ae241710975ccefcc51bd580c92d5fcf1580b856895591521
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_cancel_stops_each_provider
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.6
   plan_node_hash: 3e7e0a084b3cf3a815376b4fe629278a89fadb02282144f95a78696ad12575f9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_merge_and_remove_each_provider
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.7
   plan_node_hash: 2f6638df933cb6e3406c92edfa90a027970f55ef0c8f055be29c9b5f388d606f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_projects_view_for_node_machine
   deferral_target: null
   detail: ''
 - section_id: '5.1'
   item_id: 5.1.8
   plan_node_hash: 426f441453434b3c64a069dc34197a616a9910f57ed0890c0db27e64d8ce8fad
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24604'
+    validation_criteria_snippet: '5.1.1: The node''s first hook from its checkout
+      root registers that checkout on the hub under the node''s machine. test: `tests/e2e/test_hub_node_live.py::test_n...'
+    matched_artifact_ref: tests/e2e/test_hub_node_live.py::test_missing_srt_fails
   deferral_target: null
   detail: ''

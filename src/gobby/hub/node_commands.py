@@ -1,7 +1,9 @@
 """Typed hub-node command frames and node bodies.
 
-Wire JSON is compact, field order follows each model, and unknown fields fail
-validation. ``docs/contracts/node-commands.md`` is the contract.
+Wire JSON is compact, field order follows each model, unknown fields fail
+validation, and strict mode refuses coercion, so a missing nullable field and
+``"1"`` for an integer both fail. ``docs/contracts/node-commands.md`` is the
+contract.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from pydantic import (
 
 from gobby.utils.terminal_output import redact_terminal_output
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3
 
 _LIST_LIMIT = 1000
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
@@ -57,7 +59,7 @@ Version = Annotated[int, Field(ge=1)]
 
 
 class NodeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class Sandbox(NodeModel):
@@ -144,6 +146,31 @@ class WritePayload(NodeModel):
     submit: bool
 
 
+class MergePayload(NodeModel):
+    project_id: str
+    mode: Literal["worktree", "clone"]
+    path: str
+    branch_name: str
+    target_branch: str
+    source_root: str
+
+
+class RemovePayload(NodeModel):
+    project_id: str
+    mode: Literal["worktree", "clone"]
+    path: str
+    branch_name: str
+    source_root: str
+    force: bool
+    force_delete_branch: bool
+    merged_into: str | None
+
+
+class StatusPayload(NodeModel):
+    project_id: str
+    root_path: str
+
+
 class SpawnCommand(NodeModel):
     type: Literal["command"]
     v: Version
@@ -168,6 +195,30 @@ class WriteCommand(NodeModel):
     payload: WritePayload
 
 
+class MergeCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["workspace.merge"]
+    payload: MergePayload
+
+
+class RemoveCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["workspace.remove"]
+    payload: RemovePayload
+
+
+class StatusCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["checkout.status"]
+    payload: StatusPayload
+
+
 class AcceptedResult(NodeModel):
     accepted: Literal[True]
 
@@ -178,6 +229,25 @@ class StoppedResult(NodeModel):
 
 class EmptyResult(NodeModel):
     pass
+
+
+class MergeResult(NodeModel):
+    outcome: Literal["merged", "already_merged", "conflict", "target_dirty", "busy"]
+    merge_sha: str | None
+    target_head_sha: str | None
+    conflicted_files: list[str]
+    dirty_paths: list[str]
+
+
+class RemoveResult(NodeModel):
+    outcome: Literal["removed", "dirty", "unmerged", "busy"]
+
+
+class StatusResult(NodeModel):
+    current_branch: str | None
+    branch_count: Count
+    ahead: Count | None
+    behind: Count | None
 
 
 class ErrorBody(NodeModel):
@@ -191,7 +261,7 @@ class OkReply(NodeModel):
     v: Version
     request_id: str
     ok: Literal[True]
-    result: AcceptedResult | StoppedResult | EmptyResult
+    result: AcceptedResult | StoppedResult | EmptyResult | MergeResult | RemoveResult | StatusResult
 
 
 class ErrReply(NodeModel):
@@ -391,7 +461,9 @@ class DetectionManifestsResult(NodeModel):
     manifests: list[DetectionManifestEntry]
 
 
-CommandFrame = SpawnCommand | CancelCommand | WriteCommand
+CommandFrame = (
+    SpawnCommand | CancelCommand | WriteCommand | MergeCommand | RemoveCommand | StatusCommand
+)
 ReplyFrame = OkReply | ErrReply
 
 _PARSERS: dict[str, TypeAdapter[NodeModel]] = {

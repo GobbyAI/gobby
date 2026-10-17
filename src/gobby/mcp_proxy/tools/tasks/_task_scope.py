@@ -94,10 +94,21 @@ async def evaluate_task_scope_async(
         if (normalized := _normalize_repo_path(path)) is not None
     }
     commit_list = list(commit_shas)
+    committed_paths: set[str] = set()
     if (declared_paths or advisory_paths) and commit_list:
         if not repo_path:
             raise RuntimeError("No repository path is available for linked commit inspection.")
-        actual_paths.update(await collect_commit_paths_async(commit_list, repo_path))
+        committed_paths = await collect_commit_paths_async(commit_list, repo_path)
+        actual_paths.update(committed_paths)
+
+    if repo_path:
+        # Attribution retains transient edits after scratch files are removed or
+        # a rebase discards them. Linked changes still count, including deletions.
+        for path in actual_paths - committed_paths:
+            try:
+                (Path(repo_path) / path).lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                actual_paths.remove(path)
 
     declared_actual_paths = _paths_relevant_to_scope(actual_paths, declared_paths)
     advisory_actual_paths = _paths_relevant_to_scope(actual_paths, advisory_paths)
@@ -216,7 +227,13 @@ def targets_not_found_for_request(
         session = ctx.session_manager.get(resolved_session) if resolved_session else None
         machine_id = ctx.checkout_machine_id(project_id, session_id)
         primary = ctx.get_project_repo_path(project_id, machine_id)
-        workspace = getattr(session, "workspace_path", None)
+        # The caller's overlay belongs to its own project. A coordinator creating
+        # work elsewhere validates targets against that project's registered root.
+        workspace = (
+            getattr(session, "workspace_path", None)
+            if session is not None and session.project_id == project_id
+            else None
+        )
         repo_path = primary
         if workspace and (not primary or os.path.realpath(workspace) != os.path.realpath(primary)):
             repo_path = resolve_operation_root(
