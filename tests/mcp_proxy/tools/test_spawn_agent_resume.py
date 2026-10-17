@@ -325,7 +325,7 @@ async def test_resume_refuses_a_stored_workspace_that_is_not_a_directory(
     runner = MagicMock()
     runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
     with (
-        patch.object(implementation, "resolve_resume_target", return_value=target),
+        patch.object(resume, "resolve_resume_target", return_value=target),
         patch.object(
             implementation, "authorize_write_grant", side_effect=ValueError("past resume preflight")
         ) as authorize,

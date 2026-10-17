@@ -51,6 +51,7 @@ async def enforce_spawn_caller(
     target_project_id: str | None,
     *,
     network: str | None = None,
+    resume_session_id: str | None = None,
 ) -> str | None:
     """Enforce spawnable_agents at admission, including calls that skip tool rules.
 
@@ -98,6 +99,7 @@ async def enforce_spawn_caller(
             "spawn_agent",
             agent,
             target_project_id=target_project_id,
+            resume_session_id=resume_session_id,
         ):
             raise ValueError(f"caller may not spawn {agent!r} or its target-project fallback chain")
         enforce_network_override(session_manager, caller.id, network)

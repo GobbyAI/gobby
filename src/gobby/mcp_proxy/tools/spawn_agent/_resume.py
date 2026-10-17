@@ -1,5 +1,7 @@
 """Validate an explicit native-thread relaunch before spawn allocations."""
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from gobby.agents.resume_executor import SUPPORTED_RESUME_PROVIDERS
@@ -9,7 +11,11 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.utils.project_context import get_project_context
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
+
+from ._provider_resolution import concrete_provider
 
 _RETYPE_REFUSED = frozenset({"assistant", "orchestrator", "default"})
 # Bounds the resume-chain walk for a placement recorded before resumes dropped it.
@@ -43,6 +49,7 @@ def resolve_resume_target(
     provider: str | None,
     run_storage: Any,
     agent_type: str,
+    lane: str | None = None,
 ) -> Session:
     if session_manager is None or not project_id:
         raise ValueError("Resume requires a session manager and project context")
@@ -88,7 +95,46 @@ def resolve_resume_target(
             f"Resume target {ref} is a {stored_type!r} session; resume it with "
             f"agent={stored_type!r}, not {agent_type!r}"
         )
+    # A resume keeps the seat in the lane it was recorded in, for every caller.
+    recorded_lane = resumed_seat_lane(session, run_storage)
+    requested_lane = (lane or "").strip()
+    if requested_lane and recorded_lane and requested_lane != recorded_lane:
+        raise ValueError(
+            f"Resume target {ref} is in lane {recorded_lane!r}; it cannot resume into "
+            f"{requested_lane!r}"
+        )
     return session
+
+
+async def resolve_seat_resume(
+    session_manager: SessionManager | None,
+    resume_session_id: str,
+    target_project_id: str | None,
+    project_path: str | None,
+    provider: str | None,
+    run_storage: Any,
+    agent_body: AgentDefinitionBody | None,
+    lane: str | None,
+) -> Session:
+    """Resolve the stored seat a resume reference names, in the target or checkout project."""
+    project_id = target_project_id
+    if project_id is None:
+        project_ctx = await asyncio.to_thread(
+            get_project_context, Path(project_path) if project_path else None
+        )
+        project_id = (
+            (project_ctx.get("id") or project_ctx.get("project_id")) if project_ctx else None
+        )
+    return await asyncio.to_thread(
+        resolve_resume_target,
+        session_manager,
+        resume_session_id,
+        project_id,
+        concrete_provider(provider),
+        run_storage,
+        agent_body.name if agent_body is not None else "default",
+        lane,
+    )
 
 
 class ResumeSeatGone(LookupError):

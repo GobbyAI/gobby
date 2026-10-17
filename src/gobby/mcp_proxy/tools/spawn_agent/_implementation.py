@@ -63,7 +63,7 @@ from ._provider_resolution import (
 from ._request import build_spawn_request
 from ._resume import (
     ResumeSeatGone,
-    resolve_resume_target,
+    resolve_seat_resume,
     resume_isolation,
     resumed_seat_lane,
     resumed_seat_placement,
@@ -147,23 +147,16 @@ async def spawn_agent_impl(
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
     if resume_session_id:
-        resume_project_id = target_project_id
-        if resume_project_id is None:
-            resume_ctx = await asyncio.to_thread(
-                get_project_context, Path(project_path) if project_path else None
-            )
-            resume_project_id = (
-                (resume_ctx.get("id") or resume_ctx.get("project_id")) if resume_ctx else None
-            )
         try:
-            resume_target = await asyncio.to_thread(
-                resolve_resume_target,
+            resume_target = await resolve_seat_resume(
                 session_manager,
                 resume_session_id,
-                resume_project_id,
-                concrete_provider(provider),
+                target_project_id,
+                project_path,
+                provider,
                 runner.run_storage,
-                agent_body.name if agent_body is not None else "default",
+                agent_body,
+                lane,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}

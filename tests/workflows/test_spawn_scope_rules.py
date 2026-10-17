@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
 from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
@@ -809,3 +811,78 @@ async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
     )
 
     assert refused.decision == "block"
+
+
+def _admit_as(monkeypatch: pytest.MonkeyPatch, caller: Session) -> None:
+    """Make ``caller`` the verified spawn caller, with no request principal."""
+    monkeypatch.setattr(
+        _spawn_guards, "get_request_principal", AsyncMock(return_value=None), raising=False
+    )
+    monkeypatch.setattr(_spawn_guards, "get_current_session_id", lambda: caller.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat_type", ["developer", "code-reviewer"])
+async def test_lane_manager_admission_resumes_its_own_lane_seat(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    seat_type: str,
+) -> None:
+    _define_agent(temp_db, "lane-manager", None)
+    root = _register(session_manager, str(sample_project["id"]), f"admit-root-{seat_type}")
+    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
+    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, "7")
+    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
+    _admit_as(monkeypatch, manager)
+
+    caller = await _spawn_guards.enforce_spawn_caller(
+        session_manager, seat_type, manager.project_id, resume_session_id=seat.id
+    )
+
+    assert caller == manager.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seat_type", "seat_lane", "resume", "agent"),
+    [
+        ("developer", "3", True, "developer"),
+        ("orchestrator", "7", True, "orchestrator"),
+        ("developer", "7", False, "developer"),
+        ("developer", "7", True, "release-manager"),
+        ("developer", "7", True, "lane-manager"),
+    ],
+    ids=[
+        "other-lane-seat",
+        "orchestrator-seat",
+        "fresh-spawn",
+        "retyped-to-release-manager",
+        "retyped-to-lane-manager",
+    ],
+)
+async def test_lane_manager_admission_refuses_other_lanes_retypes_and_fresh_spawns(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    seat_type: str,
+    seat_lane: str,
+    resume: bool,
+    agent: str,
+) -> None:
+    _define_agent(temp_db, "lane-manager", None)
+    root = _register(session_manager, str(sample_project["id"]), f"admit-refuse-{seat_type}")
+    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
+    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, seat_lane)
+    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
+    _admit_as(monkeypatch, manager)
+
+    with pytest.raises(ValueError, match="caller may not spawn"):
+        await _spawn_guards.enforce_spawn_caller(
+            session_manager,
+            agent,
+            manager.project_id,
+            resume_session_id=seat.id if resume else None,
+        )
