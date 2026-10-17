@@ -5,21 +5,29 @@ job's retained full output, and every delivery before the cutoff must validate a
 """
 
 import re
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from gobby.tasks import tdd_retained_output
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_evidence import (
     TddEvidenceResult,
     _has_named_red_failure,
     evaluate_tdd_evidence,
 )
+from gobby.tasks.tdd_retained_output import retained_red_output
+from gobby.tasks.transcript_evidence_models import OutputDelivery
 from tests.tasks.test_tdd_retained_output import (
     NOTICE,
+    START,
     _evidence,
     _job,
     _pair,
+    _queued,
     _retain,
     _write,
 )
@@ -42,6 +50,9 @@ REPLAY = (
 GREEN = f"PASS [   0.010s] (  1/1) gobby-code {QUALIFIED}\nSummary [   0.010s] 1 test run: 1 passed"
 # The FAIL blocks, summary and exit trailer of #23575's real RED output (PASS rows dropped).
 RED = (Path(__file__).parent / "fixtures" / "nextest_red_23575.txt").read_text(encoding="utf-8")
+# The target's panic header and the message nextest prints on the line after it.
+THREAD = f"thread '{QUALIFIED}' (126180598) panicked at {TEST_FILE}:322:5:"
+ASSERTION = "assertion failed: !succeeded"
 
 
 def _grep(output: str, pattern: str) -> str:
@@ -140,11 +151,11 @@ def test_split_or_post_cutoff_reads_never_credit_red(tmp_path: Path, case: str) 
     elif case == "post_cutoff_detail":
         reads[1] = (11, reads[1][1], detail)
     elif case == "sibling_detail_without_target":
-        # The original's target block lost its own panic and detail; the sibling's identical
-        # assertion line remains. The target's panic thread alone would otherwise credit RED.
+        # The original's target block lost its assertion; the sibling's identical assertion
+        # line remains. The target's bare panic header must not credit RED on its own.
         lines = RED.splitlines()
         index = next(i for i, line in enumerate(lines) if f"thread '{QUALIFIED}'" in line)
-        retained = "\n".join(lines[:index] + lines[index + 2 :])
+        retained = "\n".join(lines[: index + 1] + lines[index + 2 :])
     result = _red_result(tmp_path, reads, retained=retained)
     assert not result.passed
     assert result.red_runs == ()
@@ -172,3 +183,87 @@ def test_red_rejection_names_the_delivered_read(tmp_path: Path) -> None:
     assert not result.passed
     reason = f"its reads before the implementation edit ({read}) name no runner row for {QUALIFIED}"
     assert any(reason in finding for finding in result.findings), result.findings
+
+
+def _monitor_event(at: float, text: str) -> dict[str, Any]:
+    return _queued(
+        at,
+        "<task-notification><task-id>monitor</task-id>"
+        f'<summary>Monitor event: "tests"</summary><event>{text}</event></task-notification>',
+    )
+
+
+def _monitor_red_result(
+    tmp_path: Path, events: list[tuple[float, str]], *, retained: str | None
+) -> TddEvidenceResult:
+    """A background RED whose job output reaches the transcript as Monitor events."""
+    job = tmp_path / "tasks/job.output"
+    if retained is not None:
+        _retain(job, retained, NOTICE + 0.3)
+    (first_at, first_text), *later = events
+    records = _write(tmp_path, 1, TEST_FILE)
+    records += _job(job, monitor_at=first_at, events=first_text, command=REPLAY)
+    records += [_monitor_event(at, text) for at, text in later]
+    records += _write(tmp_path, 10, CODE_FILE)
+    records += _pair(12, "Bash", {"command": REPLAY}, GREEN)
+    records.sort(key=lambda record: str(record["timestamp"]))
+    test = AcceptanceTest(f"{TEST_FILE}::{TARGET}", TEST_FILE, TARGET, "", rust_module=MODULE)
+    return evaluate_tdd_evidence((test,), _evidence(tmp_path, records, {TEST_FILE, CODE_FILE}))
+
+
+def test_monitor_events_split_identity_from_assertion_reject_without_retained(
+    tmp_path: Path,
+) -> None:
+    # Joined, the two events would read as one failure; each alone names no failure body.
+    result = _monitor_red_result(tmp_path, [(5, THREAD), (6, ASSERTION)], retained=None)
+    assert not result.passed
+    assert result.red_runs == ()
+
+
+def test_monitor_split_red_credits_only_through_the_authenticated_original(
+    tmp_path: Path,
+) -> None:
+    result = _monitor_red_result(tmp_path, [(5, THREAD), (6, ASSERTION)], retained=RED)
+    assert result.passed, result.findings
+    assert result.red_runs == (REPLAY,)
+
+
+def test_monitor_sibling_assertion_never_completes_the_target_header(tmp_path: Path) -> None:
+    lines = RED.splitlines()
+    index = next(i for i, line in enumerate(lines) if f"thread '{QUALIFIED}'" in line)
+    # The target's block lost its assertion; the sibling's identical assertion line remains.
+    retained = "\n".join(lines[: index + 1] + lines[index + 2 :])
+    result = _monitor_red_result(tmp_path, [(5, THREAD), (6, ASSERTION)], retained=retained)
+    assert not result.passed
+    assert result.red_runs == ()
+
+
+def test_bare_panic_header_names_no_failure() -> None:
+    test = AcceptanceTest(f"{TEST_FILE}::{TARGET}", TEST_FILE, TARGET, "", rust_module=MODULE)
+    assert not _has_named_red_failure(REPLAY, THREAD, test)[0]
+    assert _has_named_red_failure(REPLAY, f"{THREAD}\n{ASSERTION}", test)[0]
+
+
+def test_identical_text_deliveries_each_authenticate_on_their_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = tmp_path / "tasks/job.output"
+    records = _job(job, monitor=False, command=REPLAY)
+    [run] = [
+        item
+        for item in _evidence(tmp_path, records, {TEST_FILE, CODE_FILE}).validation_runs
+        if item.command == REPLAY
+    ]
+    # The first delivery was truncated, so its last line went unchecked; the second repeats
+    # the text in full. Its final line must be authenticated too, so the dropped copy would hide it.
+    text = "present line\nunmatched final line"
+    deliveries = (
+        OutputDelivery(START + timedelta(seconds=5), str(job), text, True, False, "Read"),
+        OutputDelivery(START + timedelta(seconds=6), str(job), text, False, False, "Read"),
+    )
+    run = replace(run, output_deliveries=deliveries)
+    production_at = START + timedelta(seconds=10)
+    monkeypatch.setattr(tdd_retained_output, "_job_output", lambda *_: "present line\n")
+    assert retained_red_output(run, production_at) is None
+    monkeypatch.setattr(tdd_retained_output, "_job_output", lambda *_: f"{text}\n")
+    assert retained_red_output(run, production_at) == f"{text}\n"

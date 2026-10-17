@@ -393,29 +393,29 @@ def _context_groups(output: str) -> list[str]:
 def recovered_deliveries(
     run: TranscriptValidationRun, before: datetime | None
 ) -> list[OutputDelivery]:
-    """Each distinct recovered delivery before ``before``, in delivery order.
+    """Each recovered delivery before ``before``, in delivery order.
 
     Gate 12 proves each one alone: deliveries are never joined, since a newline between
-    two reads would make unrelated lines adjacent to a failure section.
+    two reads would make unrelated lines adjacent to a failure section. Identical text is
+    not deduplicated: each delivery has its own provenance and must validate on its own.
     """
-    seen: set[str] = set()
-    found: list[OutputDelivery] = []
-    for delivery in run.output_deliveries:
-        if delivery.source is None or not delivery.text:
-            continue
-        if before is not None and delivery.delivered_at >= before:
-            continue
-        if delivery.text not in seen:
-            seen.add(delivery.text)
-            found.append(delivery)
-    return found
+    return [
+        delivery
+        for delivery in run.output_deliveries
+        if delivery.source is not None
+        and delivery.text
+        and (before is None or delivery.delivered_at < before)
+    ]
 
 
 def unread_reason(run: TranscriptValidationRun, before: datetime | None, name: str) -> str:
     """Why a background run's pre-cutoff reads did not prove RED for ``name``."""
-    readers = [
-        delivery.reader or str(delivery.source) for delivery in recovered_deliveries(run, before)
-    ]
+    readers = list(
+        dict.fromkeys(
+            delivery.reader or str(delivery.source)
+            for delivery in recovered_deliveries(run, before)
+        )
+    )
     if not readers:
         return "its output was never read in a recognized form before the implementation edit"
     return (

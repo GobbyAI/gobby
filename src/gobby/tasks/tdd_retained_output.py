@@ -66,18 +66,19 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
 
 
 def delivered_proof_runs(
-    run: TranscriptValidationRun, production_at: datetime
+    run: TranscriptValidationRun, production_at: datetime | None
 ) -> list[TranscriptValidationRun]:
     """Each pre-cutoff delivery proved alone, then the authenticated full output.
 
     Deliveries are never joined: a newline between two reads would make unrelated
-    lines adjacent to a failure section.
+    lines adjacent to a failure section. Without a production cutoff there is no
+    retained output to authenticate, so only the deliveries are returned.
     """
     runs = [
         replace(run, output=delivery.text, output_truncated=delivery.truncated)
         for delivery in recovered_deliveries(run, production_at)
     ]
-    retained = retained_red_output(run, production_at)
+    retained = retained_red_output(run, production_at) if production_at is not None else None
     if retained is not None:
         runs.append(replace(run, output=retained))
     return runs
