@@ -136,12 +136,32 @@ def test_seat_variable_writes_cannot_forge_the_edit_ledgers_the_gate_trusts(
     assert variables.get(name) != forged
 
 
+def test_approve_dirty_paths_cli_refuses_without_an_interactive_terminal(
+    temp_db: HubDatabase, seat: Session, tmp_path: Path
+) -> None:
+    with (
+        patch("gobby.cli.sessions_dirty_paths.require_cli_database", return_value=temp_db),
+        patch("gobby.cli.sessions_dirty_paths.resolve_session_id", side_effect=lambda ref: ref),
+        patch("gobby.cli.sessions_dirty_paths._interactive_terminal", return_value=False),
+    ):
+        result = CliRunner().invoke(
+            sessions,
+            ["approve-dirty-paths", seat.id, "--checkout", str(tmp_path), "a.txt"],
+        )
+    variables = SessionVariableManager(temp_db).get_variables(seat.id)
+
+    assert result.exit_code != 0
+    assert "interactive terminal" in result.output
+    assert OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE not in variables
+
+
 def test_approve_dirty_paths_cli_records_the_operator_approval(
     temp_db: HubDatabase, seat: Session, tmp_path: Path
 ) -> None:
     with (
         patch("gobby.cli.sessions_dirty_paths.require_cli_database", return_value=temp_db),
         patch("gobby.cli.sessions_dirty_paths.resolve_session_id", side_effect=lambda ref: ref),
+        patch("gobby.cli.sessions_dirty_paths._interactive_terminal", return_value=True),
     ):
         result = CliRunner().invoke(
             sessions,

@@ -23,3 +23,22 @@ rules:
           Approving unowned dirty paths is operator-only. Relay the exact
           `gobby sessions approve-dirty-paths ...` command from the refusal to
           the user, who runs it in their own shell, then retry.
+
+  block-gobby-cli-expansion:
+    description: "Block agent gobby CLI calls that expand a variable or substitution, since the operator-only approval subcommand can be assembled that way."
+    event: before_tool
+    enabled: true
+    priority: 30
+    effects:
+      - type: block
+        tools: [Bash]
+        # Raw text on purpose: quoting or escaping the subcommand does not stop a
+        # shell from expanding a variable or substitution inside a gobby CLI
+        # call, which is how the subcommand gets assembled at run time. Agents
+        # pass literal arguments to the CLI.
+        mask_quoted: false
+        command_pattern: "(?<![\\w./-])gobby(?![\\w-])[^;&|\\n]*[$`]"
+        reason: |
+          A gobby CLI call from an agent shell takes literal arguments. A variable,
+          `$(...)` or backtick in the command can assemble an operator-only
+          subcommand at run time. Use the gobby MCP tools, or pass the literal text.

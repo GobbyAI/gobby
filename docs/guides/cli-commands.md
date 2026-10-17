@@ -835,9 +835,10 @@ gobby sessions approve-dirty-paths SESSION --checkout ROOT PATH...
 no live session owns. The edit gate's refusal prints the command. Each path stays
 approved only while its content matches what it was at approval. Agents cannot run
 it: `block-dirty-path-approval-cli` refuses any shell command that names the
-subcommand, and any `sessions` command that expands a variable or runs a
-substitution unquoted, since the subcommand could then be assembled at run time.
-A managed execution's database role also cannot read or write session state.
+subcommand, and `block-gobby-cli-expansion` refuses any `gobby` CLI call that
+expands a variable or runs a substitution unquoted, since the subcommand could
+then be assembled at run time. The CLI also requires an interactive terminal.
+A managed execution's database role cannot read or write session state.
 
 `summarize` creates archival output; it never stages a recoverable handoff.
 `renumber` previews until `--apply`; context-window backfill writes unless

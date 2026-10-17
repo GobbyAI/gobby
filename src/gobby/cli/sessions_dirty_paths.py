@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import getpass
+import sys
 
 import click
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
+
+
+def _interactive_terminal() -> bool:
+    return sys.stdin.isatty()
 
 
 @click.command("approve-dirty-paths")
@@ -28,6 +33,13 @@ def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, 
     agent session. Each path stays approved only while its content matches what
     it is now. A new approval replaces the session's earlier one for the checkout.
     """
+    # Defense in depth: the rule is text matching, and an agent's Bash has no
+    # terminal. A pty can still be faked, so the operator credential check that
+    # Security names is the boundary.
+    if not _interactive_terminal():
+        raise click.ClickException(
+            "approve-dirty-paths runs only from an interactive terminal. Run it in your own shell."
+        )
     session_id = resolve_session_id(session_ref)
     try:
         fingerprints = record_dirty_path_approval(

@@ -14,6 +14,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-dirty-path-approval-cli"
+EXPANSION_RULE = "block-gobby-cli-expansion"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
@@ -33,8 +34,14 @@ INVOCATIONS = (
     "bash -c 'gobby sessions approve-dirty-paths s7 a.txt'",
     'echo "$(gobby sessions approve-dirty-paths s7 a.txt)"',
     "a=approve-dirty-; b=paths; gobby sessions $a$b s7 --checkout /repo a.txt",
+    "a=approve-dirty-; b=paths; gobby 'sessions' $a$b s7 a.txt",
+    'a=approve-dirty-; b=paths; gobby "sessions" $a$b s7 a.txt',
+    "a=approve-dirty-; b=paths; gobby se\\ssions $a$b s7 a.txt",
+    "a=approve-dirty-; b=paths; gobby sess'ions' $a$b s7 a.txt",
+    'a=approve-dirty-; b=paths; gobby sessions "$a$b" s7 a.txt',
     'eval "gobby sessions approve-dirty-paths s7 a.txt"',
     "sh -c 'gobby sessions $v s7 a.txt'",
+    'gobby sessions show "$SID"',
 )
 
 
@@ -58,7 +65,9 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
     temp_db: HubDatabase, variables: dict[str, object]
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
-    temp_db.execute("DELETE FROM rule_definitions WHERE name != %s", (RULE_NAME,))
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s)", (RULE_NAME, EXPANSION_RULE)
+    )
     engine = RuleEngine(temp_db)
 
     async def decide(command: str) -> tuple[str, str]:
@@ -75,7 +84,6 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
             'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"',
             "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt",
             "gobby sessions list",
-            'gobby sessions show "$SID"',
         )
     }
 
@@ -85,5 +93,4 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
         'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"': "allow",
         "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt": "allow",
         "gobby sessions list": "allow",
-        'gobby sessions show "$SID"': "allow",
     }
