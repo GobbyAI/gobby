@@ -231,7 +231,7 @@ impl NativeWs {
         let mut request = request;
         let response = match handshake(&request) {
             Ok(response) => response,
-            Err(refusal) => return refusal,
+            Err(refusal) => return *refusal,
         };
         let upgrade = hyper::upgrade::on(&mut request);
         let Some(captured) = self.captured() else {
@@ -645,12 +645,12 @@ impl NativeWs {
             tokio::select! {
                 message = public.next() => match message {
                     Some(Ok(Message::Text(text))) => {
-                        if let Some(app) = broker.receive(&registration, text.as_str()) {
-                            if !send_leg(&mut leg_tx, Message::text(app.to_owned())).await {
-                                let frame = close_frame(CloseCode::Error, BRIDGE_GONE);
-                                broker.close(&registration, frame);
-                                break;
-                            }
+                        if let Some(app) = broker.receive(&registration, text.as_str())
+                            && !send_leg(&mut leg_tx, Message::text(app.to_owned())).await
+                        {
+                            let frame = close_frame(CloseCode::Error, BRIDGE_GONE);
+                            broker.close(&registration, frame);
+                            break;
                         }
                     }
                     Some(Ok(Message::Binary(bytes))) => {
@@ -746,7 +746,7 @@ impl NativeWs {
 /// Validates the upgrade request as tungstenite does, plus the checks it
 /// leaves out: no duplicated handshake header, version 13 (426 otherwise), and
 /// a key that decodes to 16 bytes. Every other failure is 400.
-fn handshake(request: &Request<Body>) -> Result<Response<Body>, Response<Body>> {
+fn handshake(request: &Request<Body>) -> Result<Response<Body>, Box<Response<Body>>> {
     let headers = request.headers();
     let duplicated = [
         UPGRADE,
@@ -757,7 +757,7 @@ fn handshake(request: &Request<Body>) -> Result<Response<Body>, Response<Body>> 
     .iter()
     .any(|name| headers.get_all(name).iter().count() > 1);
     if duplicated {
-        return Err(status_only(StatusCode::BAD_REQUEST));
+        return Err(Box::new(status_only(StatusCode::BAD_REQUEST)));
     }
     let version = headers
         .get(SEC_WEBSOCKET_VERSION)
@@ -767,16 +767,16 @@ fn handshake(request: &Request<Body>) -> Result<Response<Body>, Response<Body>> 
         response
             .headers_mut()
             .insert(SEC_WEBSOCKET_VERSION, HeaderValue::from_static("13"));
-        return Err(response);
+        return Err(Box::new(response));
     }
     let key = headers
         .get(SEC_WEBSOCKET_KEY)
         .and_then(|value| STANDARD.decode(value.as_bytes()).ok());
     if key.is_none_or(|key| key.len() != 16) {
-        return Err(status_only(StatusCode::BAD_REQUEST));
+        return Err(Box::new(status_only(StatusCode::BAD_REQUEST)));
     }
     create_response_with_body(request, Body::empty)
-        .map_err(|_| status_only(StatusCode::BAD_REQUEST))
+        .map_err(|_| Box::new(status_only(StatusCode::BAD_REQUEST)))
 }
 
 /// Answers a refused browser upgrade: the 101 is already on its way, so the
