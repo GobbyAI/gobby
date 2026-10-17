@@ -67,6 +67,7 @@ def _server(db: HubDatabase) -> HTTPServer:
     server = create_http_server(
         config=DaemonConfig(),
         database=db,
+        session_manager=SessionManager(db),
         task_manager=LocalTaskManager(db),
         authenticated_requests=False,
     )
@@ -106,7 +107,8 @@ def test_dirty_path_approval_route_refuses_managed_claims(
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 403
+    # The auth middleware rejects a managed bearer before the route's identity check.
+    assert response.status_code == 401
     assert OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE not in _variables(db, seat.id)
 
 
@@ -130,7 +132,9 @@ def test_dirty_path_approval_route_refuses_without_a_verified_operator(
         }
     response = client.post(_route(seat.id), json=_body(tmp_path), headers=headers)
 
-    assert response.status_code == 403
+    # Absent and forged identities are rejected by the auth middleware (401) before
+    # the route runs. Only a session cookie reaches the route, which refuses it (403).
+    assert response.status_code == (403 if case == "cookie" else 401)
     assert OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE not in _variables(db, seat.id)
 
 
