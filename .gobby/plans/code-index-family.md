@@ -30,8 +30,8 @@ hub. The hub nevertheless issues an interactive principal on a node a
 When P1 closes:
 
 - The hub issues an interactive principal whose machine is not the hub's a
-  `Brokered` Postgres capability. The capability names four node operations, and
-  Falkor and Qdrant are `Brokered` too.
+  `Brokered` Postgres capability. The capability names one operation,
+  `node_code_index`, and Falkor and Qdrant are `Brokered` too.
 - `gcode` under that grant runs `status`, `search-content` and `index` through
   `/api/code-index/node/*`.
 - gdaemon serves those routes natively. It verifies the grant and binds it to the
@@ -148,11 +148,18 @@ own answers.
     resolution;
   - a per-fact HTTP sink, which costs a round trip per file and holds no lock.
 - **D3, grant shape.** An interactive principal whose machine differs from the hub's
-  gets `PostgresCapability::Brokered` with the four node operations and no DSN, plus
-  Falkor and Qdrant `Brokered`. Python issuance changes now (1.6). The shape becomes a
+  gets `PostgresCapability::Brokered` with one operation and no DSN, plus Falkor and
+  Qdrant `Brokered`. The operation is `node_code_index` (`POST`,
+  `/api/code-index/node`). It authorizes the whole node family, and the route paths
+  come from the wire contract in `gobby_code::node`. Python issuance changes now (1.6). The shape becomes a
   shared golden vector in the same leaf. The native handshake reproduces it after
   #24449 (1.10). Binding condition (#15977, 16:24): nodes stay fully functional with
   no node update while the hub's Python is ported (1.6.4, 1.10.2).
+  - Rejected: one operation per route. P2 and P4 add routes, so every addition would
+    change the grant, its golden and the Python and Rust issuers. Until 1.10 lands
+    the Rust list would have no fixed owner, and whichever of 1.10 and a route
+    addition landed second would have to edit the other's code. With one operation
+    the grant never changes after P1.
   - Node agents reach this branch too. A node spawn carries no managed bootstrap, so
     `crates/gcore/src/grant/acquisition.rs::acquire_with_reachability` picks the
     interactive handshake, and the hub issues through `issue_for_operator` for the
@@ -213,13 +220,15 @@ P1 makes the three preflight commands work on a node:
 - 1.10 keeps the grant shape when the handshake goes native.
 - 1.11 proves the preflight end to end.
 
-Wire names, shared by 1.3, 1.4, 1.6, 1.8, 1.9 and 1.10. Every operation is `POST` with
-a JSON body:
+Wire names. The grant names one operation, `node_code_index` (`POST`,
+`/api/code-index/node`), shared by 1.6, 1.7, 1.9 and 1.10 (D3). The route paths are
+the wire contract in `gobby_code::node`, shared by 1.3, 1.4, 1.8 and 1.9. Every route
+is `POST` with a JSON body:
 
-- `node_status`: `/api/code-index/node/status`;
-- `node_search_content`: `/api/code-index/node/search-content`;
-- `node_index_plan`: `/api/code-index/node/index/plan`;
-- `node_index_apply`: `/api/code-index/node/index/apply`.
+- status: `/api/code-index/node/status`;
+- search-content: `/api/code-index/node/search-content`;
+- index plan: `/api/code-index/node/index/plan`;
+- index apply: `/api/code-index/node/index/apply`.
 
 ### 1.1 Machine-explicit index, status and content-search paths [category: refactor] (depends: #23831)
 `kind: deliverable`
@@ -353,7 +362,7 @@ The test-only Targets carry only the new field.
 Consumers unchanged:
 - `crates/gcode/src/index/api/file_state.rs` — no-edit-reason: its writers already take `machine_id`.
 - `crates/gcode/src/commands/symbols.rs` — no-edit-reason: passes its `ctx` to `indexed_file_exists`, which now reads that context's machine.
-- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `crates/gcode/src/commands/grep.rs` — no-edit-reason: passes its `ctx` to `current_indexed_path_is_valid`, whose `indexed_file_exists` call now reads that context's machine.- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `src/gobby/install/bin_freshness_models.py` — no-edit-reason: iterates every pin, so the bumped value flows through.
 - `src/gobby/install/distribution.py` — no-edit-reason: looks a pin up by binary name.
@@ -457,8 +466,8 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
 
 `gobby_code::node` (`crates/gcode/src/node/mod.rs`) is the wire contract both halves compile against:
 
-- Constants for the four operation names and paths (P1 framing), plus
-  `NODE_OPERATIONS: [(&str, &str); 4]` pairing each name with its path.
+- Constants for the operation name `node_code_index`, the family prefix
+  `/api/code-index/node` and the four route paths (P1 framing).
 - `NodeScope { root: String, parent_root: Option<String> }`. `parent_root` is present
   exactly when the node's project is an overlay.
 - `StatusRequest { scope: NodeScope }` and `StatusReport`. The status JSON object and
@@ -731,9 +740,9 @@ Targets:
 
 Release ownership (Constraints): Python and test files only, so no binary bumps.
 
-- `NODE_CODE_INDEX_OPERATIONS` in `service.py` is a tuple of four `BrokerOperation`s
-  with P1's names, `method="POST"` and paths. It sits beside `FALKOR_OPERATIONS` and
-  `QDRANT_OPERATIONS`.
+- `NODE_CODE_INDEX_OPERATIONS` in `service.py` is a one-element tuple,
+  `BrokerOperation(name="node_code_index", method="POST", path="/api/code-index/node")`
+  (D3). It sits beside `FALKOR_OPERATIONS` and `QDRANT_OPERATIONS`.
 - `HandshakeService._issue` decides by machine. An `interactive` principal whose
   `machine_id` differs from `self.local_machine_id` gets
   `BrokeredCapability(operations=NODE_CODE_INDEX_OPERATIONS)`
@@ -793,7 +802,7 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 1.6.1 - A handshake for an interactive principal on another machine returns Postgres `brokered` with exactly the four node operations, and Falkor and Qdrant `brokered`, without calling `issue_postgres`. The same principal on the hub's machine still gets `direct`. test: `tests/runtime_grants/test_remote_principal_grants.py::test_remote_interactive_principal_gets_brokered_datastores`.
+- 1.6.1 - A handshake for an interactive principal on another machine returns Postgres `brokered` with exactly the `node_code_index` operation, and Falkor and Qdrant `brokered`, without calling `issue_postgres`. The same principal on the hub's machine still gets `direct`. test: `tests/runtime_grants/test_remote_principal_grants.py::test_remote_interactive_principal_gets_brokered_datastores`.
 - 1.6.2 - A Brokered grant's expiry is the TTL bound and never reads `valid_until`. test: `tests/runtime_grants/test_remote_principal_grants.py::test_brokered_grant_ttl_ignores_valid_until`.
 - 1.6.3 - The new golden round-trips and its checksum is pinned (the directory readers include it). test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
 - 1.6.4 - Binding condition: Python issuance for the golden's fixed inputs reproduces `remote_interactive_brokered.json` byte for byte, so the shape nodes depend on is pinned while the hub's Python is ported. test: `tests/runtime_grants/test_remote_principal_grants.py::test_remote_issuance_reproduces_the_golden`.
@@ -830,10 +839,11 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
     - project root, project id and index scope;
     - `quiet`;
     - `indexing` from `services_from_acquired_settings`;
-    - the daemon URL and the acquired grant;
-    - the operation paths, looked up by name in the grant's Postgres `operations`.
+    - the daemon URL and the acquired grant.
 
-    A Brokered grant missing any of the four names fails with `capability_unavailable("postgres")`.
+    A Brokered grant whose Postgres `operations` lacks `node_code_index` fails with
+    `capability_unavailable("postgres")`. The route paths come from
+    `gobby_code::node`.
 
   `NodeAccess` implements 1.3's `ProjectView`, so the node renders pages and resolves
   path filters with the local code.
@@ -874,7 +884,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.7.1 - Under a Brokered grant, `Context` resolution fails with `brokered_unsupported` and its recovery text, before any connection attempt. test: `crates/gcode/src/config/access_tests.rs::brokered_context_resolution_is_refused`.
-- 1.7.2 - `resolve_access` returns `Node` with the four operation paths for the remote golden grant, `Direct` for a direct grant, and `capability_unavailable` when an operation is missing. test: `crates/gcode/src/config/access_tests.rs::resolve_access_reads_the_remote_golden`.
+- 1.7.2 - `resolve_access` returns `Node` for the remote golden grant, `Direct` for a direct grant, and `capability_unavailable` when the Brokered grant lacks `node_code_index`. test: `crates/gcode/src/config/access_tests.rs::resolve_access_reads_the_remote_golden`.
 - 1.7.3 - The contract lists `brokered_unsupported`, `node_code_index_failed`, `node_index_conflict` and the seven node route codes, and both JSON copies match `contract()`. test: `crates/gcode/tests/contract.rs::contract_lists_the_node_facing_codes`.
 - 1.7.4 - `gcode` is one patch version above the executor's starting tip in `crates/gcode/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -914,13 +924,14 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
   - any other code: a `CliError` with that code;
   - a body with no `code`: `node_code_index_failed`, from the new
     `DaemonRequestKind::NodeCodeIndex`. Transport failures use the same kind.
-- Each request runs inside `gobby_core::grant::present_bundle_with_single_retry`,
-  with the request built by `AcquireRequest::from_process(&root)`. A retryable grant
-  error (`is_retryable_presentation`: a stale epoch or a rotated signature)
-  re-handshakes once and resends the same body. The closure must return a
-  `GrantError`, so a route code is stashed and returned after the helper, as
-  `crates/gcore/src/ai/daemon/operations.rs` does for AI calls. An `index` run keeps
-  the refreshed grant for its later requests.
+- Each request presents the client's current grant. On a retryable grant error
+  (`is_retryable_presentation`: a stale epoch or a rotated signature), the client
+  calls `gobby_core::grant::rehandshake(&AcquireRequest::from_process(&root)?)` once,
+  keeps the new bundle for this and every later request in the run, and resends the
+  same body. A second grant error on the resend is returned. This is
+  `present_bundle_with_single_retry`'s rule. The client calls `rehandshake` itself
+  because that helper does not return the refreshed bundle, and an `index` run sends
+  many requests.
 - Path filters resolve on the node. `resolve_path_input`, `scope_roots` and
   `path_exists_in_current_project` take `&impl ProjectView` instead of `&Context`, so
   their 27 `&Context` call sites keep compiling. The client resolves each
@@ -952,8 +963,9 @@ Research context:
   `from_presentation_http`, which maps any 409 to `stale_epoch` and 403
   `claims_mismatch` to `Unauthorized`. Node routes return 409 for `index_busy` and
   the checkout and parent codes (1.9), so the client reads the body code first.
-- `present_bundle_with_single_retry` (`crates/gcore/src/grant/acquisition.rs`) is the
-  gcore helper for one re-handshake on a retryable presentation error.
+- `present_bundle_with_single_retry` (`crates/gcore/src/grant/acquisition.rs`)
+  re-handshakes once on a retryable presentation error through `rehandshake`, which
+  `crates/gcore/src/grant/mod.rs` re-exports and which returns the `AcquiredGrant`.
 - `resolve_path_input` (`commands/scope.rs:37`), `scope_roots` and
   `path_exists_in_current_project` read only `project_root` and `index_scope` from
   the context. `dispatch_navigation.rs` resolves `search-content` filters through
@@ -1058,8 +1070,9 @@ switched off.
 4. Require principal kind `interactive`, and
    `x-gobby-machine-id == principal.machine_id`. Otherwise return 403
    `claims_mismatch`.
-5. Require Postgres `Brokered` whose `operations` contains this route's exact
-   name, method and path. Otherwise return 403 `wrong_capability`.
+5. Require Postgres `Brokered` whose `operations` contains `node_code_index` with
+   method `POST` and path `/api/code-index/node` exactly. Otherwise return 403
+   `wrong_capability`.
 6. Build `HubScope` from the principal and the hub DSN, then run the matching
    `gobby_code::node::hub` call under `tokio::task::spawn_blocking`.
 7. Map a `RouteError` to its status: `claims_mismatch` 403; `checkout_required`,
@@ -1107,7 +1120,7 @@ Consumers unchanged:
 
 - 1.9.1 - `crates/gcodeindex` builds as workspace member `gobby-codeindex` (publish false, workspace version) and gdaemon links it. file: `crates/gcodeindex/Cargo.toml`.
 - 1.9.2 - With a valid remote grant and a matching machine header, each of the four routes returns what the library call returns for that machine. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_serve_the_principal_machine`.
-- 1.9.3 - A grant whose machine differs from `x-gobby-machine-id`, a managed principal, and a grant without the route's operation return 403 `claims_mismatch`, `claims_mismatch` and `wrong_capability`. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_bind_machine_and_capability`.
+- 1.9.3 - A grant whose machine differs from `x-gobby-machine-id`, a managed principal, and a grant without the `node_code_index` operation return 403 `claims_mismatch`, `claims_mismatch` and `wrong_capability`. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_bind_machine_and_capability`.
 - 1.9.4 - A stale epoch returns 409, an expired grant 401, a bad signature 403, and a missing or malformed header Python's 401 or 400. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_follow_python_presentation_order`.
 - 1.9.5 - A 15 MiB apply body is accepted and a 17 MiB body returns 413. test: `crates/gcodeindex/tests/node_routes.rs::apply_body_limit_is_sixteen_mib`.
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
@@ -1132,7 +1145,7 @@ this leaf bumps `gdaemon` by 0.0.1.
 #24449 ports the interactive handshake and `capabilities_from_snapshot`, and it
 always issues `PostgresDirect`. This leaf ports 1.6's two rules:
 
-- The handshake issues `Brokered` with the four node operations to an interactive
+- The handshake issues `Brokered` with the `node_code_index` operation to an interactive
   principal whose machine differs from the daemon machine
   (`gobby_core::machine::read_machine_id_from_home`). It skips credential issuance and
   caps expiry only for `Direct`.
