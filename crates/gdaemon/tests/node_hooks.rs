@@ -528,6 +528,46 @@ async fn ingress_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn ingress_disconnect_after_first_frame_releases() -> anyhow::Result<()> {
+    use http_body_util::BodyExt;
+
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (release_entered, release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let response = call_hook(
+        node.node.clone(),
+        hook_request(Some("partial-delivery"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    let frame = body.frame().await.expect("response data frame")?;
+    assert_eq!(serde_json::from_slice::<Value>(frame.data_ref().unwrap())?, reply);
+    drop(body);
+    let released = tokio::time::timeout(std::time::Duration::from_secs(3), release_entered).await;
+    assert!(
+        released.is_ok(),
+        "dropping after one frame must release the receipt before terminal poll"
+    );
+    released??;
+    release.send(()).unwrap();
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].path, RECEIPTS);
+    assert_eq!(requests[1].body["op"], "release");
+    assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
+    assert_eq!(
+        node.node.hook_ledger.marker("partial-delivery").await?.unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn ingress_unledgered_passthrough() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
     let node = NodeHome::new(&hub)?;

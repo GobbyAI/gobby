@@ -268,7 +268,9 @@ impl Stream for DeliveryBody {
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let bytes = self.bytes.take();
-        self.receipt.take();
+        if bytes.is_none() {
+            self.receipt.take();
+        }
         Poll::Ready(bytes.map(Ok))
     }
 }
