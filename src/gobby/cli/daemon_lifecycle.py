@@ -57,7 +57,14 @@ __all__ = ["kill_all_gobby_daemons"]
 
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
-DAEMON_HEALTH_TIMEOUT_SECONDS = 120.0
+# Startup readiness budget. Serving /api/health is one early step of subsystem
+# init, so the health wait reuses this budget: a loaded boot that is still
+# initializing must not be reported as a failed start. Subsystem startup is
+# fail-soft and progress-terminal, so an unfinished poll means "still
+# initializing", never "broken". Sized against measured time-to-ready, which
+# reached 168s on a loaded machine.
+STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
+DAEMON_HEALTH_TIMEOUT_SECONDS = STARTUP_READINESS_TIMEOUT_SECONDS
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
@@ -525,7 +532,7 @@ def _restart_backend(
     """Restart a serving backend; None requires a full lifecycle replacement."""
     from gobby.cli.runtime import get_cli_runtime
 
-    from .daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS, _poll_startup_progress
+    from .daemon_start import _poll_startup_progress
 
     runtime = get_cli_runtime(ctx)
     port = runtime.read_only_operational_config().daemon_port

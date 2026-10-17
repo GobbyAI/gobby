@@ -34,7 +34,7 @@ from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.status import format_startup_summary
 
 from .daemon import _services_start
-from .daemon_lifecycle import _step, _wait_for_daemon_health
+from .daemon_lifecycle import STARTUP_READINESS_TIMEOUT_SECONDS, _step, _wait_for_daemon_health
 from .installers.service import get_service_status, service_start
 from .ui_mode import resolve_ui_mode
 from .utils import (
@@ -46,14 +46,6 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-# Readiness subsumes health: serving /api/health is one early step of subsystem
-# init, so this budget must never be smaller than DAEMON_HEALTH_TIMEOUT_SECONDS.
-# Subsystem startup is fail-soft and progress-terminal — a failed init records an
-# error and still finishes the tracker — so an unfinished poll only ever means
-# "still initializing", never "broken". Sized against measured time-to-ready,
-# which reached 168s on a loaded machine while the previous 60s budget reported
-# that healthy daemon as a failed start.
-STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
 PORT_REUSE_WAIT_SECONDS = 10.0
 
 

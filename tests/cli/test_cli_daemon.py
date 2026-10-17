@@ -385,6 +385,35 @@ def test_startup_readiness_budget_is_not_smaller_than_the_health_budget() -> Non
     assert readiness_budget >= health_budget
 
 
+def test_service_start_health_wait_covers_a_slow_but_successful_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A daemon that turns healthy 150s into a loaded start is a successful start (#23650).
+
+    The service-start health wait had a 120s budget, so a boot that reached
+    /api/health after that expired failed although the daemon came up healthy.
+    """
+    from gobby.cli import daemon_lifecycle
+    from gobby.cli.daemon_lifecycle import _wait_for_daemon_health
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        "gobby.cli.daemon_lifecycle.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    monkeypatch.setattr(
+        daemon_lifecycle,
+        "_is_daemon_healthy",
+        lambda _port, *, timeout=1.0: clock["now"] >= 150.0,
+    )
+
+    elapsed = _wait_for_daemon_health(60887)
+
+    assert elapsed is not None
+    assert elapsed == pytest.approx(150.0, abs=0.5)
+
+
 def test_reconcile_ui_exposure_reports_url(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
