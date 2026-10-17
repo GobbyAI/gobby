@@ -145,8 +145,16 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 @pytest.mark.integration
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
+    subprocess.run(
+        ["cargo", "build", "--locked", "-p", "gobby-daemon"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
-    assert candidate.is_file(), "build the checkout's debug gdaemon before native proof"
+    assert candidate.is_file(), "the checkout build must produce its routed gdaemon candidate"
     _PROVE_CATALOG_FRESHNESS(repo, candidate)
 
 
