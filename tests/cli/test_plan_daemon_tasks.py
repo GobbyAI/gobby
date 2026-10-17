@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +11,7 @@ import httpx
 import pytest
 
 from gobby.cli._plan_daemon_tasks import DaemonTaskLookup
+from gobby.cli.utils_config import get_daemon_client
 from gobby.tasks.expansion._validate import CompletedSectionExemptionsUnavailable
 from gobby.utils.daemon_client import DaemonAuthenticationError
 
@@ -243,3 +245,31 @@ def test_lookup_failures_raise_the_named_condition(client: FakeTaskClient, messa
         )
 
     assert str(raised.value).startswith(message)
+
+
+def test_plan_validation_daemon_calls_keep_the_thirty_second_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plans validate's daemon calls get 30s; the shared client default stays 5s (#23650)."""
+    url = "http://127.0.0.1:60887"
+    monkeypatch.setattr("gobby.cli.utils_config.get_daemon_url", lambda: url)
+    client = get_daemon_client()
+    timeouts: list[float] = []
+
+    def http_api(**kwargs: Any) -> httpx.Response:
+        timeouts.append(kwargs["timeout"])
+        return httpx.Response(
+            200,
+            json={"success": True, "result": {"tasks": []}},
+            request=httpx.Request("POST", f"{url}/api/mcp/gobby-tasks/tools/list_tasks"),
+        )
+
+    monkeypatch.setattr(client, "call_http_api", http_api)
+
+    rows = DaemonTaskLookup(client).list_tasks(
+        project_id="project-1", limit=2, offset=0, sort_by="updated_at"
+    )
+
+    assert rows == []
+    assert timeouts == [30.0]
+    assert inspect.signature(get_daemon_client).parameters["timeout"].default == 5.0
