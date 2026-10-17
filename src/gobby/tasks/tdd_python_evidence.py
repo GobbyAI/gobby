@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import copy
 import re
+import sys
 import textwrap
 from collections.abc import Iterable
 
@@ -639,3 +641,65 @@ def _module_dependency_matches(path: str, dependency: str) -> bool:
         or module.startswith(dependency + ".")
         or dependency.startswith(module + ".")
     )
+
+
+def _has_pytest_fail_placeholder(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Reject fail reached before control flow or a call into application code."""
+    node = _original_test_node(test, evidence, run, parse_cache)
+    if node is None:
+        return False
+    # Builtins, stdlib and test-framework setup are not calls into code under test.
+    setup_roots = {"pytest", "unittest", "builtins"}
+    fail_calls = {"pytest.fail"}
+    module = _original_test_module(test, evidence, run, parse_cache)
+    for item in [*(module.body if module is not None else ()), *node.body]:
+        if isinstance(item, ast.Import):
+            fail_calls.update(
+                f"{alias.asname or alias.name}.fail"
+                for alias in item.names
+                if alias.name == "pytest"
+            )
+            setup_roots.update(
+                alias.asname or alias.name.split(".")[0]
+                for alias in item.names
+                if alias.name.split(".")[0] in sys.stdlib_module_names | {"pytest"}
+            )
+        elif isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in (
+            sys.stdlib_module_names | {"pytest"}
+        ):
+            setup_roots.update(alias.asname or alias.name for alias in item.names)
+            if item.module == "pytest":
+                fail_calls.update(
+                    alias.asname or alias.name for alias in item.names if alias.name == "fail"
+                )
+    for statement in node.body:
+        for item in _executed_python_nodes(statement):
+            if isinstance(
+                item,
+                ast.If
+                | ast.IfExp
+                | ast.BoolOp
+                | ast.For
+                | ast.AsyncFor
+                | ast.While
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.Match
+                | ast.Assert
+                | ast.comprehension,
+            ) or (isinstance(item, ast.Compare) and len(item.comparators) > 1):
+                return False
+            if isinstance(item, ast.Call):
+                if ast.unparse(item.func) in fail_calls:
+                    return True
+                root = ast.unparse(item.func).split(".", 1)[0]
+                if root not in setup_roots and root not in vars(builtins):
+                    return False
+    return False

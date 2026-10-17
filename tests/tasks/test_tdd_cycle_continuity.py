@@ -1,5 +1,6 @@
 """Task-level TDD cycles survive handoff and compacted runner output."""
 
+import gzip
 import json
 import subprocess
 from dataclasses import replace
@@ -28,7 +29,10 @@ from gobby.tasks.close_test_coverage import (
     drop_foreign_runs,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
-from gobby.tasks.transcript_evidence import _derive_transcript_path_evidence
+from gobby.tasks.transcript_evidence import (
+    _derive_transcript_evidence_sync,
+    _derive_transcript_path_evidence,
+)
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -799,6 +803,140 @@ def _pair(
             },
         },
     ]
+
+
+def _archived_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    archive_owner: str = "closing",
+    window_start: datetime = START,
+    overlap: bool = False,
+) -> TranscriptEvidence:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    production = "src/feature.py"
+    early = _pair(
+        1,
+        "Write",
+        {"file_path": str(tmp_path / TEST_PATH), "content": "def test_feature(): assert 1 == 2"},
+        "",
+        cwd=str(tmp_path),
+    )
+    early += _pair(
+        2, "Bash", {"command": _run(2, red=True).command}, _run(2, red=True).output or ""
+    )
+    current = _pair(
+        3,
+        "Write",
+        {"file_path": str(tmp_path / production), "content": "value = 2"},
+        "",
+        cwd=str(tmp_path),
+    )
+    current += _pair(4, "Bash", {"command": _run(4, red=False).command}, "1 passed in 0.01s")
+    transcript = tmp_path / "current.jsonl"
+    records = [*early, *current] if overlap else current
+    transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n", encoding="utf-8")
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    with gzip.open(archives / f"{archive_owner}.jsonl.gz", "wt", encoding="utf-8") as stream:
+        stream.write("\n".join(json.dumps(row) for row in early) + "\n")
+    session = Session(
+        id="closing",
+        external_id="closing",
+        machine_id="isolated",
+        source="claude",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=START,
+        updated_at=START,
+    )
+    files = {TEST_PATH, production}
+    evidence, _ = _derive_transcript_evidence_sync(
+        session,
+        window_start,
+        default_validation_detection_config(),
+        files,
+        str(tmp_path),
+        frozenset((str(tmp_path), path) for path in files),
+        str(archives),
+        "isolated",
+        None,
+    )
+    return evidence
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+def test_red_in_prior_transcript_of_closing_session_is_credited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: bool
+) -> None:
+    evidence = _archived_cycle(tmp_path, monkeypatch, overlap=overlap)
+    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=(TEST_PATH,))
+    assert result.passed, result.findings
+    assert result.red_runs == (_run(2, red=True).command,)
+    assert evidence.sessions == ("closing",)
+    assert str(tmp_path / "archives/closing.jsonl.gz") in evidence.attempted_paths
+
+
+@pytest.mark.parametrize("exclusion", ["unrelated", "before_claim"])
+def test_red_in_unrelated_session_transcript_is_not_credited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exclusion: str
+) -> None:
+    evidence = _archived_cycle(
+        tmp_path,
+        monkeypatch,
+        archive_owner="other" if exclusion == "unrelated" else "closing",
+        window_start=START + timedelta(seconds=3) if exclusion == "before_claim" else START,
+    )
+    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=(TEST_PATH,))
+    assert not result.passed
+    assert not result.red_runs
+    assert not any(run.outcome == "failure" for run in evidence.validation_runs)
+
+
+@pytest.mark.parametrize("has_red", [False, True])
+def test_named_unchanged_test_is_not_refused_for_missing_edit(has_red: bool) -> None:
+    evidence = TranscriptEvidence(
+        edits=(_edit("src/feature.py", 3),),
+        validation_runs=(*((_run(2, red=True),) if has_red else ()), _run(4, red=False)),
+    )
+    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
+    assert result.passed, result.findings
+    assert result.red_runs == ((_run(2, red=True).command,) if has_red else ())
+    assert result.details()["regression_tests"] == ([] if has_red else [_test().reference])
+
+
+def test_unchanged_regression_still_requires_a_fresh_pass() -> None:
+    evidence = TranscriptEvidence(
+        edits=(_edit("src/feature.py", 3),),
+        validation_runs=(_run(2, red=False),),
+    )
+    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
+    assert not result.passed
+    assert any("no pass" in finding for finding in result.findings)
+
+
+def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
+    changed = _test("tests/test_changed.py", "test_changed")
+    evidence = TranscriptEvidence(
+        edits=(_edit(changed.path, 1), _edit("src/feature.py", 3)),
+        validation_runs=(
+            _run(2, red=True),
+            _run(4, red=False),
+            replace(_run(5, red=False), command="uv run pytest tests/test_changed.py -q"),
+        ),
+    )
+    result = evaluate_tdd_evidence(
+        (changed, _test()), evidence, implementation_paths=(changed.path, "src/feature.py")
+    )
+    assert not result.passed
+    assert not result.red_runs
+    assert any(changed.reference in finding for finding in result.findings)
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])

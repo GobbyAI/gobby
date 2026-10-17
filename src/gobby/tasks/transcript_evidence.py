@@ -497,7 +497,13 @@ def _resolve_transcript_paths(
     if primary is None:
         return [], attempted
     supplemental = find_supplemental_transcripts_on_disk(session.source, primary)
-    return [primary, *supplemental], [*attempted, *supplemental]
+    # A compact or account switch can replace a live file at the same path.
+    # Read this session's archive as well; never scan other sessions' files.
+    archive = str(get_archive_dir(archive_dir) / f"{session.external_id}.jsonl.gz")
+    if archive != primary and Path(archive).is_file():
+        supplemental.append(archive)
+    paths = list(dict.fromkeys((primary, *supplemental)))
+    return paths, list(dict.fromkeys((*attempted, *supplemental)))
 
 
 def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
