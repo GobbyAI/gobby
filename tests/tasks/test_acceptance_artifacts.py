@@ -1766,8 +1766,71 @@ def test_assert_helper_named_in_non_identifier_literal_stays_credited(tmp_path: 
             def test_feature(self):
                 self.assertTrue(make_receipt())
         """,
+        """
+        from unittest.mock import patch
+
+        def test_feature():
+            with patch("receipts.publish") as sink:
+                publish(sink)
+                sink.assert_called_once_with("ok")
+        """,
+        """
+        import unittest
+
+        class Base(unittest.TestCase):
+            pass
+
+        class TestFeature(Base):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+        """
+        from unittest.mock import MagicMock
+
+        def test_feature():
+            sink = MagicMock()
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        from unittest.mock import patch
+
+        @patch("receipts.publish")
+        def test_feature(sink):
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        def test_feature(mocker):
+            sink = mocker.patch("receipts.publish")
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """,
+        """
+        import unittest
+
+        class TestFeature(unittest.TestCase):
+            def test_feature(self):
+                self.client.post.assert_called_once_with("/receipts")
+        """,
+        """
+        def test_feature(fake):
+            fake.assert_called_once_with(1)
+        """,
     ],
-    ids=["mock_assertion", "testcase", "async_testcase_alias", "testcase_from_import"],
+    ids=[
+        "mock_assertion",
+        "testcase",
+        "async_testcase_alias",
+        "testcase_from_import",
+        "patch_result",
+        "testcase_local_base",
+        "local_magicmock",
+        "patch_decorator_parameter",
+        "mocker_patch_result",
+        "self_attribute_mock",
+        "unbound_fixture_fake",
+    ],
 )
 def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: str) -> None:
     result = _committed_python_result(tmp_path, source)
@@ -1802,11 +1865,308 @@ def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: 
             def test_feature(self):
                 self.assertEqual(make_receipt(), "ok")
         """,
+        """
+        import unittest
+
+        class Base(unittest.TestCase):
+            def assertEqual(self, first, second, msg=None):
+                pass
+
+        class TestFeature(Base):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+        """
+        import unittest
+
+        def marker(cls):
+            return cls
+
+        @marker
+        class Base(unittest.TestCase):
+            pass
+
+        class TestFeature(Base):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
+        """
+        import unittest
+
+        class Base(unittest.TestCase):
+            pass
+
+        class Base(object):
+            pass
+
+        class TestFeature(Base):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
     ],
-    ids=["noop_method", "noop_module_def", "not_a_testcase"],
+    ids=[
+        "noop_method",
+        "noop_module_def",
+        "not_a_testcase",
+        "assert_equal_noop_override",
+        "decorated_local_base",
+        "base_bound_twice",
+    ],
 )
 def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: str) -> None:
     result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            if False:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            raise NotImplementedError
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            if not True:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            if True:
+                pass
+            else:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            while False:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+    ],
+    ids=[
+        "after_return",
+        "under_if_false",
+        "after_raise",
+        "under_not_true",
+        "else_of_true",
+        "while_false",
+    ],
+)
+def test_assert_helper_unreachable_assertion_is_not_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt, strict):
+            if strict:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok", True)
+        """,
+        """
+        def _assert_ok(receipt):
+            try:
+                return None
+            finally:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+            return None
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+    ],
+    ids=["if_strict", "finally_after_return", "assert_before_return"],
+)
+def test_assert_helper_reachable_assertion_is_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            return None
+            _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            return None
+            assert make_receipt() == "ok"
+        """,
+    ],
+    ids=["test_body_call_after_return", "test_body_assert_after_return"],
+)
+def test_test_body_unreachable_assertion_is_not_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+MOCK_CALL_TEST = """
+    from unittest.mock import MagicMock
+
+    def test_feature():
+        sink = MagicMock()
+        publish(sink)
+        sink.assert_called_once_with("ok")
+    """
+
+
+def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None:
+    conftest = "import pytest\n\n\n@pytest.fixture\ndef client():\n    return None\n"
+    result = _committed_python_result(
+        tmp_path, MOCK_CALL_TEST, extra={"tests/conftest.py": conftest}
+    )
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    ("source", "extra"),
+    [
+        (
+            """
+            from unittest.mock import MagicMock
+            from .fakes import assert_called_once_with
+
+            def test_feature():
+                sink = MagicMock()
+                publish(sink)
+                sink.assert_called_once_with("ok")
+            """,
+            {"tests/fakes.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
+        (
+            MOCK_CALL_TEST,
+            {"tests/conftest.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
+        (
+            MOCK_CALL_TEST,
+            {"conftest.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
+        (
+            MOCK_CALL_TEST,
+            {
+                "tests/conftest.py": "from .receipts_support import assert_called_once_with\n",
+                "tests/receipts_support.py": "def assert_called_once_with(*args):\n    pass\n",
+            },
+        ),
+        (
+            """
+            from unittest.mock import MagicMock
+            from .support import Receipts
+
+            def test_feature():
+                sink = MagicMock()
+                publish(sink)
+                sink.assert_called_once_with("ok")
+            """,
+            {
+                "tests/support.py": "Receipts = None\n",
+                "tests/support/__init__.py": "def assert_called_once_with(*args):\n    pass\n",
+            },
+        ),
+    ],
+    ids=[
+        "fakes_module",
+        "test_dir_conftest",
+        "parent_conftest",
+        "conftest_imported_module",
+        "module_package_pair",
+    ],
+)
+def test_mock_assertion_defined_nearby_is_not_credited(
+    tmp_path: Path, source: str, extra: dict[str, str]
+) -> None:
+    result = _committed_python_result(tmp_path, source, extra=extra)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "conftest",
+    [
+        """
+        import pytest
+        from unittest.mock import MagicMock
+
+        @pytest.fixture
+        def sink():
+            return MagicMock(**{"assert_called_once_with": lambda *args: None})
+        """,
+        """
+        import pytest
+        from unittest.mock import MagicMock
+
+        @pytest.fixture
+        def sink():
+            return MagicMock(assert_called_once_with=lambda *args: None)
+        """,
+    ],
+    ids=["dict_literal_key", "keyword_argument"],
+)
+def test_mock_assertion_rebound_in_conftest_is_not_credited(tmp_path: Path, conftest: str) -> None:
+    source = """
+        def test_feature(sink):
+            publish(sink)
+            sink.assert_called_once_with("ok")
+        """
+    result = _committed_python_result(tmp_path, source, extra={"tests/conftest.py": conftest})
 
     assert result.passed is False
     assert result.findings == (NO_ASSERTION,)
