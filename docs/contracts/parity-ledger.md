@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1101. Unclassified: 0.
+Public surfaces and evidence gates: 1103. Unclassified: 2.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -617,8 +617,10 @@ Public surfaces and evidence gates: 1101. Unclassified: 0.
 | `HTTP POST /api/memories/{memory_id}/move` | proxied | Python src/gobby/servers/routes/memory.py::move_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/move remains under #21563 Memory and search. |
 | `HTTP POST /api/memories/{memory_id}/promote` | proxied | Python src/gobby/servers/routes/memory.py::promote_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/promote remains under #21563 Memory and search. |
 | `HTTP POST /api/memories/{memory_id}/restore` | proxied | Python src/gobby/servers/routes/memory.py::restore_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/restore remains under #21563 Memory and search. |
+| `HTTP POST /api/nodes/checkouts` | **unclassified** |  |
 | `HTTP POST /api/nodes/hooks/replay` | proxied | Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.replay` shares hub replay decisions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port replay decisions and node machine ownership checks to Rust. |
 | `HTTP POST /api/nodes/receipts` | proxied | Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.receipts` applies hub receipt actions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port receipt authorization, UUID validation and compare-and-set side effects to Rust. |
+| `HTTP POST /api/nodes/report` | **unclassified** |  |
 | `HTTP POST /api/pipelines/approve/{token}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/approve/{token}; Python handler `src/gobby/servers/routes/pipelines.py:432`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:284`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions/import` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/import; Python handler `src/gobby/servers/routes/pipeline_definitions.py:238`; Rust front-door dispatch currently proxies this family. |
