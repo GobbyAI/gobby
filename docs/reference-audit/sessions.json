@@ -1374,8 +1374,8 @@
       "id": "dirty-path-approval-source",
       "kind": "source-audit",
       "status": "passed",
-      "command": "gcode symbol-at src/gobby/cli/sessions_dirty_paths.py:14; registered Click cli_verbs inventory",
-      "result": "The registered gobby sessions approve-dirty-paths command requires SESSION_REF, --checkout ROOT and PATHS. approve_dirty_paths records content-fingerprinted operator approval; a later approval replaces the earlier approval for that checkout. Its docstring identifies block-dirty-path-approval-cli as the agent-session refusal. Existing regression: tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_records_the_operator_approval (source inspected, not rerun for this docs correction)."
+      "command": "gcode symbol-at src/gobby/cli/sessions_dirty_paths.py:40; gcode symbol-at src/gobby/servers/routes/sessions/dirty_paths.py:29; registered Click cli_verbs inventory",
+      "result": "The registered gobby sessions approve-dirty-paths command requires SESSION_REF, --checkout ROOT and PATHS. It sends the bootstrap operator API key to POST /api/sessions/{session_ref}/dirty-path-approvals, and the route accepts only a verified front-door operator identity before record_dirty_path_approval records the content-fingerprinted approval; a later approval replaces the earlier approval for that checkout. The CLI docstring identifies block-dirty-path-approval-cli as the agent-session refusal. Regressions: tests/servers/routes/test_dirty_path_approval_routes.py::test_dirty_path_approval_route_records_a_verified_operator_approval and tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_sends_only_the_operator_key (source inspected, not rerun for this docs correction)."
     },
     {
       "id": "source-audit",
