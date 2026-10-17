@@ -182,7 +182,7 @@ def register_memory_review_tools(
         resolved_session_id, session = resolved_session
         authenticated_id = get_current_session_id()
         if authenticated_id is not None and authenticated_id != resolved_session_id:
-            return _error("cross_project_task_forbidden", "Calling session identity mismatch.")
+            return _error("task_not_found", f"Could not resolve task {task_id!r}.")
         project_id = getattr(session, "project_id", None)
         if not isinstance(project_id, str) or not project_id:
             return _error(
@@ -202,7 +202,10 @@ def register_memory_review_tools(
                     sessions=session_manager,
                 )
             except CrossProjectTaskForbidden as exc:
-                return _error(str(exc), "The caller cannot review this project's task.")
+                return _error(
+                    str(exc),
+                    f"Could not resolve task {task_id!r} in the calling session's project.",
+                )
             except (TaskNotFoundError, ValueError):
                 return _error(
                     "task_not_found",

@@ -246,7 +246,7 @@ async def test_cross_project_ref_without_authority_is_refused(
                     "session_id": world.stranger_id,
                 },
             )
-    assert result["error"] == "cross_project_task_forbidden"
+    assert result["error"] == "task_not_found"
     assert world.git("rev-parse", "HEAD") == world.base
     assert list_close_receipts(world.db, world.task.id) == []
 
@@ -266,7 +266,7 @@ async def test_cross_project_review_cannot_impersonate_ancestor(world: CrossProj
                 "session_id": world.caller_id,
             },
         )
-    assert result["error"] == "cross_project_task_forbidden"
+    assert result["error"] == "task_not_found"
     assert (
         SessionVariableManager(world.db)
         .get_variable_subset(world.caller_id, ("_memory_task_review_records",))
@@ -320,7 +320,7 @@ async def test_role_name_alone_does_not_grant_cross_project_access(
         )
     SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", "assistant")
     result = await approve(world, caller.id, world.ref("qualified"))
-    assert result["error"] == "cross_project_task_forbidden"
+    assert result["error"] == "task_not_found"
     assert list_close_receipts(world.db, world.task.id) == []
 
 

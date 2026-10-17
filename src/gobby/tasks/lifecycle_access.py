@@ -15,7 +15,8 @@ class CrossProjectTaskForbidden(ValueError):
     """The authenticated caller has no authority over a foreign task."""
 
     def __init__(self) -> None:
-        super().__init__("cross_project_task_forbidden")
+        # Preserve the not-found contract for refs outside the caller authority.
+        super().__init__("task_not_found")
 
 
 def is_operator_coordinator(tasks: LocalTaskManager, caller: Session) -> bool:
