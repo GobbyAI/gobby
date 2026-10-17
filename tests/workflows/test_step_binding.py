@@ -1024,6 +1024,138 @@ def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(seats: _Sea
     assert _current_step(seats.db, seats.former) == "claim"
 
 
+@pytest.mark.parametrize("starting_step", ["claim", "implement"])
+async def test_developer_reclaim_rebinds_assigned_task(
+    seats: _Seats, starting_step: str, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
+    other = tasks.create_task(
+        project_id, "Next claim", validation_criteria="Claim follows selection."
+    )
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, starting_step)
+    with session_context_for_test(seats.former):
+        claimed = await _task_proxy(seats).call_tool(
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": f"#{other.seq_num}"},
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+    assert claimed["task_id"] == other.id
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(seats.former, "claim_task", {"task_id": f"#{other.seq_num}"}, claimed),
+        seats.former,
+        SessionVariableManager(seats.db).get_variables(seats.former),
+    )
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "route_skills"
+    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (
+        other.id,
+        f"#{other.seq_num}",
+    )
+    escalation = replace(
+        _after_tool(
+            seats.former,
+            "escalate_task",
+            {"task_id": f"#{other.seq_num}", "reason": "Handed off: reviewer LAND"},
+            {},
+        ),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    assert RuleEngine(seats.db)._check_step_tool_enforcement(escalation, seats.former, {}) is None
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_unselected_or_failed_claim_completion_does_not_rebind(
+    seats: _Seats, failed: bool
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    selected = tasks.create_task(
+        project_id, "Selected", validation_criteria="Selection stays current."
+    )
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    claim_task(seats.db, selected.id, seats.former)
+    output = (
+        {"success": False, "error": "Claim failed", "task_id": selected.id}
+        if failed
+        else {"success": True, "task_id": seats.task_id, "ref": seats.ref}
+    )
+    event = _after_tool(seats.former, "claim_task", {"task_id": output["task_id"]}, output)
+    if failed:
+        # The proxy delivers internal tool failures directly, without a success wrapper.
+        event.data["tool_output"] = output
+    await RuleEngine(seats.db)._process_step_after_tool(
+        event,
+        seats.former,
+        SessionVariableManager(seats.db).get_variables(seats.former),
+    )
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "implement"
+    assert state["assigned_task_id"] == seats.task_id
+    assert (
+        SessionVariableManager(seats.db).get_variables(seats.former)["active_task_id"]
+        == selected.id
+    )
+
+
+async def test_relaunched_developer_recovers_handoff_close_preview(
+    seats: _Seats, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(repo))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    proxy = _task_proxy(seats)
+    engine = RuleEngine(seats.db)
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(seats.former):
+            result = await proxy.call_tool(
+                "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
+            )
+        await engine._process_step_after_tool(
+            _after_tool(seats.former, tool, arguments, result),
+            seats.former,
+            SessionVariableManager(seats.db).get_variables(seats.former),
+        )
+        return cast(dict[str, Any], result)
+
+    handoff = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at linked commit"}
+    assert await call("escalate_task", handoff) == {}
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    # A fresh relaunch has lost the old instance's handoff permission.
+    _seat(seats, seats.former, "claim", bound=False)
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == []
+    claimed = await call("claim_task", {"task_id": seats.ref})
+    assert claimed["task_id"] == seats.task_id
+    assert _current_step(seats.db, seats.former) == "route_skills"
+    # Repeating the authorized handoff releases the reclaimed escalated task
+    # and rebuilds close rights through ordinary tool effects, without variable writes.
+    assert await call("escalate_task", handoff) == {}
+    assert _current_step(seats.db, seats.former) == "claim"
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    assert "error" not in await call(
+        "de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"}
+    )
+    preview = await call(
+        "close_task",
+        {"task_id": seats.ref, "preview": True, "changes_summary": "Landed and released."},
+    )
+    assert preview["preview"] is True
+    assert preview["blocking_reasons"] == [
+        "Deterministic gates passed; a real close requires independent review."
+    ]
+    assert tasks.get_task(seats.task_id).closed_at is None
+
+
 @pytest.mark.parametrize("closed_bound", [False, True])
 async def test_active_claim_rebinds_parked_or_closed_step_task(
     seats: _Seats, closed_bound: bool, tmp_path: Path

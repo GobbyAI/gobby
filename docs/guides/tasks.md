@@ -125,6 +125,18 @@ Git records whole seconds, so same-second ordering is treated as unproven.
 Close uses validation runs started while its task was selected; edits to that
 task's owned paths always count and stale earlier green evidence.
 
+### Recover a handed-off task after a developer relaunch
+
+A fresh developer workflow may no longer have its previous handoff list. After
+the Lane Manager releases landed work, reclaim that task with `claim_task`. If
+`de_escalate_task` or the close preview says "Finish only a task this developer
+handed off", repeat `escalate_task` on the reclaimed task with the original
+`Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated
+task and records its handoff in the current workflow. Then call
+`de_escalate_task` and `close_task(preview=true)` through the ordinary developer
+path. The preview still enforces the close checklist and independent review.
+This recovery requires no workflow-variable writes.
+
 ### Close
 
 Leaf task closure requires a change summary. If the session edited in-repo files,
