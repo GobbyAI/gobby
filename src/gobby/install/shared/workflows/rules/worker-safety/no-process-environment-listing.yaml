@@ -4,7 +4,7 @@ tags: [worker-safety, enforcement, default, gobby]
 # them is refused for every session (#24566). PID-only lookups stay open.
 rules:
   no-process-environment-listing:
-    description: "Block commands that print other processes' environment or full arguments."
+    description: "Block commands that print other processes' environment or arguments: ps aux, ps -o args or command, plain ps, ps -e or -E, pgrep -fl, pgrep -a, and /proc/<pid>/environ."
     event: before_tool
     enabled: true
     priority: 50
@@ -13,8 +13,10 @@ rules:
         tools: [Bash]
         # mask_quoted keeps a quoted pattern such as pgrep -f 'gobby -a' as data.
         mask_quoted: true
-        # Wrappers and VAR=value assignments are skipped in any order before the ps
-        # or pgrep word. A dashed ps group with e or E is refused: BSD -e means -E
-        # under COMMAND_MODE=legacy, so the lowercase form is not safe to allow.
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|-\\S+|\\d+)\\s+)*(?:(?:[^\\s;&|]*/)?ps\\s+(?:[A-Za-z]*e[A-Za-z]*(?=[\\s)]|$)|(?:[^\\s;&|]+\\s+)*-[A-Za-z]*[eE])|(?:[^\\s;&|]*/)?pgrep(?:(?=[^;&|\\n]*\\s(?:-[A-Za-z]*l|--list-name\\b))(?=[^;&|\\n]*\\s(?:-[A-Za-z]*f|--full\\b))\\s|\\s+(?:[^\\s;&|]+\\s+)*?(?:-[A-Za-z]*a|--list-full\\b))|[^;&|\\n]*/proc/[^\\s/]+/environ\\b)"
-        reason: "Printing other processes' environment or full arguments (ps e, ps -E, ps -e, ps eww, pgrep -fl, pgrep -a, /proc/<pid>/environ) is not allowed. PID-only forms such as pgrep -f and pgrep -g are permitted."
+        # ps is allowed only with an explicit -o list of non-argument columns
+        # (pid, ppid, pgid, uid, user, gid, group, etime, etimes, time, stat, state,
+        # tt, tty, lstart, start, pcpu, pmem, rss, vsz, nice, pri, comm) plus the
+        # selector flags -A -a -x -r -w -p -q -U -G -g -t. Anything else is refused.
+        # Quoted or variable -o lists are refused too, because mask_quoted blanks them.
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|-\\S+|\\d+)\\s+)*(?:(?:[^\\s;&|]*/)?ps(?=[ \\t\\n)]|$)(?!(?=(?:[ \\t]+(?:-[AaxrwW]*o[ \\t]*(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?(?:,(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?)*(?=[ \\t\\n;&|)]|$)|-[AaxrwW]+|-[pqUGgt][ \\t]*[A-Za-z0-9_][A-Za-z0-9_.,:]*))*[ \\t]+-[AaxrwW]*o[ \\t]*(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?(?:,(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?)*(?=[ \\t\\n;&|)]|$)(?:[ \\t]+(?:-[AaxrwW]*o[ \\t]*(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?(?:,(?:pid|ppid|pgid|uid|user|gid|group|etimes?|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm)(?:=[A-Za-z0-9_]*)?)*(?=[ \\t\\n;&|)]|$)|-[AaxrwW]+|-[pqUGgt][ \\t]*[A-Za-z0-9_][A-Za-z0-9_.,:]*))*[ \\t]*(?:[;&|\\n)]|$)))|(?:[^\\s;&|]*/)?pgrep(?:(?=[^;&|\\n]*\\s(?:-[A-Za-z]*l|--list-name\\b))(?=[^;&|\\n]*\\s(?:-[A-Za-z]*f|--full\\b))\\s|\\s+(?:[^\\s;&|]+\\s+)*?(?:-[A-Za-z]*a|--list-full\\b))|[^;&|\\n]*/proc/[^\\s/]+/environ\\b)"
+        reason: "Printing other processes' environment or arguments is refused. ps is allowed only with -o naming non-argument columns (pid, ppid, pgid, uid, user, gid, group, etime, etimes, time, stat, state, tt, tty, lstart, start, pcpu, pmem, rss, vsz, nice, pri, comm) and selector flags -A -a -x -r -w -p -q -U -G -g -t. Refused: ps aux, ps -o args or command (or cmd), plain ps and ps without -o, ps -e, -E, -f, -u, -O, --format, quoted or variable -o lists, pgrep -fl, pgrep -a, and /proc/<pid>/environ. PID-only pgrep forms such as pgrep -f and pgrep -g stay permitted."
