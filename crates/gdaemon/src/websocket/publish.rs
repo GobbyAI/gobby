@@ -9,6 +9,7 @@ use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use super::broker::{Batch, ConnectionId, MAX_QUEUED_BYTES};
@@ -65,7 +66,7 @@ async fn bind(native: &NativeWs, token: &str, headers: &HeaderMap, body: Body) -
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    let Ok(settings) = serde_json::from_slice::<Settings>(&body) else {
+    let Some(settings) = parse_object::<Settings>(&body) else {
         return status_only(StatusCode::BAD_REQUEST);
     };
     let generation = format!("{:032x}", rand::random::<u128>());
@@ -86,7 +87,7 @@ async fn publish(
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    let Ok(request) = serde_json::from_slice::<PublishRequest>(&body) else {
+    let Some(request) = parse_object::<PublishRequest>(&body) else {
         return status_only(StatusCode::BAD_REQUEST);
     };
     // A stale generation has no bound of its own; the commit refuses it with 409.
@@ -119,6 +120,15 @@ async fn publish(
         Ok(()) => status_only(StatusCode::NO_CONTENT),
         Err(refusal) => status_only(refusal.status()),
     }
+}
+
+/// Parses one JSON object into `T`. Serde also reads a struct from a sequence,
+/// in field order, so the body must open with `{` before any field is read.
+fn parse_object<T: DeserializeOwned>(body: &[u8]) -> Option<T> {
+    if body.trim_ascii_start().first() != Some(&b'{') {
+        return None;
+    }
+    serde_json::from_slice(body).ok()
 }
 
 /// Reads at most `limit` bytes. A declared length over the limit is refused

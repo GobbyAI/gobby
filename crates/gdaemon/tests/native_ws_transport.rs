@@ -625,8 +625,9 @@ async fn native_leg_relays_frames_and_consumes_controls() {
     let (mut public, mut leg) = h.admit("/direct?probe=1", &extra).await;
 
     // The public 101: the RFC accept key, no extension and no subprotocol.
-    assert!(
-        common::head_has(&public.head, &format!("sec-websocket-accept: {ACCEPT}")),
+    assert_eq!(
+        header_value(&public.head, "sec-websocket-accept").as_deref(),
+        Some(ACCEPT),
         "accept key: {}",
         public.head
     );
@@ -682,9 +683,11 @@ async fn native_leg_relays_frames_and_consumes_controls() {
     );
     wait_connections(&h.broker, 1).await;
 
-    // Text and binary relay exactly in both directions.
-    public.send(Message::text("client text")).await;
-    assert_eq!(leg.next("client text").await, Message::text("client text"));
+    // Text and binary relay exactly in both directions. Client text must be a
+    // JSON object: any other text is answered locally and never forwarded.
+    let client_event = r#"{"type": "client_event"}"#;
+    public.send(Message::text(client_event)).await;
+    assert_eq!(leg.next("client event").await, Message::text(client_event));
     let client_bytes = vec![0xff, 0x00, 0xfe, 0x80];
     public.send(Message::binary(client_bytes.clone())).await;
     assert_eq!(
@@ -724,10 +727,11 @@ async fn native_leg_relays_frames_and_consumes_controls() {
     let direct = json!({"type": "session_event", "event": "direct", "session_id": "s-1"});
     leg.send(Message::text(direct.to_string())).await;
     assert_eq!(public.text("direct reply").await, direct.to_string());
-    public.send(Message::text("after controls")).await;
+    let after = r#"{"type": "after_controls"}"#;
+    public.send(Message::text(after)).await;
     assert_eq!(
         leg.next("after controls").await,
-        Message::text("after controls"),
+        Message::text(after),
         "no control reached the bridge"
     );
 }
@@ -821,8 +825,9 @@ async fn bridge_readiness_is_one_time_and_entry_specific() {
         leg.send(Message::text(frame.clone())).await;
         assert_eq!(public.text("later bridge_ready").await, frame);
     }
-    public.send(Message::text("still open")).await;
-    assert_eq!(leg.next("still open").await, Message::text("still open"));
+    let still_open = r#"{"type": "still_open"}"#;
+    public.send(Message::text(still_open)).await;
+    assert_eq!(leg.next("still open").await, Message::text(still_open));
     let (_second, second_leg) = h.admit(DIRECT, &[]).await;
     assert_eq!(second_leg.single("x-gobby-ws-generation"), generation);
     wait_connections(&h.broker, 2).await;
@@ -1125,10 +1130,11 @@ async fn terminal_and_envelope_corpora_replay_native() {
                 expected,
                 "{context}: exactly the corpus deliveries"
             );
-            public.send(Message::text("client marker")).await;
+            let client_marker = r#"{"type": "client_marker"}"#;
+            public.send(Message::text(client_marker)).await;
             assert_eq!(
                 leg.next(&context).await,
-                Message::text("client marker"),
+                Message::text(client_marker),
                 "{context}: no control reached the bridge"
             );
         }
@@ -1359,10 +1365,10 @@ async fn invalid_handshakes_are_refused_before_the_bridge() {
 
     // The unmodified request opens a leg and upgrades.
     let (public, _leg) = h.admit(DIRECT, &[]).await;
-    assert!(common::head_has(
-        &public.head,
-        &format!("sec-websocket-accept: {ACCEPT}")
-    ));
+    assert_eq!(
+        header_value(&public.head, "sec-websocket-accept").as_deref(),
+        Some(ACCEPT)
+    );
     wait_connections(&h.broker, 1).await;
 }
 
