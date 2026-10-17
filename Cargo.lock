@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "base64 0.22.1",
  "bincode",
