@@ -312,17 +312,30 @@ def _written_names(tree: ast.Module) -> frozenset[str]:
 
 
 def _string_keys(node: ast.AST) -> list[str]:
-    """String literals a call passes or a subscript indexes, any of which can name a binding."""
+    """String names a call or subscript can bind by.
+
+    A call contributes its string arguments, the string keys of any dict-literal
+    argument, and every keyword name; a subscript contributes its index.
+    """
     if isinstance(node, ast.Call):
-        values = [*node.args, *(keyword.value for keyword in node.keywords)]
+        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+        values: list[ast.expr | None] = [*arguments]
+        for argument in arguments:
+            if isinstance(argument, ast.Dict):
+                values.extend(argument.keys)
+        names: list[str] = [keyword.arg for keyword in node.keywords if keyword.arg is not None]
     elif isinstance(node, ast.Subscript):
         values = [node.slice]
+        names = []
     else:
         return []
     return [
-        value.value
-        for value in values
-        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        *names,
+        *(
+            value.value
+            for value in values
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        ),
     ]
 
 

@@ -1545,6 +1545,30 @@ class TestFeature:
         ),
         (
             """
+            from unittest.mock import patch
+
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                with patch.dict(globals(), {"_assert_ok": lambda receipt: None}):
+                    _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(_assert_ok=lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
             class Meta(type):
                 def __new__(mcs, name, bases, namespace):
                     namespace["_assert_ok"] = lambda self, receipt: None
@@ -1624,6 +1648,8 @@ class TestFeature:
         "patch_object",
         "patch_dotted_path",
         "globals_subscript",
+        "patch_dict_literal_key",
+        "update_keyword_name",
         "metaclass_namespace",
         "module_staticmethod_rebinding",
         "imported_staticmethod_alias",
