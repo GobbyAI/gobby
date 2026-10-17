@@ -414,6 +414,59 @@ def test_service_start_health_wait_covers_a_slow_but_successful_start(
     assert elapsed == pytest.approx(150.0, abs=0.5)
 
 
+def test_wait_for_daemon_health_stops_when_the_launched_child_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A launched daemon that has exited fails the start at once (#23650)."""
+    from gobby.cli import daemon_lifecycle
+    from gobby.cli.daemon_lifecycle import _wait_for_daemon_health
+
+    clock = {"now": 0.0}
+    probes: list[float] = []
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        "gobby.cli.daemon_lifecycle.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    def never_healthy(_port: int, *, timeout: float = 1.0) -> bool:
+        probes.append(timeout)
+        return False
+
+    monkeypatch.setattr(daemon_lifecycle, "_is_daemon_healthy", never_healthy)
+
+    elapsed = _wait_for_daemon_health(60887, child_exited=lambda: True)
+
+    assert elapsed is None
+    assert len(probes) == 1
+    assert clock["now"] < 1.0
+
+
+def test_wait_for_daemon_health_keeps_waiting_while_the_launched_child_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live launched daemon still gets the whole health budget (#23650)."""
+    from gobby.cli import daemon_lifecycle
+    from gobby.cli.daemon_lifecycle import _wait_for_daemon_health
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        "gobby.cli.daemon_lifecycle.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    monkeypatch.setattr(
+        daemon_lifecycle,
+        "_is_daemon_healthy",
+        lambda _port, *, timeout=1.0: clock["now"] >= 150.0,
+    )
+
+    elapsed = _wait_for_daemon_health(60887, child_exited=lambda: False)
+
+    assert elapsed is not None
+    assert elapsed == pytest.approx(150.0, abs=0.5)
+
+
 def test_reconcile_ui_exposure_reports_url(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1148,7 +1201,10 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "Health check failed" in result.output
-            mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+            mock_wait_for_health.assert_called_once()
+            (port,) = mock_wait_for_health.call_args.args
+            assert port == mock_daemon_config.daemon_port
+            assert mock_wait_for_health.call_args.kwargs["child_exited"]() is False
 
     @patch("gobby.cli.daemon_lifecycle.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon_start.init_local_storage")
@@ -2645,7 +2701,10 @@ class TestEdgeCases:
 
             assert result.exit_code == 1
             assert "Health check failed" in result.output
-            mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+            mock_wait_for_health.assert_called_once()
+            (port,) = mock_wait_for_health.call_args.args
+            assert port == mock_daemon_config.daemon_port
+            assert mock_wait_for_health.call_args.kwargs["child_exited"]() is False
 
     @patch("gobby.cli.daemon_lifecycle.fetch_rich_status")
     @patch("gobby.cli.daemon_lifecycle.httpx.get")

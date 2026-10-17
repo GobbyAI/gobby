@@ -263,7 +263,9 @@ def _launch_direct_runner(
 
             _step(f"Daemon process launched (PID: {process.pid})")
             time.sleep(2.0)
-            elapsed = _wait_for_daemon_health(http_port)
+            elapsed = _wait_for_daemon_health(
+                http_port, child_exited=lambda: process.poll() is not None
+            )
             if elapsed is not None:
                 _step(f"Health check passed ({elapsed:.1f}s)")
             else:

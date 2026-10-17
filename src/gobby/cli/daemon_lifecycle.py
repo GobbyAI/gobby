@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 
 import click
@@ -82,11 +83,13 @@ def _wait_for_daemon_health(
     *,
     timeout: float = DAEMON_HEALTH_TIMEOUT_SECONDS,
     interval: float = 0.5,
+    child_exited: Callable[[], bool] | None = None,
 ) -> float | None:
     """Wait for the daemon health endpoint to respond successfully.
 
     Each probe may use the rest of the wait, so a loaded daemon that answers
-    slower than a decision probe allows still counts as healthy.
+    slower than a decision probe allows still counts as healthy. A launched
+    child that has exited ends the wait at once: it cannot become healthy.
     """
     start = time.monotonic()
     deadline = start + timeout
@@ -94,6 +97,8 @@ def _wait_for_daemon_health(
     while (remaining := deadline - time.monotonic()) > 0:
         if _is_daemon_healthy(http_port, timeout=remaining):
             return time.monotonic() - start
+        if child_exited is not None and child_exited():
+            return None
         time.sleep(interval)
 
     return None
