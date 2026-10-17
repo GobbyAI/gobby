@@ -418,6 +418,40 @@ def uncovered_pytest_paths(
         if runner_reported_success((run.output or "") + "\n")
         and not runner_reported_failures(run.output)
     )
+    return _uncovered_by(runs, changed_python_tests, close_root, changed_paths, candidate)
+
+
+def unread_background_runs(
+    runs: Iterable[TranscriptValidationRun],
+    tests: Sequence[str],
+    *,
+    close_root: str | None = None,
+    changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
+) -> tuple[TranscriptValidationRun, ...]:
+    """Return exit-0 background runs of ``tests`` whose output file was never read.
+
+    A background job's pytest summary reaches the transcript only through a
+    recognized read of its output file, so such a run proves nothing until then.
+    """
+    tests = tuple(tests)
+    return tuple(
+        run
+        for run in runs
+        if run.background_output_path is not None
+        and run.exit_code == 0
+        and run.output_recovered_from is None
+        and len(_uncovered_by((run,), tests, close_root, changed_paths, candidate)) < len(tests)
+    )
+
+
+def _uncovered_by(
+    runs: tuple[TranscriptValidationRun, ...],
+    changed_python_tests: tuple[str, ...],
+    close_root: str | None,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None,
+) -> tuple[str, ...]:
     if close_root is None:
         covered: list[str] = []
         for run in runs:
@@ -482,6 +516,17 @@ def credit_off_task_author_runs(
         if not targets or any(not target.endswith(".py") for target in targets):
             continue
         proven = candidate_pytest_paths(run, required_tests, changed_paths, candidate)
+        # Shared paths lose away edits from Gate 12's attribution. Those edits
+        # still invalidate a run on older bytes, even if today's tree matches
+        # the candidate. Use timestamps because this pool has session-local order.
+        validated_paths = {*changed_paths, *proven}
+        if any(
+            edit.session_id == run.session_id
+            and edit.path in validated_paths
+            and edit.timestamp >= run.started_at
+            for edit in evidence.off_task_author_edits
+        ):
+            continue
         covered = set(required_tests).difference(
             uncovered_pytest_paths(
                 (run,),
@@ -701,12 +746,13 @@ def coverage_failure_messages(
     web_paths: tuple[str, ...],
     *,
     differing_paths: tuple[str, ...] = (),
+    unread_runs: Sequence[TranscriptValidationRun] = (),
     close_root: str | None = None,
 ) -> list[tuple[str, str]]:
     """Name and describe every uncovered test obligation in checklist priority order.
 
-    The differing-copy note closes the last pytest obligation, since its paths can
-    come from either one.
+    The differing-copy and unread-background notes close the last pytest obligation,
+    since their paths can come from either one.
     """
     failures: list[tuple[str, str]] = []
     if python_tests:
@@ -737,6 +783,17 @@ def coverage_failure_messages(
             f"{message} A run from another tree is credited only when that tree matches the "
             "close candidate commit, or the close checkout without one; these paths differ: "
             f"{', '.join(f'`{path}`' for path in differing_paths)}.",
+        )
+    if failures and unread_runs:
+        name, message = failures[-1]
+        runs = "; ".join(
+            f"`{run.command}` (output `{run.background_output_path}`)" for run in unread_runs
+        )
+        failures[-1] = (
+            name,
+            f"{message} These background runs exited 0, but their output was never read in a "
+            "recognized form (Read, `cat`, `tail` or `grep` of the output file), so no pytest "
+            f"summary proves them: {runs}.",
         )
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.

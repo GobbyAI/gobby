@@ -691,7 +691,7 @@ test"""
         assert spawn_request.clone_id == "clone-1"
         assert (
             spawn_request.prompt
-            == f"""Clone context — you are working in an isolated shallow clone, not the original repository.
+            == f"""Clone context — you are working in an isolated clone, not the original repository.
 - Branch: branch
 - Clone path: {clone_path}
 - Source repo: {tmp_path / "repo"}

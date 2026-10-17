@@ -263,14 +263,14 @@ def srt_install_lock() -> Iterator[None]:
         yield
 
 
-def _raise_srt_lockout(
+def log_srt_lockout(
     reason: str,
     *,
     run_id: str | None,
     provider: str | None,
     policy_hash: str | None,
-    cause: BaseException | None = None,
-) -> NoReturn:
+) -> None:
+    """Record a launch refused by managed SRT validation, with its run context."""
     logger.warning(
         "Managed SRT validation failed closed",
         extra={
@@ -280,27 +280,24 @@ def _raise_srt_lockout(
             "lockout_reason": reason,
         },
     )
+
+
+def _raise_srt_lockout(reason: str, *, cause: BaseException | None = None) -> NoReturn:
+    # Verification only raises: status probes it too, and only a launch
+    # refusal is an operator-facing lockout (see verify_srt_installation_for_launch).
     error = SrtRuntimeError(reason)
     if cause is not None:
         raise error from cause
     raise error
 
 
-def verify_srt_installation_locked(
-    *,
-    run_id: str | None = None,
-    provider: str | None = None,
-    policy_hash: str | None = None,
-) -> SrtInstallation:
+def verify_srt_installation_locked() -> SrtInstallation:
     """Verify the pinned runtime while the caller holds :func:`srt_install_lock`."""
     try:
         root = srt_install_root().resolve(strict=False)
     except OSError as exc:
         _raise_srt_lockout(
             f"managed SRT {SRT_RELEASE.version} install root is invalid; rerun `gobby install`",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
             cause=exc,
         )
     receipt_path = root / "receipt.json"
@@ -317,9 +314,6 @@ def verify_srt_installation_locked(
     except (OSError, json.JSONDecodeError) as exc:
         _raise_srt_lockout(
             f"managed SRT {SRT_RELEASE.version} is missing or invalid; rerun `gobby install`",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
             cause=exc,
         )
     try:
@@ -327,68 +321,41 @@ def verify_srt_installation_locked(
     except (OSError, json.JSONDecodeError) as exc:
         _raise_srt_lockout(
             "managed SRT content manifest is missing or invalid; rerun `gobby install`",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
             cause=exc,
         )
     if not isinstance(receipt, dict) or not isinstance(package, dict):
         _raise_srt_lockout(
             f"managed SRT {SRT_RELEASE.version} receipt or package metadata is invalid",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     if not isinstance(manifest, dict):
         _raise_srt_lockout(
             "managed SRT content manifest is invalid",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     if not all(isinstance(key, str) and isinstance(value, str) for key, value in manifest.items()):
         _raise_srt_lockout(
             "managed SRT content manifest is invalid",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     expected_receipt = SRT_RELEASE.receipt_fields()
     if any(receipt.get(key) != value for key, value in expected_receipt.items()):
         _raise_srt_lockout(
             "managed SRT receipt does not match Gobby's pinned runtime",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     if package.get("name") != SRT_RELEASE.package or package.get("version") != SRT_RELEASE.version:
         _raise_srt_lockout(
             "managed SRT package identity does not match its receipt",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     runner_sha256 = hashlib.sha256(runner_bytes).hexdigest()
     if runner_sha256 != SRT_RELEASE.runner_sha256:
         _raise_srt_lockout(
             "managed SRT runner checksum mismatch; run `gobby install srt`",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     if hashlib.sha256(bundled_runner_bytes).hexdigest() != SRT_RELEASE.runner_sha256:
         _raise_srt_lockout(
             "managed SRT runner does not match this Gobby installation",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     if hashlib.sha256(lockfile_bytes).hexdigest() != SRT_RELEASE.lockfile_sha256:
         _raise_srt_lockout(
             "managed SRT lockfile checksum mismatch",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     try:
         from gobby.agents.srt_package_patch import verify_srt_proxy_patch
@@ -398,9 +365,6 @@ def verify_srt_installation_locked(
     except (OSError, SrtRuntimeError, ValueError) as exc:
         _raise_srt_lockout(
             str(exc),
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
             cause=exc,
         )
 
@@ -408,9 +372,6 @@ def verify_srt_installation_locked(
     if node_status.state != "healthy" or node_status.path is None:
         _raise_srt_lockout(
             node_status.error or "Node.js version could not be verified",
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
         )
     node = Path(node_status.path)
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
@@ -465,12 +426,7 @@ def _srt_verification_cache_key() -> str:
     return digest.hexdigest()
 
 
-def verify_srt_installation(
-    *,
-    run_id: str | None = None,
-    provider: str | None = None,
-    policy_hash: str | None = None,
-) -> SrtInstallation:
+def verify_srt_installation() -> SrtInstallation:
     """Reuse verification only while the pinned runtime and installed binaries are unchanged."""
     global _verified_srt_cache
 
@@ -486,25 +442,31 @@ def verify_srt_installation(
                 return installation
 
         _verified_srt_cache = None
-        installation = verify_srt_installation_locked(
-            run_id=run_id,
-            provider=provider,
-            policy_hash=policy_hash,
-        )
+        installation = verify_srt_installation_locked()
         try:
             verified_key = _srt_verification_cache_key()
         except (OSError, RuntimeError):
             verified_key = None
         if key is not None and verified_key != key:
-            _raise_srt_lockout(
-                "managed SRT or installed binary set changed during verification",
-                run_id=run_id,
-                provider=provider,
-                policy_hash=policy_hash,
-            )
+            _raise_srt_lockout("managed SRT or installed binary set changed during verification")
         if verified_key is not None and verified_key == key:
             _verified_srt_cache = (verified_key, installation)
         return installation
+
+
+def verify_srt_installation_for_launch(
+    *, run_id: str | None, provider: str | None, policy_hash: str | None
+) -> SrtInstallation:
+    """Verify for a sandboxed launch and record a refusal with its run context.
+
+    Runs in a worker thread. Status probes call :func:`verify_srt_installation`
+    directly, so a probe abandoned at its deadline never logs a lockout.
+    """
+    try:
+        return verify_srt_installation()
+    except SrtRuntimeError as exc:
+        log_srt_lockout(str(exc), run_id=run_id, provider=provider, policy_hash=policy_hash)
+        raise
 
 
 # sandbox-runtime's getDefaultWritePaths() (dist/sandbox/sandbox-utils.js) joins
@@ -666,13 +628,17 @@ async def prepare_sandbox_launch(
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        _raise_srt_lockout(
+        reason = (
             "SRT does not accept unrestricted network access; configure explicit "
-            "allowed_domains or enable a scoped Git/package capability",
+            "allowed_domains or enable a scoped Git/package capability"
+        )
+        log_srt_lockout(
+            reason,
             run_id=run_id,
             provider=provider,
             policy_hash=hashlib.sha256(rejected_policy).hexdigest(),
         )
+        _raise_srt_lockout(reason)
 
     capabilities = provider_capabilities(provider)
     if config.backend == "provider-native" and (
@@ -798,9 +764,10 @@ async def prepare_sandbox_launch(
             and (is_glob or not allowed.is_relative_to(own_root))
         ):
             raise SrtRuntimeError("Sandbox grants cannot expose another managed execution")
-    if config.backend == "srt" and sys.platform == "linux":
-        # bwrap masks denied temp roots before executing SRT's seccomp helper.
-        # Re-expose the pinned runtime when isolated GOBBY_HOME lives under one.
+    if config.backend == "srt":
+        # Credential roots deny the SRT tree; re-expose only the pinned version,
+        # read-only. bwrap masks denied temp roots before running SRT's seccomp
+        # helper, and seat-run e2e tests verify the operator install.
         paths.read_paths.append(str(srt_install_root().resolve()))
     # TODO(#22407): workaround for an upstream Droid defect. Seatbelt denies exec of
     # setuid /bin/ps, so Droid's supervisor reads its failed probe as owner death and
@@ -841,7 +808,7 @@ async def prepare_sandbox_launch(
     verify_started = start_spawn_phase()
     try:
         installation = await asyncio.to_thread(
-            verify_srt_installation,
+            verify_srt_installation_for_launch,
             run_id=run_id,
             provider=provider,
             policy_hash=policy_hash,

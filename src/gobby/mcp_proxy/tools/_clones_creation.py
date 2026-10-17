@@ -11,6 +11,8 @@ from gobby.agents.frozen_workspace import frozen_workspace_refusal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.git import run_to_completion
+from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
+from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +29,24 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         clone_path: str,
         remote_url: str | None = None,
         task_id: str | None = None,
-        base_branch: str = "main",
+        base_branch: str | None = None,
         depth: int = 1,
-        use_local: bool = False,
         cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Create a new git clone.
 
         Args:
-            branch_name: Branch to clone
+            branch_name: Branch to create (external clones check it out)
             clone_path: Path where clone will be created
-            remote_url: Remote URL (defaults to origin of parent repo)
+            remote_url: External repository to shallow-clone; omitted clones
+                the local repository at the selected commit
             task_id: Optional task ID to link
-            base_branch: Base branch for the clone
-            depth: Clone depth (default: 1 for shallow)
-            use_local: If True, clone from local repo path instead of remote URL.
-                       Forces full clone to preserve unpushed commits.
+            base_branch: Local fork base (omitted: the caller's HEAD)
+            depth: External clone depth (default: 1)
 
         Returns:
-            Dict with clone info or error
+            Dict with clone info, base_commit_sha and index_source, or error
         """
         # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
         clone_path = str(Path(clone_path).expanduser())
@@ -103,37 +103,10 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
 
-            if use_local:
-                # Clone from local repo path - always full clone
-                # Clone base_branch first, then create branch_name as new branch
-                source = str(git_manager.repo_path)
-                result = await git_manager.full_clone(
-                    remote_url=source,
-                    clone_path=clone_path,
-                    branch=base_branch,
-                )
-                clone_created = result.success
-                if result.success and branch_name != base_branch:
-                    await git_manager.run_git_command(
-                        ["checkout", "-b", branch_name],
-                        cwd=clone_path,
-                        check=True,
-                    )
-                if not remote_url:
-                    remote_url = await git_manager.get_remote_url() or source
-            else:
-                # Get remote URL if not provided
-                if not remote_url:
-                    remote_url = await git_manager.get_remote_url()
-                    if not remote_url:
-                        return {
-                            "success": False,
-                            "error": "No remote URL provided and could not get from repository",
-                        }
-                if cancellation_requested is not None and cancellation_requested.is_set():
-                    raise asyncio.CancelledError
-
-                # Create the clone
+            if remote_url:
+                # External repository: no local index to reuse
+                index_source = "cold"
+                stored_base = base_branch or "main"
                 result = await git_manager.shallow_clone(
                     remote_url=remote_url,
                     clone_path=clone_path,
@@ -141,6 +114,29 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     depth=depth,
                 )
                 clone_created = result.success
+                if result.success:
+                    head = await git_manager.run_git_command(
+                        ["rev-parse", "HEAD"], cwd=clone_path, check=True
+                    )
+                    base_commit_sha = head.stdout.strip()
+            else:
+                index_source = "local"
+                try:
+                    stored_base, base_commit_sha = await select_worktree_base(
+                        WorktreeGitManager(git_manager.repo_path), base_branch
+                    )
+                except WorktreeBaseError as error:
+                    return {"success": False, "error": str(error), "error_code": error.code}
+                if cancellation_requested is not None and cancellation_requested.is_set():
+                    raise asyncio.CancelledError
+                result = await git_manager.create_clone(
+                    clone_path,
+                    branch_name,
+                    stored_base,
+                    base_commit_sha=base_commit_sha,
+                )
+                clone_created = result.success
+                remote_url = await git_manager.get_remote_url() or str(git_manager.repo_path)
 
             if not result.success:
                 return {
@@ -153,7 +149,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 project_id=project_id,
                 branch_name=branch_name,
                 clone_path=clone_path,
-                base_branch=base_branch,
+                base_branch=stored_base,
                 task_id=resolved_task_id,
                 remote_url=remote_url,
             )
@@ -162,6 +158,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             return {
                 "success": True,
                 "clone": clone.to_dict(),
+                "base_commit_sha": base_commit_sha,
+                "index_source": index_source,
                 "message": f"Created clone at {clone_path}",
             }
 
@@ -178,9 +176,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         clone_path: str,
         remote_url: str | None = None,
         task_id: str | None = None,
-        base_branch: str = "main",
+        base_branch: str | None = None,
         depth: int = 1,
-        use_local: bool = False,
     ) -> dict[str, Any]:
         cancellation_requested = asyncio.Event()
         return await run_to_completion(
@@ -191,7 +188,6 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 task_id,
                 base_branch,
                 depth,
-                use_local,
                 cancellation_requested,
             ),
             on_cancel=cancellation_requested.set,
@@ -205,7 +201,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             "properties": {
                 "branch_name": {
                     "type": "string",
-                    "description": "Branch to clone",
+                    "description": ("Branch to create in the clone (external clones check it out)"),
                 },
                 "clone_path": {
                     "type": "string",
@@ -213,7 +209,9 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 },
                 "remote_url": {
                     "type": "string",
-                    "description": "Remote URL (defaults to origin of parent repo)",
+                    "description": (
+                        "External repository to shallow-clone; omit to clone the local repository"
+                    ),
                 },
                 "task_id": {
                     "type": "string",
@@ -221,21 +219,14 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 },
                 "base_branch": {
                     "type": "string",
-                    "description": "Base branch for the clone",
-                    "default": "main",
+                    "description": (
+                        "Local fork base: a branch or origin/<branch> (omitted: the caller's HEAD)"
+                    ),
                 },
                 "depth": {
                     "type": "integer",
-                    "description": "Clone depth (default: 1 for shallow)",
+                    "description": "External clone depth (default: 1)",
                     "default": 1,
-                },
-                "use_local": {
-                    "type": "boolean",
-                    "description": (
-                        "Clone from local repo path instead of remote URL "
-                        "(full clone, preserves unpushed commits)"
-                    ),
-                    "default": False,
                 },
             },
             "required": ["branch_name", "clone_path"],

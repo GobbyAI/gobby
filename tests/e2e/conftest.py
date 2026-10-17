@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import httpx
 import psutil
@@ -493,8 +493,18 @@ def prepare_daemon_env(
     return env
 
 
+def skip_unless_seat(reason: str) -> NoReturn:
+    """Skip a missing operator prerequisite, but fail inside a seat sandbox.
+
+    A seat close gate credits skips as clean, so a seat must see the gap.
+    """
+    if os.environ.get("SANDBOX_RUNTIME") == "1":
+        pytest.fail(f"{reason} (seat sandbox)")
+    pytest.skip(reason)
+
+
 def link_operator_srt(home: Path) -> None:
-    """Link the operator's managed SRT into an isolated home, or skip.
+    """Link the operator's managed SRT into an isolated home, or skip (fail in a seat).
 
     Spawns fail closed without managed SRT. The isolated home borrows the
     operator install through a symlink and never installs, downloads, or
@@ -502,7 +512,7 @@ def link_operator_srt(home: Path) -> None:
     """
     operator = Path.home() / ".gobby" / "tools" / "srt" / SRT_RELEASE.version
     if not operator.is_dir():
-        pytest.skip(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
+        skip_unless_seat(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
     link = home / "tools" / "srt" / SRT_RELEASE.version
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(operator, target_is_directory=True)
@@ -511,10 +521,21 @@ def link_operator_srt(home: Path) -> None:
         try:
             verify_srt_installation()
         except (OSError, SrtRuntimeError) as exc:
-            pytest.skip(
+            skip_unless_seat(
                 f"managed SRT {SRT_RELEASE.version} failed verification: {exc}; "
                 f"cause: {exc.__cause__}"
             )
+
+
+def link_spawning_operator_srt(home: Path) -> None:
+    """Link the operator SRT for a test that launches agents under it.
+
+    macOS refuses a nested Seatbelt profile (sandbox_apply EPERM), so a seat
+    sandbox can never run these spawns; fail there instead of skipping.
+    """
+    if os.environ.get("SANDBOX_RUNTIME") == "1":
+        pytest.fail("SRT agent spawns cannot run inside a seat sandbox: nested sandbox refused")
+    link_operator_srt(home)
 
 
 def find_free_port(max_retries: int = 20) -> int:

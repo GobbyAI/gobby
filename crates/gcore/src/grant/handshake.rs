@@ -385,24 +385,31 @@ fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
         .ok_or(GrantError::RemoteEndpoint)?;
     let (hostport, _) = rest.split_once('/').unwrap_or((rest, ""));
     if let Some(host) = hostport.strip_prefix('[') {
-        let (host, port) = host
-            .split_once("]:")
-            .ok_or(GrantError::Malformed("invalid daemon url".to_string()))?;
+        let (host, port) = host.split_once("]:").ok_or(GrantError::BootstrapConfig(
+            "invalid daemon url".to_string(),
+        ))?;
+        if host.is_empty() {
+            return Err(GrantError::BootstrapConfig(
+                "invalid daemon url".to_string(),
+            ));
+        }
         let port = port
             .parse::<u16>()
-            .map_err(|_| GrantError::Malformed("invalid daemon url".to_string()))?;
+            .map_err(|_| GrantError::BootstrapConfig("invalid daemon url".to_string()))?;
         return Ok((host.to_string(), port));
     }
     let (host, port) = match hostport.rsplit_once(':') {
         Some((host, port)) => (
             host.to_string(),
             port.parse::<u16>()
-                .map_err(|_| GrantError::Malformed("invalid daemon url".to_string()))?,
+                .map_err(|_| GrantError::BootstrapConfig("invalid daemon url".to_string()))?,
         ),
         None => (hostport.to_string(), crate::bootstrap::DEFAULT_DAEMON_PORT),
     };
     if host.is_empty() {
-        return Err(GrantError::Malformed("invalid daemon url".to_string()));
+        return Err(GrantError::BootstrapConfig(
+            "invalid daemon url".to_string(),
+        ));
     }
     Ok((host, port))
 }

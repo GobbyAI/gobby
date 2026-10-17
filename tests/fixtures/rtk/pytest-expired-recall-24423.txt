@@ -1,0 +1,48 @@
+>       assert matched, reason
+
+E       AssertionError: post-production red has no attributable NotImplementedError or proven API stub
+
+E       assert False
+
+replace(item, source_after=BEFORE + "\ndef test_other():\n    assert True\n")
+if item.path == TEST_PATH and item.order == 4
+else item
+for item in evidence.edits
+),
+)
+red = evidence.validation_runs[1]
+
+assert not matched
+>       assert not evaluate_tdd_evidence((test,), evidence).passed
+
+E       AssertionError: assert not True
+
+E        +  where True = TddEvidenceResult(passed=True, skipped=False, findings=(), red_runs=('pytest tests/test_feature.py -q',), green_runs=('pytest tests/test_feature.py -q',)).passed
+
+E        +    where TddEvidenceResult(passed=True, skipped=False, findings=(), red_runs=('pytest tests/test_feature.py -q',), green_runs=('pytest tests/test_feature.py -q',)) = evaluate_tdd_evidenc...
+
+replace(item, source_after=BEFORE + "\ndef test_other():\n    assert True\n")
+if item.path == TEST_PATH and item.order == 4
+else item
+for item in evidence.edits
+),
+)
+red = evidence.validation_runs[1]
+
+assert not matched
+>       assert not evaluate_tdd_evidence((test,), evidence).passed
+
+E       AssertionError: assert not True
+
+E        +  where True = TddEvidenceResult(passed=True, skipped=False, findings=(), red_runs=('pytest tests/test_feature.py -q',), green_runs=('pytest tests/test_feature.py -q',)).passed
+
+E        +    where TddEvidenceResult(passed=True, skipped=False, findings=(), red_runs=('pytest tests/test_feature.py -q',), green_runs=('pytest tests/test_feature.py -q',)) = evaluate_tdd_evidenc...
+
+FAILED tests/tasks/test_tdd_test_tightening.py::test_post_production_proof_credits_test_only_tightening
+
+FAILED tests/tasks/test_tdd_test_tightening.py::test_post_production_proof_rejects_unattributable_red[production_changed]
+
+FAILED tests/tasks/test_tdd_test_tightening.py::test_post_production_proof_rejects_unattributable_red[other_node_changed]
+
+============================== 3 failed in 0.55s ===============================
+[full output: rtk recall b9c63de981c8]

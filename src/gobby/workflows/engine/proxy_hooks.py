@@ -161,12 +161,12 @@ async def _read_bounded(
         return b""
     output = bytearray()
     while True:
-        chunk = await stream.read(min(8192, limit + 1 - len(output)))
+        chunk = await stream.read(8192)
         if not chunk:
             return bytes(output)
-        output.extend(chunk)
-        if len(output) > limit:
-            raise _OutputTooLarge
+        # Drain both pipes so the exit verdict remains available without
+        # retaining unbounded output. One extra byte marks an oversized stream.
+        output.extend(chunk[: max(0, limit + 1 - len(output))])
 
 
 async def _collect_process_output(
@@ -179,6 +179,8 @@ async def _collect_process_output(
     )
     try:
         stdout, stderr, code = await asyncio.gather(*tasks)
+        if max(len(stdout), len(stderr)) > _MAX_PROXY_OUTPUT_BYTES and code != 2:
+            raise _OutputTooLarge
         return code, stdout, stderr
     except BaseException:
         for task in tasks:
@@ -338,7 +340,7 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
-        if code == 2 and stdout.strip():
+        if code == 2 and stdout:
             # RTK pipeline denials carry a message; an empty exit 2 delegates
             # the original command to the host's existing permission rules.
             message = _ANSI_ESCAPE_RE.sub("", stdout[:4096].decode("utf-8", errors="replace"))

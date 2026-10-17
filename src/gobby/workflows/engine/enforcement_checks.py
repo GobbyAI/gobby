@@ -19,6 +19,7 @@ from gobby.workflows.enforcement.blocking import (
     is_provider_discovery_tool,
 )
 from gobby.workflows.engine.block_batching import operator_event_is_subagent
+from gobby.workflows.engine.idle_declaration import gates_idle_write, is_idle_declaration
 from gobby.workflows.engine.skill_load_guidance import (
     skill_load_block_guidance,
     skill_load_call_lead,
@@ -617,8 +618,8 @@ class EnforcementCheckMixin:
                 )
                 return HookResponse(decision="block", reason=reason)
 
-        # Discovery/infrastructure tools always pass
-        if canonical_tool.startswith("mcp__gobby__"):
+        # Discovery/infrastructure tools pass; an idle step's set_variable meets its allowlist.
+        if canonical_tool.startswith("mcp__gobby__") and not gates_idle_write(step, canonical_tool):
             mcp_suffix = canonical_tool[len("mcp__gobby__") :]
             if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
                 return None
@@ -661,11 +662,13 @@ class EnforcementCheckMixin:
                 variables["_agent_early_exit_step"] = step.name
                 return None
 
-        # Check native tool allow-list
+        # Check native tool allow-list; an idle step also admits its own-session idle declaration.
         if step.allowed_tools != "all" and canonical_tool not in _CAPABILITY_NEUTRAL_NATIVE_TOOLS:
-            if canonical_tool not in {
-                canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
-            }:
+            admitted = {canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools}
+            sessions = getattr(self, "_session_manager", None)
+            if canonical_tool not in admitted and not is_idle_declaration(
+                step, canonical_tool, tool_input, session_id, sessions
+            ):
                 reason = _step_tool_denial_reason(
                     wf_name,
                     step,

@@ -627,6 +627,7 @@ def test_deferrals_preserved(
                     "artifact_ref": "D1.1",
                 }
             ],
+            "external_blocked_by": [],
         }
     ]
 
@@ -756,3 +757,77 @@ def test_registered_plan_synthesis_coverage_has_no_hash_drift(
 
     assert result["ok"] is True
     assert result.get("error") != "plan_hash_drift"
+
+
+def test_phase_root_and_cross_plan_refs_compile_into_spec(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    text = (
+        _MANIFEST_PLAN.replace("## P2 Integration", "## P2 Integration (#24150)")
+        .replace("### 1.2 Core Section", "### 1.2 Core Section (depends: #24151)")
+        .replace("### 2.2 Release Section", "### 2.2 Release Section (depends: #24150, #24152)")
+    )
+    spec = service.compile_plan_to_spec(parse_plan(_write_plan(tmp_path, text)), parent)
+
+    phases = {phase["id"]: phase for phase in spec["phases"]}
+    assert phases["phase-p2"]["title"] == "P2: Integration"
+    assert phases["phase-p2"]["root_task_ref"] == "#24150"
+    assert "root_task_ref" not in phases["phase-p1"]
+    blocked_by = {task["id"]: task["external_blocked_by"] for task in spec["tasks"]}
+    assert blocked_by["1.2::single"] == ["#24151"]
+    assert blocked_by["1.1::single"] == []
+    assert blocked_by["2.1::single"] == []
+    # The phase's own declared root never blocks its leaves: it waits on their epic.
+    assert blocked_by["2.2::single"] == ["#24152"]
+    assert _deps_for(spec, "1.2::single") == _deps_for(
+        service.compile_plan_to_spec(parse_plan(_write_plan(tmp_path, _MANIFEST_PLAN)), parent),
+        "1.2::single",
+    )
+
+
+def test_single_phase_root_ref_stays_a_leaf_blocker(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = _write_plan(
+        tmp_path,
+        """
+        > **Plan ID:** single-phase-root
+
+        ## P1 Only (#24150)
+        `kind: framing`
+
+        ### 1.1 Consumer (depends: #24150)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 - Consumer exists. file: `src/consumer.py`
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Consumer from manifest"
+          category: code
+          implementation_domain: backend
+          task_type: task
+          depends_on: []
+          validation_criteria: "Consumer validation from manifest"
+          labels:
+            - "covers:single-phase-root:1.1:1.1.1"
+          tdd: false
+          source_section: "1.1"
+        ```
+        """,
+        name="single-phase-root.md",
+    )
+
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
+
+    assert [phase["root_task_ref"] for phase in spec["phases"]] == ["#24150"]
+    assert [task["external_blocked_by"] for task in spec["tasks"]] == [["#24150"]]

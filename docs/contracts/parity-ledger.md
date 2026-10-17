@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1098. Unclassified: 0.
+Public surfaces and evidence gates: 1100. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -231,6 +231,7 @@ Public surfaces and evidence gates: 1098. Unclassified: 0.
 | `CLI gobby service status` | proxied | Python `src/gobby/cli/service.py::status (line 91)`; blocked on Rust CLI dispatcher for `gobby service status`. Owner: #21568 Remaining route families. |
 | `CLI gobby service uninstall` | proxied | Python `src/gobby/cli/service.py::uninstall (line 76)`; blocked on Rust CLI dispatcher for `gobby service uninstall`. Owner: #21568 Remaining route families. |
 | `CLI gobby sessions` | proxied | Python `src/gobby/cli/sessions.py::sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions approve-dirty-paths` | proxied | Python `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions backfill-context-windows` | proxied | Python `src/gobby/cli/sessions.py::backfill_context_windows`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions delete` | proxied | Python `src/gobby/cli/sessions.py::delete_session`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions list` | proxied | Python `src/gobby/cli/sessions.py::list_sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
@@ -1122,8 +1123,9 @@ Public surfaces and evidence gates: 1098. Unclassified: 0.
 | `WS message voice_mode_toggle` | proxied | Python handler `VoiceMixin._handle_voice_mode_toggle` at `src/gobby/servers/websocket/voice/mixin.py:418`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `WS message voice_prepare` | proxied | Python handler `VoiceMixin._handle_voice_prepare` at `src/gobby/servers/websocket/voice/mixin.py:472`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `WS message voice_status_request` | proxied | Python handler `VoiceMixin._handle_voice_status_request` at `src/gobby/servers/websocket/voice/mixin.py:453`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
-| `WS message workspace_attach` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:129`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
-| `WS message workspace_op` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:189`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
-| `WS message workspace_snapshot` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:175`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
-| `WS transport /ws` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:76`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
-| `WS transport /ws/{path:path}` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:49`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS message workspace_attach` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:140`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS message workspace_op` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:201`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS message workspace_snapshot` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:187`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS transport /_gobby/ws/bridge` | proxied | Python handler `mount_native_bridge.<locals>.native_bridge` at `src/gobby/servers/websocket/native_bridge.py:176`: gdaemon's private leg into the Python application handlers, refused to anything but a loopback peer with the pair secret and current generation. Retires with #21574 when the handlers move to gdaemon. |
+| `WS transport /ws` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:77`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS transport /ws/{path:path}` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:50`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |

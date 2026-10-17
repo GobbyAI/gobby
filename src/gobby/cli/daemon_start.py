@@ -104,32 +104,31 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
 def _poll_startup_progress(
     http_port: int, max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS
 ) -> bool:
-    """Poll the daemon's startup progress endpoint and display steps."""
+    """Poll the daemon's startup progress endpoint and display steps.
+
+    A loaded or restarting daemon can answer slowly, with a transient error
+    status, or with a partial body; all of those keep waiting until the
+    deadline. Only a backend the native front door refused or holds in standby
+    fails fast.
+    """
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
-    poll_start = time.time()
+    deadline = time.monotonic() + max_wait
     shown_header = False
 
-    while (time.time() - poll_start) < max_wait:
+    while (remaining := deadline - time.monotonic()) > 0:
         try:
             resp = httpx.get(
                 f"http://localhost:{http_port}/api/admin/startup-progress",
-                timeout=1.0,
+                timeout=remaining,
             )
             if resp.status_code != 200:
-                if resp.status_code == 503:
-                    unavailable = resp.json()
-                    backend = unavailable.get("backend") if isinstance(unavailable, dict) else None
-                    if (
-                        isinstance(unavailable, dict)
-                        and unavailable.get("status") == "unavailable"
-                        and isinstance(backend, dict)
-                        and backend.get("state") in ("starting", "down")
-                        and isinstance(backend.get("target"), str)
-                    ):
-                        time.sleep(0.5)
-                        continue
-                return False
+                refusal = _native_backend_refusal(resp)
+                if refusal is not None:
+                    _step(f"Backend unavailable: {refusal}", error=True)
+                    return False
+                time.sleep(0.5)
+                continue
             progress = resp.json()
 
             # Show completed steps
@@ -163,24 +162,29 @@ def _poll_startup_progress(
                         _step(task, scheduled=True)
                 return True
 
-        except (httpx.ConnectError, httpx.TimeoutException):
+        except (httpx.HTTPError, ValueError):
+            # Transport, protocol and decode failures are transient under load.
             pass
-        except (
-            httpx.DecodingError,
-            httpx.ProtocolError,
-            httpx.TooManyRedirects,
-            json.JSONDecodeError,
-        ) as e:
-            logger.exception("Non-retryable startup progress polling error: %s", e)
-            return False
-        except httpx.RequestError as e:
-            logger.exception("Non-retryable startup progress request error: %s", e)
-            return False
         except Exception as e:
             logger.exception("Unexpected startup progress polling error: %s", e)
             return False
         time.sleep(0.5)
     return False
+
+
+def _native_backend_refusal(response: httpx.Response) -> str | None:
+    """Return why the native front door will not serve a backend, if it says so."""
+    if response.status_code != 503:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    backend = payload.get("backend") if isinstance(payload, dict) else None
+    if not isinstance(backend, dict) or backend.get("state") not in ("refused", "standby"):
+        return None
+    refusal = backend.get("refusal")
+    return refusal if isinstance(refusal, str) and refusal else str(backend["state"])
 
 
 def _launch_direct_runner(

@@ -173,6 +173,24 @@ class TestClonesCreateCommand:
         assert "clone-new" in result.output
         mock_httpx.assert_called_once()
         assert "headers" in mock_httpx.call_args.kwargs
+        # Omitted --base leaves selection to the tool: the caller's HEAD
+        assert "base_branch" not in mock_httpx.call_args.kwargs["json"]
+
+    def test_create_clone_explicit_base(self, mock_httpx: MagicMock) -> None:
+        """An explicit --base reaches the tool unchanged."""
+        from gobby.cli.clones import clones
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True, "clone": {"id": "clone-dev"}}
+        mock_httpx.return_value = mock_response
+
+        result = CliRunner().invoke(
+            clones, ["create", "feature/dev", "/tmp/clone-dev", "--base", "develop"]
+        )
+
+        assert result.exit_code == 0
+        assert mock_httpx.call_args.kwargs["json"]["base_branch"] == "develop"
 
     def test_create_clone_failure(self, mock_httpx: MagicMock) -> None:
         """Test 'clones create' failure."""

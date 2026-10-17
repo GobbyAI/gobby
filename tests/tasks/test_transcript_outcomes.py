@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from gobby.config.validation_detection import classify_validation_command
-from gobby.tasks.command_equivalence import command_covers, pytest_targets
+from gobby.tasks.close_test_coverage import uncovered_pytest_paths
+from gobby.tasks.command_equivalence import command_covers, pytest_targets, run_location
+from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
     extract_outcome,
@@ -18,6 +21,141 @@ from gobby.tasks.transcript_outcomes import (
     unregistered_execution_reason,
     wrapped_validation_command,
 )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "env -u A -u B -C /wt",
+        "env -C /wt CARGO_BUILD_JOBS=2",
+        "env --unset A --chdir /wt --ignore-environment",
+        "env --unset=A --chdir=/wt -i",
+        "env --chdir=/wt - A=1",
+    ],
+)
+def test_env_unset_chdir_ignore_environment_options_are_credited(prefix: str) -> None:
+    bare = "cargo nextest run -p gobby-daemon"
+    command = f"{prefix} {bare}"
+    equivalence = classify_validation_command_equivalence(command)
+    assert equivalence.wrapped is False
+    assert equivalence.core_command == bare
+    assert unregistered_execution_reason(command) is None
+    assert run_location(command, workdir="/original") == "/wt"
+    match = classify_validation_command(command)
+    bare_match = classify_validation_command(bare)
+    assert match is not None and bare_match is not None
+    assert match.categories == bare_match.categories
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "-S",
+        "--split-string",
+        "-a NAME",
+        "--argv0 NAME",
+        "-P /bin",
+        "-0",
+        "--default-signal",
+        "--ignore-signal",
+        "--block-signal",
+        "--debug",
+        "--unknown",
+        "-C",
+        "--chdir",
+        "-u",
+        "--unset",
+    ],
+)
+def test_env_unsafe_or_unknown_options_stay_uncredited(options: str) -> None:
+    command = f"env {options}"
+    if options not in {"-C", "--chdir", "-u", "--unset"}:
+        command += " pytest tests/a.py"
+    assert unregistered_execution_reason(command) == "ambiguous launcher"
+    assert not command_covers(command, "pytest tests/a.py")
+
+
+@pytest.mark.parametrize("options", ["-u X -C /wt", "--unset=X --chdir=/wt -i", "--chdir /wt -"])
+def test_env_options_command_equivalence_matches_bare(options: str) -> None:
+    command = f"env {options} pytest tests/a.py"
+    assert command_covers(command, "pytest tests/a.py")
+    assert pytest_targets(command) == ("tests/a.py",)
+    assert run_location(command, workdir="/original") == run_location(
+        "pytest tests/a.py", workdir="/wt"
+    )
+
+
+@pytest.mark.parametrize("prefix", ["env -u X -C /wt", "sudo env --chdir=/wt"])
+def test_env_chdir_reaches_tracked_script_ownership(
+    prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[tuple[str, str | None, Path | None]] = []
+
+    def tracked_script(script: str, project_path: str | None, directory: Path | None) -> bool:
+        observed.append((script, project_path, directory))
+        return directory == Path("/wt")
+
+    monkeypatch.setattr("gobby.tasks.transcript_outcomes._tracked_script", tracked_script)
+    assert (
+        unregistered_execution_reason(f"{prefix} python check.py", "/repo", workdir="/original")
+        is None
+    )
+    assert observed == [("check.py", "/repo", Path("/wt"))]
+
+
+@pytest.mark.parametrize(
+    "prefix,expected_location,covered",
+    [
+        ("env -C {root} -C .", "foreign", False),
+        ("env --chdir={root} --chdir=.", "foreign", False),
+        ("env -C {root} env -C .", "repo", True),
+        ("env - --chdir={root}", None, False),
+        ("env - --unset=NAME --chdir={root}", None, False),
+        ("env - -C {root}", None, False),
+        ("env -C {root} - --unset=NAME", None, False),
+    ],
+)
+def test_env_option_boundaries_preserve_foreign_tree_coverage(
+    tmp_path: Path, prefix: str, expected_location: str | None, covered: bool
+) -> None:
+    root = tmp_path / "repo"
+    foreign = tmp_path / "foreign"
+    for tree, contents in [(root, "assert True\n"), (foreign, "assert False\n")]:
+        (tree / "tests").mkdir(parents=True)
+        (tree / "tests/a.py").write_text(contents)
+    command = f"{prefix.format(root=root)} pytest tests/a.py"
+    expected_directory = str(tmp_path / expected_location) if expected_location else None
+    assert run_location(command, workdir=str(foreign)) == expected_directory
+    now = datetime(2026, 10, 16, tzinfo=UTC)
+    run = TranscriptValidationRun(
+        session_id="synthetic",
+        source="codex",
+        command=command,
+        categories=("test",),
+        matcher_id="python-tests",
+        label="pytest",
+        outcome="success",
+        started_at=now,
+        completed_at=now,
+        order=0,
+        exit_code=0,
+        output="1 passed in 0.01s",
+        workdir=str(foreign),
+    )
+    expected_uncovered = () if covered else ("tests/a.py",)
+    assert (
+        uncovered_pytest_paths((run,), ("tests/a.py",), close_root=str(root)) == expected_uncovered
+    )
+    if expected_location is None:
+        assert unregistered_execution_reason(command) == "ambiguous launcher"
+        assert not command_covers(command, "pytest tests/a.py")
+
+
+@pytest.mark.parametrize("launcher", ["timeout 600", "sudo", "uv run"])
+def test_env_behind_other_launchers_does_not_gain_command_coverage(launcher: str) -> None:
+    command = f"{launcher} env -C /other pytest tests/a.py"
+    assert not command_covers(command, "pytest tests/a.py")
+    assert pytest_targets(command) is None
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,12 @@ _BACKGROUND = re.compile(
 _MAX_RECOVERED_CHARS = 64_000
 # The Read tool renders each line behind its number and a tab.
 _READ_LINE_NUMBER = re.compile(r"(?m)^ *\d+\t")
+_TAIL_COUNT = re.compile(r"\+?\d+")
+_TAIL_OPTION = re.compile(r"-(?:\d+|[nc]\+?\d+|q)")
+# shlex's punctuation_chars set: a token made only of these is a shell operator.
+_SHELL_OPERATOR_CHARS = frozenset("();<>|&")
+# Unquoted, Bash brace-expands, globs, tilde-expands or history-expands these.
+_UNQUOTED_EXPANSION_CHARS = frozenset("{}*?[~!")
 
 
 def output_as_of(run: TranscriptValidationRun, before: datetime) -> TranscriptValidationRun:
@@ -207,15 +213,18 @@ def _recover_monitor_receipt(
     if message.content_type == "tool_result" and pending and pending.name.lower() == "monitor":
         if extract_outcome(message.tool_result)[0] != "success":
             return True
-        command = pending.arguments.get("command")
-        try:
-            argv = shlex.split(command) if isinstance(command, str) else []
-        except ValueError:
-            return True
+        # Non-POSIX lexing keeps quotes on their words, so only the unquoted pipe
+        # lexes as ``|`` and any other separator or redirection breaks the shape.
+        argv = _shell_words(pending.arguments.get("command"), posix=False)
+        if argv is not None and argv.count("|") == 1:
+            pipe = argv.index("|")
+            argv = _reader_command(argv[:pipe]) + ["|"] + _reader_command(argv[pipe + 1 :])
         if (
-            len(argv) != 10
+            argv is None
+            or len(argv) != 10
             or argv[:4] != ["tail", "-n", "+1", "-f"]
             or argv[5:9] != ["|", "grep", "-E", "--line-buffered"]
+            or set(argv[9]) <= _SHELL_OPERATOR_CHARS
         ):
             return True
         output, _ = extract_output(message.tool_result)
@@ -250,27 +259,150 @@ def _recover_monitor_receipt(
     return True
 
 
+def _shell_words(command: object, *, posix: bool) -> list[str] | None:
+    """Words of one plain command line, with every unquoted operator split out.
+
+    A command Bash could expand, substitute or end early is refused, never guessed.
+    """
+    if not isinstance(command, str):
+        return None
+    command = command.rstrip("\n")
+    # shlex reads a newline as a blank; Bash ends the command there.
+    if "\n" in command or _expands(command):
+        return None
+    lexer = shlex.shlex(command, posix=posix, punctuation_chars=True)
+    lexer.whitespace_split = True
+    # Bash splits words only on blanks and keeps a word-internal ``#`` literal.
+    lexer.whitespace = " \t"
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _expands(command: str) -> bool:
+    """Whether Bash could substitute or expand any part of ``command``.
+
+    ``$`` and backticks are refused even inside quotes; the other expansion
+    characters only outside quotes or a backslash escape.
+    """
+    if "$" in command or "`" in command:
+        return True
+    quote: str | None = None
+    chars = iter(command)
+    for char in chars:
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == "\\":
+            next(chars, None)
+        elif quote == '"':
+            if char == '"':
+                quote = None
+        elif char in "'\"":
+            quote = char
+        elif char in _UNQUOTED_EXPANSION_CHARS:
+            return True
+    return False
+
+
 def _read_path(pending: PendingTool) -> str | None:
     if pending.name.lower() == "read":
         path = pending.arguments.get("file_path")
         return path if isinstance(path, str) else None
     if pending.name.lower() != "bash":
         return None
-    command = pending.arguments.get("command")
-    if not isinstance(command, str):
+    argv = _shell_words(pending.arguments.get("command"), posix=True)
+    if argv is None:
         return None
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        argv = list(lexer)
-    except ValueError:
-        return None
+    if argv[:2] == ["rtk", "read"]:
+        return _rtk_read_path(argv[2:])
+    argv = _reader_command(argv)
     if len(argv) == 2 and argv[0] == "cat":
         return argv[1]
-    if len(argv) == 4 and argv[:2] == ["tail", "-n"] and argv[2].isdigit():
-        return argv[3]
+    if argv[:1] == ["tail"]:
+        return _tail_path(argv[1:])
     if len(argv) == 3 and argv[0] == "grep" and not argv[1].startswith("-"):
         return argv[2]
-    if len(argv) == 4 and argv[:2] in (["grep", "-E"], ["grep", "-F"]):
+    if (
+        len(argv) == 4
+        and argv[:2] in (["grep", "-E"], ["grep", "-F"])
+        and not argv[2].startswith("-")
+    ):
         return argv[3]
     return None
+
+
+def _reader_command(argv: list[str]) -> list[str]:
+    """Strip only RTK's direct execution prefixes from one reader command.
+
+    Keep lexing and the reader's strict argument grammar in charge of shell safety.
+    Proxy (0.x) and bypass (1.x) execute the same reader without output filtering.
+    """
+    if argv[:1] != ["rtk"]:
+        return argv
+    argv = argv[1:]
+    if argv[:1] in (["proxy"], ["bypass"]):
+        argv = argv[1:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    return argv
+
+
+def _rtk_read_path(args: list[str]) -> str | None:
+    """RTK read's raw single-file mode, optionally keeping its final N lines.
+
+    Head windows and every structural/filtering/numbering option stay unsupported.
+    A bare shell ``read`` or a bypass-wrapped ``read`` is never this RTK subcommand.
+    """
+    path: str | None = None
+    seen: set[str] = set()
+    index = 0
+    while index < len(args):
+        token = args[index]
+        option, equals, value = token.partition("=")
+        if option in {"--tail-lines", "--level", "-l"}:
+            key = "--level" if option == "-l" else option
+            if key in seen:
+                return None
+            seen.add(key)
+            if not equals:
+                index += 1
+                if index >= len(args):
+                    return None
+                value = args[index]
+            if key == "--level":
+                if value != "none":
+                    return None
+            elif re.fullmatch(r"[0-9]+", value) is None:
+                return None
+        elif token.startswith("-") or path is not None:
+            return None
+        else:
+            path = token
+        index += 1
+    return path
+
+
+def _tail_path(args: list[str]) -> str | None:
+    """The one file a plain ``tail [-N | -n N | -nN | -c N | -cN | -q]... P`` prints.
+
+    Following (``-f``/``-F``), several files, unknown options and shell operators
+    are refused.
+    """
+    index = 0
+    while index < len(args) - 1:
+        option = args[index]
+        if option in ("-n", "-c") and _TAIL_COUNT.fullmatch(args[index + 1]):
+            index += 2
+        elif _TAIL_OPTION.fullmatch(option):
+            index += 1
+        else:
+            return None
+    if index != len(args) - 1:
+        return None
+    path = args[index]
+    if path.startswith("-") or set(path) <= _SHELL_OPERATOR_CHARS:
+        return None
+    return path

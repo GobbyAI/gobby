@@ -54,7 +54,7 @@ from tests.e2e.conftest import (
     copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
-    link_operator_srt,
+    link_spawning_operator_srt,
     stop_terminal_host,
 )
 from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
@@ -165,7 +165,7 @@ def e2e_pre_daemon_setup(
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
         directory.mkdir(exist_ok=True)
         copy_daemon_api_key(daemon_home, directory)
-    link_operator_srt(daemon_home)
+    link_spawning_operator_srt(daemon_home)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
     claude.chmod(0o755)

@@ -99,6 +99,25 @@ def test_probe_accepts_minimum_rewrite_contract(tmp_path: Path, version: str) ->
     assert result.path == binary.resolve()
 
 
+def test_probe_accepts_byte_exact_101_version_and_help(tmp_path: Path) -> None:
+    captures = json.loads(
+        (Path(__file__).parents[1] / "fixtures/rtk/contracts-1.0.1.json").read_text()
+    )
+    responses = {tuple(captures[key]["argv"]): captures[key] for key in ("version", "help")}
+    binary = tmp_path / "rtk"
+    binary.write_text(
+        f"#!{sys.executable}\nimport sys\nresponses = {responses!r}\n"
+        "result = responses[tuple(sys.argv[1:])]\n"
+        "sys.stdout.write(result['stdout'])\nsys.stderr.write(result['stderr'])\n"
+        "raise SystemExit(result['exit'])\n"
+    )
+    binary.chmod(0o755)
+    result = probe_rtk(binary)
+    assert result.compatible is True
+    assert result.version == "1.0.1"
+    assert result.path == binary.resolve()
+
+
 @pytest.mark.parametrize(
     ("version", "valid_contract", "error"),
     [

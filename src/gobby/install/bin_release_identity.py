@@ -126,9 +126,13 @@ def workspace_source_identity(root: Path, name: str) -> str:
         if not filename:
             continue
         path = root / os.fsdecode(filename)
-        if path.is_file() and not any(
-            part in {"tests", "benches", "examples", "docs"}
-            for part in path.relative_to(root).parts
+        if (
+            path.is_file()
+            and path.name != "tests.rs"
+            and not any(
+                part in {"tests", "benches", "examples", "docs"}
+                for part in path.relative_to(root).parts
+            )
         ):
             files.add(path)
     for path in sorted(files):

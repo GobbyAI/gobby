@@ -22,6 +22,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
@@ -38,6 +39,7 @@ from gobby.workflows.commit_guard_conflicts import (
     format_ref,
 )
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -1079,7 +1081,111 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
     assert "gobby-agents.send_message" in response.reason
     assert "Ask each owner" in response.reason
-    assert "ask the user about unowned paths" in response.reason
+    assert "approve-dirty-paths" not in response.reason
+
+
+def _predecessor_holding(h: GuardHarness, task: Task, path: str, *, live: bool) -> Session:
+    """Register an earlier session that edited `path` for `task`, as a handoff leaves it."""
+    predecessor = h.session_manager.register(
+        external_id=f"predecessor-{path}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=h.project.id,
+    )
+    SessionTaskManager(h.db).link_task(predecessor.id, task.id, "claimed")
+    SessionVariableManager(h.db).merge_variables(
+        predecessor.id,
+        {
+            "claimed_tasks": {task.id: f"#{task.seq_num}"} if live else {},
+            "task_edited_file_checkouts": {task.id: {str(h.repo): [path]}},
+            "session_dirty_files": [path],
+            "session_dirty_file_checkouts": {str(h.repo): [path]},
+        },
+    )
+    if not live:
+        h.session_manager.update_status(predecessor.id, "completed")
+    return predecessor
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("predecessor_live", [False, True], ids=["ended", "live"])
+async def test_rule3_claim_successor_writes_its_tasks_carriers(
+    guard_harness: GuardHarness, predecessor_live: bool
+) -> None:
+    h = guard_harness
+    _predecessor_holding(h, h.current_task, "carrier.txt", live=predecessor_live)
+    (h.repo / "carrier.txt").write_text("generated carrier\n", encoding="utf-8")
+
+    claimed = await h.handler._evaluate_rules(h.edit_event("carrier.txt"))
+    h.db.execute(
+        "UPDATE tasks SET claimed_by_session_id = NULL WHERE id = %s", (h.current_task.id,)
+    )
+    released = await h.handler._evaluate_rules(h.edit_event("carrier.txt"))
+
+    assert claimed.decision == "allow", claimed.reason
+    assert released.decision == "block"
+
+
+@pytest.mark.asyncio
+async def test_rule3_claim_successor_still_refused_for_another_tasks_live_claim(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _predecessor_holding(h, h.current_task, "foreign.txt", live=False)
+    _predecessor_holding(h, h.foreign_task, "orphan.txt", live=False)
+    (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    (h.repo / "orphan.txt").write_text("other task carrier\n", encoding="utf-8")
+
+    held = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
+    other_task = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert held.decision == "block"
+    assert held.reason is not None
+    assert f"{h.foreign_session.ref}, task #{h.foreign_task.seq_num}" in held.reason
+    assert other_task.decision == "block"
+    assert other_task.reason is not None
+    assert "orphan.txt — no live session owns it" in other_task.reason
+
+
+@pytest.mark.asyncio
+async def test_rule3_unowned_dirt_needs_an_exact_operator_approval(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("orphaned change\n", encoding="utf-8")
+    for name in ("approved.txt", "other.txt"):
+        (h.repo / name).write_text("orphaned\n", encoding="utf-8")
+    (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    approved = ["approved.txt", "tracked.txt", "foreign.txt"]
+
+    async def decide(event: HookEvent) -> str:
+        return (await h.handler._evaluate_rules(event)).decision
+
+    refused = await h.handler._evaluate_rules(h.edit_event("approved.txt"))
+    record_dirty_path_approval(
+        h.db,
+        h.current_session.id,
+        checkout_root=str(h.repo),
+        paths=approved,
+        approved_by="operator",
+    )
+
+    assert refused.decision == "block"
+    assert refused.reason is not None
+    assert "approved.txt — no live session owns it" in refused.reason
+    assert (
+        f"gobby sessions approve-dirty-paths {h.current_session.id} "
+        f"--checkout {h.repo.resolve()} approved.txt"
+    ) in refused.reason
+    assert await decide(h.edit_event("approved.txt")) == "allow"
+    assert await decide(h.event("rm approved.txt")) == "allow"
+    assert await decide(h.event("git checkout -- tracked.txt")) == "allow"
+    assert await decide(h.edit_event("other.txt")) == "block"
+    assert await decide(h.event("rm other.txt")) == "block"
+    assert await decide(h.edit_event("foreign.txt")) == "block"
+    (h.repo / "approved.txt").write_text("changed after approval\n", encoding="utf-8")
+    assert await decide(h.edit_event("approved.txt")) == "block"
 
 
 @pytest.mark.asyncio

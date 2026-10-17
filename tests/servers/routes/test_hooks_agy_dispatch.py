@@ -30,7 +30,10 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
-from gobby.hooks.startup_claim_preflight import StartupClaimLease
+from gobby.hooks.startup_claim_preflight import (
+    STARTUP_CLAIM_PREFLIGHT_TIMEOUT_SECONDS,
+    StartupClaimLease,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import get_machine_id
@@ -860,6 +863,15 @@ def _short_timeout_server(session_storage: SessionManager) -> Any:
 
 
 class TestAgyAdapterTimeoutFencing:
+    @pytest.fixture(autouse=True)
+    def _full_preflight_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fence the adapter timeout only; the preflight keeps its own budget under load."""
+        monkeypatch.setattr(
+            hooks_routes,
+            "preflight_timeout_seconds",
+            lambda _adapter_timeout: STARTUP_CLAIM_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+
     def test_timeout_keeps_claim_until_completed_worker_finalizes(
         self,
         session_storage: SessionManager,

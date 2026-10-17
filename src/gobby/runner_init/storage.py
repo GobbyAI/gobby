@@ -220,6 +220,8 @@ def open_storage_and_config(
     postgres_database = cast(PostgresHubDatabase, runner.database)
     from gobby.ai.embedding_switch import managed_embedding_projection
     from gobby.config.runtime import ConfigRuntime
+    from gobby.config.runtime_active_state import ActiveStatePublisher
+    from gobby.deployment import deployment_token
     from gobby.storage.config_notifications import ConfigNotificationListener
     from gobby.storage.config_repository import ConfigRepository
 
@@ -241,6 +243,9 @@ def open_storage_and_config(
             postgres_database.open_runtime_async_connection,
         ),
         managed_resolver=lambda snapshot: managed_embedding_projection(snapshot),
+        active_state_publisher=ActiveStatePublisher(
+            runner.database, runner.secret_store, deployment_token()
+        ),
     )
     from gobby.storage.definitions.notifications import DefinitionRevisionListener
     from gobby.storage.definitions.revisions import fetch_persistent_revisions

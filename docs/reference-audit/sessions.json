@@ -1148,6 +1148,20 @@
       "tool": "wait_for_pane_output"
     },
     {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.move_tab"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "move_tab"
+    },
+    {
       "surface": "cli",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
       "implementation": {
@@ -1395,7 +1409,7 @@
       "id": "workspaces-registry",
       "kind": "pytest",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_workspaces_registry.py tests/skills/test_reference_library.py tests/servers/routes/mcp/ tests/mcp_proxy/test_registries.py -q",
-      "result": "Sixteen gobby-workspaces tools execute by ref through the WebSocket server's shared WorkspaceOps; wrapper sessions act as session:<id>, the local operator token as operator, and agent tokens (with or without a session header) and unseeded calls are refused forbidden."
+      "result": "Eighteen gobby-workspaces tools execute by ref through the WebSocket server's shared WorkspaceOps; wrapper sessions act as session:<id>, the local operator token as operator, and agent tokens (with or without a session header) and unseeded calls are refused forbidden."
     },
     {
       "id": "workspaces-cli",

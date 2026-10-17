@@ -6,6 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,13 +14,12 @@ import pytest
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationContext,
-    IsolationHandler,
     SpawnConfig,
     WorktreeIsolationHandler,
     repair_isolation_environment,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
-from gobby.utils.daemon_git import GitOk
 from gobby.utils.project_context import IsolationProjectJsonError
 
 pytestmark = pytest.mark.unit
@@ -27,7 +27,10 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.asyncio
 async def test_worktree_handler_captures_selected_commit(
-    temp_db, sample_project, tmp_path: Path
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -36,7 +39,7 @@ async def test_worktree_handler_captures_selected_commit(
             "Worktree isolation records the selected commit in task artifacts and runtime context."
         ),
     )
-    handler, worktree_path = _worktree_handler(temp_db, tmp_path)
+    handler, worktree_path = _worktree_handler(temp_db, tmp_path, monkeypatch)
 
     ctx = await _prepare_worktree_with_selected_commit(
         handler,
@@ -51,7 +54,12 @@ async def test_worktree_handler_captures_selected_commit(
 
 
 @pytest.mark.asyncio
-async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Path) -> None:
+async def test_clone_handler_captures_base(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Clone base",
@@ -59,14 +67,23 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
             "Clone isolation records the base commit in task artifacts and runtime context."
         ),
     )
-    handler, clone_path = _clone_handler(temp_db, tmp_path)
+    handler, clone_path = _clone_handler(temp_db, tmp_path, monkeypatch)
+    git_manager = handler._git_manager
+    assert git_manager is not None
 
-    ctx = await _prepare_with_git_head(
-        handler,
-        _config(task.id, sample_project["id"], tmp_path),
-        expected_git_cwd=clone_path,
+    with (
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
+    ):
+        ctx = await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
+
+    git_manager.get_local_commit.assert_awaited_once_with("refs/heads/main^{commit}")
+    handler._clone_manager.create_clone.assert_awaited_once_with(
+        clone_path=clone_path,
+        branch_name=ctx.branch_name,
+        base_branch="main",
+        base_commit_sha="abc123",
     )
-
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.clone_path == clone_path
     assert artifacts.clone_id == "cccccccc-cccc-4ccc-8ccc-cccccccc1123"
@@ -76,9 +93,10 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_base_captured_before_first_agent_run(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -87,7 +105,7 @@ async def test_base_captured_before_first_agent_run(
             "Isolation persists the base commit before copying agent runtime hooks."
         ),
     )
-    handler, _worktree_path = _worktree_handler(temp_db, tmp_path)
+    handler, _worktree_path = _worktree_handler(temp_db, tmp_path, monkeypatch)
     handler._git_manager.run_git_command.return_value = _git_head("abc123")
     handler._git_manager.get_local_commit.return_value = "abc123"
 
@@ -124,16 +142,19 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
         patch(
             "gobby.agents.isolation_repair.apply_isolation_git_hygiene",
             side_effect=RuntimeError("git hygiene failed"),
-        ),
+        ) as hygiene,
         caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
     ):
-        result = await repair_isolation_environment(
+        timings: dict[str, float] = {}
+        await repair_isolation_environment(
             main_repo_path="/tmp/main",
             isolated_path="/tmp/isolated",
             provider="codex",
+            phase_timings_ms=timings,
         )
 
-    assert result is None
+    hygiene.assert_called_once_with("/tmp/isolated", main_repo_path="/tmp/main")
+    assert "isolation_git_hygiene" in timings
     assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
 
 
@@ -161,33 +182,6 @@ async def test_repair_isolation_environment_propagates_project_json_failure() ->
     patch_mcp.assert_not_awaited()
 
 
-async def _prepare_with_git_head(
-    handler: IsolationHandler,
-    config: SpawnConfig,
-    *,
-    expected_git_cwd: str,
-) -> IsolationContext:
-    with (
-        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
-        patch(
-            "gobby.agents.isolation_clone.daemon_git.run",
-            new=AsyncMock(
-                return_value=GitOk(
-                    status="ok",
-                    argv=("git", "rev-parse", "HEAD"),
-                    stdout="abc123\n",
-                    stderr="",
-                )
-            ),
-        ) as git_run,
-    ):
-        ctx = await handler.prepare_environment(config)
-
-    git_run.assert_awaited_once_with(["rev-parse", "HEAD"], cwd=expected_git_cwd, timeout=10)
-    return ctx
-
-
 async def _prepare_worktree_with_selected_commit(
     handler: WorktreeIsolationHandler,
     config: SpawnConfig,
@@ -211,14 +205,15 @@ async def _prepare_worktree_with_selected_commit(
     return ctx
 
 
-def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler, str]:
+def _worktree_handler(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[WorktreeIsolationHandler, str]:
     from gobby.worktrees.git import WorktreeGitManager
 
     worktree_path = str(tmp_path / "wt")
     git_manager = MagicMock(spec=WorktreeGitManager)
     git_manager.repo_path = str(tmp_path / "repo")
     git_manager.get_current_branch.return_value = "main"
-    git_manager.has_unpushed_commits.return_value = (False, 0)
     git_manager.create_worktree.return_value = MagicMock(success=True)
     storage = MagicMock()
     storage.db = temp_db
@@ -229,12 +224,19 @@ def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler
         branch_name="branch",
     )
     handler = WorktreeIsolationHandler(git_manager=git_manager, worktree_storage=storage)
-    handler._generate_worktree_path = MagicMock(return_value=worktree_path)
+    monkeypatch.setattr(handler, "_generate_worktree_path", MagicMock(return_value=worktree_path))
     return handler, worktree_path
 
 
-def _clone_handler(temp_db, tmp_path: Path) -> tuple[CloneIsolationHandler, str]:
+def _clone_handler(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[CloneIsolationHandler, str]:
+    from gobby.worktrees.git import WorktreeGitManager
+
     clone_path = str(tmp_path / "clone")
+    git_manager = MagicMock(spec=WorktreeGitManager)
+    git_manager.run_git_command.return_value = _git_head("abc123")
+    git_manager.get_local_commit.return_value = "abc123"
     clone_manager = MagicMock()
     clone_manager.create_clone = AsyncMock(return_value=MagicMock(success=True))
     storage = MagicMock()
@@ -245,8 +247,10 @@ def _clone_handler(temp_db, tmp_path: Path) -> tuple[CloneIsolationHandler, str]
         clone_path=clone_path,
         branch_name="branch",
     )
-    handler = CloneIsolationHandler(clone_manager=clone_manager, clone_storage=storage)
-    handler._generate_clone_path = MagicMock(return_value=clone_path)
+    handler = CloneIsolationHandler(
+        clone_manager=clone_manager, clone_storage=storage, git_manager=git_manager
+    )
+    monkeypatch.setattr(handler, "_generate_clone_path", MagicMock(return_value=clone_path))
     return handler, clone_path
 
 

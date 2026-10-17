@@ -51,6 +51,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationSegment,
     missing_linked_session_capability,
 )
+from gobby.tasks.validation_diagnostics import bound_review_details
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 EvidenceOutcome = Literal["success", "failure", "unknown"]
@@ -3154,6 +3155,82 @@ def test_uncredited_compound_success_reports_specific_wrapper_reason(
     assert gate.details["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": wrapper_reason}
     ]
+
+
+@pytest.mark.parametrize("criterion_gap", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run pytest tests/tasks/test_gap.py -q",
+        "uv run pytest /Users/josh/wt/tests/tasks/test_gap.py -q",
+        "uv run --directory /Users/josh/Projects/gobby pytest --rootdir /tmp/exp "
+        "/tmp/exp/tests/tasks/test_gap.py -q",
+        "uv run pytest /Users/josh/wt/tests/tasks -q",
+    ],
+    ids=["relative-file", "absolute-file", "absolute-export", "absolute-directory"],
+)
+def test_excluded_runs_list_gap_covering_records_first(criterion_gap: bool, command: str) -> None:
+    gap_run = replace(_run(1, command=command), exclusion_reason="off-task")
+    unrelated = tuple(
+        replace(
+            _run(order, command=f"git show commit-{order}", categories=()),
+            exclusion_reason="off-task",
+        )
+        for order in range(2, 22)
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        has_attributed_edits=True,
+        changed_paths=() if criterion_gap else ("tests/tasks/test_gap.py",),
+        validation_criteria=f"Run `{command}`." if criterion_gap else "Focused tests pass.",
+        evidence=TranscriptEvidence(excluded_runs=(*unrelated, gap_run)),
+    )
+
+    assert gate.status == "failed"
+    records = gate.details["excluded_runs"]
+    assert records[0]["command"] == command
+    assert records[0]["reason_code"] == "off-task"
+    assert records[0]["reason"] == "Task was not selected when the run started"
+    assert len(records) == 16
+    assert gate.details["omitted_excluded_run_count"] == 5
+    assert records[1]["command"] == "git show commit-21"
+
+
+@pytest.mark.parametrize(
+    "gap_details",
+    [
+        {"pytest_uncovered_paths": ["tests/tasks/test_gap.py"]},
+        {"python_source_uncovered_tests": {"src/gap.py": ["tests/tasks/test_gap.py"]}},
+        {"vitest_related_uncovered_paths": ["tests/tasks/test_gap.py"]},
+        {"test_types_audit_uncovered_paths": ["tests/tasks/test_gap.py"]},
+        {"criterion_command_gaps": [{"command": "uv run pytest tests/tasks/test_gap.py -q"}]},
+    ],
+    ids=["changed-test", "related-test", "vitest-related", "test-types-audit", "required-command"],
+)
+@pytest.mark.parametrize("record_key,limit", [("uncredited_runs", 16), ("latest_runs", 64)])
+def test_uncredited_selection_keeps_gap_covering_runs(
+    gap_details: dict[str, object], record_key: str, limit: int
+) -> None:
+    command = "uv run pytest tests/tasks/test_gap.py -q"
+    gap_record: dict[str, object] = {"command": command, "reason": "stale after a later task edit"}
+    records = [gap_record]
+    records.extend({"command": f"git show commit-{order}"} for order in range(limit + 5))
+    details = bound_review_details(
+        {"latest_runs": [], "uncredited_runs": [], record_key: records, **gap_details},
+        "Focused tests pass.",
+    )
+
+    assert gap_record in details[record_key]
+    assert len(details[record_key]) == limit
+    assert (
+        details[
+            "omitted_uncredited_run_count"
+            if record_key == "uncredited_runs"
+            else "omitted_latest_run_count"
+        ]
+        == 6
+    )
 
 
 def test_uncredited_runs_explain_unknown_wrapped_and_stale_runs() -> None:

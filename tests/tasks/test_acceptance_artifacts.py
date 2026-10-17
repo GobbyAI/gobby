@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -2319,8 +2320,29 @@ def test_file_evidence_missing_at_the_close_candidate_names_it(tmp_path: Path) -
 def test_native_backend_evidence_regression_fails_on_local_contradictions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-01-02T00:00:00+00:00")
-    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-01-02T00:00:00+00:00")
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key)
+    for key, value in {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TEMPLATE_DIR": "",
+        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_VALUE_0": os.devnull,
+        "GIT_CONFIG_KEY_1": "commit.gpgSign",
+        "GIT_CONFIG_VALUE_1": "false",
+        "GIT_CONFIG_KEY_2": "tag.gpgSign",
+        "GIT_CONFIG_VALUE_2": "false",
+        "GIT_AUTHOR_NAME": "Tests",
+        "GIT_AUTHOR_EMAIL": "tests@example.com",
+        "GIT_COMMITTER_NAME": "Tests",
+        "GIT_COMMITTER_EMAIL": "tests@example.com",
+        "GIT_AUTHOR_DATE": "2026-01-02T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-02T00:00:00+00:00",
+    }.items():
+        monkeypatch.setenv(key, value)
     repo = _init_repo(tmp_path)
     seed = repo / "seed.txt"
     seed.write_text("first\n", encoding="utf-8")
@@ -3958,6 +3980,63 @@ def test_validation_matchers_compare_credited_core_command() -> None:
     assert validation_run_covers_test(prefixed.core_command, prefixed.output, test)
     assert not validation_run_names_test(wrapped.core_command, wrapped.command, test)
     assert not validation_run_covers_test(wrapped.core_command, wrapped.command, test)
+
+
+@pytest.mark.parametrize(
+    "header,symbol",
+    [
+        (
+            "_ test_env_unset_chdir_ignore_environment_options_are_credited"
+            "[env -u A -u B -C /wt] _",
+            "test_env_unset_chdir_ignore_environment_options_are_credited",
+        ),
+        (
+            "________ test_env_options_command_equivalence_matches_bare[-u X -C /wt] ________",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+        (
+            "1. [FAIL] test_env_options_command_equivalence_matches_bare[-u X -C /wt]",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+    ],
+)
+@pytest.mark.parametrize("case", ["bound", "other-test", "other-path", "no-detail", "sibling"])
+def test_tdd_pytest_spaced_headers_bind_failure_body(header: str, symbol: str, case: str) -> None:
+    started = datetime(2026, 10, 16, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference=f"tests/tasks/test_transcript_outcomes.py::{symbol}",
+        path="tests/tasks/test_transcript_outcomes.py",
+        symbol=symbol,
+        body=f"def {symbol}(): assert feature() == 1",
+    )
+    reported_header = header.replace(symbol, "test_other") if case == "other-test" else header
+    reported_path = "tests/test_other.py" if case == "other-path" else test.path
+    detail = "E   AssertionError: assert 0 == 1\n" if case != "no-detail" else ""
+    if case == "sibling":
+        # A recognized target header must not borrow a sibling's assertion,
+        # including when that sibling uses pytest's shortest padding.
+        reported_header = f"________ {symbol} ________"
+        detail = "_ test_other[env -u A] _\nE   AssertionError: assert 0 == 1\n"
+    red_output = f"{reported_header}\n{reported_path}:37: in {symbol}\n{detail}"
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command=f"pytest {test.path} -k {symbol}",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is (case == "bound"), result.findings
+    assert result.red_runs == ((red.command,) if case == "bound" else ())
 
 
 def test_tdd_evidence_rejection_names_run_and_unattributed_symbol() -> None:
