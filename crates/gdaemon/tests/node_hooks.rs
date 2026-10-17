@@ -658,7 +658,10 @@ async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result
     sweep_receipts(&node.node, &ledger).await?;
 
     assert_eq!(hub.requests().len(), 1);
-    assert_eq!(hub.requests()[0].body["receipt_id"], receipt()["receipt_id"]);
+    assert_eq!(
+        hub.requests()[0].body["receipt_id"],
+        receipt()["receipt_id"]
+    );
     assert!(ledger.is_processed(ACK_ID).await?);
     assert!(ledger.is_processed("original").await?);
     assert!(!valid.exists());
