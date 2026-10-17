@@ -482,7 +482,7 @@ def _red_run_proof(
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
             reason = "test body is an unconditional pytest.fail placeholder"
         elif not require_not_implemented or (
-            _has_runtime_stub(test, evidence, run, core_command)
+            _has_runtime_stub(test, evidence, run, core_command, parse_cache)
             or _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
@@ -498,11 +498,19 @@ def _red_run_proof(
 
 
 def _has_runtime_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun, command: str
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    command: str,
+    parse_cache: PythonModuleCache | None,
 ) -> bool:
     """Bind an HTTP/helper-mediated stub failure to its named test section."""
     nodes, same_file = _selected_pytest_nodes(command, test)
-    lines = (run.output or "").splitlines()
+    # Captured payload can forge even a fresh failure header. Never resume inside it.
+    output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
+        0
+    ]
+    lines = output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
         if header is None or not _header_names_artifact(
@@ -513,7 +521,7 @@ def _has_runtime_stub(
         if (
             _section_has_artifact_location(section, test)
             and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
-            and _has_python_runtime_stub(section, evidence, run)
+            and _has_python_runtime_stub(section, evidence, run, parse_cache)
         ):
             return True
     return False

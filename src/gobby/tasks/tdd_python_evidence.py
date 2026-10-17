@@ -326,24 +326,54 @@ def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST,
 
 
 def _has_python_runtime_stub(
-    section: str, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    section: str,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
-    """Require an actual raising frame from production attributed before RED."""
-    paths = {
-        PurePosixPath(edit.path).parts
-        for edit in evidence.edits
-        if edit.task_attributed
-        and edit.session_id == run.session_id
+    """Bind a raising frame to the latest confirmed pre-RED source and function."""
+    latest = {
+        PurePosixPath(edit.path).parts: edit
+        for edit in sorted(evidence.edits, key=lambda item: item.order)
+        if edit.session_id == run.session_id
         and edit.order < run.order
         and edit.timestamp < run.started_at
         and is_production_edit_path(edit.path)
     }
     rows = section.splitlines()
     for row, source in zip(rows, rows[1:], strict=False):
-        frame = re.match(r"\s*(.+\.py):\d+: in \w+\s*$", row)
-        if frame and re.match(r"\s*raise NotImplementedError\b", source):
-            reported = PurePosixPath(frame[1]).parts
-            if any(reported[-len(path) :] == path for path in paths):
+        frame = re.match(r"\s*(.+\.py):(\d+): in (\w+)\s*$", row)
+        if frame is None or not re.match(r"\s*raise NotImplementedError\b", source):
+            continue
+        reported = PurePosixPath(frame[1]).parts
+        for path, edit in latest.items():
+            if reported[-len(path) :] != path or not edit.task_attributed:
+                continue
+            if not _source_confirmed_before(edit, run):
+                continue
+            historical_source = edit.source_after
+            if historical_source is None:
+                historical_source = textwrap.dedent(edit.source_fragment or "")
+            module = parse_python_module(historical_source, parse_cache)
+            if module is None:
+                continue
+            functions = [
+                node
+                for node in ast.walk(module)
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == frame[3]
+            ]
+            if len(functions) != 1:
+                continue
+            raised = functions[0].body[0]
+            if not isinstance(raised, ast.Raise):
+                continue
+            exception = raised.exc.func if isinstance(raised.exc, ast.Call) else raised.exc
+            if (
+                isinstance(exception, ast.Name)
+                and exception.id == "NotImplementedError"
+                and (edit.source_after is None or raised.lineno == int(frame[2]))
+            ):
                 return True
     return False
 

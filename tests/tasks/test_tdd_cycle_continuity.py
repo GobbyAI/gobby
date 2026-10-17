@@ -1004,7 +1004,26 @@ def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
 )
 @pytest.mark.parametrize(
     "failure_kind",
-    ["stub", "assertion_mentions_stub", "sibling_stub", "no_stub_frame", "foreign_stub_frame"],
+    [
+        "stub",
+        "assertion_mentions_stub",
+        "sibling_stub",
+        "no_stub_frame",
+        "foreign_stub_frame",
+        "captured_stdout",
+        "captured_stderr",
+        "captured_log",
+        "source_no_stub",
+        "source_other_function",
+        "source_wrong_line",
+        "source_unconfirmed",
+        "source_late_confirmation",
+        "source_overwritten",
+        "fragment_stub",
+        "fragment_wrong_function",
+        "fragment_no_stub",
+        "fragment_unconfirmed",
+    ],
 )
 def test_node_route_postproduction_not_implemented_is_attributed(
     symbol: str, failure_kind: str
@@ -1042,17 +1061,81 @@ def test_node_route_postproduction_not_implemented_is_attributed(
             f"{test.path}:700: in test_sibling\n"
             "E   NotImplementedError: sibling route stub\n"
         )
+    if failure_kind.startswith("captured_"):
+        stream = failure_kind.removeprefix("captured_")
+        output = (
+            f"______________ {symbol} ______________\n"
+            f"{test.path}:612: in {symbol}\nE   assert False\n"
+            f"---------------- Captured {stream} call ----------------\n"
+            f"{production}:117: in register_checkout\n"
+            '    raise NotImplementedError("fabricated")\n'
+            "E   NotImplementedError: fabricated\n"
+        )
+    elif failure_kind.startswith(("source_", "fragment_")):
+        output = output.replace(
+            "E   AssertionError: NotImplementedError was mentioned but not raised",
+            "E   NotImplementedError: stub: checkout registration route",
+        )
     output += "======================== 18 failed, 1 passed in 16.19s ========================\n"
     command = f"uv run pytest {test.path} -q --timeout=120 --session-timeout=600"
+    source = "\n" * 115 + (
+        "async def register_checkout():\n"
+        '    raise NotImplementedError("stub: checkout registration route")\n'
+    )
+    if failure_kind == "source_no_stub":
+        source = source.replace(
+            'raise NotImplementedError("stub: checkout registration route")', "return 0"
+        )
+    elif failure_kind == "source_other_function":
+        source = source.replace("register_checkout", "unrelated")
+    elif failure_kind == "source_wrong_line":
+        source = "\n" + source
+    production_edit = replace(
+        _edit(production, 0),
+        source_after=source,
+        source_confirmed=failure_kind != "source_unconfirmed",
+        source_confirmed_at=START
+        + timedelta(seconds=3 if failure_kind == "source_late_confirmation" else 0),
+    )
+    if failure_kind.startswith("fragment_"):
+        fragment = (
+            "    async def register_checkout(request):\n"
+            '        raise NotImplementedError("stub: checkout registration route")\n'
+            "        machine_id = node_machine(request)\n"
+        )
+        if failure_kind == "fragment_wrong_function":
+            fragment = fragment.replace("register_checkout", "unrelated")
+        elif failure_kind == "fragment_no_stub":
+            fragment = fragment.replace(
+                'raise NotImplementedError("stub: checkout registration route")', "return 0"
+            )
+        production_edit = replace(
+            production_edit,
+            source_after=None,
+            source_fragment=fragment,
+            source_confirmed=failure_kind != "fragment_unconfirmed",
+        )
+    overwritten = (
+        (
+            replace(
+                _edit(production, 1),
+                source_after="async def register_checkout(): return 0\n",
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+        )
+        if failure_kind == "source_overwritten"
+        else ()
+    )
     evidence = TranscriptEvidence(
-        edits=(_edit(production, 0), _edit(test.path, 1), _edit(production, 3)),
+        edits=(production_edit, _edit(test.path, 1), *overwritten, _edit(production, 3)),
         validation_runs=(
             replace(_run(2, red=True, output=output), command=command),
             replace(_run(4, red=False), command=command),
         ),
     )
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed is (failure_kind == "stub"), result.findings
+    assert result.passed is (failure_kind in {"stub", "fragment_stub"}), result.findings
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])
