@@ -688,7 +688,10 @@ def build_condition_helpers(
             creates_task_outside_lane(task_manager, _get_project_id(ctx), tool_input, event_data)
         )
         funcs["open_lane_epic_refs"] = lambda: open_lane_epic_refs(
-            task_manager, _get_project_id(ctx)
+            task_manager,
+            _get_project_id(ctx),
+            tool_input=ctx.get("tool_input"),
+            event_data=getattr(ctx.get("event"), "data", None),
         )
     else:
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: False

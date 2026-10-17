@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
+from gobby.tasks.close_pytest_collection import collection_target, operator_guard_file
 from gobby.tasks.command_equivalence import (
     pytest_targets,
     run_location,
@@ -419,6 +420,32 @@ def uncovered_pytest_paths(
         and not runner_reported_failures(run.output)
     )
     return _uncovered_by(runs, changed_python_tests, close_root, changed_paths, candidate)
+
+
+def collection_credited_pytest_paths(
+    runs: Iterable[TranscriptValidationRun],
+    changed_python_tests: tuple[str, ...],
+    *,
+    close_root: str | None = None,
+    changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
+) -> tuple[str, ...]:
+    """Credit only guarded changed files; ordinary execution coverage stays separate."""
+    collected: set[str] = set()
+    if close_root is not None:
+        root = os.path.realpath(close_root)
+        for run in runs:
+            target = collection_target(run)
+            location = run_location(run.command, workdir=run.workdir)
+            if target is None or location is None:
+                continue
+            resolved = os.path.normpath(os.path.join(root, location, target))
+            for test in changed_python_tests:
+                if _runs_test(
+                    resolved, test, root, changed_paths, candidate
+                ) and operator_guard_file(Path(root) / test):
+                    collected.add(test)
+    return tuple(test for test in changed_python_tests if test in collected)
 
 
 def unread_background_runs(

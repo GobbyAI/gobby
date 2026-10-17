@@ -298,32 +298,28 @@ def _shadowed(module: _Module, name: str) -> bool:
 
 
 def _written_names(tree: ast.Module) -> frozenset[str]:
-    """Names anything in ``tree`` can rebind on an object or across scopes."""
+    """Names anything in ``tree`` can rebind on an object or across scopes.
+
+    Any string literal can reach a namespace (``globals().update([...])``,
+    ``setattr``, ``patch.dict``, ``monkeypatch.setattr``), so the last dotted
+    part of every literal counts as written when it is an identifier, whatever
+    the prefix, as does every keyword name.
+    """
     written: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
             written.add(node.attr)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             written.update(node.names)
-        for key in _string_keys(node):
-            # A dotted target such as "pkg.module.name" rebinds its last part.
-            written.update({key, key.rsplit(".", 1)[-1]})
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            written.add(node.arg)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # A dotted target such as "pkg.module.name" rebinds its last part,
+            # whatever the prefix: monkeypatch imports "test_x-extra.name" too.
+            name = node.value.rsplit(".", 1)[-1]
+            if name.isidentifier():
+                written.add(name)
     return frozenset(written)
-
-
-def _string_keys(node: ast.AST) -> list[str]:
-    """String literals a call passes or a subscript indexes, any of which can name a binding."""
-    if isinstance(node, ast.Call):
-        values = [*node.args, *(keyword.value for keyword in node.keywords)]
-    elif isinstance(node, ast.Subscript):
-        values = [node.slice]
-    else:
-        return []
-    return [
-        value.value
-        for value in values
-        if isinstance(value, ast.Constant) and isinstance(value.value, str)
-    ]
 
 
 def _defines(tree: ast.Module, name: str) -> bool:

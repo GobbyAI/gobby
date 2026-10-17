@@ -291,6 +291,10 @@ async def _call_tool_impl(
             {},
         )
     arguments = cast("dict[str, Any]", prepared_arguments or {})
+    # Scope remains the authenticated caller's project; task creation's explicit
+    # destination is a tool argument and must survive that scope resolution.
+    if server_name == "gobby-tasks" and tool_name == "create_task" and requested_project_id:
+        arguments.setdefault("project", requested_project_id)
 
     hook_manager = service._resolve_hook_manager()
     session_manager = getattr(service, "session_manager", None)

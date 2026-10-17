@@ -649,10 +649,16 @@ def test_recall_after_a_job_file_tail_counts_only_before_production(
 
 
 def _expired_recall_result(
-    tmp_path: Path, output: str, path: str, symbols: tuple[str, ...]
+    tmp_path: Path,
+    output: str,
+    path: str,
+    symbols: tuple[str, ...],
+    *,
+    source: str = "x = 1\n",
+    selection: str = "",
 ) -> TddEvidenceResult:
-    command = f"uv run rtk pytest {path} -q"
-    records = _write(tmp_path, 1, path)
+    command = f"uv run rtk pytest {path}{selection} -q"
+    records = _pair(1, "Write", {"file_path": str(tmp_path / path), "content": source}, "")
     records += _pair(2, "Bash", {"command": command}, output, error=True)
     records += _write(tmp_path, 10, PY_CODE)
     records += _pair(12, "Bash", {"command": command}, f"{len(symbols)} passed in 0.4s")
@@ -671,7 +677,7 @@ def _expired_recall_result(
         "test_post_production_proof_rejects_unattributable_red[other_node_changed]",
     ],
 )
-def test_expired_recall_rejects_original_multinode_output_without_node_binding(
+def test_expired_recall_credits_original_multinode_output_by_node_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symbol: str
 ) -> None:
     # Original author CommandExecution, 2026-10-14T21:11:33.811Z, exit 1.
@@ -680,8 +686,9 @@ def test_expired_recall_rejects_original_multinode_output_without_node_binding(
         Path(__file__).parents[1] / "fixtures/rtk/pytest-expired-recall-24423.txt"
     ).read_text()
     path = "tests/tasks/test_tdd_test_tightening.py"
-    result = _expired_recall_result(tmp_path, output, path, (symbol,))
-    assert_uncredited(result)
+    source = (Path(__file__).parent / "test_tdd_test_tightening.py").read_text()
+    result = _expired_recall_result(tmp_path, output, path, (symbol,), source=source)
+    assert result.passed, result.findings
 
 
 @pytest.mark.parametrize(
@@ -702,13 +709,14 @@ def test_expired_recall_credits_compacted_node_failure_detail(
     assert result.passed, result.findings
 
 
-def test_expired_recall_rejects_both_original_named_tests_without_node_binding(
+def test_expired_recall_credits_both_original_named_tests_by_node_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _recall_store(tmp_path / "home", monkeypatch, None)
     output = (
         Path(__file__).parents[1] / "fixtures/rtk/pytest-expired-recall-24423.txt"
     ).read_text()
+    source = (Path(__file__).parent / "test_tdd_test_tightening.py").read_text()
     result = _expired_recall_result(
         tmp_path,
         output,
@@ -717,8 +725,9 @@ def test_expired_recall_rejects_both_original_named_tests_without_node_binding(
             "test_post_production_proof_credits_test_only_tightening",
             "test_post_production_proof_rejects_unattributable_red",
         ),
+        source=source,
     )
-    assert_uncredited(result)
+    assert result.passed, result.findings
 
 
 @pytest.mark.parametrize(
@@ -757,6 +766,8 @@ def test_expired_recall_rejects_both_original_named_tests_without_node_binding(
         f"1 failed\n[full output: rtk recall {RECALL}]",
         f">       assert feature()\nE       assert False\nFAILED {PY_TEST}::test_feature\n"
         f"2 failed\n[full output: rtk recall {RECALL}]",
+        f">       assert feature()\nE       assert False\nFAILED {PY_TEST}::test_feature\n"
+        f"1 failed, 1 error\n[full output: rtk recall {RECALL}]",
     ],
     ids=[
         "summary-only",
@@ -773,6 +784,7 @@ def test_expired_recall_rejects_both_original_named_tests_without_node_binding(
         "context-only",
         "other-path",
         "incomplete-list",
+        "summary-error-count",
     ],
 )
 def test_expired_recall_keeps_unattributable_compacted_red_rejected(
@@ -782,3 +794,88 @@ def test_expired_recall_keeps_unattributable_compacted_red_rejected(
     result = _expired_recall_result(tmp_path, output, PY_TEST, ("test_feature",))
     assert_uncredited(result)
     assert any("no attributable failure section" in finding for finding in result.findings)
+
+
+MULTI_SOURCE = "def test_first():\n    assert feature() == 2\n\n\ndef test_second():\n    assert other() == 3\n"
+MULTI_OUTPUT = (
+    ">       assert feature() == 2\nE       assert 1 == 2\n\n"
+    ">       assert other() == 3\nE       assert 1 == 3\n\n"
+    f"FAILED {PY_TEST}::test_first\nFAILED {PY_TEST}::test_second\n"
+    f"2 failed in 0.5s\n[full output: rtk recall {RECALL}]"
+)
+
+
+@pytest.mark.parametrize(
+    "symbols", [("test_first",), ("test_second",), ("test_first", "test_second")]
+)
+def test_expired_recall_credits_each_failed_node_bound_to_its_own_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symbols: tuple[str, ...]
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    result = _expired_recall_result(tmp_path, MULTI_OUTPUT, PY_TEST, symbols, source=MULTI_SOURCE)
+    assert result.passed, result.findings
+
+
+def test_expired_recall_withholds_credit_from_a_body_shared_by_two_failed_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both failing bodies carry the same statement, so neither node is provably bound.
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    source = "def test_first():\n    assert feature() == 2\n\n\ndef test_second():\n    assert feature() == 2\n"
+    output = (
+        ">       assert feature() == 2\nE       assert 1 == 2\n\n"
+        ">       assert feature() == 2\nE       assert 1 == 2\n\n"
+        f"FAILED {PY_TEST}::test_first\nFAILED {PY_TEST}::test_second\n"
+        f"2 failed in 0.5s\n[full output: rtk recall {RECALL}]"
+    )
+    result = _expired_recall_result(tmp_path, output, PY_TEST, ("test_second",), source=source)
+    assert_uncredited(result)
+
+
+def test_expired_recall_ignores_error_count_text_in_a_failure_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    output = (
+        f">       assert feature()\nE       ValueError: 2 errors found\nFAILED {PY_TEST}::test_feature\n"
+        f"1 failed\n[full output: rtk recall {RECALL}]"
+    )
+    result = _expired_recall_result(tmp_path, output, PY_TEST, ("test_feature",))
+    assert result.passed, result.findings
+
+
+def test_expired_recall_anchors_the_count_to_the_final_summary_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An earlier `N failed` line is text, not pytest's summary; the final line decides.
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    output = (
+        "2 failed checks\n"
+        ">       assert feature() == 2\nE       assert 1 == 2\n\n"
+        ">       assert other() == 3\nE       assert 1 == 3\n\n"
+        f"FAILED {PY_TEST}::test_first\nFAILED {PY_TEST}::test_second\n"
+        f"2 failed, 1 error in 0.5s\n[full output: rtk recall {RECALL}]"
+    )
+    result = _expired_recall_result(tmp_path, output, PY_TEST, ("test_first",), source=MULTI_SOURCE)
+    assert_uncredited(result)
+
+
+SIBLING_SOURCE = "def test_feature():\n    assert feature() == 2\n\n\ndef test_other():\n    assert other() == 3\n"
+
+
+@pytest.mark.parametrize(("line", "credited"), [(2, True), (6, False)], ids=["own-span", "sibling"])
+def test_expired_recall_binds_location_only_failure_to_the_node_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: int, credited: bool
+) -> None:
+    # --tb=line reports no symbol, so the location must fall inside the selected node.
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    output = f"{PY_TEST}:{line}: AssertionError: wrong\n1 failed in 0.4s\n[full output: rtk recall {RECALL}]"
+    result = _expired_recall_result(
+        tmp_path,
+        output,
+        PY_TEST,
+        ("test_feature",),
+        source=SIBLING_SOURCE,
+        selection="::test_feature",
+    )
+    assert result.passed is credited, result.findings

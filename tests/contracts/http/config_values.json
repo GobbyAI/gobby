@@ -720,6 +720,10 @@
         "metrics": {
           "list_limit": 10000
         },
+        "node_reports": {
+          "max_pending_bytes_per_machine": 16777216,
+          "max_request_bytes": 8388608
+        },
         "pipelines": {
           "nesting_depth_limit": 10,
           "prompt_step": {
@@ -1808,6 +1812,10 @@
         },
         "metrics": {
           "list_limit": 10000
+        },
+        "node_reports": {
+          "max_pending_bytes_per_machine": 16777216,
+          "max_request_bytes": 8388608
         },
         "pipelines": {
           "nesting_depth_limit": 10,

@@ -709,10 +709,14 @@ def _isolated_child_env(
     # write Gobby home.
     if not env.get("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR", "").strip() and machine_pkgs.is_dir():
         cache_root = unsandboxed_zig_cache_dir()
-        vendored_zig_pkg = vendored_libghostty_vt(repo_root) / "zig-pkg"
+        vendored = vendored_libghostty_vt(repo_root)
         try:
             complete = materialize_zig_packages(
-                machine_pkgs, cache_root, vendored_zig_pkg, report=_emit
+                machine_pkgs,
+                cache_root,
+                vendored / "zig-pkg",
+                manifest=vendored / "build.zig.zon",
+                report=_emit,
             )
         except OSError as exc:
             _emit(f"zig package cache preparation skipped: {exc}")

@@ -65,6 +65,11 @@ if [[ -n "${GTERM_TARGET:-}" ]]; then
 fi
 
 cd "$VENDORED_DIR"
+# Fetch every pinned package into the machine cache first. Cargo builds keep
+# their packages under OUT_DIR, so a dependency bump reaches the sandbox
+# package mirror (src/gobby/agents/zig_packages.py reads ~/.cache/zig/p) only
+# through this step.
+"$ZIG_BIN" build --fetch --global-cache-dir "$HOME/.cache/zig"
 "$ZIG_BIN" "${build_args[@]}" "$@"
 
 echo
