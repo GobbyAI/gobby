@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
+from gobby.tasks.close_pytest_collection import declares_operator_guard
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
 
 TEST = "tests/e2e/test_live.py"
@@ -82,6 +83,32 @@ def test_guarded_collection_credits_changed_file(root: Path) -> None:
     assert gate.details["pytest_uncovered_paths"] == []
 
 
+def test_composer_live_proof_guard_earns_collection_credit(root: Path) -> None:
+    # #24411's file reads _GRANT in composer_fixture and the child env.
+    real = Path(__file__).resolve().parents[2] / "tests/e2e/test_composer_live_proof.py"
+    gate = _gate(
+        root,
+        _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected in 0.01s"),
+        real.read_text(encoding="utf-8"),
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_collection_credited_paths"] == [TEST]
+
+
+def test_collection_accepts_read_only_grant_uses(root: Path) -> None:
+    source = GUARDED + (
+        "@pytest.fixture\ndef admitted():\n"
+        '    if os.environ.get("GOBBY_LIVE_EXECUTION") != _GRANT:\n'
+        '        pytest.skip("no grant")\n'
+        "    return dict(GOBBY_LIVE_EXECUTION=_GRANT)\n"
+    )
+    gate = _gate(
+        root, _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected in 0.01s"), source
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
 @pytest.mark.parametrize(
     ("source", "output", "exit_code"),
     [
@@ -144,6 +171,19 @@ def root(tmp_path: Path) -> Path:
         GUARDED + "pytestmark *= 0\n",
         GUARDED + "if True:\n    pytestmark = []\n",
         GUARDED + "markers = pytestmark\nmarkers.clear()\n",
+        GUARDED + "pytestmark.clear()\n",
+        GUARDED + "pytestmark[1] = pytest.mark.e2e\n",
+        GUARDED + "del _GRANT\n",
+        GUARDED.replace(
+            '_GRANT = "OPERATOR_AUTHORIZED"',
+            '_GRANT = "OPERATOR_AUTHORIZED"\n_GRANT += "X"',
+        ),
+        GUARDED + "def reset():\n    global _GRANT\n    _GRANT = None\n",
+        GUARDED.replace(
+            '_GRANT = "OPERATOR_AUTHORIZED"',
+            '_GRANT = "OPERATOR_AUTHORIZED"\nfrom os import sep as _GRANT',
+        ),
+        GUARDED + "if (_GRANT := None):\n    pass\n",
         GUARDED + "pytestmark, other = [], None\n",
         GUARDED.replace("pytestmark = [", "markers = pytestmark = ["),
         GUARDED.replace(
@@ -157,6 +197,13 @@ def root(tmp_path: Path) -> Path:
         "augmented-marker",
         "conditional-marker",
         "alias-mutation",
+        "marker-method-mutation",
+        "marker-item-store",
+        "deleted-grant",
+        "augmented-grant",
+        "nested-global-grant",
+        "imported-grant",
+        "walrus-grant",
         "unpacked-marker",
         "chained-alias",
         "conditional-grant",
@@ -186,3 +233,24 @@ def test_lossy_rtk_collection_output_never_earns_credit(root: Path, version: str
     ).read_text()
     gate = _gate(root, _run(f"rtk uv run pytest {TEST} --collect-only -q", output))
     assert gate.details["pytest_uncovered_paths"] == [TEST]
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        'globals()["pytestmark"] = []\n',
+        'globals()["pytestmark"]: list = []\n',
+        'globals()["pytestmark"] += []\n',
+        'del globals()["pytestmark"]\n',
+    ],
+    ids=["assignment", "annotated", "augmented", "delete"],
+)
+def test_declares_operator_guard_rejects_globals_pytestmark_write(write: str) -> None:
+    source = GUARDED.replace("!= _GRANT", '!= "OPERATOR_AUTHORIZED"') + write
+    assert declares_operator_guard(source) is False
+
+
+@pytest.mark.parametrize("protected_name", ["pytestmark", "_GRANT"])
+def test_declares_operator_guard_rejects_mapping_rest_binding(protected_name: str) -> None:
+    source = GUARDED + f"match {{}}:\n    case {{**{protected_name}}}:\n        pass\n"
+    assert declares_operator_guard(source) is False

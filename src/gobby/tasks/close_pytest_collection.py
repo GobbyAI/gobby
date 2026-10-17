@@ -29,10 +29,27 @@ def collection_target(run: TranscriptValidationRun) -> str | None:
     return pytest_collection_target(run.core_command or run.command)
 
 
-def _isolated_binding(module: ast.Module, name: str, allowed: tuple[ast.AST, ...]) -> bool:
-    """Reject other references, aliases or bindings, including nested writes."""
+def _isolated_binding(
+    module: ast.Module, name: str, allowed: tuple[ast.AST, ...], *, reads: bool = False
+) -> bool:
+    """Reject other bindings; reads=True admits Load references (immutable grant only)."""
     for node in ast.walk(module):
         if isinstance(node, ast.Name) and node.id == name and node not in allowed:
+            if not (reads and isinstance(node.ctx, ast.Load)):
+                return False
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "globals"
+            and not node.value.args
+            and not node.value.keywords
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == name
+        ):
+            return False
+        if isinstance(node, ast.MatchMapping) and node.rest == name:
             return False
         if (
             isinstance(
@@ -60,8 +77,9 @@ def declares_operator_guard(source: str) -> bool:
     The declaration is ``pytestmark = [..., pytest.mark.skipif(
     os.environ.get("ENV_NAME") != GRANT, ...)]``, or that skipif alone.
     GRANT must be a nonempty literal string or an unambiguous module string
-    constant. Each binding must be a single plain module assignment; any other
-    reference or binding (including aliases and conditional writes) fails closed.
+    constant. Each binding must be a single plain module assignment;
+    pytestmark admits no other reference; the str grant admits read-only references
+    but no other binding (including aliases and conditional writes).
     This matches the existing operator-proof declaration; arbitrary
     truthy skip conditions and observed skips never establish admission.
     """
@@ -107,7 +125,7 @@ def declares_operator_guard(source: str) -> bool:
         if isinstance(grant, ast.Name):
             binding = assignments.get(grant.id)
             if binding is None or not _isolated_binding(
-                module, grant.id, (binding.targets[0], grant)
+                module, grant.id, (binding.targets[0],), reads=True
             ):
                 continue
             grant = binding.value
