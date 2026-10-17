@@ -42,6 +42,11 @@ INVOCATIONS = (
     'eval "gobby sessions approve-dirty-paths s7 a.txt"',
     "sh -c 'gobby sessions $v s7 a.txt'",
     'gobby sessions show "$SID"',
+    'gobby sessions {approve-dirty-path"s",s7} a.txt',
+    "gobby sessions approve-dirty-p?ths s7 a.txt",
+    "gobby sessions approve-dirty-p[a]ths s7 a.txt",
+    'gobby sessions list --project "$(gobby sessions approve-dirty-paths s7 a.txt)"',
+    "gobby sessions list --project $P; a=approve-dirty-; b=paths; $g sessions $a$b s7 a.txt",
 )
 
 
@@ -84,6 +89,8 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
             'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"',
             "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt",
             "gobby sessions list",
+            "gobby sessions list --project $PROJECT",
+            "uv run gobby sessions list --project $PROJECT",
         )
     }
 
@@ -93,4 +100,6 @@ async def test_dirty_path_approval_cli_is_blocked_for_every_session(
         'echo "ask the operator: gobby sessions approve-dirty-paths s7 a.txt"': "allow",
         "git commit -m 'relay gobby sessions approve-dirty-paths' -- a.txt": "allow",
         "gobby sessions list": "allow",
+        "gobby sessions list --project $PROJECT": "allow",
+        "uv run gobby sessions list --project $PROJECT": "allow",
     }

@@ -836,8 +836,10 @@ no live session owns. The edit gate's refusal prints the command. Each path stay
 approved only while its content matches what it was at approval. Agents cannot run
 it: `block-dirty-path-approval-cli` refuses any shell command that names the
 subcommand, and `block-gobby-cli-expansion` refuses any `gobby` CLI call that
-expands a variable or runs a substitution unquoted, since the subcommand could
-then be assembled at run time. The CLI also requires an interactive terminal.
+contains a variable, a substitution, a brace or a glob, quoted or not, since the
+subcommand could then be assembled at run time. The one exemption is
+`gobby sessions list` whose arguments hold no substitution or separator. The CLI
+also requires an interactive terminal.
 A managed execution's database role cannot read or write session state.
 
 `summarize` creates archival output; it never stages a recoverable handoff.
