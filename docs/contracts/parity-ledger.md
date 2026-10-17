@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1102. Unclassified: 0.
+Public surfaces and evidence gates: 1104. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -656,6 +656,7 @@ Public surfaces and evidence gates: 1102. Unclassified: 0.
 | `HTTP POST /api/sessions/{session_id}/stop` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::stop_session`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/variables/get` | proxied | Python `src/gobby/servers/routes/sessions/variables.py::get_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/variables/set` | proxied | Python `src/gobby/servers/routes/sessions/variables.py::set_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_ref}/dirty-path-approvals` | proxied | Python `src/gobby/servers/routes/sessions/dirty_paths.py::register_dirty_path_routes`; operator-only, admitted only with a verified front-door identity. Rust blocker: implement native operator approval with the front-door check. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/skills` | proxied | Python src/gobby/servers/routes/skills.py::create_skill; Rust HTTP handler parity for POST /api/skills remains under #21568 Remaining route families (Skills). |
 | `HTTP POST /api/skills/hubs/install` | proxied | Python src/gobby/servers/routes/skills.py::install_from_hub; Rust HTTP handler parity for POST /api/skills/hubs/install remains under #21568 Remaining route families (Skills). |
 | `HTTP POST /api/skills/import` | proxied | Python src/gobby/servers/routes/skills.py::import_skill; Rust HTTP handler parity for POST /api/skills/import remains under #21568 Remaining route families (Skills). |
@@ -981,6 +982,7 @@ Public surfaces and evidence gates: 1102. Unclassified: 0.
 | `MCP gobby-tasks:list_stages_registry` | proxied | Blocked on #21560 Tasks family: port `list_stages_registry` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:124`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:list_tasks` | proxied | Blocked on #21560 Tasks family: port `list_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_listing.py:137`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:record_close_receipt` | proxied | Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:release_task_claim` | proxied | Python `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`; Rust blocker: #21560 Tasks family and #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:remove_dependency` | proxied | Blocked on #21560 Tasks family: port `remove_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:116`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:remove_label` | proxied | Blocked on #21560 Tasks family: port `remove_label` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py:64`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:reopen_task` | proxied | Blocked on #21560 Tasks family: port `reopen_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |

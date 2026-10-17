@@ -75,8 +75,9 @@ _NATIVE_SANDBOX_CARGO_WORKSPACE = os.environ.get("GOBBY_SANDBOX_CARGO_WORKSPACE"
 
 
 @pytest.fixture
-def native_cargo_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Restore the real build route after ordinary unit fixtures clear it."""
+def native_cargo_target(monkeypatch: pytest.MonkeyPatch, postgres_database_url: str) -> None:
+    """Restore native build routing and bind proofs to the isolated test database."""
+    monkeypatch.setenv("GOBBY_SCHEMA_TEST_DATABASE_URL", postgres_database_url)
     for name, value in (
         ("CARGO_TARGET_DIR", _NATIVE_CARGO_TARGET_DIR),
         ("GOBBY_SANDBOX_CARGO_TARGET", _NATIVE_SANDBOX_CARGO_TARGET),
@@ -145,8 +146,16 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 @pytest.mark.integration
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
+    subprocess.run(
+        ["cargo", "build", "--locked", "-p", "gobby-daemon"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
-    assert candidate.is_file(), "build the checkout's debug gdaemon before native proof"
+    assert candidate.is_file(), "the checkout build must produce its routed gdaemon candidate"
     _PROVE_CATALOG_FRESHNESS(repo, candidate)
 
 
