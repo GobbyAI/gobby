@@ -17,7 +17,9 @@ The dependency edges pull in **78 open tasks**, **65** of them leaves:
 
 The ready leaves are #24381 (Detection manifest engine) and #24350 (`gobby-mcp` crate and its daemon dialer). The landed or in-review leaves are #24368 (Node hook ingress arm), #24270 (Node routes: checkout registration and run reports), #24595 (Callers act only on machines they own), #24596 (Node-commands contract version 3) and #24582 (Node ledger prune test).
 
-The hub-mode and node-half plans are fully expanded. **Correction, 16:05 CDT:** #23275 (`gobby-mcp` crate) needs no planning. Its plan took your four rulings, reached consensus and was expanded into #24350 through #24360 on 10-13. Its `needs-planning` flag and escalation were stale bookkeeping; both are now cleared. Only #21586 and #23276 still need planning.
+Every task this report names has a full entry (title, status, open blockers and planning need): tasks on the path in **Full tree on the path**, and the rest in **Other tasks this report mentions** at the end.
+
+The hub-mode and node-half plans are fully expanded. **Correction, about 15:50 CDT:** #23275 (`gobby-mcp` crate) needs no planning. Its plan took your four rulings, reached consensus and was expanded on 10-13 into #24350 (`gobby-mcp` crate and its daemon dialer) through #24360 (OAuth 2.1 authorization for the HTTP transport). Its `needs-planning` flag and escalation were stale bookkeeping; both are now cleared. Only #21586 and #23276 still need planning.
 
 **Two tasks the edges pull in from outside hub-node still need planning before the path can finish.** Expanding #21586 would create new tasks, and the close cap you chose blocks that for now (option B: no new tasks until the close backlog is under 20).
 
@@ -25,8 +27,8 @@ The hub-mode and node-half plans are fully expanded. **Correction, 16:05 CDT:** 
 
 1. **#21586** (Migrate code-index orchestration and shared dependencies): an epic with **no children**. It needs a plan and an expansion.
    - Why it's on the path: #24380 (Node code-index preflight), in S2.7 node half P2, is blocked by it.
-   - Its parent #21568 (Remaining route families) is itself gated on #21558 (Native WS transport in gdaemon) and #21560 (Tasks family). #21560 is gated on #21559 (Config, runtime handshake, and grant issuing), which has about 30 open leaves.
-   - So as the edges stand, hub-node's test date waits on most of the rest of Stage 2.
+   - Its parent was #21568 (Remaining route families), which is gated on #21558 (Native WS transport in gdaemon) and #21560 (Tasks family). #21560 is gated on #21559 (Config, runtime handshake, and grant issuing), which has about 30 open leaves. Full entries for all four are at the end.
+   - That inherited gate made hub-node's test date wait on most of the rest of Stage 2. **Update:** you approved re-parenting #21586 directly under Stage 2 #21544, which removed it.
 2. **#23276** (gcode index writes from a node need hub HTTP routes): escalated `needs-planning`, deferred behind the same code-index family gate. #24380 is also blocked by it.
 3. **#23275** (`gobby-mcp` crate: native MCP transports with OAuth and CIMD): no planning needed (see the correction above).
    - It is already planned and expanded: leaves #24350 through #24360 carry full specs from the approved gmcp-stdio plan. The placeholder acceptance text belongs only to the #23275 holder itself.
@@ -63,7 +65,7 @@ The second spine starts at the just-landed ingress arm: #24368 (Node hook ingres
 | #24368 Node hook ingress arm | Landed at cac3ed622b (gdaemon 0.4.52). Its cutover activation runs after this report; the focused retest and close follow. |
 | #24270 Node routes: checkout registration and run reports | Landed (f0a600e55c), close pending. |
 | #24595 Callers act only on machines they own | In review at 6059529d0e; its 24-file rerun is waiting on a test slot. This one unblocks the most hub-mode leaves. |
-| #24596 Node-commands contract version 3 | Landed (f770f3317d). Its close waits on the #24642 close gate 10 fix. |
+| #24596 Node-commands contract version 3 | Landed (f770f3317d). Its close waits on #24642 (Close gate 10 refuses a fresh passing run on a clean integration checkout; in progress, see the end). |
 | #24582 Node ledger prune test | Reviewer LAND; waiting on its activation receipt, then close. |
 | #24584 Node receipt sweep | Final-source clippy and nextest waiting on test slots. |
 | #24594 gdaemon internal node-command route | Claimed, blocked behind #24370. |
@@ -71,7 +73,7 @@ The second spine starts at the just-landed ingress arm: #24368 (Node hook ingres
 ## Edits made today while building this report
 
 - **Fixed a dependency cycle.** #24604 (Live hub-to-node proof) depended on the whole #24150 epic (S2.11 node half). Inside #24150, #24532 (Live node-origin checkout reads) depends on #24604, so neither could ever close. #24604 now depends on #24361 (P1: Node hook ingress), #24517 (P1: Node checkout reads) and #24518 (P2: Hub sites read through the seam) instead. #21579's own edge to #24150 is unchanged.
-- **Closed two superseded hub-mode holders as duplicates.** #24280 (Remote workspace lifecycle, plan section D1) and #24282 (Machine-scoped project view, D3) are now covered by the P4 #24592 leaves #24596 through #24603.
+- **Closed two superseded hub-mode holders as duplicates.** #24280 (Remote workspace lifecycle, plan section D1) and #24282 (Machine-scoped project view, D3) are now covered by the P4 #24592 leaves #24596 (Node-commands contract version 3) through #24603 (gclient projects pane follows the machine filter).
 
 ## Full tree on the path
 
@@ -167,7 +169,7 @@ The tree lists only open tasks. "Blocked by" names only open blockers. The statu
 
 ### Pulled in from outside hub-node by dependency edges
 
-- **#23275** `gobby-mcp` crate: native MCP transports with OAuth and CIMD. Status: open container (0/11 children closed), escalated; blocked by #21570 (MCP front door flip). Planning: none: planned and expanded on 10-13; the stale needs-planning flag and escalation were cleared at 16:05.
+- **#23275** `gobby-mcp` crate: native MCP transports with OAuth and CIMD. Status: open container (0/11 children closed), not escalated; blocked by #21570 (MCP front door flip). Planning: none: planned and expanded on 10-13; the stale needs-planning flag and escalation were cleared at about 15:50.
   - **#24350** `gobby-mcp` crate and its daemon dialer. Status: ready. Planning: none: expanded leaf from the approved gmcp-stdio plan.
   - **#24351** `gmcp` serves the wrapper's tool surface over stdio. Status: blocked; blocked by #24350 (`gobby-mcp` crate and its daemon dialer). Planning: none: expanded leaf from the approved gmcp-stdio plan.
   - **#24353** `gobby install` builds, promotes, and tracks `gmcp`. Status: blocked; blocked by #24351 (`gmcp` serves the wrapper's tool surface over stdio). Planning: none: expanded leaf from the approved gmcp-stdio plan.
@@ -176,5 +178,22 @@ The tree lists only open tasks. "Blocked by" names only open blockers. The statu
   - **#24358** `gmcp` starts a stopped local daemon at launch. Status: blocked; blocked by #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: none: expanded leaf from the approved gmcp-stdio plan.
   - **#24355** Every launch site starts `~/.gobby/bin/gmcp`. Status: blocked; blocked by #24358 (`gmcp` starts a stopped local daemon at launch), #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24352 (`call_tool` keeps the wrapper's canonicalization, wait gu...), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: none: expanded leaf from the approved gmcp-stdio plan.
   - **#24357** The sandbox drops the wrapper's read grant. Status: blocked; blocked by #24355 (Every launch site starts `~/.gobby/bin/gmcp`). Planning: none: expanded leaf from the approved gmcp-stdio plan.
-- **#21586** Migrate code-index orchestration and shared dependencies. Status: open, no children. Planning: NEEDS PLANNING AND EXPANSION: epic with no children; parent #21568 is gated on #21558 Native WS and #21560 Tasks family.
+- **#21586** Migrate code-index orchestration and shared dependencies. Status: open, no children, no open blockers since its re-parent from #21568 (Remaining route families) to Stage 2 #21544 on your approval. Planning: NEEDS PLANNING AND EXPANSION: epic with no children; Plan Writer gobby#16767 is drafting .gobby/plans/code-index-family.md.
 - **#23276** gcode index writes from a node need hub HTTP routes. Status: blocked, escalated; blocked by #21586 (Migrate code-index orchestration and shared dependencies). Planning: NEEDS PLANNING (escalated needs-planning: deferred behind the Stage 2 native code-index family gate, #21586).
+
+## Other tasks this report mentions
+
+These tasks are named above but sit outside the path tree. Statuses are from about 16:20 CDT. Blockers named in parentheses carry their titles; any blocker on the path also has its own entry in the tree.
+
+- **#21558** Native WS transport in gdaemon. Status: open epic (0/5 children closed), blocked; blocked by #23881 (Auth-integrated private bridge and native WS activation), #24619 (P2: Auth-integrated private bridge and native WS activation). Planning: none: expanded into #23878 (Shared subscribe/unsubscribe/broadcast corpus) through #23881 (Auth-integrated private bridge and native WS activation) and P2 #24619.
+- **#21559** Config, runtime handshake, and grant issuing. Status: open epic, claimed, blocked; blocked by #24438 (P3: `gobby-runtime` family crate), #24439 (P4: Managed principals), #24440 (P5: Config routes), #24441 (P6: Native default, parity evidence and the template docs). Planning: none: planned (gdaemon-runtime-family) and expanded.
+- **#21560** Tasks family. Status: open epic (0/1 children closed), blocked; blocked by #21559 (Config, runtime handshake, and grant issuing). Planning: partly expanded: one child, #21561 (Tasks write path and lifecycle transitions in Rust).
+- **#21568** Remaining route families. Status: open epic (0/12 children closed), blocked; blocked by #21560 (Tasks family), #21558 (Native WS transport in gdaemon). Planning: holder for 12 route-family epics, #21580 (Skills route family) through #21592 (WS chat route family), each still to be planned. The #24649 audit is checking this family-wide gate per family.
+- **#21570** MCP front door flip. Status: open epic (no children), blocked; blocked by #21566 (External-MCP transport multiplexer as a delegated backend), #21569 (Hook ingress and the node-local envelope ledger). Planning: needs planning and expansion (no children).
+- **#21575** Hub mode: the datastore owner that runs everything database-backed. Status: open epic, blocked; blocked by #24265 (P1: Hub-node interface), #24266 (P2: Machine-correct hub loops and remote callers), #24267 (P3: Machine-aware roster and attention), #24592 (P4: Remote workspaces and the machine-scoped project view), #24593 (P5: Live hub-to-node proof). Planning: none: planned (hub-mode) and expanded.
+- **#24280** Remote workspace lifecycle. Status: closed today as a duplicate of the P4 #24592 leaves. Planning: none (closed).
+- **#24282** Machine-scoped project view. Status: closed today as a duplicate of the P4 #24592 leaves. Planning: none (closed).
+- **#24360** OAuth 2.1 authorization for the HTTP transport. Status: ready (no open blockers, unclaimed). Planning: NEEDS PLANNING (needs-planning label, deferred from gmcp-stdio decision D3). It is not on the hub-node path.
+- **#24603** gclient projects pane follows the machine filter. Status: blocked; blocked by #24599 (REST workspace routes list by machine and finish through the node), #24602 (Hub projects and source-control status take machine_id). Planning: none: expanded leaf (hub-mode 4.8).
+- **#24642** Close gate 10 refuses a fresh passing run on a clean integration checkout that contains the already-landed candidate. Status: in progress (claimed, Lane 1), no open blockers. Planning: none: found-work bug fix.
+- **#24648** Hub-node path-to-test task tree report for Josh (2026-10-17). Status: in progress (this report's task). Planning: none.
