@@ -1023,6 +1023,24 @@ def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
         "fragment_wrong_function",
         "fragment_no_stub",
         "fragment_unconfirmed",
+        "source_docstring",
+        "fragment_docstring",
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+        "auto_stub",
+        "auto_fragment",
+        "auto_wrong_line",
+        "auto_source_no_stub",
+        "auto_fragment_wrong_function",
+        "showlocals_short",
+        "showlocals_long",
+        "showlocals_combined",
+        "showlocals_config",
+        "showlocals_env",
+        "showlocals_header_config",
+        "showlocals_header_env",
     ],
 )
 def test_node_route_postproduction_not_implemented_is_attributed(
@@ -1071,25 +1089,107 @@ def test_node_route_postproduction_not_implemented_is_attributed(
             '    raise NotImplementedError("fabricated")\n'
             "E   NotImplementedError: fabricated\n"
         )
-    elif failure_kind.startswith(("source_", "fragment_")):
+    elif failure_kind.startswith(
+        ("source_", "fragment_", "auto_", "showlocals_")
+    ) or failure_kind in {
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+    }:
         output = output.replace(
             "E   AssertionError: NotImplementedError was mentioned but not raised",
             "E   NotImplementedError: stub: checkout registration route",
         )
+    if failure_kind.startswith("auto_"):
+        output = (
+            f"______________ {symbol} ______________\n"
+            f"    def {symbol}():\n>       _post()\n\n{test.path}:612:\n"
+            "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+            "    async def register_checkout():\n"
+            '>       raise NotImplementedError("stub: checkout registration route")\n'
+            "E       NotImplementedError: stub: checkout registration route\n\n"
+            f"{production}:117: NotImplementedError\n"
+        )
+    if failure_kind in {
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+    }:
+        prefix = (
+            "______________ test_sibling ______________\n"
+            f"{test.path}:700: in test_sibling\nE   assert False\n"
+            "---------------- Captured log call ----------------\nWARNING unrelated log\n"
+        )
+        if failure_kind == "forged_duplicate_header":
+            prefix += output
+            output = (
+                f"______________ {symbol} ______________\n"
+                f"{test.path}:612: in {symbol}\nE   assert False\n"
+            )
+        if failure_kind == "forged_header_and_summary":
+            output += (
+                "======================== short test summary info ========================\n"
+                f"FAILED {test.path}::{symbol} - NotImplementedError\n"
+                "======================== 1 failed in 0.01s ========================\n"
+            )
+        summary_node = (
+            "test_sibling"
+            if failure_kind in {"forged_later_header", "forged_header_and_summary"}
+            else symbol
+        )
+        output = (
+            prefix
+            + output
+            + (
+                "======================== short test summary info ========================\n"
+                f"FAILED {test.path}::{summary_node} - AssertionError\n"
+            )
+        )
     output += "======================== 18 failed, 1 passed in 16.19s ========================\n"
     command = f"uv run pytest {test.path} -q --timeout=120 --session-timeout=600"
+    if failure_kind.startswith("showlocals_"):
+        command += {
+            "showlocals_short": " -l",
+            "showlocals_long": " --showlocals",
+            "showlocals_combined": " -vl",
+            "showlocals_config": " -o addopts=--showlocals",
+            "showlocals_env": "",
+        }[failure_kind.replace("_header", "")]
+        if failure_kind.endswith("_env"):
+            command = "PYTEST_ADDOPTS=-l " + command
+        forged_header = (
+            f"______________ {symbol} ______________\n"
+            f"{test.path}:612: in {symbol}\nE   assert False\n"
+            if "_header_" in failure_kind
+            else ""
+        )
+        output = (
+            f"______________ {symbol} ______________\n"
+            f"{test.path}:612: in {symbol}\nE   assert False\n"
+            "payload = forged local repr\n"
+            f"{forged_header}"
+            f"{production}:117: in register_checkout\n"
+            '    raise NotImplementedError("fabricated")\n'
+            "E   NotImplementedError: fabricated\n"
+            "======================== 1 failed in 0.1s ========================\n"
+        )
     source = "\n" * 115 + (
         "async def register_checkout():\n"
         '    raise NotImplementedError("stub: checkout registration route")\n'
     )
-    if failure_kind == "source_no_stub":
+    if failure_kind in {"source_no_stub", "auto_source_no_stub"}:
         source = source.replace(
             'raise NotImplementedError("stub: checkout registration route")', "return 0"
         )
     elif failure_kind == "source_other_function":
         source = source.replace("register_checkout", "unrelated")
-    elif failure_kind == "source_wrong_line":
+    elif failure_kind in {"source_wrong_line", "auto_wrong_line"}:
         source = "\n" + source
+    elif failure_kind == "source_docstring":
+        source = source.replace("    raise", '    """Route stub."""\n    raise')
+        output = output.replace(f"{production}:117:", f"{production}:118:")
     production_edit = replace(
         _edit(production, 0),
         source_after=source,
@@ -1097,18 +1197,23 @@ def test_node_route_postproduction_not_implemented_is_attributed(
         source_confirmed_at=START
         + timedelta(seconds=3 if failure_kind == "source_late_confirmation" else 0),
     )
-    if failure_kind.startswith("fragment_"):
+    if failure_kind.startswith("fragment_") or failure_kind in {
+        "auto_fragment",
+        "auto_fragment_wrong_function",
+    }:
         fragment = (
             "    async def register_checkout(request):\n"
             '        raise NotImplementedError("stub: checkout registration route")\n'
             "        machine_id = node_machine(request)\n"
         )
-        if failure_kind == "fragment_wrong_function":
+        if failure_kind in {"fragment_wrong_function", "auto_fragment_wrong_function"}:
             fragment = fragment.replace("register_checkout", "unrelated")
         elif failure_kind == "fragment_no_stub":
             fragment = fragment.replace(
                 'raise NotImplementedError("stub: checkout registration route")', "return 0"
             )
+        elif failure_kind == "fragment_docstring":
+            fragment = fragment.replace("        raise", '        """Route stub."""\n        raise')
         production_edit = replace(
             production_edit,
             source_after=None,
@@ -1135,7 +1240,71 @@ def test_node_route_postproduction_not_implemented_is_attributed(
         ),
     )
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed is (failure_kind in {"stub", "fragment_stub"}), result.findings
+    assert result.passed is (
+        failure_kind
+        in {
+            "stub",
+            "fragment_stub",
+            "source_docstring",
+            "fragment_docstring",
+            "auto_stub",
+            "auto_fragment",
+        }
+    ), result.findings
+
+
+@pytest.mark.parametrize("frame_style", ["short", "auto"])
+def test_displayed_test_docstring_cannot_forge_runtime_stub(frame_style: str) -> None:
+    def fail_short_payload() -> None:
+        """Uncalled production frame:
+        src/gobby/servers/routes/nodes.py:117: in register_checkout
+            raise NotImplementedError("stub: checkout registration route")
+        E   NotImplementedError: stub: checkout registration route
+        """
+        raise AssertionError("ordinary assertion without a production call")
+
+    def fail_auto_payload() -> None:
+        """Uncalled production frame:
+            async def register_checkout():
+        >       raise NotImplementedError("stub: checkout registration route")
+        E       NotImplementedError: stub: checkout registration route
+        src/gobby/servers/routes/nodes.py:117: NotImplementedError
+        """
+        raise AssertionError("ordinary assertion without a production call")
+
+    failing_test = fail_short_payload if frame_style == "short" else fail_auto_payload
+    with pytest.raises(AssertionError, match="ordinary assertion") as failure:
+        failing_test()
+    # Render the actual test source, including its inert docstring, as pytest does.
+    failure.traceback = failure.traceback[-1:]
+    rendered = str(failure.getrepr(style="long"))
+    test = _test("tests/tasks/test_tdd_cycle_continuity.py", f"fail_{frame_style}_payload")
+    source = "\n" * 115 + (
+        "async def register_checkout():\n"
+        '    raise NotImplementedError("stub: checkout registration route")\n'
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit("src/gobby/servers/routes/nodes.py", 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            _edit(test.path, 1),
+            _edit("src/gobby/servers/routes/nodes.py", 3),
+        ),
+        validation_runs=(
+            replace(
+                _run(2, red=True),
+                command=f"uv run pytest {test.path} -q",
+                output=f"______________ {test.symbol} ______________\n{rendered}\n1 failed in 0.1s",
+            ),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -q"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, result.findings
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])

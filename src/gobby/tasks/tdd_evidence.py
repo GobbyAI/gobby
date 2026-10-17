@@ -63,7 +63,7 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_+\s+\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"^(?:_+\s+(?![_\s]+$)\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
     r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
@@ -510,6 +510,9 @@ def _has_runtime_stub(
     output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
         0
     ]
+    # Config/env-enabled locals can forge fresh headers as well as frame markers.
+    if re.search(r"(?m)^\w+[ \t]+=[ \t]", output):
+        return False
     lines = output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
@@ -521,7 +524,7 @@ def _has_runtime_stub(
         if (
             _section_has_artifact_location(section, test)
             and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
-            and _has_python_runtime_stub(section, evidence, run, parse_cache)
+            and _has_python_runtime_stub(section, evidence, run, parse_cache, command=command)
         ):
             return True
     return False
