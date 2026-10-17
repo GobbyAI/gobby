@@ -96,6 +96,7 @@ def storage(
 def _git_manager() -> MagicMock:
     git_manager = MagicMock()
     git_manager.get_current_branch = AsyncMock(return_value="main")
+    git_manager.get_local_commit = AsyncMock(return_value="base-sha")
     return git_manager
 
 
