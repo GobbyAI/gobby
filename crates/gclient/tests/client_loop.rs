@@ -10115,7 +10115,7 @@ fn shown_terminals(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Vec<St
 /// its first frame: the test backend reports 640 pixels over 120 columns,
 /// so the cap is 101 columns.
 #[tokio::test]
-async fn live_loop_caps_the_sidebar_from_the_window_pixels() {
+async fn live_loop_caps_the_sidebar_at_one_third_of_the_window() {
     let mock = MockDaemon::start("local-token").await;
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -10135,7 +10135,7 @@ async fn live_loop_caps_the_sidebar_from_the_window_pixels() {
     )
     .await
     .expect("live loop exits cleanly");
-    assert_eq!(chrome.sidebar.max_width, 101);
+    assert_eq!(chrome.sidebar.max_width, 40);
     mock.shutdown().await;
 }
 
