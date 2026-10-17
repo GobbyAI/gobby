@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.53"
+version = "0.4.54"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2525,6 +2525,7 @@ dependencies = [
  "deadpool-postgres",
  "futures-util",
  "gobby-core",
+ "gobby-runtime",
  "gobby-terminals",
  "hmac 0.12.1",
  "http-body-util",
@@ -2565,6 +2566,24 @@ dependencies = [
  "temp-env",
  "tempfile",
  "ureq",
+ "uuid",
+]
+
+[[package]]
+name = "gobby-runtime"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "gobby-core",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tower-service",
  "uuid",
 ]
 

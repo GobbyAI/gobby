@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gcode", "crates/gcore", "crates/gclient", "crates/gdaemon", "crates/ghook", "crates/gterminal", "crates/gterminals"]
+members = ["crates/gcode", "crates/gcore", "crates/gclient", "crates/gdaemon", "crates/ghook", "crates/gruntime", "crates/gterminal", "crates/gterminals"]
 resolver = "3"
 
 # Inherited by daemon family crates (crates/AGENTS.md, "Daemon family crates").
