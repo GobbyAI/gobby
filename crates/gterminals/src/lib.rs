@@ -19,6 +19,7 @@ pub mod frames;
 pub mod hold;
 pub mod host;
 pub mod leases;
+pub mod native_write;
 pub mod reconcile;
 pub mod repository;
 pub mod write;

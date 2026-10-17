@@ -76,6 +76,13 @@ async def test_cancel_retry_preserves_caller_cancellation(
             'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
         ),
         psycopg.errors.ConnectionFailure("SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError("consuming input failed: SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError(
+            "consuming input failed: could not receive data from server: Connection reset by peer"
+        ),
+        psycopg.OperationalError(
+            "sending query failed: could not send data to server: Broken pipe"
+        ),
         psycopg.errors.SerializationFailure("serialization conflict"),
         psycopg.errors.DeadlockDetected("deadlock detected"),
         psycopg.errors.TooManyConnections("connection slots exhausted"),

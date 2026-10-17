@@ -1,9 +1,9 @@
 header:
   plan_id: gate10-test-run-reuse
-  plan_hash: 7db40fcb29e80528a4ddcedd2f76782b0c577fec3a8def2cb7ca88c9cde70619
+  plan_hash: a50e11f37288fa9ab493d2ab82f8df00a96ee76da01159c8edf0f98e7b6d70e0
   root_task_ref: '24538'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-17T02:20:11Z'
+  generated_at: '2026-10-17T04:38:45Z'
   task_tree_source: db
   task_tree_source_hash: 01af768112adf28b793e263d433095a9fe04cadb4ee9195406c7cd837d364d5a
   evidence_summary: []
@@ -259,14 +259,14 @@ rows:
   detail: ''
 - section_id: '2.4'
   item_id: 2.4.5
-  plan_node_hash: d37fcda4bada1273c272b683b616ac19e6d7af0a98d1c53ea548e4dcb69d5200
+  plan_node_hash: bb59cc868b434ccc8131e4b8c3cfcdf80c299e4a88dc588dfe570c582abc0fe3
   status: covered
   leaves:
   - leaf_task_ref: '#24552'
     validation_criteria_snippet: '2.4.1: `gdaemon run --bound N [--term-grace G] --
       <cmd>` resolves to `<cmd>`''s executable and is credited unwrapped; a missing
       `--` or another gdaemon subcomma...'
-    matched_artifact_ref: src/gobby/tasks/transcript_launchers.py
+    matched_artifact_ref: src/gobby/config/validation_wrappers.py
   deferral_target: null
   detail: ''
 - section_id: '2.5'
