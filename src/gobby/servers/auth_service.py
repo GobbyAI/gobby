@@ -25,6 +25,7 @@ from gobby.servers.grant_auth import (
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
@@ -280,9 +281,11 @@ class AuthService:
             if rejection is not None:
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
             identity = self.verified_front_door_identity(request)
+            user_id, break_glass = self._resolved_caller(request)
             return AuthDecision(
                 allowed=True,
-                user_id=identity.user_id if identity else None,
+                user_id=user_id,
+                break_glass=break_glass,
                 machine_id=identity.machine_id if identity else None,
                 key_id=identity.key_id if identity else None,
             )
@@ -324,16 +327,63 @@ class AuthService:
             )
             if isinstance(presented, AuthDecision):
                 return presented
+        supplied = bearer if isinstance(bearer, AgentApiTokenClaims) else None
+        user_id, break_glass = self._resolved_caller(request, bearer=supplied)
         return AuthDecision(
             allowed=True,
             principal=presented.principal,
             grant=presented,
             bearer_claims=bearer,
             status_code=200,
-            user_id=identity.user_id if identity else None,
+            user_id=user_id,
+            break_glass=break_glass,
             machine_id=identity.machine_id if identity else None,
             key_id=identity.key_id if identity else None,
         )
+
+    def _resolved_caller(
+        self,
+        request: HTTPConnection,
+        *,
+        bearer: AgentApiTokenClaims | None = None,
+    ) -> tuple[str | None, bool]:
+        """Return the owner and whether break-glass left this request unbound."""
+        identity = self.verified_front_door_identity(request)
+        if identity is not None:
+            return identity.user_id, False
+        if self.break_glass_admits(request):
+            return None, True
+        claims = bearer if bearer is not None else self._presented_bearer_claims(request)
+        if claims is not None:
+            return self._machine_owner(claims), False
+        return self._cookie_user(request), False
+
+    def _presented_bearer_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
+        """Decode a managed bearer. Route and liveness were already accepted."""
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return None
+        parts = authorization.split(maxsplit=1)
+        if len(parts) != 2 or parts[0].casefold() != "bearer":
+            return None
+        claims = classify_agent_api_token(parts[1], self.managed_signing_key())
+        return claims if isinstance(claims, AgentApiTokenClaims) else None
+
+    def _machine_owner(self, claims: AgentApiTokenClaims) -> str | None:
+        """Return the machine owner. A missing row or a failed lookup has no user."""
+        try:
+            machine = LocalMachineManager(self._database_getter()).get(claims.machine_id)
+        except Exception:
+            return None
+        if machine is None:
+            return None
+        return machine.owner_user_id
+
+    def _cookie_user(self, request: HTTPConnection) -> str | None:
+        token = request.cookies.get(_SESSION_COOKIE)
+        if not token:
+            return None
+        return AuthStore(self._database_getter()).session_user_id(token)
 
     def _legacy_rejection(self, request: HTTPConnection) -> str | None:
         """Return why operator, browser, or managed credentials were refused, or None."""

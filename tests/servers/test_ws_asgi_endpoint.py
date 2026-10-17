@@ -19,6 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosedError
 
 from gobby.servers._app_ui import _mount_ws_endpoint
+from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 from gobby.servers.websocket.server import WebSocketServer
@@ -29,11 +30,15 @@ pytestmark = pytest.mark.unit
 class _AuthService:
     enabled = True
 
-    def is_request_authenticated(self, websocket: WebSocket) -> bool:
-        return (
+    def authenticate(self, websocket: WebSocket) -> AuthDecision:
+        allowed = (
             websocket.headers.get("Authorization") == "Bearer browser-token"
             or websocket.cookies.get("gobby_session") == "session-token"
         )
+        return AuthDecision(allowed=allowed, break_glass=allowed)
+
+    def is_request_authenticated(self, websocket: WebSocket) -> bool:
+        return self.authenticate(websocket).allowed
 
 
 class _WebSocketServer:
@@ -71,7 +76,14 @@ class _WebSocketServer:
         finally:
             self.clients.pop(websocket, None)
 
-    async def handle_connection(self, websocket: Any) -> None:
+    async def handle_connection(
+        self,
+        websocket: Any,
+        decision: Any = None,
+        *,
+        database: Any = None,
+    ) -> None:
+        del decision, database
         await self._handle_connection(websocket)
 
 
@@ -83,7 +95,7 @@ def _client(
     app = FastAPI()
     server = SimpleNamespace(
         auth_service=auth_service or _AuthService(),
-        services=SimpleNamespace(websocket_server=websocket_server),
+        services=SimpleNamespace(websocket_server=websocket_server, database=MagicMock()),
         websocket_server=websocket_server,
     )
     _mount_ws_endpoint(app, cast(HTTPServer, server))
@@ -181,8 +193,10 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
 
     app = FastAPI()
     server = SimpleNamespace(
-        auth_service=SimpleNamespace(is_request_authenticated=lambda _request: True),
-        services=SimpleNamespace(websocket_server=websocket_server),
+        auth_service=SimpleNamespace(
+            authenticate=lambda _request: AuthDecision(allowed=True, break_glass=True),
+        ),
+        services=SimpleNamespace(websocket_server=websocket_server, database=MagicMock()),
         websocket_server=websocket_server,
     )
     _mount_ws_endpoint(app, cast(HTTPServer, server))
@@ -322,7 +336,9 @@ def test_authentication_is_always_checked() -> None:
     websocket_server = _WebSocketServer(return_immediately=True)
     client = _client(
         websocket_server,
-        auth_service=SimpleNamespace(is_request_authenticated=lambda _request: False),
+        auth_service=SimpleNamespace(
+            authenticate=lambda _request: AuthDecision(allowed=False),
+        ),
     )
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
@@ -353,7 +369,7 @@ async def _live_ws_server(websocket_server: _WebSocketServer | None) -> AsyncIte
     app = FastAPI()
     server = SimpleNamespace(
         auth_service=_AuthService(),
-        services=SimpleNamespace(websocket_server=websocket_server),
+        services=SimpleNamespace(websocket_server=websocket_server, database=MagicMock()),
         websocket_server=websocket_server,
     )
     _mount_ws_endpoint(app, cast(HTTPServer, server))
@@ -430,10 +446,11 @@ async def test_disconnect_during_authentication_does_not_repeat_handshake() -> N
     release = asyncio.Event()
 
     class DelayedAuthServer(_WebSocketServer):
-        async def run_db(self, func: object, *args: object) -> bool:
+        async def run_db(self, func: object, *args: object) -> AuthDecision:
+            del func, args
             entered.set()
             await release.wait()
-            return False
+            return AuthDecision(allowed=False)
 
     websocket_server = DelayedAuthServer()
     probe = _LogProbe()
