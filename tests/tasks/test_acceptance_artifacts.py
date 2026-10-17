@@ -1570,6 +1570,39 @@ class TestFeature:
         ),
         (
             """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update([("_assert_ok", lambda receipt: None)])
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(zip(["_assert_ok"], [lambda receipt: None]))
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update({name: lambda receipt: None for name in ["_assert_ok"]})
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
             class Meta(type):
                 def __new__(mcs, name, bases, namespace):
                     namespace["_assert_ok"] = lambda self, receipt: None
@@ -1651,6 +1684,9 @@ class TestFeature:
         "globals_subscript",
         "patch_dict_literal_key",
         "update_keyword_name",
+        "globals_update_pairs",
+        "globals_update_zip",
+        "globals_update_comprehension",
         "metaclass_namespace",
         "module_staticmethod_rebinding",
         "imported_staticmethod_alias",
@@ -1666,6 +1702,24 @@ def test_assert_helper_string_named_or_shadowed_binding_is_flagged(
 
     assert result.passed is False
     assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_named_in_non_identifier_literal_stays_credited(tmp_path: Path) -> None:
+    result = _committed_python_result(
+        tmp_path,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            message = "_assert_ok failed"
+            _assert_ok("ok")
+        """,
+        {},
+    )
+
+    assert result.passed is True
+    assert result.findings == ()
 
 
 @pytest.mark.parametrize(

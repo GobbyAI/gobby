@@ -298,45 +298,26 @@ def _shadowed(module: _Module, name: str) -> bool:
 
 
 def _written_names(tree: ast.Module) -> frozenset[str]:
-    """Names anything in ``tree`` can rebind on an object or across scopes."""
+    """Names anything in ``tree`` can rebind on an object or across scopes.
+
+    Any string literal can reach a namespace (``globals().update([...])``,
+    ``setattr``, ``patch.dict``), so every identifier-shaped literal and the
+    last part of a dotted one count as written, as does every keyword name.
+    """
     written: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
             written.add(node.attr)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             written.update(node.names)
-        for key in _string_keys(node):
-            # A dotted target such as "pkg.module.name" rebinds its last part.
-            written.update({key, key.rsplit(".", 1)[-1]})
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            written.add(node.arg)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            parts = node.value.split(".")
+            if all(part.isidentifier() for part in parts):
+                # A dotted target such as "pkg.module.name" rebinds its last part.
+                written.update({node.value, parts[-1]})
     return frozenset(written)
-
-
-def _string_keys(node: ast.AST) -> list[str]:
-    """String names a call or subscript can bind by.
-
-    A call contributes its string arguments, the string keys of any dict-literal
-    argument, and every keyword name; a subscript contributes its index.
-    """
-    if isinstance(node, ast.Call):
-        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
-        values: list[ast.expr | None] = [*arguments]
-        for argument in arguments:
-            if isinstance(argument, ast.Dict):
-                values.extend(argument.keys)
-        names: list[str] = [keyword.arg for keyword in node.keywords if keyword.arg is not None]
-    elif isinstance(node, ast.Subscript):
-        values = [node.slice]
-        names = []
-    else:
-        return []
-    return [
-        *names,
-        *(
-            value.value
-            for value in values
-            if isinstance(value, ast.Constant) and isinstance(value.value, str)
-        ),
-    ]
 
 
 def _defines(tree: ast.Module, name: str) -> bool:
