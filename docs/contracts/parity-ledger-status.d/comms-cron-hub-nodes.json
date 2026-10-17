@@ -179,6 +179,10 @@
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/cron.py:273` (`create_cron_router::toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
   },
+  "HTTP POST /api/nodes/checkouts": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/nodes.py::create_nodes_router.register_checkout` registers node project checkouts under the front-door key identity; blocked on #24151 hub half to port node machine ownership checks and checkout registration to Rust."
+  },
   "HTTP POST /api/nodes/hooks/replay": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.replay` shares hub replay decisions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port replay decisions and node machine ownership checks to Rust."
@@ -186,6 +190,10 @@
   "HTTP POST /api/nodes/receipts": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.receipts` applies hub receipt actions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port receipt authorization, UUID validation and compare-and-set side effects to Rust."
+  },
+  "HTTP POST /api/nodes/report": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/nodes.py::create_nodes_router.report` admits node run reports through the hub inbox with byte budgets; blocked on #24151 hub half to port node machine ownership checks and report admission to Rust."
   },
   "HTTP POST /api/webhooks/test": {
     "status": "proxied",
