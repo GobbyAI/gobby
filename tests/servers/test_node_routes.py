@@ -130,7 +130,7 @@ def _report(
     exits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
-        "v": 2,
+        "v": 3,
         "hub_epoch": epoch,
         "revision": revision,
         "host_epoch": 1,
@@ -234,7 +234,7 @@ def test_checkout_registration_uses_key_machine(
 ) -> None:
     _machines(temp_db)
     root = f"/node-only/checkouts/{uuid.uuid4()}"
-    body = {"v": 2, "project_id": sample_project["id"], "root_path": root}
+    body = {"v": 3, "project_id": sample_project["id"], "root_path": root}
 
     with _client(temp_db, monkeypatch) as client:
         first = _post(client, "checkouts", body)
@@ -263,7 +263,7 @@ def test_checkout_registration_refusals(
     root = f"/node-only/root/{uuid.uuid4()}"
 
     def body(project: str, root_path: str) -> dict[str, Any]:
-        return {"v": 2, "project_id": project, "root_path": root_path}
+        return {"v": 3, "project_id": project, "root_path": root_path}
 
     with _client(temp_db, monkeypatch) as client:
         unknown = _post(client, "checkouts", body(str(uuid.uuid4()), root))
@@ -349,7 +349,7 @@ def test_node_routes_refuse_unverified_and_local_identity(
     with _client(temp_db, monkeypatch) as client:
         inbox = node_reports.node_report_inbox()
         body: dict[str, Any] = (
-            {"v": 2, "project_id": sample_project["id"], "root_path": "/node-only/refused"}
+            {"v": 3, "project_id": sample_project["id"], "root_path": "/node-only/refused"}
             if route == "checkouts"
             else _report(inbox.hub_epoch, 1, exits=[_fresh_exit()])
         )
@@ -599,7 +599,7 @@ def test_checkout_body_is_capped_before_parse_or_write(
     root = f"/node-only/capped/{uuid.uuid4()}"
     config = SimpleNamespace(node_reports=NodeReportsConfig(max_request_bytes=2048))
     oversized = {
-        "v": 2,
+        "v": 3,
         "project_id": sample_project["id"],
         "root_path": root,
         "padding": "x" * 4096,
