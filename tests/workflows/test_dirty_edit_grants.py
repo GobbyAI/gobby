@@ -285,6 +285,9 @@ def test_obfuscated_approval_spellings_pass_the_rule_and_stop_at_the_cli(
             "HOME": str(tmp_path),
             "GOBBY_HOME": str(bootstrap_home),
             "GOBBY_DAEMON_URL": "http://127.0.0.1:1",
+            # The shared venv's editable install points at the main checkout; pin the
+            # import root to this checkout so the child runs the candidate's CLI.
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
         },
         capture_output=True,
         text=True,

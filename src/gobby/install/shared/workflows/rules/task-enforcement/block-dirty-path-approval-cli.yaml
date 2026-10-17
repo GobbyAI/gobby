@@ -9,11 +9,13 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        # The subcommand name is unique, so any unquoted occurrence in an
-        # executable segment blocks, whatever launcher, wrapper, global option
-        # or variable names the CLI. A segment that names `sessions` and expands
-        # a variable or runs a substitution unquoted also blocks: the subcommand
-        # can then be assembled at run time, so the literal name never appears.
+        # The approval subcommand blocks only where it fills the subcommand slot
+        # right after `sessions` (flags aside), whatever launcher, wrapper, global
+        # option or variable names the CLI. A quoted or read-only mention, such as
+        # a search term, is not an invocation and stays allowed. A segment that
+        # names `sessions` and expands a variable or runs a substitution unquoted
+        # also blocks: the subcommand can then be assembled at run time, so the
+        # literal name never appears.
         # `gobby sessions list` is exempt when its arguments hold no command
         # substitution or separator: list takes no operator-only subcommand, so a
         # variable in its arguments cannot reach approve-dirty-paths. Quoted data
@@ -21,7 +23,7 @@ rules:
         # sendable. Managed executions are also denied the session tables at the
         # database, so this rule is not the only boundary.
         mask_quoted: true
-        command_pattern: "(?<![\\w./-])approve-dirty-paths(?![\\w-])|^(?!\\s*(?:uv\\s+run\\s+)?gobby\\s+sessions\\s+list(?![\\w-])(?:[^;&|\\n`$]|\\$(?!\\())*$)(?=[\\s\\S]*(?<![\\w./-])sessions(?![\\w-]))(?=[\\s\\S]*[$`])"
+        command_pattern: "(?<![\\w.-])sessions(?![\\w-])(?:\\s+-[\\w-]+)*\\s+approve-dirty-paths(?![\\w-])|^(?!\\s*(?:uv\\s+run\\s+)?gobby\\s+sessions\\s+list(?![\\w-])(?:[^;&|\\n`$]|\\$(?!\\())*$)(?=[\\s\\S]*(?<![\\w./-])sessions(?![\\w-]))(?=[\\s\\S]*[$`])"
         reason: |
           Approving unowned dirty paths is operator-only. Relay the exact
           `gobby sessions approve-dirty-paths ...` command from the refusal to

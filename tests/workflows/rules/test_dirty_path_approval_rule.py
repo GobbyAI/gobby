@@ -56,6 +56,7 @@ ALLOWED = (
     "gobby tasks show {a,b}",
     "gobby tasks list --status *.md",
     """gobby tasks create --data '{"title": "sessions $HOME"}'""",
+    "gcode search-content 'approve-dirty-paths'",
 )
 
 
