@@ -12,6 +12,7 @@ from gobby.tasks.close_test_coverage import (
     CloseCandidate,
     changed_python_source_paths,
     changed_web_source_paths,
+    collection_credited_pytest_paths,
     copy_differing_paths,
     coverage_failure_messages,
     credit_off_task_author_runs,
@@ -588,7 +589,16 @@ def _evaluate_validation_commands(
     uncovered_pytest: tuple[str, ...] = ()
     if pytest_required_paths:
         uncovered_pytest = covers(pytest_required_paths)
+        collected = collection_credited_pytest_paths(
+            credited,
+            uncovered_pytest,
+            close_root=close_root,
+            changed_paths=changed_paths,
+            candidate=candidate,
+        )
+        uncovered_pytest = tuple(path for path in uncovered_pytest if path not in collected)
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
+        details["pytest_collection_credited_paths"] = list(collected)
     declined = (*uncovered_pytest, *(t for tests in uncovered_sources.values() for t in tests))
     if differing := copy_differing_paths(
         passing_runs, declined, close_root, changed_paths, candidate

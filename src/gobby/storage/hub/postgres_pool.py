@@ -7,7 +7,6 @@ import json
 import logging
 import random
 import re
-import select
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
@@ -93,6 +92,8 @@ _POOL_UNAVAILABLE_MESSAGE_MARKERS = (
     "connection not open",
     "server closed the connection unexpectedly",
     "connection refused",
+    "connection timed out",
+    "no connection to the server",
 )
 
 
@@ -103,9 +104,10 @@ class RuntimeRoleMismatchError(RuntimeError):
 def is_pool_unavailable(exc: BaseException) -> bool:
     """Classify an exception as a transient hub pool outage.
 
-    Matches PoolTimeout and psycopg operational failures whose message
-    indicates dead or unavailable pool connections, including causes wrapped
-    by ``raise ... from ...``.
+    Matches PoolTimeout and retryable psycopg connection, transaction, resource,
+    shutdown and session-expiry SQLSTATEs. DatabaseDropped is permanent. Only
+    SQLSTATE-less operational failures use known connection-outage messages;
+    unknown messages stay permanent. Includes causes wrapped by ``raise ... from ...``.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -114,9 +116,18 @@ def is_pool_unavailable(exc: BaseException) -> bool:
         if isinstance(current, PoolTimeout):
             return True
         if isinstance(current, psycopg.OperationalError):
-            message = str(current).lower()
-            if any(marker in message for marker in _POOL_UNAVAILABLE_MESSAGE_MARKERS):
-                return True
+            if current.sqlstate:
+                if current.sqlstate.startswith(("08", "40", "53")) or current.sqlstate in {
+                    "57P01",  # AdminShutdown
+                    "57P02",  # CrashShutdown
+                    "57P03",  # CannotConnectNow
+                    "57P05",  # IdleSessionTimeout
+                }:
+                    return True
+            else:
+                message = str(current).lower()
+                if any(marker in message for marker in _POOL_UNAVAILABLE_MESSAGE_MARKERS):
+                    return True
         current = current.__cause__ or current.__context__
     return False
 
@@ -699,24 +710,6 @@ def configure_pool_connection(
     adapters.register_loader("uuid", TextLoader)
     if runtime_role is not None:
         configure_runtime_role(connection, runtime_role)
-        assert_runtime_role(connection, runtime_role)
-
-
-def check_connection_alive(connection: psycopg.Connection[Any]) -> None:
-    """Pool check: reject a pooled connection whose server end went away.
-
-    An idle connection's socket has nothing to read until the server sends a
-    FATAL notice or closes it, so a zero-timeout poll finds the connections a
-    hub restart killed without a round trip on every checkout (#23359). Only
-    a readable socket pays for psycopg_pool's own query check.
-    """
-    poll = getattr(select, "poll", None)
-    if poll is not None:
-        readable = poll()
-        readable.register(connection.fileno(), select.POLLIN)
-        if not readable.poll(0):
-            return
-    ConnectionPool.check_connection(connection)
 
 
 def configure_runtime_role(
@@ -734,15 +727,17 @@ def assert_runtime_role(
     connection: psycopg.Connection[Any],
     runtime_role: str,
 ) -> None:
-    """Reject a connection whose effective identity is not the runtime role.
+    """Reject a checked-out connection whose effective identity changed.
 
-    The pool runs this once per connection, right after SET ROLE, and
-    verify_runtime_identity runs it on demand. It used to run on every
-    checkout, which charged a round trip to every database operation (#23359).
-    The query itself is unavoidable -- PostgreSQL does not push the role: on
-    server 18, parameter_status('role') is None before and after SET ROLE, and
-    session_authorization stays at the login user. Autocommit keeps the SELECT
-    from opening a transaction that would need a commit to close it (#20853).
+    This runs on every checkout, so its cost is charged to every database
+    operation in the process. The query itself is unavoidable -- PostgreSQL
+    does not push the role: on server 18, parameter_status('role') is None
+    before and after SET ROLE, and session_authorization stays at the login
+    user. The transaction around it was avoidable, and was two thirds of the
+    cost: the pool's connections are not autocommit, so the SELECT opened a
+    transaction and the commit existed only to close it, verifying nothing.
+    Checking out and running one statement measured 0.620 ms with that commit
+    and 0.420 ms without, against 0.320 ms for no check at all (#20853).
     """
     validate_identifier(runtime_role)
     previous_autocommit = connection.autocommit

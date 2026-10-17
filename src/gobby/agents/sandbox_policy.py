@@ -921,10 +921,11 @@ def prepare_sandbox_run_paths(
 def _prepare_zig_system_dir(*, workspace: Path, cache_root: Path) -> Path | None:
     """Back a sandboxed libghostty-vt build with the machine's Zig packages.
 
-    Zig otherwise unpacks packages into the checkout's zig-pkg, where the
-    sandbox denies their `.gitmodules`, and the machine cache is read-only to
-    the run. A linked worktree's zig-pkg is empty, so reuse the main checkout's
-    extractions; symlinking them keeps this to milliseconds per spawn.
+    Zig otherwise fetches and unpacks packages into its build root's zig-pkg,
+    where the sandbox denies their `.gitmodules`, and the machine cache is
+    read-only to the run. Only the vendor helper script unpacks into the
+    vendored tree, so reuse the main checkout's extractions; symlinking them
+    keeps this to milliseconds per spawn.
     """
     if not vendored_libghostty_vt(workspace).is_dir():
         return None
@@ -938,6 +939,7 @@ def _prepare_zig_system_dir(*, workspace: Path, cache_root: Path) -> Path | None
             machine_pkgs,
             cache_root,
             vendored_libghostty_vt(checkout) / "zig-pkg",
+            manifest=vendored_libghostty_vt(workspace) / "build.zig.zon",
             report=logger.warning,
         )
     except OSError:

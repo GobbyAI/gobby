@@ -458,6 +458,42 @@ async def test_unsupported_rtk_jq_rewrite_falls_back_to_original_command(
     assert response.permission_decision is None
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest tests/e2e/test_live.py --collect-only -q",
+        "uv run pytest tests/e2e/test_live.py --co -q",
+        "python -m pytest --collect-only tests/e2e/test_live.py",
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_live.py --collect-only -q",
+    ],
+)
+async def test_pytest_collection_keeps_raw_positive_count(
+    command: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+    assert response.modified_input is None
+    assert response.permission_decision is None
+
+
+@pytest.mark.parametrize(
+    "command", ["echo pytest --co", "uv run echo pytest --co", "coverage run script.py --co"]
+)
+async def test_collection_looking_arguments_keep_other_rtk_rewrites(
+    command: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+    assert response.modified_input == {"command": f"rtk {command}"}
+    assert response.permission_decision is None
+
+
 async def test_rtk_rewrite_logs_at_debug(
     db: HubDatabase,
     manager: RuleDefinitionManager,
