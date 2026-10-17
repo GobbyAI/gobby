@@ -774,7 +774,7 @@ async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result
         let unreadable = ledger.inbox.join("002-unreadable.json");
         // Malformed bytes are also ignored when tests run with permission bypass.
         fs::write(&unreadable, b"unreadable receipt")?;
-        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0))?;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o0))?;
     }
     let valid = ledger.inbox.join(format!("{ACK_ID}.json"));
     fs::write(&valid, serde_json::to_vec(&receipt())?)?;
