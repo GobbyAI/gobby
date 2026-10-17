@@ -168,8 +168,8 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   credit).** No deliverable depends on it. Records carry the child's exit code and
   never parse output. Deliverable 2.4 teaches the transcript path that
   `gdaemon run ... --` is exit-preserving; that is new work here, not a fix #24535
-  owns. If #24535 changes `_first_executable` or the wrapper rules first, 2.4 merges
-  onto its result. Historical: Release Manager packets kept `RTK_DISABLED=1` until
+  owns. #24535 has landed, and #24627 (`93b369cc0a`) later moved the launcher
+  resolver into `validation_launchers.py`, which 2.4 targets. Historical: Release Manager packets kept `RTK_DISABLED=1` until
   #24535 landed. It has been live since 2026-10-15 20:28 CDT.
 - **Operator rulings (Josh, 2026-10-15).** 18:45 slot limit; 19:06-19:07 rtk hard
   requirement (seats never rerun without rtk to satisfy a gate). 20:41: the
@@ -182,9 +182,10 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   is promoted through `promote_workspace_binary_set`. A gcore asset change (1.1)
   reaches `gcode`, `gdaemon`, `ghook`, `gclient` and the `gobby-terminals` library.
   Installing a new gdaemon needs a global restart announcement and a quiet window.
-- **Monolith ceiling.** `transcript_outcomes.py` (893 lines) and
-  `validation_detection.py` (957 lines, after #24507, #24608 and #24535) are above the 850-line heuristic, so 2.4
-  moves code out of both before adding to them. `_lifecycle_close.py` (929 lines) is
+- **Monolith ceiling.** `validation_detection.py` (957 lines, after #24507, #24608 and
+  #24535) is above the 850-line heuristic, so 2.4 moves its wrapper rules out before
+  adding to them. `transcript_outcomes.py` (570 lines since #24627) and
+  `validation_launchers.py` (335 lines) are below it. `_lifecycle_close.py` (929 lines) is
   not targeted: reuse records reach the gate through `load_confinement_context`.
 - **Test isolation.** Python tests use the isolated test hub
   (`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
@@ -522,9 +523,8 @@ own. It forwards SIGINT and SIGTERM by closing the request, which 2.2 drains as
 `kind: deliverable`
 
 Targets:
-- `src/gobby/tasks/transcript_outcomes.py::_first_executable`
-- `src/gobby/tasks/transcript_outcomes.py::_launcher_arguments`
-- `src/gobby/tasks/transcript_launchers.py`
+- `src/gobby/tasks/validation_launchers.py::first_executable`
+- `src/gobby/tasks/validation_launchers.py::_launcher_arguments`
 - `src/gobby/config/validation_detection.py::default_validation_wrapper_rules`
 - `src/gobby/config/validation_detection.py::_wrapper_rule`
 - `src/gobby/config/validation_detection.py::_iter_wrapper_rules`
@@ -537,10 +537,12 @@ Targets:
 - `tests/tasks/test_close_checklist.py::*` — scope-reason: adds the end-to-end launcher credit case for Gate 10
 
 Research context. Transcript credit resolves a command's executable through
-`transcript_outcomes.py::_first_executable`, which unwraps `timeout`, `gtimeout`,
-`time`, `exec`, `command`, `xargs`, `stdbuf`, `sudo` and `caffeinate` with
-`_launcher_arguments` (flag and value-option tables, stopping at `--`). A run whose
-executable resolves is not wrapped, so `timeout 300 uv run pytest x` credits today.
+`validation_launchers.py::first_executable`, which #24627 (`93b369cc0a`) moved out of
+`transcript_outcomes.py`; `transcript_outcomes.py` imports it and calls it at both
+credit sites. It unwraps `timeout`, `gtimeout`, `time`, `exec`, `command`, `xargs`,
+`stdbuf`, `sudo` and `caffeinate` with `_launcher_arguments` (flag and value-option
+tables, stopping at `--`). A run whose executable resolves is not wrapped, so
+`timeout 300 uv run pytest x` credits today.
 Add `gdaemon` with first argument `run` as a launcher: flags none, value options
 `--bound` and `--term-grace`, terminated by the required `--`. Other `gdaemon`
 subcommands stay unresolved. The launcher's 124 is a failure outcome, as with
@@ -554,13 +556,16 @@ delimiter. Add `_wrapper_rule("gdaemon-run", "gdaemon run", "delimiter",
 criterion `uv run pytest x`. Any Target under `src/gobby/config/` requires the
 `runtime_config_contract.json` carrier.
 
-Both files are above the 850-line heuristic (893 and 957 lines). Move
-`_launcher_arguments` and its option tables from `transcript_outcomes.py` into the
-new `src/gobby/tasks/transcript_launchers.py`, imported by `_first_executable`
-(its only caller). Move `default_validation_wrapper_rules` and `_wrapper_rule` from
-`validation_detection.py` into the new `src/gobby/config/validation_wrappers.py`,
-imported by `_iter_wrapper_rules` (the only caller of
-`default_validation_wrapper_rules`). Both files end smaller than they start.
+`validation_detection.py` is above the 850-line heuristic (957 lines). Move
+`default_validation_wrapper_rules` and `_wrapper_rule` from it into the new
+`src/gobby/config/validation_wrappers.py`, imported by `_iter_wrapper_rules` (the only
+caller of `default_validation_wrapper_rules`), so it ends smaller than it starts.
+The `gdaemon run` launcher entry goes into `validation_launchers.py` (335 lines)
+in place, beside the existing launchers.
+
+Consumers unchanged:
+- `src/gobby/tasks/transcript_outcomes.py` — no-edit-reason: both credit sites call `first_executable` and take the resolved child executable unchanged.
+- `src/gobby/tasks/command_equivalence.py` — no-edit-reason: `run_location` calls `first_executable` with a `directories` list, so a launcher run's location now resolves through its child as intended; `gdaemon run` has no directory options, so the list stays empty.
 
 The launcher's 124 trailer line must not count as retained failure output, so add
 `gdaemon run: .*` to `tdd_retained_output.py::_GENERATED_LINE_RE`.
@@ -575,7 +580,7 @@ tests/tasks/test_close_checklist.py -q`.
 - 2.4.2 - Criterion matching treats "gdaemon run --bound 300 -- uv run pytest x" as "uv run pytest x". test: `tests/config/test_validation_detection.py::test_gdaemon_run_delimiter_wrapper_unwraps_child`.
 - 2.4.3 - A passing launcher pytest run of a changed test, also behind `rtk`, earns the same Gate 10 credit as the bare run, and exit 124 is an unresolved failure. test: `tests/tasks/test_close_checklist.py::test_gdaemon_run_pytest_earns_bare_run_credit`.
 - 2.4.4 - The launcher trailer line is generated output, not retained failure text. test: `tests/tasks/test_tdd_retained_output.py::test_gdaemon_run_trailer_is_generated_line`.
-- 2.4.5 - `transcript_outcomes.py` and `validation_detection.py` each end below their starting line counts, with the moved code in the two new modules. file: `src/gobby/tasks/transcript_launchers.py`. file: `src/gobby/config/validation_wrappers.py`.
+- 2.4.5 - `validation_detection.py` ends below its starting line count, with the wrapper rules in the new `validation_wrappers.py`. file: `src/gobby/config/validation_wrappers.py`.
 
 ### 2.5 rtk rewrites inside the launcher [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -1020,6 +1025,18 @@ that rewritten launcher must exit non-zero and write a `failed` record.
     lines.
   - The 3.2 and 3.3 figures now read 848 lines for `close_checklist.py` and 946
     for `close_test_coverage.py`.
+- 2026-10-16: After the 22:16 restart, the adversary bounced the d47d014 stamp:
+  #24627 (`93b369cc0a`) moved the launcher resolver into
+  `validation_launchers.py` as the public `first_executable`. With the
+  Orchestrator's 23:32 CDT GO:
+  - 2.4 now targets `validation_launchers.py::first_executable` and
+    `::_launcher_arguments`, and drops the planned `transcript_launchers.py`
+    extraction.
+  - 2.4 names `transcript_outcomes.py` and `command_equivalence.py` as unchanged
+    consumers.
+  - 2.4.5 keeps only the `validation_detection.py` wrapper-rule move.
+  - The Constraints monolith line now lists only `validation_detection.py`
+    (957), and the #24535 line now points at #24627.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1167,9 +1184,8 @@ that rewritten launcher must exit non-zero and write a `failed` record.
     2.4.4: The launcher trailer line is generated output, not retained failure text.
     test: `tests/tasks/test_tdd_retained_output.py::test_gdaemon_run_trailer_is_generated_line`.
 
-    2.4.5: `transcript_outcomes.py` and `validation_detection.py` each end below their
-    starting line counts, with the moved code in the two new modules. file: `src/gobby/tasks/transcript_launchers.py`.
-    file: `src/gobby/config/validation_wrappers.py`.'
+    2.4.5: `validation_detection.py` ends below its starting line count, with the
+    wrapper rules in the new `validation_wrappers.py`. file: `src/gobby/config/validation_wrappers.py`.'
   labels:
   - covers:gate10-test-run-reuse:2.4:2.4.1
   - covers:gate10-test-run-reuse:2.4:2.4.2

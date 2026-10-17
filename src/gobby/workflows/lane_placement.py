@@ -11,6 +11,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 
@@ -29,8 +30,17 @@ def open_lane_epics(task_manager: LocalTaskManager, project_id: str) -> list[Tas
     )
 
 
-def open_lane_epic_refs(task_manager: LocalTaskManager, project_id: str | None) -> str:
+def open_lane_epic_refs(
+    task_manager: LocalTaskManager,
+    project_id: str | None,
+    *,
+    tool_input: Any = None,
+    event_data: Any = None,
+) -> str:
     """Name the project's open lane epics for a refusal message."""
+    if isinstance(tool_input, Mapping):
+        data = event_data if isinstance(event_data, Mapping) else {}
+        project_id = _project_id(task_manager, _target_project_ref(tool_input, data), project_id)
     if not project_id:
         return ""
     return ", ".join(
@@ -56,7 +66,9 @@ def creates_task_outside_lane(
     data = event_data if isinstance(event_data, Mapping) else {}
     server, tool = _target_tool(tool_input, data)
     if server == "gobby-tasks" and tool == "create_task":
-        project_id = _project_id(task_manager, tool_input.get("project"), session_project_id)
+        project_id = _project_id(
+            task_manager, _target_project_ref(tool_input, data), session_project_id
+        )
         if not project_id or not open_lane_epics(task_manager, project_id):
             return False
         parent_ref = tool_input.get("parent_task_id")
@@ -67,7 +79,9 @@ def creates_task_outside_lane(
         parent = _resolve_task(task_manager, str(parent_ref), project_id)
         return parent is not None and not _reaches_open_lane_epic(task_manager, parent)
     if server == "gobby-tasks-ops" and tool == "start_expansion_run":
-        project_id = _project_id(task_manager, tool_input.get("project"), session_project_id)
+        project_id = _project_id(
+            task_manager, _target_project_ref(tool_input, data), session_project_id
+        )
         target_ref = tool_input.get("task_id")
         if not project_id or not target_ref:
             return False
@@ -76,6 +90,15 @@ def creates_task_outside_lane(
             return False
         return not _reaches_open_lane_epic(task_manager, target)
     return False
+
+
+def _target_project_ref(tool_input: Mapping[str, Any], data: Mapping[str, Any]) -> Any:
+    if tool_input.get("project"):
+        return tool_input["project"]
+    wrapper = data.get("tool_input")
+    if data.get("tool_name") in _CALL_TOOL_NAMES and isinstance(wrapper, Mapping):
+        return canonical_call_tool_input(wrapper).get("project_id")
+    return None
 
 
 def _target_tool(tool_input: Mapping[str, Any], data: Mapping[str, Any]) -> tuple[str, str]:

@@ -3,97 +3,167 @@
     {
       "name": "command.agent.spawn",
       "kind": "command",
-      "json": "{\"type\":\"command\",\"v\":2,\"request_id\":\"c1111111-1111-4111-8111-111111111111\",\"command\":\"agent.spawn\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"session_id\":\"33333333-3333-4333-8333-333333333333\",\"parent_session_id\":\"44444444-4444-4444-8444-444444444444\",\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"agent_depth\":1,\"max_agent_depth\":5,\"workflow_name\":\"team-lane\",\"provider\":\"grok\",\"model\":\"grok-4\",\"prompt\":\"implement the contract\",\"provider_args\":[\"--settings\",\"{}\"],\"reasoning_effort\":\"medium\",\"sandbox\":{\"enabled\":true,\"backend\":\"srt\",\"mode\":\"permissive\",\"allow_network\":true,\"extra_read_paths\":[\"/opt/shared\"],\"extra_write_paths\":[\"/tmp/lane\"],\"extra_deny_read_paths\":[\"/Users/josh/.ssh\"],\"extra_deny_write_paths\":[],\"allowed_domains\":[\"github.com\"],\"denied_domains\":[],\"allow_git_network\":true,\"allow_package_registries\":false,\"allow_unix_sockets\":[]},\"timeout_seconds\":600,\"title\":\"lane 5\",\"source_root\":\"/Users/josh/Projects/gobby\",\"workspace\":{\"mode\":\"worktree\",\"path\":null,\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":\"0.5.0\"},\"agent_name\":\"developer\",\"api_base\":null,\"api_token\":null,\"codex_oss_provider\":null,\"resume_session_id\":null,\"execution_mode\":\"interactive\",\"code_index_preflight\":\"managed\",\"task_id\":\"88888888-8888-4888-8888-888888888888\",\"extra_env\":{\"GOBBY_LANE\":\"5\",\"RUST_LOG\":\"info\"},\"codex_config_overrides\":[\"sandbox_mode=workspace-write\"],\"droid_mode\":\"exec\",\"prewarm_pre_commit_store\":true,\"monitor\":{\"auto_enter_agent_terminals\":true,\"auto_enter_agent_interval_seconds\":30,\"auto_enter_approval_prompts\":true,\"init_timeout_seconds\":120}}}"
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c1111111-1111-4111-8111-111111111111\",\"command\":\"agent.spawn\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"session_id\":\"33333333-3333-4333-8333-333333333333\",\"parent_session_id\":\"44444444-4444-4444-8444-444444444444\",\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"agent_depth\":1,\"max_agent_depth\":5,\"workflow_name\":\"team-lane\",\"provider\":\"grok\",\"model\":\"grok-4\",\"prompt\":\"implement the contract\",\"provider_args\":[\"--settings\",\"{}\"],\"reasoning_effort\":\"medium\",\"sandbox\":{\"enabled\":true,\"backend\":\"srt\",\"mode\":\"permissive\",\"allow_network\":true,\"extra_read_paths\":[\"/opt/shared\"],\"extra_write_paths\":[\"/tmp/lane\"],\"extra_deny_read_paths\":[\"/Users/josh/.ssh\"],\"extra_deny_write_paths\":[],\"allowed_domains\":[\"github.com\"],\"denied_domains\":[],\"allow_git_network\":true,\"allow_package_registries\":false,\"allow_unix_sockets\":[]},\"timeout_seconds\":600,\"title\":\"lane 5\",\"source_root\":\"/Users/josh/Projects/gobby\",\"workspace\":{\"mode\":\"worktree\",\"path\":null,\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":\"0.5.0\"},\"agent_name\":\"developer\",\"api_base\":null,\"api_token\":null,\"codex_oss_provider\":null,\"resume_session_id\":null,\"execution_mode\":\"interactive\",\"code_index_preflight\":\"managed\",\"task_id\":\"88888888-8888-4888-8888-888888888888\",\"extra_env\":{\"GOBBY_LANE\":\"5\",\"RUST_LOG\":\"info\"},\"codex_config_overrides\":[\"sandbox_mode=workspace-write\"],\"droid_mode\":\"exec\",\"prewarm_pre_commit_store\":true,\"monitor\":{\"auto_enter_agent_terminals\":true,\"auto_enter_agent_interval_seconds\":30,\"auto_enter_approval_prompts\":true,\"init_timeout_seconds\":120}}}"
     },
     {
       "name": "command.agent.spawn.existing",
       "kind": "command",
-      "json": "{\"type\":\"command\",\"v\":2,\"request_id\":\"c4444444-4444-4444-8444-444444444444\",\"command\":\"agent.spawn\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"session_id\":\"33333333-3333-4333-8333-333333333333\",\"parent_session_id\":\"44444444-4444-4444-8444-444444444444\",\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"agent_depth\":1,\"max_agent_depth\":5,\"workflow_name\":\"team-lane\",\"provider\":\"codex\",\"model\":null,\"prompt\":\"implement the contract\",\"provider_args\":[\"--settings\",\"{}\"],\"reasoning_effort\":\"medium\",\"sandbox\":{\"enabled\":true,\"backend\":\"srt\",\"mode\":\"permissive\",\"allow_network\":true,\"extra_read_paths\":[\"/opt/shared\"],\"extra_write_paths\":[\"/tmp/lane\"],\"extra_deny_read_paths\":[\"/Users/josh/.ssh\"],\"extra_deny_write_paths\":[],\"allowed_domains\":[\"github.com\"],\"denied_domains\":[],\"allow_git_network\":true,\"allow_package_registries\":false,\"allow_unix_sockets\":[]},\"timeout_seconds\":600,\"title\":\"lane 5\",\"source_root\":\"/Users/josh/Projects/gobby\",\"workspace\":{\"mode\":\"existing\",\"path\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":null},\"agent_name\":null,\"api_base\":null,\"api_token\":null,\"codex_oss_provider\":null,\"resume_session_id\":\"019a1b2c-3d4e-7f00-8a9b-0c1d2e3f4a5b\",\"execution_mode\":null,\"code_index_preflight\":null,\"task_id\":null,\"extra_env\":{},\"codex_config_overrides\":[],\"droid_mode\":\"exec\",\"prewarm_pre_commit_store\":true,\"monitor\":{\"auto_enter_agent_terminals\":true,\"auto_enter_agent_interval_seconds\":30,\"auto_enter_approval_prompts\":true,\"init_timeout_seconds\":120}}}"
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c4444444-4444-4444-8444-444444444444\",\"command\":\"agent.spawn\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"session_id\":\"33333333-3333-4333-8333-333333333333\",\"parent_session_id\":\"44444444-4444-4444-8444-444444444444\",\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"agent_depth\":1,\"max_agent_depth\":5,\"workflow_name\":\"team-lane\",\"provider\":\"codex\",\"model\":null,\"prompt\":\"implement the contract\",\"provider_args\":[\"--settings\",\"{}\"],\"reasoning_effort\":\"medium\",\"sandbox\":{\"enabled\":true,\"backend\":\"srt\",\"mode\":\"permissive\",\"allow_network\":true,\"extra_read_paths\":[\"/opt/shared\"],\"extra_write_paths\":[\"/tmp/lane\"],\"extra_deny_read_paths\":[\"/Users/josh/.ssh\"],\"extra_deny_write_paths\":[],\"allowed_domains\":[\"github.com\"],\"denied_domains\":[],\"allow_git_network\":true,\"allow_package_registries\":false,\"allow_unix_sockets\":[]},\"timeout_seconds\":600,\"title\":\"lane 5\",\"source_root\":\"/Users/josh/Projects/gobby\",\"workspace\":{\"mode\":\"existing\",\"path\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":null},\"agent_name\":null,\"api_base\":null,\"api_token\":null,\"codex_oss_provider\":null,\"resume_session_id\":\"019a1b2c-3d4e-7f00-8a9b-0c1d2e3f4a5b\",\"execution_mode\":null,\"code_index_preflight\":null,\"task_id\":null,\"extra_env\":{},\"codex_config_overrides\":[],\"droid_mode\":\"exec\",\"prewarm_pre_commit_store\":true,\"monitor\":{\"auto_enter_agent_terminals\":true,\"auto_enter_agent_interval_seconds\":30,\"auto_enter_approval_prompts\":true,\"init_timeout_seconds\":120}}}"
     },
     {
       "name": "command.agent.cancel",
       "kind": "command",
-      "json": "{\"type\":\"command\",\"v\":2,\"request_id\":\"c2222222-2222-4222-8222-222222222222\",\"command\":\"agent.cancel\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"signal\":\"TERM\",\"close_terminal\":true}}"
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c2222222-2222-4222-8222-222222222222\",\"command\":\"agent.cancel\",\"payload\":{\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"signal\":\"TERM\",\"close_terminal\":true}}"
     },
     {
       "name": "command.terminal.write",
       "kind": "command",
-      "json": "{\"type\":\"command\",\"v\":2,\"request_id\":\"c3333333-3333-4333-8333-333333333333\",\"command\":\"terminal.write\",\"payload\":{\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"kind\":\"text\",\"data\":\"ls\\n\",\"submit\":true}}"
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c3333333-3333-4333-8333-333333333333\",\"command\":\"terminal.write\",\"payload\":{\"terminal_id\":\"66666666-6666-4666-8666-666666666666\",\"kind\":\"text\",\"data\":\"ls\\n\",\"submit\":true}}"
+    },
+    {
+      "name": "command.workspace.merge",
+      "kind": "command",
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"command\":\"workspace.merge\",\"payload\":{\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"mode\":\"worktree\",\"path\":\"/Users/josh/.gobby/worktrees/55555555-5555-4555-8555-555555555555/22222222-2222-4222-8222-222222222222\",\"branch_name\":\"lane-5-24268-node-commands\",\"target_branch\":\"0.5.0\",\"source_root\":\"/Users/josh/Projects/gobby\"}}"
+    },
+    {
+      "name": "command.workspace.remove",
+      "kind": "command",
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c6666666-6666-4666-8666-666666666666\",\"command\":\"workspace.remove\",\"payload\":{\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"mode\":\"clone\",\"path\":\"/Users/josh/.gobby/clones/55555555-5555-4555-8555-555555555555/22222222-2222-4222-8222-222222222222\",\"branch_name\":\"lane-5-24268-node-commands\",\"source_root\":\"/Users/josh/Projects/gobby\",\"force\":false,\"force_delete_branch\":false,\"merged_into\":\"0.5.0\"}}"
+    },
+    {
+      "name": "command.checkout.status",
+      "kind": "command",
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c7777777-7777-4777-8777-777777777777\",\"command\":\"checkout.status\",\"payload\":{\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"root_path\":\"/Users/josh/Projects/gobby\"}}"
     },
     {
       "name": "reply.agent.spawn",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"c1111111-1111-4111-8111-111111111111\",\"ok\":true,\"result\":{\"accepted\":true}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c1111111-1111-4111-8111-111111111111\",\"ok\":true,\"result\":{\"accepted\":true}}"
     },
     {
       "name": "reply.agent.cancel",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"c2222222-2222-4222-8222-222222222222\",\"ok\":true,\"result\":{\"stopped\":true}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c2222222-2222-4222-8222-222222222222\",\"ok\":true,\"result\":{\"stopped\":true}}"
     },
     {
       "name": "reply.terminal.write",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"c3333333-3333-4333-8333-333333333333\",\"ok\":true,\"result\":{}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c3333333-3333-4333-8333-333333333333\",\"ok\":true,\"result\":{}}"
+    },
+    {
+      "name": "reply.workspace.merge.merged",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"ok\":true,\"result\":{\"outcome\":\"merged\",\"merge_sha\":\"9d60fa837b0c4e1f2a3b4c5d6e7f8091a2b3c4d5\",\"target_head_sha\":\"9d60fa837b0c4e1f2a3b4c5d6e7f8091a2b3c4d5\",\"conflicted_files\":[],\"dirty_paths\":[]}}"
+    },
+    {
+      "name": "reply.workspace.merge.already_merged",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"ok\":true,\"result\":{\"outcome\":\"already_merged\",\"merge_sha\":null,\"target_head_sha\":\"e1d4ad92ac0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d\",\"conflicted_files\":[],\"dirty_paths\":[]}}"
+    },
+    {
+      "name": "reply.workspace.merge.conflict",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"ok\":true,\"result\":{\"outcome\":\"conflict\",\"merge_sha\":null,\"target_head_sha\":null,\"conflicted_files\":[\"src/gobby/hub/node_commands.py\",\"docs/contracts/node-commands.md\"],\"dirty_paths\":[]}}"
+    },
+    {
+      "name": "reply.workspace.merge.target_dirty",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"ok\":true,\"result\":{\"outcome\":\"target_dirty\",\"merge_sha\":null,\"target_head_sha\":null,\"conflicted_files\":[],\"dirty_paths\":[\"README.md\"]}}"
+    },
+    {
+      "name": "reply.workspace.merge.busy",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c5555555-5555-4555-8555-555555555555\",\"ok\":true,\"result\":{\"outcome\":\"busy\",\"merge_sha\":null,\"target_head_sha\":null,\"conflicted_files\":[],\"dirty_paths\":[]}}"
+    },
+    {
+      "name": "reply.workspace.remove.removed",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c6666666-6666-4666-8666-666666666666\",\"ok\":true,\"result\":{\"outcome\":\"removed\"}}"
+    },
+    {
+      "name": "reply.workspace.remove.dirty",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c6666666-6666-4666-8666-666666666666\",\"ok\":true,\"result\":{\"outcome\":\"dirty\"}}"
+    },
+    {
+      "name": "reply.workspace.remove.unmerged",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c6666666-6666-4666-8666-666666666666\",\"ok\":true,\"result\":{\"outcome\":\"unmerged\"}}"
+    },
+    {
+      "name": "reply.workspace.remove.busy",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c6666666-6666-4666-8666-666666666666\",\"ok\":true,\"result\":{\"outcome\":\"busy\"}}"
+    },
+    {
+      "name": "reply.checkout.status",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c7777777-7777-4777-8777-777777777777\",\"ok\":true,\"result\":{\"current_branch\":\"0.5.0\",\"branch_count\":12,\"ahead\":2,\"behind\":0}}"
+    },
+    {
+      "name": "reply.checkout.status.nulls",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"c7777777-7777-4777-8777-777777777777\",\"ok\":true,\"result\":{\"current_branch\":null,\"branch_count\":1,\"ahead\":null,\"behind\":null}}"
     },
     {
       "name": "error.node_offline",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e1111111-1111-4111-8111-111111111111\",\"ok\":false,\"error\":{\"code\":\"node_offline\",\"message\":\"no live channel\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e1111111-1111-4111-8111-111111111111\",\"ok\":false,\"error\":{\"code\":\"node_offline\",\"message\":\"no live channel\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.node_timeout",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e2222222-2222-4222-8222-222222222222\",\"ok\":false,\"error\":{\"code\":\"node_timeout\",\"message\":\"reply exceeded timeout\",\"stage\":null}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e2222222-2222-4222-8222-222222222222\",\"ok\":false,\"error\":{\"code\":\"node_timeout\",\"message\":\"reply exceeded timeout\",\"stage\":null}}"
     },
     {
       "name": "error.channel_closed",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e3333333-3333-4333-8333-333333333333\",\"ok\":false,\"error\":{\"code\":\"channel_closed\",\"message\":\"channel closed\",\"stage\":null}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e3333333-3333-4333-8333-333333333333\",\"ok\":false,\"error\":{\"code\":\"channel_closed\",\"message\":\"channel closed\",\"stage\":null}}"
     },
     {
       "name": "error.unsupported_version",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e4444444-4444-4444-8444-444444444444\",\"ok\":false,\"error\":{\"code\":\"unsupported_version\",\"message\":\"unknown version\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e4444444-4444-4444-8444-444444444444\",\"ok\":false,\"error\":{\"code\":\"unsupported_version\",\"message\":\"unknown version\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.unknown_command",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e5555555-5555-4555-8555-555555555555\",\"ok\":false,\"error\":{\"code\":\"unknown_command\",\"message\":\"unknown command\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e5555555-5555-4555-8555-555555555555\",\"ok\":false,\"error\":{\"code\":\"unknown_command\",\"message\":\"unknown command\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.invalid_payload",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e6666666-6666-4666-8666-666666666666\",\"ok\":false,\"error\":{\"code\":\"invalid_payload\",\"message\":\"payload failed validation\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e6666666-6666-4666-8666-666666666666\",\"ok\":false,\"error\":{\"code\":\"invalid_payload\",\"message\":\"payload failed validation\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.managed_srt_required",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"ebbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"ok\":false,\"error\":{\"code\":\"invalid_payload\",\"message\":\"spawn_agent requires managed SRT (enabled=true, backend=provider-native)\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"ebbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"ok\":false,\"error\":{\"code\":\"invalid_payload\",\"message\":\"spawn_agent requires managed SRT (enabled=true, backend=provider-native)\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.not_found",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e7777777-7777-4777-8777-777777777777\",\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"run is not accepted or live\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e7777777-7777-4777-8777-777777777777\",\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"run is not accepted or live\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.cancelled",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e8888888-8888-4888-8888-888888888888\",\"ok\":false,\"error\":{\"code\":\"cancelled\",\"message\":\"run was cancelled\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e8888888-8888-4888-8888-888888888888\",\"ok\":false,\"error\":{\"code\":\"cancelled\",\"message\":\"run was cancelled\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.command_failed",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"e9999999-9999-4999-8999-999999999999\",\"ok\":false,\"error\":{\"code\":\"command_failed\",\"message\":\"accepted and live runs are at 1000\",\"stage\":\"none\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e9999999-9999-4999-8999-999999999999\",\"ok\":false,\"error\":{\"code\":\"command_failed\",\"message\":\"accepted and live runs are at 1000\",\"stage\":\"none\"}}"
     },
     {
       "name": "error.terminal_write_partial",
       "kind": "reply",
-      "json": "{\"type\":\"reply\",\"v\":2,\"request_id\":\"eaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"ok\":false,\"error\":{\"code\":\"command_failed\",\"message\":\"write may have reached the pane\",\"stage\":\"partial\"}}"
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"eaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"ok\":false,\"error\":{\"code\":\"command_failed\",\"message\":\"write may have reached the pane\",\"stage\":\"partial\"}}"
     },
     {
       "name": "checkout.register",
       "kind": "checkout",
-      "json": "{\"v\":2,\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"root_path\":\"/Users/josh/Projects/gobby\"}"
+      "json": "{\"v\":3,\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"root_path\":\"/Users/josh/Projects/gobby\"}"
     },
     {
       "name": "checkout.result",
@@ -103,12 +173,12 @@
     {
       "name": "report.full",
       "kind": "report",
-      "json": "{\"v\":2,\"hub_epoch\":null,\"revision\":1,\"host_epoch\":4,\"accepted\":[\"22222222-2222-4222-8222-222222222222\"],\"agents\":[{\"run_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"terminal_id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"pid\":4242,\"locator\":\"pane-1\",\"locator_key\":\"host-1:pane-1\",\"workspace\":{\"mode\":\"worktree\",\"path\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":\"0.5.0\"},\"pane\":{\"attention\":{\"reason\":\"approval\",\"kind\":\"approval\",\"fingerprint\":\"bb6df13abbebbb441118d5eb13b3ce8eef0b2ed864dddf0f4a633590c1044d94\",\"payload\":{\"kind\":\"approval\",\"excerpt\":\"Allow command? 1. Yes 2. No\",\"options\":[{\"option\":1,\"label\":\"Yes\"},{\"option\":2,\"label\":\"No\"}],\"fingerprint\":\"bb6df13abbebbb441118d5eb13b3ce8eef0b2ed864dddf0f4a633590c1044d94\"},\"dismissed\":false},\"injections\":1,\"composer\":{\"state\":\"draft\",\"line\":\"continue\"},\"idle\":{\"status\":\"active\",\"turn_in_flight\":true,\"unsubmitted_input\":false,\"queued_message_prompt\":false,\"capacity_message\":null,\"quota\":{\"provider\":\"codex\",\"reset_time\":\"9:30 PM\"}},\"tail\":\"Allow command?\\n1. Yes\\n2. No\"},\"sandbox\":{\"runtime_version\":\"0.0.79\",\"policy_schema_version\":1,\"policy_hash\":\"7a5d265776e9eb1c9cdb4a423b3df173613ab5828aa7bdcaaf39c61e1d68648b\",\"violation_count\":4,\"violation_count_truncated\":false,\"denial_operations\":{\"file-write*\":1,\"file-write-create\":2,\"unclassified\":1},\"recent_violations\":null}},{\"run_id\":\"ffffffff-ffff-4fff-8fff-ffffffffffff\",\"terminal_id\":\"99999999-9999-4999-8999-999999999999\",\"pid\":4343,\"locator\":\"pane-2\",\"locator_key\":\"host-1:pane-2\",\"workspace\":null,\"pane\":{\"attention\":null,\"injections\":0,\"composer\":{\"state\":\"unknown\",\"line\":null},\"idle\":null,\"tail\":\"\"},\"sandbox\":null},{\"run_id\":\"12121212-1212-4212-8212-121212121212\",\"terminal_id\":\"34343434-3434-4434-8434-343434343434\",\"pid\":4444,\"locator\":\"pane-3\",\"locator_key\":\"host-1:pane-3\",\"workspace\":null,\"pane\":null,\"sandbox\":null}],\"exits\":[{\"run_id\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\",\"terminal_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"launched\":true,\"exit_code\":0,\"reason\":\"exited\",\"workspace\":{\"mode\":\"clone\",\"path\":\"/Users/josh/.gobby/clones/cccccccc\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":null},\"sandbox\":{\"runtime_version\":\"0.0.79\",\"policy_schema_version\":1,\"policy_hash\":\"7a5d265776e9eb1c9cdb4a423b3df173613ab5828aa7bdcaaf39c61e1d68648b\",\"violation_count\":2,\"violation_count_truncated\":false,\"denial_operations\":{\"file-write-create\":2},\"recent_violations\":[{\"line\":\"deny(1) file-write-create /etc/hosts\",\"command\":\"touch /etc/hosts\"},{\"line\":\"deny(1) file-write-create /etc/passwd\",\"command\":\"sh -c 'echo x > /etc/passwd'\",\"command_length\":2600,\"command_truncated\":true}]}},{\"run_id\":\"56565656-5656-4656-8656-565656565656\",\"terminal_id\":\"78787878-7878-4878-8878-787878787878\",\"launched\":false,\"exit_code\":null,\"reason\":\"prepare_failed\",\"workspace\":null,\"sandbox\":null}]}"
+      "json": "{\"v\":3,\"hub_epoch\":null,\"revision\":1,\"host_epoch\":4,\"accepted\":[\"22222222-2222-4222-8222-222222222222\"],\"agents\":[{\"run_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"terminal_id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"pid\":4242,\"locator\":\"pane-1\",\"locator_key\":\"host-1:pane-1\",\"workspace\":{\"mode\":\"worktree\",\"path\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":\"0.5.0\"},\"pane\":{\"attention\":{\"reason\":\"approval\",\"kind\":\"approval\",\"fingerprint\":\"bb6df13abbebbb441118d5eb13b3ce8eef0b2ed864dddf0f4a633590c1044d94\",\"payload\":{\"kind\":\"approval\",\"excerpt\":\"Allow command? 1. Yes 2. No\",\"options\":[{\"option\":1,\"label\":\"Yes\"},{\"option\":2,\"label\":\"No\"}],\"fingerprint\":\"bb6df13abbebbb441118d5eb13b3ce8eef0b2ed864dddf0f4a633590c1044d94\"},\"dismissed\":false},\"injections\":1,\"composer\":{\"state\":\"draft\",\"line\":\"continue\"},\"idle\":{\"status\":\"active\",\"turn_in_flight\":true,\"unsubmitted_input\":false,\"queued_message_prompt\":false,\"capacity_message\":null,\"quota\":{\"provider\":\"codex\",\"reset_time\":\"9:30 PM\"}},\"tail\":\"Allow command?\\n1. Yes\\n2. No\"},\"sandbox\":{\"runtime_version\":\"0.0.79\",\"policy_schema_version\":1,\"policy_hash\":\"7a5d265776e9eb1c9cdb4a423b3df173613ab5828aa7bdcaaf39c61e1d68648b\",\"violation_count\":4,\"violation_count_truncated\":false,\"denial_operations\":{\"file-write*\":1,\"file-write-create\":2,\"unclassified\":1},\"recent_violations\":null}},{\"run_id\":\"ffffffff-ffff-4fff-8fff-ffffffffffff\",\"terminal_id\":\"99999999-9999-4999-8999-999999999999\",\"pid\":4343,\"locator\":\"pane-2\",\"locator_key\":\"host-1:pane-2\",\"workspace\":null,\"pane\":{\"attention\":null,\"injections\":0,\"composer\":{\"state\":\"unknown\",\"line\":null},\"idle\":null,\"tail\":\"\"},\"sandbox\":null},{\"run_id\":\"12121212-1212-4212-8212-121212121212\",\"terminal_id\":\"34343434-3434-4434-8434-343434343434\",\"pid\":4444,\"locator\":\"pane-3\",\"locator_key\":\"host-1:pane-3\",\"workspace\":null,\"pane\":null,\"sandbox\":null}],\"exits\":[{\"run_id\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\",\"terminal_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"launched\":true,\"exit_code\":0,\"reason\":\"exited\",\"workspace\":{\"mode\":\"clone\",\"path\":\"/Users/josh/.gobby/clones/cccccccc\",\"branch_name\":\"lane-5-24268-node-commands\",\"base_branch\":null},\"sandbox\":{\"runtime_version\":\"0.0.79\",\"policy_schema_version\":1,\"policy_hash\":\"7a5d265776e9eb1c9cdb4a423b3df173613ab5828aa7bdcaaf39c61e1d68648b\",\"violation_count\":2,\"violation_count_truncated\":false,\"denial_operations\":{\"file-write-create\":2},\"recent_violations\":[{\"line\":\"deny(1) file-write-create /etc/hosts\",\"command\":\"touch /etc/hosts\"},{\"line\":\"deny(1) file-write-create /etc/passwd\",\"command\":\"sh -c 'echo x > /etc/passwd'\",\"command_length\":2600,\"command_truncated\":true}]}},{\"run_id\":\"56565656-5656-4656-8656-565656565656\",\"terminal_id\":\"78787878-7878-4878-8878-787878787878\",\"launched\":false,\"exit_code\":null,\"reason\":\"prepare_failed\",\"workspace\":null,\"sandbox\":null}]}"
     },
     {
       "name": "report.empty",
       "kind": "report",
-      "json": "{\"v\":2,\"hub_epoch\":null,\"revision\":2,\"host_epoch\":4,\"accepted\":[],\"agents\":[],\"exits\":[]}"
+      "json": "{\"v\":3,\"hub_epoch\":null,\"revision\":2,\"host_epoch\":4,\"accepted\":[],\"agents\":[],\"exits\":[]}"
     },
     {
       "name": "stale_report",
@@ -118,7 +188,7 @@
     {
       "name": "runs.prompt_delivery_failure",
       "kind": "prompt_delivery_failure",
-      "json": "{\"v\":2,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"code\":\"codex_composer_not_ready\",\"detail\":\"Codex composer did not render before prompt-delivery timeout\",\"pane\":\"OpenAI Codex\\n› \"}"
+      "json": "{\"v\":3,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"code\":\"codex_composer_not_ready\",\"detail\":\"Codex composer did not render before prompt-delivery timeout\",\"pane\":\"OpenAI Codex\\n› \"}"
     },
     {
       "name": "runs.prompt_delivery_failure.result",
@@ -128,7 +198,7 @@
     {
       "name": "runs.code_index_warning",
       "kind": "code_index_warning",
-      "json": "{\"v\":2,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"warning\":{\"preflight\":\"managed\",\"cwd\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"message\":\"code index preflight timed out\"},\"prompt\":\"implement the contract\"}"
+      "json": "{\"v\":3,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"warning\":{\"preflight\":\"managed\",\"cwd\":\"/Users/josh/.gobby/worktrees/gobby/lane-5-24268\",\"message\":\"code index preflight timed out\"},\"prompt\":\"implement the contract\"}"
     },
     {
       "name": "runs.code_index_warning.result",
@@ -138,12 +208,12 @@
     {
       "name": "runs.terminate",
       "kind": "terminate",
-      "json": "{\"v\":2,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"cause\":\"doom_loop\",\"detail\":\"doom loop: dismissed loop prompt 3+ times\",\"pane_tail\":\"Loop detected. Continue? 1. Yes 2. No\",\"checkpoint\":{\"ref_name\":\"refs/gobby/ckpt/88888888-8888-4888-8888-888888888888/22222222-2222-4222-8222-222222222222\",\"commit_sha\":\"5c528ebc85c151361dc02ed08a25eb25f665fd8f\",\"parent_sha\":\"d8fd39d0bbdd2dcf322d8b11390a4c5825b11495\",\"files_changed\":3,\"message\":\"checkpoint before doom-loop termination\"}}"
+      "json": "{\"v\":3,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"cause\":\"doom_loop\",\"detail\":\"doom loop: dismissed loop prompt 3+ times\",\"pane_tail\":\"Loop detected. Continue? 1. Yes 2. No\",\"checkpoint\":{\"ref_name\":\"refs/gobby/ckpt/88888888-8888-4888-8888-888888888888/22222222-2222-4222-8222-222222222222\",\"commit_sha\":\"5c528ebc85c151361dc02ed08a25eb25f665fd8f\",\"parent_sha\":\"d8fd39d0bbdd2dcf322d8b11390a4c5825b11495\",\"files_changed\":3,\"message\":\"checkpoint before doom-loop termination\"}}"
     },
     {
       "name": "runs.terminate.timeout",
       "kind": "terminate",
-      "json": "{\"v\":2,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"cause\":\"timeout\",\"detail\":\"run exceeded timeout_seconds=600\",\"pane_tail\":\"\",\"checkpoint\":null}"
+      "json": "{\"v\":3,\"run_id\":\"22222222-2222-4222-8222-222222222222\",\"cause\":\"timeout\",\"detail\":\"run exceeded timeout_seconds=600\",\"pane_tail\":\"\",\"checkpoint\":null}"
     },
     {
       "name": "runs.terminate.result",
@@ -154,6 +224,33 @@
       "name": "detection_manifests",
       "kind": "detection_manifests",
       "json": "{\"manifests\":[{\"provider_id\":\"codex\",\"content\":\"[provider]\\nid = \\\"codex\\\"\\n\"}]}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "invalid.string_for_integer",
+      "kind": "report",
+      "json": "{\"v\":3,\"hub_epoch\":null,\"revision\":\"2\",\"host_epoch\":4,\"accepted\":[],\"agents\":[],\"exits\":[]}"
+    },
+    {
+      "name": "invalid.integer_for_boolean",
+      "kind": "checkout_result",
+      "json": "{\"root_path\":\"/Users/josh/Projects/gobby\",\"created\":1}"
+    },
+    {
+      "name": "invalid.omitted_nullable",
+      "kind": "reply",
+      "json": "{\"type\":\"reply\",\"v\":3,\"request_id\":\"e1111111-1111-4111-8111-111111111111\",\"ok\":false,\"error\":{\"code\":\"node_offline\",\"message\":\"no live channel\"}}"
+    },
+    {
+      "name": "invalid.unknown_field",
+      "kind": "command",
+      "json": "{\"type\":\"command\",\"v\":3,\"request_id\":\"c7777777-7777-4777-8777-777777777777\",\"command\":\"checkout.status\",\"payload\":{\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"root_path\":\"/Users/josh/Projects/gobby\",\"machine_id\":\"77777777-7777-4777-8777-777777777777\"}}"
+    },
+    {
+      "name": "invalid.zero_version",
+      "kind": "checkout",
+      "json": "{\"v\":0,\"project_id\":\"55555555-5555-4555-8555-555555555555\",\"root_path\":\"/Users/josh/Projects/gobby\"}"
     }
   ]
 }

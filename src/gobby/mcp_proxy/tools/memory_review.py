@@ -11,6 +11,12 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_session import ACCESSED_MEMORY_IDS_VARIABLE, resolve_session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._id import resolve_task_reference
+from gobby.tasks.lifecycle_access import (
+    CrossProjectTaskForbidden,
+    is_operator_coordinator,
+    resolve_lifecycle_task,
+)
+from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.memory_review_conditions import (
     pending_memory_reviews,
     pending_memory_reviews_complete,
@@ -139,7 +145,8 @@ def register_memory_review_tools(
         name="review_task_memories",
         description=(
             "Search project/global memories related to a task closed by the calling session or "
-            "one of its spawned descendants. "
+            "one of its spawned descendants, or reviewed by an operator coordinator. "
+            "Accepts <project>#N and UUIDs across authorized local projects. "
             "Returns candidates for optional cleanup or durable capture; never writes memories. "
             "Reviewing every queued closure releases the post-close stop/compact review gate."
         ),
@@ -173,6 +180,9 @@ def register_memory_review_tools(
                 f"Could not resolve calling session {session_id!r}.",
             )
         resolved_session_id, session = resolved_session
+        authenticated_id = get_current_session_id()
+        if authenticated_id is not None and authenticated_id != resolved_session_id:
+            return _error("task_not_found", f"Could not resolve task {task_id!r}.")
         project_id = getattr(session, "project_id", None)
         if not isinstance(project_id, str) or not project_id:
             return _error(
@@ -182,19 +192,41 @@ def register_memory_review_tools(
 
         task = await asyncio.to_thread(_resolve_task, task_manager, task_id, project_id)
         if task is None:
-            return _error(
-                "task_not_found",
-                f"Could not resolve task {task_id!r} in the calling session's project.",
-            )
+            try:
+                task = await asyncio.to_thread(
+                    resolve_lifecycle_task,
+                    task_manager,
+                    task_id,
+                    project_id=project_id,
+                    caller_session_id=get_current_session_id(),
+                    sessions=session_manager,
+                )
+            except CrossProjectTaskForbidden as exc:
+                return _error(
+                    str(exc),
+                    f"Could not resolve task {task_id!r} in the calling session's project.",
+                )
+            except (TaskNotFoundError, ValueError):
+                return _error(
+                    "task_not_found",
+                    f"Could not resolve task {task_id!r} in the calling session's project.",
+                )
         if task.closed_at is None:
             return _error("task_not_closed", f"Task {_task_ref(task)} is not closed.")
         closing_session_id = task.closed_in_session_id
-        if closing_session_id != resolved_session_id and (
-            closing_session_id is None
-            or not await asyncio.to_thread(
-                session_manager.is_ancestor,
-                resolved_session_id,
-                closing_session_id,
+        operator_review = task.project_id != project_id and await asyncio.to_thread(
+            is_operator_coordinator, task_manager, session
+        )
+        if (
+            not operator_review
+            and closing_session_id != resolved_session_id
+            and (
+                closing_session_id is None
+                or not await asyncio.to_thread(
+                    session_manager.is_ancestor,
+                    resolved_session_id,
+                    closing_session_id,
+                )
             )
         ):
             return _error(
@@ -203,6 +235,7 @@ def register_memory_review_tools(
                 "spawned descendants.",
             )
 
+        project_id = task.project_id
         variables = SessionVariableManager(session_manager.db)
         # What the agent fetched while working is the likeliest to need an
         # update, so it leads; the closing worker's fetches count when a parent
