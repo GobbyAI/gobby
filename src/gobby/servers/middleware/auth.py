@@ -91,10 +91,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if decision.allowed:
-            token = bind_decision(
-                decision,
-                require_hub_database(self.server.services.database),
-            )
+            if services is None or not hasattr(services, "database"):
+                token = None
+            else:
+                token = bind_decision(decision, require_hub_database(services.database))
             try:
                 return await call_next(request)
             finally:
