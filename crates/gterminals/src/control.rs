@@ -115,6 +115,33 @@ pub enum WriteKind {
     Text,
     Key,
     Paste,
+    Input,
+}
+
+impl WriteKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Key => "key",
+            Self::Paste => "paste",
+            Self::Input => "input",
+        }
+    }
+}
+
+/// One recipient of a `write_batch`: ordered operations on one terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteBatchTarget {
+    pub recipient_id: String,
+    pub host_terminal_id: String,
+    pub operations: Vec<WriteBatchOp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteBatchOp {
+    pub kind: WriteKind,
+    pub data: Vec<u8>,
+    pub delay_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -510,14 +537,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
     }
 
     pub async fn write(&mut self, request: &WriteRequest) -> Result<Value, ControlError> {
-        let kind = match request.kind {
-            WriteKind::Text => "text",
-            WriteKind::Key => "key",
-            WriteKind::Paste => "paste",
-        };
         let mut fields = json!({
             "host_terminal_id": request.host_terminal_id,
-            "kind": kind,
+            "kind": request.kind.as_str(),
             "encoding": "utf8-b64",
             "data": BASE64.encode(&request.data),
         });
@@ -525,6 +547,38 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
             fields["submit"] = json!(submit);
         }
         self.mutating("write", fields).await
+    }
+
+    /// Writes every target's operations in one host request; the reply's
+    /// `results` carries one entry per target.
+    pub async fn write_batch(
+        &mut self,
+        targets: &[WriteBatchTarget],
+    ) -> Result<Value, ControlError> {
+        let targets: Vec<Value> = targets
+            .iter()
+            .map(|target| {
+                let operations: Vec<Value> = target
+                    .operations
+                    .iter()
+                    .map(|operation| {
+                        json!({
+                            "kind": operation.kind.as_str(),
+                            "encoding": "utf8-b64",
+                            "data": BASE64.encode(&operation.data),
+                            "delay_ms": operation.delay_ms,
+                        })
+                    })
+                    .collect();
+                json!({
+                    "recipient_id": target.recipient_id,
+                    "host_terminal_id": target.host_terminal_id,
+                    "operations": operations,
+                })
+            })
+            .collect();
+        self.mutating("write_batch", json!({"targets": targets}))
+            .await
     }
 
     pub async fn reserve_observer(
