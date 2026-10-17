@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -855,9 +856,25 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
-def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
+def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
+    """Create a fresh directory named ``prefix`` plus three hex digits.
+
+    An AF_UNIX path must fit ``sun_path`` (104 bytes on macOS), and sandbox temp
+    bases leave little room, so e2e socket directories keep their names short.
+    """
+    base = root if root is not None else Path(tempfile.gettempdir())
+    while True:
+        path = base / f"{prefix}{secrets.randbelow(0x1000):03x}"
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        return path.resolve()
+
+
+def create_host_socket_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a gterm host socket directory owned by this pytest process."""
-    socket_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=root)).resolve()
+    socket_dir = create_short_dir(root, prefix)
     (socket_dir / E2E_HOST_OWNER_FILE).write_text(str(os.getpid()))
     return socket_dir
 
