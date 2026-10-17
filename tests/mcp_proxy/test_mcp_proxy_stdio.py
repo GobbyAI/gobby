@@ -340,8 +340,11 @@ class TestStartDaemonProcess:
         ):
             result = await start_daemon_process()
 
+        from gobby.mcp_proxy.daemon_control import DAEMON_START_TIMEOUT_SECONDS
+
         assert result["success"] is False
-        assert result["message"] == "gobby start timed out after 600s"
+        expected = f"gobby start timed out after {DAEMON_START_TIMEOUT_SECONDS:.0f}s"
+        assert result["message"] == expected
         mock_proc.terminate.assert_called_once_with()
         mock_proc.kill.assert_called_once_with()
         assert mock_proc.wait.await_count == 3

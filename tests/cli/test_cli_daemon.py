@@ -467,6 +467,33 @@ def test_wait_for_daemon_health_keeps_waiting_while_the_launched_child_runs(
     assert elapsed == pytest.approx(150.0, abs=0.5)
 
 
+def test_startup_progress_stops_when_the_launched_child_dies_after_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A launched daemon that dies during startup ends the readiness poll at once (#23650)."""
+    from gobby.cli import daemon_start
+
+    clock = {"now": 0.0}
+    probes: list[float] = []
+    monkeypatch.setattr("gobby.cli.daemon_start.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        "gobby.cli.daemon_start.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    def unreachable(_url: str, *, timeout: float) -> httpx.Response:
+        probes.append(timeout)
+        raise httpx.ConnectError("connection reset")
+
+    monkeypatch.setattr("gobby.cli.daemon_start.httpx.get", unreachable)
+
+    ready = daemon_start._poll_startup_progress(60887, child_exited=lambda: clock["now"] >= 10.0)
+
+    assert ready is False
+    assert clock["now"] < 11.0
+    assert len(probes) < 25
+
+
 def test_reconcile_ui_exposure_reports_url(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

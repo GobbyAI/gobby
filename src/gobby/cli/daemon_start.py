@@ -8,6 +8,7 @@ import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -94,14 +95,18 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
 
 
 def _poll_startup_progress(
-    http_port: int, max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS
+    http_port: int,
+    max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS,
+    *,
+    child_exited: Callable[[], bool] | None = None,
 ) -> bool:
     """Poll the daemon's startup progress endpoint and display steps.
 
     A loaded or restarting daemon can answer slowly, with a transient error
     status, or with a partial body; all of those keep waiting until the
     deadline. Only a backend the native front door refused or holds in standby
-    fails fast.
+    fails fast. A launched child that has exited ends the poll at once: it
+    cannot finish startup.
     """
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
@@ -109,6 +114,8 @@ def _poll_startup_progress(
     shown_header = False
 
     while (remaining := deadline - time.monotonic()) > 0:
+        if child_exited is not None and child_exited():
+            return False
         try:
             resp = httpx.get(
                 f"http://localhost:{http_port}/api/admin/startup-progress",
@@ -273,7 +280,9 @@ def _launch_direct_runner(
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
-            if not _poll_startup_progress(http_port):
+            if not _poll_startup_progress(
+                http_port, child_exited=lambda: process.poll() is not None
+            ):
                 _step("Startup readiness did not complete", error=True)
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
