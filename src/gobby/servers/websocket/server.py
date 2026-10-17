@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -24,6 +24,7 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.config._loading import bootstrap_overlaid_config
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.hub.caller_scope import bind_caller, bind_decision, reset_caller
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.auth import AuthMixin
@@ -503,9 +504,33 @@ class WebSocketServer(
                 "Client %s cleaned up. Remaining clients: %s", client_id, len(self.clients)
             )
 
-    async def handle_connection(self, websocket: Any) -> None:
+    async def handle_connection(
+        self,
+        websocket: Any,
+        decision: Any = None,
+        *,
+        database: Any = None,
+    ) -> None:
         """Run the public WebSocket connection lifecycle entry point."""
-        await self._handle_connection(websocket)
+        token = self._bind_connection_caller(websocket, decision, database)
+        try:
+            await self._handle_connection(websocket)
+        finally:
+            reset_caller(token)
+
+    def _bind_connection_caller(
+        self,
+        websocket: Any,
+        decision: Any,
+        database: Any,
+    ) -> Token[Any] | None:
+        """Bind the ASGI decision, or the native front-door user."""
+        if decision is not None:
+            return bind_decision(decision, database)
+        manager = getattr(self.terminal_services, "manager", None)
+        bound_db = database if database is not None else getattr(manager, "db", None)
+        user_id = getattr(websocket, "user_id", None)
+        return bind_caller(user_id if isinstance(user_id, str) else None, bound_db)
 
     async def _handle_message(
         self, websocket: Any, message: str, *, blocks_connection: bool = True

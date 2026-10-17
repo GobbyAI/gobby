@@ -589,7 +589,11 @@ def test_agent_capability_survives_ref_spelled_path_segment(
         AuthMiddleware,
         server=cast(
             "http_module.HTTPServer",
-            SimpleNamespace(auth_service=service, run_db=_run_db),
+            SimpleNamespace(
+                auth_service=service,
+                run_db=_run_db,
+                services=SimpleNamespace(database=temp_db),
+            ),
         ),
     )
 

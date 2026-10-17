@@ -12,8 +12,10 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from gobby.hub.caller_scope import bind_decision, reset_caller
 from gobby.servers.auth_service import request_path
 from gobby.servers.responses import JSONResponse
+from gobby.servers.routes._database import require_hub_database
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -89,7 +91,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if decision.allowed:
-            return await call_next(request)
+            token = bind_decision(
+                decision,
+                require_hub_database(services.database),
+            )
+            try:
+                return await call_next(request)
+            finally:
+                reset_caller(token)
 
         if path.startswith(_PROTECTED_PREFIXES):
             code = decision.code
