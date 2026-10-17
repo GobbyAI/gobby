@@ -1,0 +1,20 @@
+tags: [worker-safety, enforcement, default, gobby]
+
+# Another process's argv and environment can carry credentials, so listing
+# them is refused for every session (#24566). PID-only lookups stay open.
+rules:
+  no-process-environment-listing:
+    description: "Block commands that print other processes' environment or full arguments."
+    event: before_tool
+    enabled: true
+    priority: 50
+    effects:
+      - type: block
+        tools: [Bash]
+        # mask_quoted keeps a quoted pattern such as pgrep -f 'gobby -a' as data.
+        mask_quoted: true
+        # Wrappers and VAR=value assignments are skipped in any order before the ps
+        # or pgrep word. A dashed ps group with e or E is refused: BSD -e means -E
+        # under COMMAND_MODE=legacy, so the lowercase form is not safe to allow.
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|-\\S+|\\d+)\\s+)*(?:(?:[^\\s;&|]*/)?ps\\s+(?:[A-Za-z]*e[A-Za-z]*(?=[\\s)]|$)|(?:[^\\s;&|]+\\s+)*-[A-Za-z]*[eE])|(?:[^\\s;&|]*/)?pgrep(?:(?=[^;&|\\n]*\\s(?:-[A-Za-z]*l|--list-name\\b))(?=[^;&|\\n]*\\s(?:-[A-Za-z]*f|--full\\b))\\s|\\s+(?:[^\\s;&|]+\\s+)*?(?:-[A-Za-z]*a|--list-full\\b))|[^;&|\\n]*/proc/[^\\s/]+/environ\\b)"
+        reason: "Printing other processes' environment or full arguments (ps e, ps -E, ps -e, ps eww, pgrep -fl, pgrep -a, /proc/<pid>/environ) is not allowed. PID-only forms such as pgrep -f and pgrep -g are permitted."
