@@ -162,3 +162,12 @@ def resume_isolation(session: Session, run_storage: Any) -> tuple[str | None, st
     if run is None:
         return None, None
     return run.worktree_id, run.clone_id
+
+
+def resumed_seat_lane(session: Session | None, run_storage: Any) -> str | None:
+    """The lane the seat's last run recorded, so a resume keeps the seat in its lane."""
+    if session is None or session.agent_run_id is None:
+        return None
+    run = run_storage.get(session.agent_run_id)
+    lane = (run.resume_metadata_json or {}).get("lane") if run is not None else None
+    return lane if isinstance(lane, str) and lane else None

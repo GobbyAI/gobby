@@ -355,8 +355,8 @@ class _FieldUpdateMixin(
             # Same transaction as the expiry: a claim sweep must never see the
             # drained session expired without the marker that shields its claims.
             # Only a pane that exited under the live host's epoch proves a close. An
-            # unknown epoch on either side, such as a restart before the host connects,
-            # may be a drain, so it is recorded as contested too.
+            # unknown live epoch, such as a restart before the host connects, may be a
+            # drain, so it is recorded as contested too.
             if not live_host_epoch or exited_host_epoch != live_host_epoch:
                 record_contested_terminal_expiry(self.db, session_id, "terminal_drain")
         self._notify_session_change("session_expired", session_id)

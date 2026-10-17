@@ -186,20 +186,32 @@ def _run_lane(runs: LocalAgentRunManager, run_id: str | None) -> str | None:
 
 
 def _lane_manager_resumes_own_seat(
-    session_manager: SessionManager, caller: Session, resume_session_id: Any
+    session_manager: SessionManager, caller: Session, agent: Any, resume_session_id: Any
 ) -> bool:
-    """Whether a running lane manager resumes a developer or code-reviewer seat in its lane.
+    """Whether a running lane manager resumes its own lane's seat as that seat's own type.
 
-    The seat must be a session in the caller's project and machine, and the caller's run
-    and the seat's run must name the same lane. A fresh spawn has no resume reference.
+    This mirrors the release rule in ``_claim_release._can_release``: the enabled
+    lane-manager definition, the caller's running run bound to the caller, and the
+    seat's run bound to the seat in the same lane. The seat must be a developer or
+    code-reviewer in the caller's project and machine, and the resume must name its
+    stored type, so a resume cannot re-type it. A fresh spawn has no resume reference.
     """
     from gobby.workflows.state_manager import SessionVariableManager
 
     if not isinstance(resume_session_id, str) or not resume_session_id:
         return False
+    definition = AgentDefinitionManager(session_manager.db).get_by_name(
+        "lane-manager", caller.project_id
+    )
+    if definition is None or not definition.enabled:
+        return False
     runs = LocalAgentRunManager(session_manager.db)
     manager_run = runs.get(caller.agent_run_id) if caller.agent_run_id else None
-    if manager_run is None or manager_run.status != "running":
+    if (
+        manager_run is None
+        or manager_run.status != "running"
+        or manager_run.child_session_id != caller.id
+    ):
         return False
     lane = _run_lane(runs, manager_run.id)
     if lane is None:
@@ -214,7 +226,14 @@ def _lane_manager_resumes_own_seat(
         .get_variable_subset(seat.id, ("_agent_type",))
         .get("_agent_type")
     )
-    return seat_type in _LANE_SEAT_TYPES and _run_lane(runs, seat.agent_run_id) == lane
+    if seat_type not in _LANE_SEAT_TYPES or agent != seat_type:
+        return False
+    seat_run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
+    return (
+        seat_run is not None
+        and seat_run.child_session_id == seat.id
+        and _run_lane(runs, seat_run.id) == lane
+    )
 
 
 def spawn_target_allowed(
@@ -246,7 +265,7 @@ def spawn_target_allowed(
     if (
         agent_name == "lane-manager"
         and tool_name == "spawn_agent"
-        and _lane_manager_resumes_own_seat(session_manager, caller, resume_session_id)
+        and _lane_manager_resumes_own_seat(session_manager, caller, agent, resume_session_id)
     ):
         return True
     body = resolve_agent(agent_name, session_manager.db, project_id=caller.project_id)
@@ -296,8 +315,12 @@ def session_condition_helpers(
         "send_message_target_allowed": lambda caller_ref, agent_type, target: (
             send_message_target_allowed(session_manager, caller_ref, agent_type, target)
         ),
-        "spawn_target_allowed": lambda caller_ref, tool_name, agent, suggestions=None: (
-            spawn_target_allowed(session_manager, caller_ref, tool_name, agent, suggestions)
+        "spawn_target_allowed": lambda caller_ref,
+        tool_name,
+        agent,
+        suggestions=None,
+        resume_session_id=None: spawn_target_allowed(
+            session_manager, caller_ref, tool_name, agent, suggestions, resume_session_id
         ),
         "network_override_allowed": lambda caller_ref: network_override_allowed(
             session_manager, caller_ref

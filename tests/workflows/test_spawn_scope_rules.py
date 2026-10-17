@@ -764,13 +764,21 @@ async def test_lane_manager_resumes_a_seat_in_its_own_lane(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("seat_type", "seat_lane", "resume"),
+    ("seat_type", "seat_lane", "resume", "agent"),
     [
-        ("developer", "3", True),
-        ("orchestrator", "7", True),
-        ("developer", "7", False),
+        ("developer", "3", True, "developer"),
+        ("orchestrator", "7", True, "orchestrator"),
+        ("developer", "7", False, "developer"),
+        ("developer", "7", True, "release-manager"),
+        ("developer", "7", True, "lane-manager"),
     ],
-    ids=["other-lane-seat", "orchestrator-seat", "fresh-spawn"],
+    ids=[
+        "other-lane-seat",
+        "orchestrator-seat",
+        "fresh-spawn",
+        "retyped-to-release-manager",
+        "retyped-to-lane-manager",
+    ],
 )
 async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
     temp_db: HubDatabase,
@@ -779,6 +787,7 @@ async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
     seat_type: str,
     seat_lane: str,
     resume: bool,
+    agent: str,
 ) -> None:
     _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
     _define_agent(temp_db, "lane-manager", None)
@@ -792,7 +801,7 @@ async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
         _spawn_event(
             manager.id,
             "spawn_agent",
-            seat_type,
+            agent,
             resume_session_id=seat.id if resume else None,
         ),
         session_id=manager.id,
