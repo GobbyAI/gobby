@@ -27,6 +27,7 @@ from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     E2E_HOST_OWNER_FILE,
     create_host_socket_dir,
+    create_short_dir,
     reap_orphaned_terminal_hosts,
     stop_terminal_host,
 )
@@ -42,7 +43,7 @@ Spawn = Callable[[list[str]], subprocess.Popen[bytes]]
 def host_root() -> Iterator[Path]:
     # AF_UNIX paths are short; keep the root near the temp base like the e2e fixtures.
     base = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
-    root = Path(tempfile.mkdtemp(prefix="gr-", dir=base)).resolve()
+    root = create_short_dir(Path(base))
     yield root
     shutil.rmtree(root, ignore_errors=True)
 
@@ -76,8 +77,15 @@ def _start_host(spawn: Spawn, socket_dir: Path) -> subprocess.Popen[bytes]:
     token_path.chmod(0o600)
     host = spawn([str(_gterm_bin_dir() / "gterm"), "host", "--socket-dir", str(socket_dir)])
     write_pidfile(socket_dir, host.pid)
+
+    def control_ready() -> bool:
+        # A host that exits early (a socket path it cannot bind, say) fails here, not 10 s later.
+        if host.poll() is not None:
+            raise AssertionError(f"gterm host exited {host.returncode} before its control socket")
+        return control_socket_path(socket_dir).exists()
+
     wait_for_condition(
-        lambda: control_socket_path(socket_dir).exists(),
+        control_ready,
         timeout=10.0,
         interval=0.05,
         description="gterm host control socket",
@@ -93,7 +101,7 @@ def _dead_pid() -> int:
 
 
 def _orphaned_dir(root: Path) -> Path:
-    socket_dir = Path(tempfile.mkdtemp(prefix="gh-", dir=root)).resolve()
+    socket_dir = create_short_dir(root)
     (socket_dir / E2E_HOST_OWNER_FILE).write_text(str(_dead_pid()))
     return socket_dir
 
@@ -143,7 +151,7 @@ def test_reap_leaves_the_host_of_a_live_owner(host_root: Path, spawn: Spawn) -> 
 
 
 def test_reap_never_touches_an_unmarked_dir(host_root: Path, spawn: Spawn) -> None:
-    socket_dir = Path(tempfile.mkdtemp(prefix="gh-", dir=host_root)).resolve()
+    socket_dir = create_short_dir(host_root)
     host = _start_host(spawn, socket_dir)
 
     reap_orphaned_terminal_hosts(host_root)
@@ -261,7 +269,7 @@ def test_placed_runbook_socket_dir_host_is_reaped(
 
 
 def test_placed_runbook_teardown_stops_a_replacement_host(host_root: Path, spawn: Spawn) -> None:
-    socket_dir = create_host_socket_dir(root=host_root, prefix="grb-")
+    socket_dir = create_host_socket_dir(host_root)
     original = _start_host(spawn, socket_dir)
     fixture = placed.FixtureHost(socket_dir, original, psutil.Process(original.pid).create_time())
     original.kill()

@@ -12,6 +12,7 @@ import pytest
 
 from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 from gobby.runner import main
+from gobby.runner_backend import FRONT_DOOR_SECRET_FD_ENV, front_door_secret
 from gobby.runner_init import StartRefusal
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
 from gobby.utils import spawn
@@ -140,3 +141,38 @@ def test_main_seals_inherited_descriptors_before_the_runner_starts(
     assert inheritable_at_runner_start == [False]
     assert end_of_pipe == b""
     assert len(children) == 1
+
+
+def test_main_takes_front_door_secret_from_its_pipe_and_keeps_it_out_of_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Descendants list no secret: it arrives on a pipe and never enters os.environ."""
+    secret = "pipe-delivered-front-door-secret"
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, secret.encode())
+    os.close(write_fd)
+    monkeypatch.setenv(FRONT_DOOR_SECRET_FD_ENV, str(read_fd))
+    monkeypatch.setattr("gobby.runner_backend._front_door_secret", None, raising=False)
+    at_runner_start: list[tuple[str | None, bool, list[str]]] = []
+
+    def record_runner_environment(**_kwargs: object) -> None:
+        at_runner_start.append(
+            (
+                front_door_secret(),
+                FRONT_DOOR_SECRET_FD_ENV in os.environ,
+                [name for name, value in os.environ.items() if secret in value],
+            )
+        )
+
+    try:
+        with (
+            patch("gobby.runner.run_gobby", new=record_runner_environment),
+            patch("asyncio.run"),
+        ):
+            main()
+    finally:
+        # main closes the pipe once it takes the variable; never close a reused number.
+        if FRONT_DOOR_SECRET_FD_ENV in os.environ:
+            os.close(read_fd)
+
+    assert at_runner_start == [(secret, False, [])]

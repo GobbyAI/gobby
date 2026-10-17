@@ -15,7 +15,7 @@ daemon access and never participate in secret-envelope encryption.
 | Plaintext | `api_key` and `api_key_id` in the owner-only startup bootstrap (default `~/.gobby/bootstrap.yaml`) |
 | Hub verifier | SHA-256 hex digest in `api_keys.key_hash`, resolved by gdaemon with the key's user and machine ownership |
 | Canonical HTTP credential | `Authorization: Bearer <gobby_ API key>` |
-| Python operator identity | gdaemon strips client user, machine, key, and front-door-secret headers, then supplies verified ids with the per-boot `GOBBY_FRONT_DOOR_SECRET`; Python requires the matching secret |
+| Python operator identity | gdaemon strips client user, machine, key, and front-door-secret headers, then supplies verified ids with the per-boot front-door secret; Python requires the matching secret. gdaemon hands the secret to each backend on an inherited pipe named by `GOBBY_FRONT_DOOR_SECRET_FD`, which the runner reads and closes at start, so it never appears in any process argv or environment |
 | Browser credential | `gobby_session` cookie created by `/api/auth/login` |
 | Break-glass credential | `break_glass` beside the daemon's bound bootstrap (default `~/.gobby/break_glass`), created once with mode `0600`; never logged or copied; the credential and its owner-only `.break_glass-staging` directory are read/write denied to managed sandboxes |
 

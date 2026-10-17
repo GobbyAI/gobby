@@ -225,12 +225,12 @@ is a shared Target across 1.1, 2.2 and 2.3, ordered by dependencies.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`
-- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 472
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 472 in the embedded asset list
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 472
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 472
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 472
+- `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 470
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 470 in the embedded asset list
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 470
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 470
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 470
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated expected schema identity
 - `crates/gcore/Cargo.toml`
 - `crates/gcode/Cargo.toml`
@@ -241,11 +241,11 @@ Targets:
 
 Research context. Migrations live under `crates/gcore/assets/schema/migrations/`;
 the latest is `469_config_active_state.sql` (#24445, `39eb1255af`), and
-`468_terminal_host_epochs.sql` landed with its carriers in `3fa292372e`. The
-Orchestrator's migration ledger (2026-10-16 18:19 CDT) reserves 470 for #24617 (Host
-e2e harness) and 471 for #23861, and assigns 472 to this deliverable. Next-free rule:
-if 472 is taken when 1.1 is implemented, use the next free number and update every
-carrier below to match. The derived-carriers lint requires every carrier listed above in the
+`468_terminal_host_epochs.sql` landed with its carriers in `3fa292372e`. Migration
+numbers are contiguous and taken at landing, with no reservations (Orchestrator
+ruling 2026-10-17 09:21 CDT): this deliverable takes the next free number on the
+tip, 470 as of 0.5.0 `f770f3317d`. If another migration lands first, renumber to the
+new next free number and update every carrier below to match. The derived-carriers lint requires every carrier listed above in the
 same deliverable. Follow 468's grant pattern: `REVOKE ALL ... FROM PUBLIC` and grant
 to `gobby_daemon_runtime`, the role both gdaemon and the Python daemon use; the
 Python gate needs SELECT, gdaemon needs SELECT, INSERT and DELETE.
@@ -278,8 +278,8 @@ patch version of each listed binary crate and `gobby-core`, and update `Cargo.lo
 
 **Acceptance:**
 
-- 1.1.1 - Migration 472 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`.
-- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 472, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 1.1.1 - Migration 470 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`.
+- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 470, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 1.1.3 - `gobby-core` and every dependent shipped binary carry a patch-version bump with `Cargo.lock` updated. file: `Cargo.lock`.
 
 ## P2: Bounded-run launcher
@@ -1037,6 +1037,11 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   - 2.4.5 keeps only the `validation_detection.py` wrapper-rule move.
   - The Constraints monolith line now lists only `validation_detection.py`
     (957), and the #24535 line now points at #24627.
+- 2026-10-17: The Orchestrator's 09:21 CDT ruling dropped migration reservations:
+  numbers are contiguous and taken at landing. #24548 was renumbered to 470, so
+  coverage row 1.1.1 went invalid against the plan's 472. With the Orchestrator's
+  10:08 CDT GO, 1.1 now uses migration 470 throughout, and its research context
+  states the no-reservation rule in place of the 18:19 ledger.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1046,12 +1051,12 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.1.1: Migration 472 creates `validation_run_records` with
+  validation_criteria: '1.1.1: Migration 470 creates `validation_run_records` with
     the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
-    SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`.
+    SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/470_validation_run_records.sql`.
 
     1.1.2: The schema catalog, asset registry, grant bundle and expected identity
-    carry migration 472, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+    carry migration 470, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`.
     file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 
     1.1.3: `gobby-core` and every dependent shipped binary carry a patch-version bump

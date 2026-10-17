@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.config.node_reports import NodeReportsConfig
 from gobby.hub import node_reports
-from gobby.hub.node_commands import ReportBody
+from gobby.hub.node_commands import CONTRACT_VERSION, ReportBody
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes import nodes
@@ -130,7 +130,7 @@ def _report(
     exits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
-        "v": 2,
+        "v": CONTRACT_VERSION,
         "hub_epoch": epoch,
         "revision": revision,
         "host_epoch": 1,
@@ -234,7 +234,7 @@ def test_checkout_registration_uses_key_machine(
 ) -> None:
     _machines(temp_db)
     root = f"/node-only/checkouts/{uuid.uuid4()}"
-    body = {"v": 2, "project_id": sample_project["id"], "root_path": root}
+    body = {"v": CONTRACT_VERSION, "project_id": sample_project["id"], "root_path": root}
 
     with _client(temp_db, monkeypatch) as client:
         first = _post(client, "checkouts", body)
@@ -263,7 +263,7 @@ def test_checkout_registration_refusals(
     root = f"/node-only/root/{uuid.uuid4()}"
 
     def body(project: str, root_path: str) -> dict[str, Any]:
-        return {"v": 2, "project_id": project, "root_path": root_path}
+        return {"v": CONTRACT_VERSION, "project_id": project, "root_path": root_path}
 
     with _client(temp_db, monkeypatch) as client:
         unknown = _post(client, "checkouts", body(str(uuid.uuid4()), root))
@@ -343,13 +343,20 @@ def test_node_routes_refuse_unverified_and_local_identity(
         "forged": _headers() | {"X-Gobby-Front-Door": "forged"},
         "local": _headers(LOCAL),
     }.get(proof, _headers())
-    extras: dict[str, dict[str, Any]] = {"machine_id": {"machine_id": NODE}, "version": {"v": 3}}
+    extras: dict[str, dict[str, Any]] = {
+        "machine_id": {"machine_id": NODE},
+        "version": {"v": CONTRACT_VERSION + 1},
+    }
     extra = extras.get(proof, {})
 
     with _client(temp_db, monkeypatch) as client:
         inbox = node_reports.node_report_inbox()
         body: dict[str, Any] = (
-            {"v": 2, "project_id": sample_project["id"], "root_path": "/node-only/refused"}
+            {
+                "v": CONTRACT_VERSION,
+                "project_id": sample_project["id"],
+                "root_path": "/node-only/refused",
+            }
             if route == "checkouts"
             else _report(inbox.hub_epoch, 1, exits=[_fresh_exit()])
         )
@@ -599,7 +606,7 @@ def test_checkout_body_is_capped_before_parse_or_write(
     root = f"/node-only/capped/{uuid.uuid4()}"
     config = SimpleNamespace(node_reports=NodeReportsConfig(max_request_bytes=2048))
     oversized = {
-        "v": 2,
+        "v": CONTRACT_VERSION,
         "project_id": sample_project["id"],
         "root_path": root,
         "padding": "x" * 4096,

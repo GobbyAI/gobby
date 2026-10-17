@@ -123,6 +123,37 @@ fn host_rejects_flag_without_its_value() {
     assert_no_host_state(dir.path());
 }
 
+/// A socket path past `sun_path` can be neither bound nor reached, so the host
+/// refuses it before pinning an image or binding, and names the path (#24615).
+#[test]
+fn host_refuses_a_socket_path_past_sun_path_before_binding() {
+    let base = host_support::temp_socket_dir();
+    let dir = base.path().join("x".repeat(120));
+    std::fs::create_dir(&dir).expect("long socket dir");
+    host_support::write_token(&dir, "token-long");
+    let control_path = dir.join(CONTROL_SOCKET);
+
+    let output = run_host(&dir, &[]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a socket path past sun_path must fail, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("too long"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&control_path.display().to_string()),
+        "stderr names the path: {stderr}"
+    );
+    assert_no_host_state(&dir);
+    assert!(
+        !dir.join(gobby_terminal::host::image::IMAGES_DIR).exists(),
+        "a refused host pins no image"
+    );
+}
+
 /// A second host on a live socket dir must exit without publishing its pid:
 /// the daemon reads the pidfile to find the host it adopts, and a dead pid
 /// there orphans every running terminal until an operator repairs the file.
