@@ -866,7 +866,7 @@ def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
     while True:
         path = base / f"{prefix}{secrets.randbelow(0x1000):03x}"
         try:
-            path.mkdir()
+            path.mkdir(mode=0o700)
         except FileExistsError:
             continue
         return path.resolve()
