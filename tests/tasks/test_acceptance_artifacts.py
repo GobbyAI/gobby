@@ -1603,6 +1603,17 @@ class TestFeature:
         ),
         (
             """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature(monkeypatch):
+                monkeypatch.setattr("test_feature-extra._assert_ok", lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
             class Meta(type):
                 def __new__(mcs, name, bases, namespace):
                     namespace["_assert_ok"] = lambda self, receipt: None
@@ -1687,6 +1698,7 @@ class TestFeature:
         "globals_update_pairs",
         "globals_update_zip",
         "globals_update_comprehension",
+        "monkeypatch_hyphenated_module_target",
         "metaclass_namespace",
         "module_staticmethod_rebinding",
         "imported_staticmethod_alias",
