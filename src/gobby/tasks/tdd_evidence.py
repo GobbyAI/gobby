@@ -18,6 +18,15 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.tdd_compacted_output import (
+    _COMPACTED_RECALL_RE,
+    _PYTEST_FAIL_DETAIL_RE,
+    _PYTEST_FAILURE_HEADER_RE,
+    _PYTHON_EXCEPTION_DETAIL_RE,
+    _RTK_FAILURE_HEADER_RE,
+    _path_matches_artifact,
+    has_compacted_pytest_failure,
+)
 from gobby.tasks.tdd_paths import is_implementation_edit_path
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
@@ -44,21 +53,10 @@ _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
     re.IGNORECASE,
 )
-_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_+\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s+_+\s*$")
-_RTK_FAILURE_HEADER_RE = re.compile(
-    r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s*$"
-)
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):(?P<line>\d+):"
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
     r"| assert(?:\s+.*)?)?\s*$"
-)
-# pytest.fail() reached from a test body. pytest-timeout kills report as
-# `Failed: Timeout`, which proves nothing about the code under test.
-_PYTEST_FAIL_DETAIL_RE = re.compile(r"^\s*E\s+Failed:(?!\s+Timeout\b)", re.MULTILINE)
-_PYTHON_EXCEPTION_DETAIL_RE = re.compile(
-    r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
-    re.MULTILINE,
 )
 _RAISE_EXCEPTION_DETAIL_RE = re.compile(
     r"^[ \t]*>?[ \t]*raise[ \t]+[A-Za-z_][\w.]*(?:Error|Exception)\b",
@@ -395,7 +393,9 @@ def _red_run_proof(
     source_failure = _has_original_source_failure(test, evidence, run, parse_cache=parse_cache)
     if not source_failure and not validation_run_names_test(core_command, run.output, test):
         return False, None
-    matched, reason = _has_named_red_failure(core_command, run.output, test)
+    matched, reason = _has_named_red_failure(
+        core_command, run.output, test, _original_test_module(test, evidence, run, parse_cache)
+    )
     matched = matched or source_failure
     if matched:
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
@@ -551,11 +551,11 @@ def _has_original_source_failure(
 
 
 def _has_named_red_failure(
-    command: str, output: str | None, test: AcceptanceTest
+    command: str, output: str | None, test: AcceptanceTest, module: ast.Module | None
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
-    if _has_failed_node_summary(output, test) or _has_compacted_pytest_failure(output, test):
+    if _has_failed_node_summary(output, test) or has_compacted_pytest_failure(output, test, module):
         return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
@@ -636,50 +636,6 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
     return False
 
 
-def _has_compacted_pytest_failure(output: str, test: AcceptanceTest) -> bool:
-    """Credit a primary diagnostic only when a compacted run has one failed node."""
-    if not test.path.endswith(".py") or not re.search(
-        r"(?m)^\[full output: rtk recall [0-9a-f]{12,64}\]$", output
-    ):
-        return False
-    lines = output.splitlines()
-    if re.search(r"(?m)^ERROR\s|\b[1-9]\d* errors?\b|\[XPASS\(strict\)\]", output):
-        return False
-    if any(
-        _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
-        for line in lines
-    ):
-        return False  # Complete reports keep their existing section attribution.
-    failed = [
-        (index, match)
-        for index, line in enumerate(lines)
-        if (match := re.fullmatch(r"FAILED (\S+\.py)::(\S+)(?:\s+-\s+.*)?", line))
-    ]
-    if len(failed) != 1:
-        return False
-    summary = re.search(r"(?m)^[= ]*(\d+) failed\b", output)
-    if summary is None or int(summary[1]) != len(failed):
-        return False
-    # Multiple traceback frames can belong to one sibling, so their order/count
-    # cannot bind diagnostics to multiple FAILED nodes. Other parsers own reports
-    # with explicit node headers or locations proven against the run's source.
-    index, node = failed[0]
-    expected = test.symbol.replace("::", ".")
-    reported = node[2].replace("::", ".")
-    if "[" not in expected:
-        reported = reported.split("[", maxsplit=1)[0]
-    return (
-        _path_matches_artifact(node[1], test)
-        and reported == expected
-        and any(
-            re.match(r"^[ \t]*E[ \t]+assert(?:[ \t]|$)", line)
-            or _PYTHON_EXCEPTION_DETAIL_RE.match(line)
-            or _PYTEST_FAIL_DETAIL_RE.match(line)
-            for line in lines[:index]
-        )
-    )
-
-
 def _has_pytest_body_failure(
     command: str, output: str, test: AcceptanceTest, *, require_not_implemented: bool = False
 ) -> tuple[bool, str]:
@@ -727,7 +683,13 @@ def _has_pytest_body_failure(
         if reported_symbol is None:
             # --tb=line names no symbol; the location is attributable only when
             # the artifact is the sole node the command selected in that file.
-            if same_file_nodes != artifact_nodes or len(artifact_nodes) != 1:
+            # Compacted output has no location proof beyond that selection, so
+            # its location must bind through _has_original_source_failure instead.
+            if (
+                _COMPACTED_RECALL_RE.search(output)
+                or same_file_nodes != artifact_nodes
+                or len(artifact_nodes) != 1
+            ):
                 continue
         elif not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes):
             continue
@@ -885,12 +847,6 @@ def _section_has_failure_detail(section: str) -> bool:
         or _PYTHON_EXCEPTION_DETAIL_RE.search(section)
         or _RAISE_EXCEPTION_DETAIL_RE.search(section)
     )
-
-
-def _path_matches_artifact(path: str, test: AcceptanceTest) -> bool:
-    expected_parts = PurePosixPath(test.path).parts
-    reported_parts = PurePosixPath(path).parts
-    return reported_parts[-len(expected_parts) :] == expected_parts
 
 
 def _failure_section(lines: list[str], start: int) -> str:

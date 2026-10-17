@@ -322,7 +322,7 @@ hub before and after #24151, and the hub reads the node's checkout through
 - Use `uv run` for every Python operation. Test runs use
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`.
 - Rust work loads the `rust` skill and follows `crates/CLAUDE.md`. Use
-  `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon ...`.
+  `CARGO_BUILD_JOBS=<jobs per the RM packet> cargo nextest run -p gobby-daemon ...`.
 - 1.1 and 1.2 change gdaemon. Each one's shipping commit bumps `gdaemon` by
   one patch version in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and
   `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`. The number
@@ -337,12 +337,13 @@ hub before and after #24151, and the hub reads the node's checkout through
   `tests/hooks/checkout_read_fakes.py` (1.3). Nothing touches the user's
   daemon, home or database.
 - There is no backward compatibility, because 0.5.0 has not shipped.
-- The monolith ceiling holds: `src/gobby/workflows/hooks.py` (923 lines) is
+- The monolith ceiling holds: `src/gobby/workflows/hooks.py` (925 lines) is
   split in 2.1. `src/gobby/workflows/found_work_gate.py` (882 lines) gets no
   production edit.
-- **Cross-plan edges.** The coverage grammar has no cross-plan dependency.
-  "Cross-plan edges set at expansion" lists every edge; the Orchestrator sets
-  them at expansion.
+- **Cross-plan edges.** Each leaf that waits on another plan's task names
+  that task on its heading as `(depends: #N)`, per the plan-coverage
+  contract. Expansion gives the leaf a `blocked-by` edge on `#N`.
+  "Cross-plan edges" below gives the reason for each one.
 
 ## Operator-approved limits
 `kind: framing`
@@ -376,28 +377,37 @@ The plan's other limits reuse existing bounds:
   `src/gobby/utils/daemon_git.py::_MAX_STREAM_STDERR_BYTES`;
 - the 5-second lost-reply margin: hub-mode 1.3's read timeout.
 
-## Cross-plan edges set at expansion
+## Cross-plan edges
 `kind: framing`
 
-Each row is one edge between a leaf of this plan and work outside it:
-- "blocked by": the external work closes before the leaf starts.
-- "blocks": the leaf closes before the external work starts.
+A leaf that waits on another plan's task names that task on its heading as
+`(depends: #N)`. Expansion gives the leaf a `blocked-by` edge on `#N`, and
+the apply fails when task `#N` does not exist. A ref to a closed task is an
+edge that is already satisfied; it stays on the heading to record the order.
+Edges between this plan's own leaves are heading dependencies too. hub-mode
+sections are numbered as in `.gobby/plans/hub-mode.md`, and node-halves
+sections as in `.gobby/plans/node-halves.md`.
 
-hub-mode leaves are numbered as in `.gobby/plans/hub-mode.md`, and
-node-halves leaves as in `.gobby/plans/node-halves.md`, each with the task
-that holds it today. Edges between this plan's own leaves are heading
-dependencies and reach the manifest.
-
-| Leaf | External work | Edge | Reason |
+| Leaf | Heading ref | External work | Reason |
 | --- | --- | --- | --- |
-| 1.1 | hub-mode 4.1 (Node-commands contract version 3: workspace and checkout commands; no task yet) | blocked by | 1.1 bumps the same contract to version 4 in the same files. Its parity tests extend the `node_command_parity` files that 4.1 creates. |
-| 1.2 | hub-mode 4.6 (Node checkout.status handler; no task yet) | blocked by | 1.2 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. 4.6 is hub-mode's last handler leaf in those files, and it follows node-halves 2.15, the last node agent leaf. |
-| 1.3 | hub-mode 1.2 (gdaemon internal node-command route over the node channel; no task yet, #24281 holds it) | blocked by | Every node read the seam sends travels that route. |
-| 1.3 | hub-mode 1.3 (#24269 Python node-command client and machine eligibility) | blocked by | The seam awaits `node_command_client().send` and maps `NodeCommandError`. |
-| 1.3 | hub-mode 2.2 (#24272 Hook ingress binds the envelope machine to the caller's key) | blocked by | Node origin reads `input_data["machine_id"]`, which is trustworthy only once 2.2 binds it (Decision 2). 2.1 also refines 2.2.7 and follows it through 1.3. |
-| 2.1 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocked by | 2.1 reads a node's `project_checkouts` rows. Only 1.4's `POST /api/nodes/checkouts` writes them. |
-| 3.1 | hub-mode 5.1 (Live hub-to-node proof with isolated daemons and fake providers; no task yet, #24283 holds it) | blocked by | 3.1 runs on the live pair that 5.1 proves, with its node checkout registration and hook delivery. |
-| Every leaf from 1.1 to 1.4 and 2.1 to 2.8 | #24151 (S2.11 hub half: hook ingress and rule engine in Rust) | blocks | #24151 ports the seam's node reads and each site's disposition (Decision 12). |
+| 1.1 | `#24596` | hub-mode 4.1 (Node-commands contract version 3: workspace and checkout commands) | 1.1 bumps the same contract to version 4 in the same files. Its parity tests extend the `node_command_parity` files that 4.1 creates. |
+| 1.2 | `#24601` | hub-mode 4.6 (Node checkout.status handler) | 1.2 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. 4.6 is hub-mode's last handler leaf in those files, and it follows node-halves 2.15, the last node agent leaf. |
+| 1.3 | `#24594` | hub-mode 1.2 (gdaemon internal node-command route over the node channel) | Every node read the seam sends travels that route. #24281, the deferral task that held this section before hub-mode expanded it, closed as obsolete. |
+| 1.3 | `#24269` | hub-mode 1.3 (Python node-command client and machine eligibility; closed) | The seam awaits `node_command_client().send` and maps `NodeCommandError`. |
+| 1.3 | `#24272` | hub-mode 2.2 (Hook ingress binds the envelope machine to the caller's key; closed at `78c2abc80d`) | Node origin reads `input_data["machine_id"]`, which is trustworthy only once 2.2 binds it (Decision 2). 2.1 also refines 2.2.7 and follows it through 1.3. |
+| 3.1 | `#24604` | hub-mode 5.1 (Live hub-to-node proof with isolated daemons and fake providers) | 3.1 runs on the live pair that 5.1 proves, with its node checkout registration and hook delivery. #24604 is the 5.1 leaf; #24283 is the deferral task that held the section before hub-mode expanded it. |
+
+Two relations are not heading refs:
+- **2.1 and hub-mode 1.4 (#24270 Node routes: checkout registration and run
+  reports).** 2.1 reads a node's `project_checkouts` rows, and only 1.4's
+  `POST /api/nodes/checkouts` writes them. 1.4 landed at `39d322e26f`, so
+  2.1 needs no edge. #24270 stays open until its close, and a ref would hold
+  2.1 on that close alone.
+- **#24151 (S2.11 hub half: hook ingress and rule engine in Rust).** Every
+  leaf from 1.1 to 1.4 and 2.1 to 2.8 blocks #24151, which ports the seam's
+  node reads and each site's disposition (Decision 12). The edge runs from
+  #24151 to this plan's leaves, and a heading cannot express it, so the
+  Orchestrator sets it on #24151 at expansion.
 
 Relations that set no edge:
 - **node-halves 2.1 (Durable node agent state) and node-halves 2.7 (Command
@@ -414,8 +424,8 @@ Relations that set no edge:
   (node-halves 1.5). This plan changes no envelope, so the arm needs no
   change.
 - **hub-mode and node-halves own tables.** They list their own edges with
-  this plan only once the Orchestrator adds them. The rows above are the full
-  set.
+  this plan only once the Orchestrator adds them. The heading refs and the
+  #24151 edge above are the full set.
 
 ## Site Disposition
 `kind: framing`
@@ -456,7 +466,7 @@ other hook.
 | 15 | `src/gobby/workflows/task_claim_state.py::resolve_edit_pair` (`_tool` before- and after-tool, `commit_guard`) | edit attribution and edit-path selection | `node-read` | `degrade-existing`: the lexical path under the node's checkout row | 2.6 |
 | 16 | `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._notify_code_index` | after-tool edits | `skip`: node-halves 2.11 runs gcode on the node | — | 2.6 |
 | 17 | `src/gobby/workflows/commit_guard.py::_live_path_owners` | commit and edit ownership gates | owners on the event's machine only | — | 2.6 |
-| 18 | `src/gobby/hooks/shell_execution.py::path_execution`, `read_script_body`; `src/gobby/hooks/_normalization_operands.py::_file_transfer_paths` | shell classification | `node-read` | `fail-closed` by propagation | 2.7 |
+| 18 | `src/gobby/hooks/shell_execution.py::_bounded_read` (reached from `path_execution` and `read_script_body`); `src/gobby/hooks/_normalization_operands.py::_file_transfer_paths` | shell classification | `node-read` | `fail-closed` by propagation | 2.7 |
 | 19 | `src/gobby/hooks/event_handlers/_misc.py::MiscEventHandlerMixin.handle_worktree_create`, `handle_worktree_remove` | `WorktreeCreate`, `WorktreeRemove` | `skip`: answer allow before any hub effect | — | 2.8 |
 | 20 | `src/gobby/adapters/claude_code.py::_saved_mcp_result`, `src/gobby/adapters/grok.py::_spilled_mcp_output`, `src/gobby/adapters/codex_impl/hooks_adapter.py::_command_execution_result` | provider spill and transcript files | `skip`: no read, take the unreadable-file branch | — | 2.8 |
 | 21 | `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy` | `rtk-command-rewrite` | `skip`: the command runs as written | — | 2.8 |
@@ -465,11 +475,7 @@ other hook.
 | 24 | `src/gobby/config/validation_detection.py::load_project_validation_detection` | found-work validation config | `no-change`: its only hook-path caller is row 23, which discards the result for a node session | — | 2.8 |
 | 25 | `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session` | AGY startup claim | `no-change`: `require_local_machine_id` refuses a node envelope before any disk walk | — | — |
 | 26 | `src/gobby/workflows/observer_plan_mode.py` Codex transcript read | plan-mode observer | `no-change`: a transcript is not the working tree | — | — |
-
-A finding outside this plan was escalated to gobby#15977.
-`src/gobby/hooks/terminal_context.py::_is_fresh_seat_tui` inspects the
-hub's processes with psutil for a node event. That is session identity, in
-hub-mode 2.2's area, and not a checkout read.
+| 27 | `src/gobby/hooks/terminal_context.py::_is_fresh_seat_tui`, reached only through `enrich_terminal_context_with_cwd` | Codex seat adoption at session start and lookup | `no-change`: for an event whose `machine_id` is not the hub's, `enrich_terminal_context_with_cwd` returns before any process inspection (hub-mode 2.2, #24272, `05e9922f6d`). #24491 closed as already implemented; `tests/hooks/test_hooks_terminal_context.py::test_node_origin_fresh_seat_check_skips_hub_processes` and `::test_local_fresh_seat_check_unchanged` pin it | — | — |
 
 ## P1: Node checkout reads
 `kind: framing`
@@ -478,7 +484,7 @@ hub-mode 2.2's area, and not a checkout read.
 answers. It knows which deliveries need that, and every hook-path git call
 from a node delivery runs on the node.
 
-### 1.1 Node-commands contract version 4: `checkout.read` [category: code]
+### 1.1 Node-commands contract version 4: `checkout.read` [category: code] (depends: #24596)
 `kind: deliverable`
 
 Targets:
@@ -562,7 +568,7 @@ Consumers unchanged:
   (Constraints).
 
 Verification planned:
-- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity)'`.
+- `CARGO_BUILD_JOBS=<jobs per the RM packet> cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity)'`.
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_node_command_corpus.py tests/hub/test_node_command_parity.py -v`.
 
 **Acceptance:**
@@ -573,7 +579,7 @@ Verification planned:
 - 1.1.4 - The Python models refuse every new `invalid` entry. test: `tests/hub/test_node_command_parity.py::test_invalid_messages_fail`.
 - 1.1.5 - The contract specifies `checkout.read` with its payload, reply, limits, node rules, error codes and stage rule. file: `docs/contracts/node-commands.md`, section "v4 commands", subsection `checkout.read`, and "Node duties".
 
-### 1.2 Node `checkout.read` handler [category: code] (depends: 1.1)
+### 1.2 Node `checkout.read` handler [category: code] (depends: 1.1, #24601)
 `kind: deliverable`
 
 Targets:
@@ -679,7 +685,7 @@ fixture tree.
   cutover-class (Constraints).
 
 Verification planned:
-- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_checkout_read)'`.
+- `CARGO_BUILD_JOBS=<jobs per the RM packet> cargo nextest run -p gobby-daemon -E 'binary(node_checkout_read)'`.
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_checkout_read_facts_golden.py -v`.
 
 **Acceptance:**
@@ -691,7 +697,7 @@ Verification planned:
 - 1.2.5 - git does not see an inherited `GIT_DIR` or `GIT_INDEX_FILE`, and runs with `GIT_OPTIONAL_LOCKS=0`, leaving no `index.lock` behind. stdout over 8 MiB is cut with `truncated: true`. git past `timeout_ms` is killed and answers `timed_out: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::git_runs_scrubbed_and_bounded`.
 - 1.2.6 - `read_limit` caps each file's data, and a reply whose files exceed 8 MiB cuts later entries with `truncated: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::reads_respect_limits`.
 
-### 1.3 Hub checkout-read seam and delivery origin [category: code] (depends: 1.1)
+### 1.3 Hub checkout-read seam and delivery origin [category: code] (depends: 1.1, #24594, #24269, #24272)
 `kind: deliverable`
 
 Targets:
@@ -706,6 +712,8 @@ Consumers unchanged:
 - `tests/servers/test_mcp_routes.py` — no-edit-reason: It patches or awaits `run_adapter_hook` with an unchanged signature, and its deliveries are local.
 - `tests/workflows/test_hook_evaluation_timeout.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and its timeout behavior is unchanged for a local delivery.
 - `tests/workflows/test_hook_saturation.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and the scope runs inside the same executor slot it measures.
+- `tests/hooks/test_adapter_admission_script_read_regression.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature, and its payloads carry no `machine_id`, so the delivery is local and keeps the bounded local script read.
+- `tests/hooks/test_adapter_admission_watchdog.py` — no-edit-reason: It awaits `run_adapter_hook` with an unchanged signature for local deliveries. The scope opens inside the worker, so the watchdog's admission slot and abandonment are unchanged.
 
 **Research context:**
 - `run_adapter_hook` captures the daemon loop with
@@ -814,6 +822,7 @@ Consumers unchanged:
 - `tests/clones/test_git.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/dispatch/test_daemon_resume.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/e2e/daemon_git_deadline_bootstrap.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
+- `tests/hooks/test_opaque_program_attribution.py` — no-edit-reason: It replaces `status` with an `AsyncMock` of unchanged signature and asserts that an opaque program run never awaits it. Its runs are local, outside any node delivery.
 - `tests/mcp_proxy/tools/close_review_test_support.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
@@ -837,6 +846,11 @@ Consumers unchanged:
 - `tests/worktrees/merge/test_resolver_implementation.py` — no-edit-reason: It patches or awaits `status` with an unchanged signature, and its runs are local, outside any node delivery.
 
 **Research context:**
+- #24318 (Remove gobby build) deletes three consumers listed above:
+  `src/gobby/build/claim_recovery.py`, `src/gobby/build/workspace_git.py`
+  and `tests/build/test_claim_recovery.py`. Whichever of #24318 and this
+  leaf lands second refreshes this consumer list against the tree it lands
+  on.
 - Every asynchronous hook-path git call goes through
   `DaemonGitService._execute(argv, *, cwd, timeout, env, input_text)`:
   - `run` and `status` both call it;
@@ -962,9 +976,11 @@ Consumers unchanged:
   the node for a node delivery (1.4).
 - `src/gobby/storage/project_checkouts.py::LocalProjectCheckoutManager` has
   `get(machine_id, project_id)` and `list_for_machine(machine_id)`. Neither
-  has a machine guard or touches the filesystem. hub-mode 1.4 writes a node's
-  rows.
-- `src/gobby/workflows/hooks.py` is 923 lines. The node branch would grow
+  has a machine guard or touches the filesystem. hub-mode 1.4 (#24270)
+  writes a node's rows through `POST /api/nodes/checkouts`
+  (`src/gobby/servers/routes/nodes.py`). It landed at `39d322e26f`, so 2.1
+  carries no edge on it (Cross-plan edges).
+- `src/gobby/workflows/hooks.py` is 925 lines. The node branch would grow
   it, so 2.1 splits it.
 - hub-mode 2.2.7 pins a remote event taking its project from its cwd, in
   `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`,
@@ -1288,37 +1304,50 @@ Verification planned:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/shell_execution.py::path_execution`
-- `src/gobby/hooks/shell_execution.py::read_script_body`
+- `src/gobby/hooks/shell_execution.py::_bounded_read`
 - `src/gobby/hooks/_normalization_operands.py::_file_transfer_paths`
 - `tests/hooks/test_node_origin_shell.py`
 
 Consumers unchanged:
-- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `path_execution` and `read_script_body` with unchanged signatures, and the node branch lives inside those functions.
-- `src/gobby/hooks/_normalization_sed.py` — no-edit-reason: It calls `read_script_body` with an unchanged signature, and the node branch lives inside that function.
+- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `path_execution` and `read_script_body` with unchanged signatures, and both reach the node branch through `_bounded_read`.
+- `src/gobby/hooks/_normalization_sed.py` — no-edit-reason: It calls `read_script_body` with an unchanged signature, and that function reaches the node branch through `_bounded_read`.
 - `src/gobby/hooks/_normalization_file_commands.py` — no-edit-reason: It calls `_file_transfer_paths` with an unchanged signature, and the node branch lives inside that function.
 - `tests/hooks/test_normalization_canonical_mutation_scope.py` — no-edit-reason: It exercises `read_script_body` with an unchanged signature for local events, whose behavior is unchanged.
+- `tests/hooks/test_shell_execution_bounded_read.py` — no-edit-reason: It replaces `_read_prefix` and the local read pool to pin the 2-second bound for local reads. A local read keeps that path unchanged, and the node branch runs before it.
 
 **Research context:**
-- `path_execution(words, base)` resolves the first word with
-  `resolve_tool_path` (2.2). It requires `is_file()`, then reads up to
-  `_HEADER_LIMIT` (512) bytes to recognize a native binary or a shebang.
-- `read_script_body(word, base)` reads up to `SCRIPT_BODY_LIMIT` (64 KiB).
+- #24505 (`a0741bece0`) routed both script reads through
+  `_bounded_read(word, base, limit)`. The function submits `_read_prefix` to
+  `_SCRIPT_READ_EXECUTOR`, a 2-thread pool, and waits
+  `SCRIPT_READ_TIMEOUT_SECONDS` (2 s). It answers `None` on a timeout, an
+  `OSError` or a `RuntimeError`, and at once while both threads are parked
+  on reads that timed out. The bound exists because a local `open()` can
+  block on a macOS privacy prompt.
+- `_read_prefix` resolves the word with `resolve_tool_path` (2.2), requires
+  `is_file()`, and reads up to `limit` bytes.
+- `path_execution(words, base)` calls `_bounded_read` with `_HEADER_LIMIT`
+  (512) to recognize a native binary or a shebang. A `None` read answers
+  `ShellExecution(script_file=True)`.
+- `read_script_body(word, base)` calls `_bounded_read` with
+  `SCRIPT_BODY_LIMIT + 1` (64 KiB + 1) and answers `None` over the limit.
 - `_file_transfer_paths` probes `is_dir()` on an absolute destination.
 
 **Implementation:** each branch below applies to a node delivery only.
-- `path_execution` reads
-  `path_facts([path], read_limit=_HEADER_LIMIT)`. A non-`file` entry
-  answers `None`, as a local non-file does. A `file` uses `data` as the
-  header.
-- `read_script_body` reads with `read_limit=SCRIPT_BODY_LIMIT + 1` and keeps
-  the existing over-limit handling.
+- The node branch is the first step of `_bounded_read`, before the
+  parked-read check and the pool submit. It resolves the word with
+  `resolve_tool_path` (2.2) and reads
+  `path_facts([path], read_limit=limit)`. A `file` entry answers
+  `(path, data)`. Any other kind answers `None`, as a local non-file does.
+  The node read never enters the local pool, so parked local reads cannot
+  fail it, and the files-query timeout bounds it.
+- `path_execution` and `read_script_body` keep their limits and their
+  handling of the read.
 - `_file_transfer_paths` treats the destination as a directory when its
   entry's `kind` is `dir`.
 - `CheckoutReadUnavailable` propagates, so classification fails closed.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_shell.py tests/hooks/test_normalization_canonical_mutation_scope.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_node_origin_shell.py tests/hooks/test_normalization_canonical_mutation_scope.py tests/hooks/test_shell_execution_bounded_read.py -v`.
 
 **Acceptance:**
 
@@ -1391,7 +1420,7 @@ Verification planned:
 **Goal**: a live hub and node pair proves that a node-origin rule reads the
 node's answer, and that the hub never falls back to its own disk.
 
-### 3.1 Live node-origin checkout reads [category: code] (depends: 1.2, 2.1, 2.2, 2.3)
+### 3.1 Live node-origin checkout reads [category: code] (depends: 1.2, 2.1, 2.2, 2.3, #24604)
 `kind: deliverable`
 
 Targets:
@@ -1524,6 +1553,33 @@ Verification planned:
   no warnings.
 - 2026-10-16: Plan Writer gobby#16764 withdraws the M1 stamped at
   `ca3d7ebf8d` before the repairs from Orchestrator gobby#15977's review.
+- 2026-10-16: Plan Writer gobby#16764 repairs the plan for Orchestrator
+  gobby#15977's review of `ca3d7ebf8d`.
+  - B1: under the plan-coverage contract as amended by #24404, each external
+    prerequisite is a heading ref. 1.1 depends on #24596 (hub-mode 4.1),
+    1.2 on #24601 (hub-mode 4.6), 1.3 on #24594 (hub-mode 1.2), #24269 and
+    #24272, and 3.1 on #24604 (hub-mode 5.1). The review named #24281 and
+    #24283. hub-mode has since expanded those sections into #24594 and
+    #24604, and #24281 closed as obsolete. 2.1 notes that #24270 landed at
+    `39d322e26f` and carries no edge. The #24151 edge stays with the
+    Orchestrator. The section is renamed "Cross-plan edges".
+  - N1: #24505 routed both script reads through `_bounded_read`. 2.7 targets
+    it in place of `path_execution` and `read_script_body`, and the node
+    branch runs before the local read pool.
+  - N2: 1.4 notes that #24318 deletes three of its consumers.
+  - N3: `src/gobby/workflows/hooks.py` is 925 lines.
+  - N4: Cargo commands take their jobs from the RM packet.
+  - N5: `terminal_context._is_fresh_seat_tui` is Site Disposition row 27,
+    `no-change`. #24272 (`05e9922f6d`) already skips process inspection for
+    a node event, and #24491 closed as already implemented with both tests
+    in place. 2.8 gains no item, because a test that already passes cannot
+    give red evidence. The escalation paragraph is removed.
+  - Consumer coverage: 1.3, 1.4 and 2.7 list the tests that #24505 added.
+- 2026-10-16: V1 consensus. Plan Writer gobby#16764 and Plan Adversary
+  gobby#16993 agree on this plan at `68ffc93ed0`, with no open findings.
+  Orchestrator gobby#15977 accepted the B1 refs, the N1 Target change, the
+  N2 note and the N5 no-change disposition. Bare validation exits 0 with no
+  warnings against a fresh code index.
 
 ## V2: Verification
 `kind: verification`
@@ -1536,7 +1592,7 @@ each must hold before #23277 closes.
   This is the only planning-time check.
 - After 1.1 and 1.2 land, both contract suites and the handler suite must
   pass:
-  - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity) + binary(node_checkout_read)'`;
+  - `CARGO_BUILD_JOBS=<jobs per the RM packet> cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity) + binary(node_checkout_read)'`;
   - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/ -v`.
 - 1.2 must carry a Security Reviewer LAND verdict before it lands.
 - After P2 lands, the focused suites of 1.3, 1.4 and 2.1 to 2.8 must pass
@@ -1549,3 +1605,371 @@ each must hold before #23277 closes.
   session's hook-path behavior must be unchanged. The local suites
   named in each leaf's verification must pass unchanged, except for the
   1.4.5 fix.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: 'Node-commands contract version 4: `checkout.read`'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `CONTRACT_VERSION` is 4 in the Rust models. Each corpus
+    `checkout.read` command and reply parses into its v4 Rust type, with `v` equal
+    to `CONTRACT_VERSION`, and re-encodes to the same bytes. test: `crates/gdaemon/tests/node_command_parity.rs::v4_checkout_read_round_trips`.
+
+    1.1.2: `CONTRACT_VERSION` is 4 in the Python models, and the same messages parse
+    into their v4 Python models and re-encode to the same bytes. test: `tests/hub/test_node_command_parity.py::test_v4_checkout_read_round_trips`.
+
+    1.1.3: Both sides refuse every new `invalid` entry. test: `crates/gdaemon/tests/node_command_parity.rs::invalid_messages_fail`.
+
+    1.1.4: The Python models refuse every new `invalid` entry. test: `tests/hub/test_node_command_parity.py::test_invalid_messages_fail`.
+
+    1.1.5: The contract specifies `checkout.read` with its payload, reply, limits,
+    node rules, error codes and stage rule. file: `docs/contracts/node-commands.md`,
+    section "v4 commands", subsection `checkout.read`, and "Node duties".'
+  labels:
+  - covers:hook-envelope-file-facts:1.1:1.1.1
+  - covers:hook-envelope-file-facts:1.1:1.1.2
+  - covers:hook-envelope-file-facts:1.1:1.1.3
+  - covers:hook-envelope-file-facts:1.1:1.1.4
+  - covers:hook-envelope-file-facts:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Node `checkout.read` handler
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: For every golden case, `checkout.read` answers the
+    expected `root`, `project_id`, `home`, `temp_dir` and entries (`resolved`, `kind`,
+    `checkout_root`, `git_common_dir`, `project_root`, `project_id`, `data`, `truncated`).
+    Every successful reply carries the node''s canonical `home` and `temp_dir`, and
+    every `outside` entry carries its non-null `resolved`. test: `crates/gdaemon/tests/node_checkout_read.rs::facts_match_golden`.
+
+    1.2.2: The Python oracle produces every golden entry outside the node home, so
+    the hub''s local helpers and the node agree. test: `tests/hub/test_checkout_read_facts_golden.py::test_golden_matches_local_helpers`.
+
+    1.2.3: Admission follows Decision 4''s predicate and home exclusion. These answer
+    `kind: "outside"` with null data: a path in an unrelated repository, a symlink
+    inside R0 that points into that repository, a `..` path that resolves outside
+    every repository, a linked worktree of R0''s repository under the temp scratchpad
+    `<fixture>/tmp/agent-scratchpad-1/`, and the isolated node home''s `bootstrap.yaml`.
+    These are admitted: a linked worktree of R0''s repository under `<home>/worktrees/`,
+    a symlink inside R0 that points into the linked worktree, and a `..` path that
+    resolves there. test: `crates/gdaemon/tests/node_checkout_read.rs::confinement_withholds_outside_paths`.
+
+    1.2.4: These answer `invalid_payload`, `stage: "none"`, and start no process:
+    a refused subcommand (`commit`, `checkout`, `config`), a `-c` other than `core.fsmonitor=false`,
+    and each refused option. A `-C`, `--git-dir` or `--work-tree` naming an outside
+    path answers `outside`. A cwd with no marker above it answers `no_project_root`.
+    test: `crates/gdaemon/tests/node_checkout_read.rs::refusals_run_nothing`.
+
+    1.2.5: git does not see an inherited `GIT_DIR` or `GIT_INDEX_FILE`, and runs with
+    `GIT_OPTIONAL_LOCKS=0`, leaving no `index.lock` behind. stdout over 8 MiB is cut
+    with `truncated: true`. git past `timeout_ms` is killed and answers `timed_out:
+    true`. test: `crates/gdaemon/tests/node_checkout_read.rs::git_runs_scrubbed_and_bounded`.
+
+    1.2.6: `read_limit` caps each file''s data, and a reply whose files exceed 8 MiB
+    cuts later entries with `truncated: true`. test: `crates/gdaemon/tests/node_checkout_read.rs::reads_respect_limits`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.2:1.2.1
+  - covers:hook-envelope-file-facts:1.2:1.2.2
+  - covers:hook-envelope-file-facts:1.2:1.2.3
+  - covers:hook-envelope-file-facts:1.2:1.2.4
+  - covers:hook-envelope-file-facts:1.2:1.2.5
+  - covers:hook-envelope-file-facts:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Hub checkout-read seam and delivery origin
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.3.1: A delivery whose `input_data.machine_id` names another
+    machine reports `node_origin()` true and that machine from `event_machine_id()`.
+    This holds in the adapter call, in a coroutine run on another loop, and in an
+    offloaded thread. A hub-machine or missing machine id reports false and the hub''s
+    machine. The scope resets after the delivery. test: `tests/hooks/test_checkout_reads.py::test_delivery_scope_marks_node_origin`.
+
+    1.3.2: `path_facts` sends one `checkout.read` files query to the event''s machine,
+    with the cwd, paths and read limit, and returns typed entries. A repeat for memoized
+    paths in the same delivery sends nothing. test: `tests/hooks/test_checkout_reads.py::test_path_facts_queries_node_once_per_delivery`.
+
+    1.3.3: Each transport code (`node_routing_unavailable`, `node_reply_lost`, `node_offline`,
+    `node_timeout`, `channel_closed`) and a synchronous call on the daemon loop''s
+    thread raises `CheckoutReadUnavailable` naming the code and machine. Every later
+    node read in that delivery raises at once without sending. `no_project_root` does
+    not latch. test: `tests/hooks/test_checkout_reads.py::test_unavailable_answers_latch_per_delivery`.
+
+    1.3.4: `run_git` spawns local git exactly as before for a local delivery. For
+    a node delivery it sends a git query and maps the exit code, stdout and stderr,
+    a timeout to `subprocess.TimeoutExpired`, and truncation to `CheckoutReadUnavailable`
+    with code `truncated`. test: `tests/hooks/test_checkout_reads.py::test_run_git_routes_by_origin`.
+
+    1.3.5: After a node delivery that read file data and git output, neither appears
+    in `HookEvent.data`, `HookEvent.metadata`, captured log records, session variables
+    or broadcaster payloads. test: `tests/hooks/test_checkout_reads.py::test_node_content_stays_in_delivery_memo`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.3:1.3.1
+  - covers:hook-envelope-file-facts:1.3:1.3.2
+  - covers:hook-envelope-file-facts:1.3:1.3.3
+  - covers:hook-envelope-file-facts:1.3:1.3.4
+  - covers:hook-envelope-file-facts:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Node-origin git runs on the node
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: In a node delivery, `daemon_git.run` and `daemon_git.status`
+    send git queries to the node and return `GitOk`, `GitFailed` or `GitTimeout` from
+    its exit code, output and timeout, and no local git process starts. test: `tests/hooks/test_node_origin_git.py::test_node_origin_git_runs_on_node`.
+
+    1.4.2: Identical `status` calls from deliveries of two machines never share one
+    in-flight result. Identical calls from the same machine still coalesce. test:
+    `tests/hooks/test_node_origin_git.py::test_status_coalescing_is_machine_scoped`.
+
+    1.4.3: An unavailable node, a truncated reply and an `env` override each yield
+    `GitFailed` whose detail carries the diagnostic, and the env case sends nothing.
+    test: `tests/hooks/test_node_origin_git.py::test_unanswered_node_git_fails_with_diagnostic`.
+
+    1.4.4: In a node delivery, `_git_out`, `_git_ignored` and `_positional_checkout_is_path`
+    send their git and existence checks to the node and start no local process. Local
+    deliveries spawn as before. test: `tests/hooks/test_node_origin_git.py::test_sync_git_sites_route_by_origin`.
+
+    1.4.5: For a local `git checkout <file>`, a relative operand that exists under
+    the command''s `cwd` but not under the daemon''s process cwd proves path mode.
+    test: `tests/hooks/test_node_origin_git.py::test_positional_checkout_joins_relative_operand_to_cwd`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.4:1.4.1
+  - covers:hook-envelope-file-facts:1.4:1.4.2
+  - covers:hook-envelope-file-facts:1.4:1.4.3
+  - covers:hook-envelope-file-facts:1.4:1.4.4
+  - covers:hook-envelope-file-facts:1.4:1.4.5
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Node events take their project from the node's checkout rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '2.1.1: A node event with no explicit or session project takes
+    the project of the node''s longest checkout row enclosing its cwd. A hub marker
+    at the same path is never read, and no checkout row is registered. test: `tests/hooks/test_node_origin_project.py::test_node_cwd_resolves_from_node_rows`.
+
+    2.1.2: A node event whose cwd matches no row of its machine raises the no-project
+    `ValueError` naming `checkout_read_unavailable: no_checkout_row` and the machine.
+    A node event with an unusable cwd is skipped without the daemon''s current-context
+    project. test: `tests/hooks/test_node_origin_project.py::test_node_cwd_without_row_fails_closed`.
+
+    2.1.3: For a node event, `_resolve_project_path` returns the node''s checkout
+    row root when the worktree root is absent or equals it, and the worktree root
+    otherwise. It never calls `require_local_machine_id` or resolves a path on the
+    hub. test: `tests/hooks/test_node_origin_project.py::test_node_project_path_uses_node_row`.
+
+    2.1.4: After the move, the no-repo project set and predicate are unchanged. test:
+    `tests/workflows/test_workflow_hooks.py::TestProjectPathResolution.test_no_repo_project_ids_include_constants_and_legacy_literals`.
+
+    2.1.5: A remote event whose session ids name another machine''s rows takes its
+    project from its own machine''s checkout row for its cwd, never from those rows.
+    test: `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.1:2.1.1
+  - covers:hook-envelope-file-facts:2.1:2.1.2
+  - covers:hook-envelope-file-facts:2.1:2.1.3
+  - covers:hook-envelope-file-facts:2.1:2.1.4
+  - covers:hook-envelope-file-facts:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Path primitives and write scope use node facts
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '2.2.1: For a node event, tool paths, the project root, checkout
+    roots, git common dirs and the managed-path verdict come from the node''s facts.
+    A hub file, symlink or `.git` at the same paths changes none of them. test: `tests/hooks/test_node_origin_path_scope.py::test_node_path_primitives_use_node_facts`.
+
+    2.2.2: `classify_git_mutation` for a node `git` command takes its checkout root
+    from the node, and a local command still resolves on the hub. test: `tests/hooks/test_node_origin_path_scope.py::test_git_mutation_checkout_root_by_origin`.
+
+    2.2.3: `write_paths_within` admits a node write under an allowed project directory
+    by the node''s resolved path, refuses one whose node path escapes through a symlink,
+    and answers `False` when the node is unavailable. test: `tests/hooks/test_node_origin_path_scope.py::test_node_write_scope`.
+
+    2.2.4: In plan mode, a node write to the project''s `.gobby/plans/x.md` and to
+    the provider scratch directory under the node''s home is allowed. A node source
+    file is refused, and an unavailable node refuses every write. test: `tests/hooks/test_node_origin_path_scope.py::test_node_plan_mode_writes`.
+
+    2.2.5: An unavailable node during normalization of a node `Write` blocks the critical
+    hook with the diagnostic in its reason. test: `tests/hooks/test_node_origin_path_scope.py::test_unavailable_normalization_fails_closed`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.2:2.2.1
+  - covers:hook-envelope-file-facts:2.2:2.2.2
+  - covers:hook-envelope-file-facts:2.2:2.2.3
+  - covers:hook-envelope-file-facts:2.2:2.2.4
+  - covers:hook-envelope-file-facts:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Monolith guard reads node files
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.3.1: A node `Write` that takes a node file from 990 to 1,000
+    lines is listed, and one that keeps it at 995 lines is not. A different file at
+    the same path on the hub does not change either answer. test: `tests/workflows/test_node_origin_monolith.py::test_node_projection_reads_node_file`.
+
+    2.3.2: The ledger recount for a node session counts the node''s files in one batched
+    read per 1,000 paths. test: `tests/workflows/test_node_origin_monolith.py::test_node_ledger_recount_batches`.
+
+    2.3.3: An unavailable node, or a truncated read under the limit, lists the guard
+    path with the diagnostic, so the rule blocks. test: `tests/workflows/test_node_origin_monolith.py::test_unanswered_node_lists_diagnostic`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.3:2.3.1
+  - covers:hook-envelope-file-facts:2.3:2.3.2
+  - covers:hook-envelope-file-facts:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Rust TDD evidence reads node files
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.4.1: A node edit that adds only a `#[test]` function inside
+    the node file''s `cfg(test)` module is test-only, judged from the node''s text
+    while the hub has no file at that path. test: `tests/workflows/test_node_origin_rust_tdd.py::test_node_rust_test_edit_reads_node_text`.
+
+    2.4.2: An unavailable node, or a truncated prior text, makes the edit not test-only,
+    including a full-content `Write`. test: `tests/workflows/test_node_origin_rust_tdd.py::test_unanswered_node_is_not_test_only`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.4:2.4.1
+  - covers:hook-envelope-file-facts:2.4:2.4.2
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Code navigation reads node files
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '2.5.1: A whole-file read of a 40-line node file counts as
+    narrow, and of a node file over the scan limit as broad, from the node''s bytes
+    while the hub has no file at that path. test: `tests/hooks/test_node_origin_code_navigation.py::test_node_line_count_reads_node_bytes`.
+
+    2.5.2: The ignore decision for a node path uses the node''s checkout root and
+    the node''s `.gobby/gcode.json` allowlist. test: `tests/hooks/test_node_origin_code_navigation.py::test_node_ignore_decision_uses_node_config`.
+
+    2.5.3: An unavailable node makes the read unverified (broad) and the allowlist
+    empty. test: `tests/hooks/test_node_origin_code_navigation.py::test_unanswered_node_keeps_enforcement`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.5:2.5.1
+  - covers:hook-envelope-file-facts:2.5:2.5.2
+  - covers:hook-envelope-file-facts:2.5:2.5.3
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Node edits record the node's checkout, and ledger owners are machine-scoped
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.6.1: A node edit attributes `(project_root, relative path)`
+    from the node''s facts, and a hub marker at the same path is never read. A node
+    path outside the project, or in another project, is not attributed. test: `tests/hooks/test_node_origin_edits.py::test_node_edit_pair_uses_node_facts`.
+
+    2.6.2: With the node unavailable, a node edit under the node''s checkout row is
+    attributed by its lexical path, and one outside the row is not. test: `tests/hooks/test_node_origin_edits.py::test_unavailable_node_edit_pair_is_lexical`.
+
+    2.6.3: A node edit triggers no hub code-index update. test: `tests/hooks/test_node_origin_edits.py::test_node_edit_skips_hub_code_index`.
+
+    2.6.4: A hub session and a node session hold the same path in checkouts with the
+    same absolute root. Each machine''s ownership check counts only its own sessions.
+    test: `tests/hooks/test_node_origin_edits.py::test_live_path_owners_are_machine_scoped`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.6:2.6.1
+  - covers:hook-envelope-file-facts:2.6:2.6.2
+  - covers:hook-envelope-file-facts:2.6:2.6.3
+  - covers:hook-envelope-file-facts:2.6:2.6.4
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Shell classification reads node executables
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.7.1: A node `./run.sh` is classified from the node''s shebang
+    and script body, and a node Mach-O header is classified as native, while the hub
+    has no file at either path. test: `tests/hooks/test_node_origin_shell.py::test_node_executable_classified_from_node_bytes`.
+
+    2.7.2: A node `cp a.txt dest` treats `dest` as a directory only when the node
+    reports `dir`. test: `tests/hooks/test_node_origin_shell.py::test_node_transfer_destination_kind`.
+
+    2.7.3: An unavailable node while classifying a node shell command blocks the critical
+    hook with the diagnostic. test: `tests/hooks/test_node_origin_shell.py::test_unanswered_node_shell_fails_closed`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.7:2.7.1
+  - covers:hook-envelope-file-facts:2.7:2.7.2
+  - covers:hook-envelope-file-facts:2.7:2.7.3
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: backend
+- title: Node events skip hub-only effects
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.8.1: A node `WorktreeCreate` or `WorktreeRemove` answers
+    allow, and creates or removes no hub worktree or directory. test: `tests/hooks/test_node_origin_dispositions.py::test_node_worktree_hooks_touch_nothing_on_hub`.
+
+    2.8.2: Node Claude and Grok spill notices keep their text, and a node Codex payload
+    recovers no transcript result, even with matching files on the hub. test: `tests/hooks/test_node_origin_dispositions.py::test_node_provider_files_are_not_read`.
+
+    2.8.3: A node shell command gets no rtk rewrite, and runs as written. test: `tests/hooks/test_node_origin_dispositions.py::test_node_shell_skips_rtk_rewrite`.
+
+    2.8.4: A node event matching `impeccable/design-detector` spawns no process. test:
+    `tests/hooks/test_node_origin_dispositions.py::test_node_run_command_spawns_nothing`.
+
+    2.8.5: A node-owned session''s turn end with no task disposition gets `()` from
+    `_terminal_failures`, and no node read is sent. test: `tests/hooks/test_node_origin_dispositions.py::test_node_found_work_terminal_evidence_is_empty`.'
+  labels:
+  - covers:hook-envelope-file-facts:2.8:2.8.1
+  - covers:hook-envelope-file-facts:2.8:2.8.2
+  - covers:hook-envelope-file-facts:2.8:2.8.3
+  - covers:hook-envelope-file-facts:2.8:2.8.4
+  - covers:hook-envelope-file-facts:2.8:2.8.5
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: backend
+- title: Live node-origin checkout reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  validation_criteria: '3.1.1: With the node connected, a node-origin `Write` that
+    takes `src/app.py` to 1,000 lines is blocked by `require-decompose-monolith-before-threshold-write`,
+    and one that keeps it at 995 lines is allowed. test: `tests/e2e/test_hub_node_checkout_read.py::test_node_file_drives_monolith_gate`.
+
+    3.1.2: After the node daemon stops, the 995-line `Write` is blocked with `checkout_read_unavailable`
+    and the node''s machine, although `src/app.py` is readable at that path on the
+    hub''s disk. test: `tests/e2e/test_hub_node_checkout_read.py::test_offline_node_fails_closed`.'
+  labels:
+  - covers:hook-envelope-file-facts:3.1:3.1.1
+  - covers:hook-envelope-file-facts:3.1:3.1.2
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+```

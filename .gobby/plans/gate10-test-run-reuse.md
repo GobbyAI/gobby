@@ -596,10 +596,20 @@ result, and reassemble the original launcher prefix with the rewritten inner com
 so rtk runs inside the launcher (`gdaemon run --bound 300 -- rtk pytest x`). A
 command already containing `rtk` after `--` is left unchanged.
 
+A launcher whose inner command is a pytest collection run is also left unchanged.
+#24625 (`8729b731d7`) added `proxy_hooks.py::_pytest_collection_command` so
+`_run_rtk_proxy` never rewrites collection runs, because RTK 0.51.0 and 1.0.1 erase
+the collection summary as zero tests and Gate 10's collection credit needs the
+`collected` line. That check reads options only before a segment's first `--`, which
+in a launcher command is gdaemon's own, so it misses
+`gdaemon run --bound 300 -- uv run pytest --collect-only x`. Apply
+`_pytest_collection_command` to the words after `--` before the inner rewrite.
+
 **Acceptance:**
 
 - 2.5.1 - `gdaemon run --bound 300 -- pytest x` is rewritten to `gdaemon run --bound 300 -- rtk pytest x` with the prefix preserved byte for byte. test: `tests/workflows/test_proxy_hooks.py::test_rtk_rewrites_inside_gdaemon_run_launcher`.
 - 2.5.2 - A rejected inner rewrite leaves the whole launcher command unchanged, and an inner `rtk` command is not rewritten twice. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_keeps_command_on_rejection`.
+- 2.5.3 - "gdaemon run --bound 300 -- uv run pytest --collect-only tests/x.py" is left unchanged, so the collection summary reaches Gate 10. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_skips_inner_collection`.
 
 ## P3: Gate 10 reuse
 `kind: framing`
@@ -714,8 +724,8 @@ Targets:
 - `src/gobby/tasks/validation_reuse.py`
 - `tests/tasks/test_validation_reuse.py`
 
-Research context. New module, so `close_checklist.py` (838 lines) and
-`close_test_coverage.py` (919 lines) only gain wiring. Inputs: the record rows
+Research context. New module, so `close_checklist.py` (848 lines) and
+`close_test_coverage.py` (946 lines) only gain wiring. Inputs: the record rows
 (loaded in 3.3), the close root, the candidate commit, the module paths to
 evaluate (required modules plus criterion pytest targets, 3.3), and the close's
 transcript evidence. Output: a frozen `ReuseCredit` (new) mapping each reused
@@ -811,6 +821,7 @@ Targets:
 - `src/gobby/tasks/validation_confinement.py::ConfinementContext`
 - `src/gobby/tasks/validation_confinement.py::load_confinement_context`
 - `src/gobby/tasks/close_checklist.py::_evaluate_validation_commands`
+- `src/gobby/tasks/validation_reuse.py`
 - `tests/tasks/test_validation_confinement.py::*` — scope-reason: adds the record projection case
 - `tests/tasks/test_close_checklist.py::*` — scope-reason: adds reuse credit cases to the Gate 10 suite
 
@@ -823,9 +834,11 @@ last 14 days in `load_confinement_context`, so `_lifecycle_close.py` (929 lines)
 stays untouched.
 
 In `_evaluate_validation_commands`, the inner `covers(tests)` already removes
-`confined_paths` from the uncovered set. Compute `ReuseCredit` with 3.2 once, right
-after confinement credit, for the modules still uncovered by fresh passing runs and
-confinement. Those modules come from `pytest_required_paths`,
+`confined_paths` from the uncovered set, and #24625 (`8729b731d7`) then removes the
+paths `collection_credited_pytest_paths` credits from `uncovered_pytest`. Compute
+`ReuseCredit` with 3.2 once, after confinement and collection credit, for the
+modules still uncovered by fresh passing runs, confinement and collection credit,
+so a collection-credited module gets no redundant reuse entry. Those modules come from `pytest_required_paths`,
 `python_source_related_tests`, and the expanded targets of every criterion pytest
 command in reusable form (Decision Record item 13). Pass the close's transcript
 evidence for 3.2's conflict rule. Remove reused modules in `covers` the same way as
@@ -836,16 +849,18 @@ expanded modules uncovered. Leading environment assignments
 (`DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest <file>`, the repository's
 standard form) are stripped before judging that form, unless one sets a 2.2
 denylisted variable. Set its `status` to `"reused"` and add its
-`reused_modules`. Every other criterion command stays fresh-only. The marking
-helper, `apply_criterion_reuse`, lives in `validation_reuse.py`, so
-`close_checklist.py` (838 lines) gains only call sites and the details entries. Fresh transcript
+`reused_modules`. Every other criterion command stays fresh-only. Fresh transcript
 evidence keeps priority: a reused module never hides a fresh failure, and
 `unresolved_failures` still blocks.
 `has_success` for the required `test` category is also true when reuse covered at
-least one required module, no required module is left uncovered, and no fresh
-test-category failure is unresolved. Add `details["reused_test_credit"]`: one entry
-per reused module with `path`, `record_id`, `session_id`, `started_at`,
-`completed_at` and `tree`, plus `details["reuse_refusals"]` (module to reason).
+least one required module, no required module is left uncovered by fresh runs,
+confinement, collection credit or reuse, and no fresh test-category failure is
+unresolved. Add `details["reused_test_credit"]`: one entry per reused module with
+`path`, `record_id`, `session_id`, `started_at`, `completed_at` and `tree`, plus
+`details["reuse_refusals"]` (module to reason). The marking helper,
+`apply_criterion_reuse`, and the builder of those two detail entries live in
+`validation_reuse.py`, so `close_checklist.py` (848 lines) gains only call sites and
+ends below 870 lines.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` — no-edit-reason: calls `load_confinement_context` with unchanged arguments and passes the result through unchanged.
@@ -859,7 +874,7 @@ tests/tasks/test_validation_reuse_classifier.py -q`.
 - 3.3.1 - `load_confinement_context` returns the project's records from the last 14 days in `ConfinementContext.run_records`. symbol: `ConfinementContext`. test: `tests/tasks/test_validation_confinement.py::test_load_confinement_context_projects_run_records`.
 - 3.3.2 - After a one-line edit, Gate 10 passes with fresh runs for affected modules and reuse for the rest, with no fresh run of the reused modules. test: `tests/tasks/test_close_checklist.py::test_gate10_reuses_unaffected_module_records`.
 - 3.3.3 - A fresh unresolved test failure still fails the gate even when every required module has reuse credit. test: `tests/tasks/test_close_checklist.py::test_gate10_reuse_never_hides_fresh_failure`.
-- 3.3.4 - Gate details list every reused pass with record id, session, original start and end time and tree, and every refusal with its reason. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
+- 3.3.4 - Gate details list every reused pass with record id, session, original start and end time and tree, and every refusal with its reason; a module with collection credit gets no reused pass entry. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
 - 3.3.5 - A criterion "uv run pytest <file>" command, also behind leading `DATABASE_URL=... GOBBY_TEST_PROTECT=1` assignments, is satisfied with `status: "reused"` when its module has reuse credit; a leading `PYTHONPATH=` assignment keeps it fresh-only. A criterion with a node id, `-k` or an unlisted option stays unsatisfied without a fresh run, as does a criterion one of whose modules lacks credit. test: `tests/tasks/test_close_checklist.py::test_gate10_criterion_pytest_command_accepts_reuse`.
 
 ## P4: Documentation
@@ -991,6 +1006,20 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   context. The monolith figures now read 893 and 957 lines (Constraints and 2.4)
   and 838 lines for `close_checklist.py` (3.2 and 3.3), and 3.2 reads 919 lines for
   `close_test_coverage.py`.
+- 2026-10-16: After the 20:37 cutover, the adversary's drift check found that #24625
+  (`8729b731d7`) changed two surfaces this plan builds on. With the Orchestrator's
+  20:58 CDT GO:
+  - 2.5 leaves a launcher command unchanged when its inner command is a pytest
+    collection run, because `_pytest_collection_command` reads options only before
+    gdaemon's own `--`. 2.5.3 covers the case.
+  - 3.3 computes reuse after collection credit, so a collection-credited module
+    gets no reused pass entry (3.3.4), and `has_success` counts collection credit as
+    covered.
+  - 3.3 moves the reuse detail builder into `validation_reuse.py`, which joins its
+    Targets beside `apply_criterion_reuse`, so `close_checklist.py` ends below 870
+    lines.
+  - The 3.2 and 3.3 figures now read 848 lines for `close_checklist.py` and 946
+    for `close_test_coverage.py`.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1160,10 +1189,14 @@ that rewritten launcher must exit non-zero and write a `failed` record.
     byte. test: `tests/workflows/test_proxy_hooks.py::test_rtk_rewrites_inside_gdaemon_run_launcher`.
 
     2.5.2: A rejected inner rewrite leaves the whole launcher command unchanged, and
-    an inner `rtk` command is not rewritten twice. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_keeps_command_on_rejection`.'
+    an inner `rtk` command is not rewritten twice. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_keeps_command_on_rejection`.
+
+    2.5.3: "gdaemon run --bound 300 -- uv run pytest --collect-only tests/x.py" is
+    left unchanged, so the collection summary reaches Gate 10. test: `tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_skips_inner_collection`.'
   labels:
   - covers:gate10-test-run-reuse:2.5:2.5.1
   - covers:gate10-test-run-reuse:2.5:2.5.2
+  - covers:gate10-test-run-reuse:2.5:2.5.3
   tdd: true
   source_section: '2.5'
   implementation_domain: backend
@@ -1261,7 +1294,8 @@ that rewritten launcher must exit non-zero and write a `failed` record.
     module has reuse credit. test: `tests/tasks/test_close_checklist.py::test_gate10_reuse_never_hides_fresh_failure`.
 
     3.3.4: Gate details list every reused pass with record id, session, original start
-    and end time and tree, and every refusal with its reason. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
+    and end time and tree, and every refusal with its reason; a module with collection
+    credit gets no reused pass entry. test: `tests/tasks/test_close_checklist.py::test_gate10_details_show_reused_pass_provenance`.
 
     3.3.5: A criterion "uv run pytest <file>" command, also behind leading `DATABASE_URL=...
     GOBBY_TEST_PROTECT=1` assignments, is satisfied with `status: "reused"` when its

@@ -124,7 +124,7 @@ def test_nextest_replay_credits_full_module_path_failures(tmp_path: Path) -> Non
 
 def test_named_red_failure_accepts_full_module_path_thread() -> None:
     test = AcceptanceTest(f"{TEST_FILE}::{TARGET}", TEST_FILE, TARGET, "", rust_module=MODULE)
-    matched, _ = _has_named_red_failure(REPLAY, RED, test)
+    matched, _ = _has_named_red_failure(REPLAY, RED, test, None)
     assert matched
 
 
@@ -240,8 +240,8 @@ def test_monitor_sibling_assertion_never_completes_the_target_header(tmp_path: P
 
 def test_bare_panic_header_names_no_failure() -> None:
     test = AcceptanceTest(f"{TEST_FILE}::{TARGET}", TEST_FILE, TARGET, "", rust_module=MODULE)
-    assert not _has_named_red_failure(REPLAY, THREAD, test)[0]
-    assert _has_named_red_failure(REPLAY, f"{THREAD}\n{ASSERTION}", test)[0]
+    assert not _has_named_red_failure(REPLAY, THREAD, test, None)[0]
+    assert _has_named_red_failure(REPLAY, f"{THREAD}\n{ASSERTION}", test, None)[0]
 
 
 def test_identical_text_deliveries_each_authenticate_on_their_own(
