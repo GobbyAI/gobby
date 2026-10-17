@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from datetime import datetime
@@ -21,7 +22,12 @@ from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
-from gobby.agents.trust import is_stale_generated_path, seed_cli_trust, seed_gobby_home_trust
+from gobby.agents.trust import (
+    ensure_codex_project_trust,
+    is_stale_generated_path,
+    seed_cli_trust,
+    seed_gobby_home_trust,
+)
 from gobby.cli.utils import get_install_dir
 from gobby.paths import get_gobby_home
 
@@ -81,11 +87,43 @@ def _get_hooks_dir() -> Path:
     return Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
 
 
+_CODEX_CONFIG_CACHE_SIZE = 8
+# Parsed configs keyed by the sha256 of their exact text. Stored documents are
+# private snapshots that are never mutated; callers receive deep copies. Hook
+# installs run on worker threads, so every access holds _codex_config_cache_lock.
+_codex_config_cache: dict[str, TOMLDocument] = {}
+_codex_config_cache_lock = threading.Lock()
+
+
+def _codex_config_cache_key(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _remember_codex_config(content: str, parsed: TOMLDocument) -> None:
+    key = _codex_config_cache_key(content)
+    snapshot = deepcopy(parsed)
+    with _codex_config_cache_lock:
+        _codex_config_cache.pop(key, None)
+        _codex_config_cache[key] = snapshot
+        while len(_codex_config_cache) > _CODEX_CONFIG_CACHE_SIZE:
+            _codex_config_cache.pop(next(iter(_codex_config_cache)), None)
+
+
 def _load_toml_config(content: str) -> TOMLDocument:
-    """Parse a TOML config string into a mutable TOML document."""
+    """Parse a TOML config string into a mutable TOML document.
+
+    Unchanged text is served from the parse cache, so a repeat read does not parse
+    again. Changed text is always parsed. Each caller owns the document it gets.
+    """
     if not content.strip():
         return tomlkit.document()
+    key = _codex_config_cache_key(content)
+    with _codex_config_cache_lock:
+        cached = _codex_config_cache.get(key)
+    if cached is not None:
+        return deepcopy(cached)
     parsed = tomlkit.parse(content)
+    _remember_codex_config(content, parsed)
     return parsed
 
 
@@ -163,8 +201,14 @@ def _remove_toml_key(config: TOMLDocument, key: str) -> None:
 
 
 def _dump_toml_config(config_path: Path, config: TOMLDocument) -> None:
-    """Write a parsed TOML config back to disk without stripping comments."""
-    config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
+    """Write a parsed TOML config back to disk without stripping comments.
+
+    The written text is cached with the config, so the next read of this file
+    is served without a parse.
+    """
+    text = tomlkit.dumps(config)
+    config_path.write_text(text, encoding="utf-8")
+    _remember_codex_config(text, config)
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -719,6 +763,9 @@ def install_codex_project_hooks(
             project_hooks_path,
             previous_entries=previous_gobby_trust_entries,
         )
+        # Trust rides in this dump, so seed_cli_trust below finds nothing pending and
+        # writes nothing; the dumped text is then the text the cache serves next time.
+        ensure_codex_project_trust(updated_config, project_path)
 
         if updated_config != parsed_config:
             if codex_config_path.exists():
