@@ -126,6 +126,9 @@ body's `run_id` or the run belongs to another machine.
 | `checkout_root_taken` | 409 |
 | `checkout_rejected` | 422 |
 | `stale_report` | 409 |
+| `report_too_large` | 413 |
+| `checkout_too_large` | 413 |
+| `report_backlog_full` | 429 |
 
 ## Commands
 
@@ -310,6 +313,17 @@ make the hub hold.
 Body: `{code, hub_epoch}` with `code` equal to `"stale_report"` and
 `hub_epoch` the hub's current epoch. The node parses this body, adopts the
 epoch, and sends a fresh report.
+
+### Report budget refusals
+
+`report_too_large` (413) means a `POST /api/nodes/report` body exceeds the hub's
+`node_reports.max_request_bytes`. `checkout_too_large` (413) is the same cap on
+`POST /api/nodes/checkouts`. The hub stops reading at that cap, before any
+parse, and writes nothing. `report_backlog_full` (429) means the report would
+push the machine's pending bytes past `node_reports.max_pending_bytes_per_machine`.
+The hub writes nothing and does not move the revision mark. Every 429 carries
+`Retry-After: 30`, the node's report interval, so the node retries the same
+fresh report after one interval. Nothing accepted is dropped.
 
 ### `POST /api/nodes/runs/prompt-delivery-failure`
 
