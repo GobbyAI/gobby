@@ -18,6 +18,24 @@ _RESUME_CHAIN_LIMIT = 32
 _INPUT_AXES = {"horizontal": "right", "vertical": "down", "balanced": "balanced"}
 
 
+def _paused_seat_has_live_pane_or_run(session: Session, db: Any, run_storage: Any) -> bool:
+    """Whether a paused seat is still live: a live managed pane or an active run.
+
+    A paused seat whose pane is gone and whose run is cancelled, failed or absent
+    is a dead seat, and it must stay resumable.
+    """
+    pane_rows = db.fetchall(
+        "SELECT 1 FROM terminals WHERE session_id = %s AND state IN ('pending', 'live') LIMIT 1",
+        (session.id,),
+    )
+    if pane_rows:
+        return True
+    if session.agent_run_id is None:
+        return False
+    run = run_storage.get(session.agent_run_id)
+    return run is not None and run.status in ACTIVE_AGENT_RUN_STATUSES
+
+
 def resolve_resume_target(
     session_manager: SessionManager | None,
     ref: str,
@@ -38,7 +56,10 @@ def resolve_resume_target(
         raise ValueError(f"Provider {session.source!r} does not support native resume")
     if provider and provider != session.source:
         raise ValueError(f"Resume target uses {session.source}, not requested provider {provider}")
-    if session.status in LIVE_SESSION_STATUSES:
+    if session.status in LIVE_SESSION_STATUSES and (
+        session.status != "paused"
+        or _paused_seat_has_live_pane_or_run(session, session_manager.db, run_storage)
+    ):
         raise ValueError(f"Resume target {ref} is still live ({session.status})")
     if session.agent_run_id:
         run = run_storage.get(session.agent_run_id)

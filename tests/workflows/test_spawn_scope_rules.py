@@ -24,6 +24,7 @@ from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -708,3 +709,94 @@ def test_spawn_any_wildcard_stands_alone() -> None:
                 "spawnable_agents": ["*", "merge-worker"],
             }
         )
+
+
+def _seat_in_lane(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    root: Session,
+    name: str,
+    agent_name: str,
+    lane: str,
+) -> Session:
+    """A running child of ``root`` whose agent run names ``agent_name`` and records ``lane``."""
+    child = _register(session_manager, root.project_id, name, root)
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent_session_id=root.id,
+        provider="claude",
+        prompt="work",
+        agent_name=agent_name,
+        child_session_id=child.id,
+        resume_metadata_json={"lane": lane},
+    )
+    started = runs.start(run.id)
+    assert started is not None and started.status == "running"
+    updated = session_manager.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
+    assert updated is not None and updated.agent_run_id == run.id
+    return updated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat_type", ["developer", "code-reviewer"])
+async def test_lane_manager_resumes_a_seat_in_its_own_lane(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    seat_type: str,
+) -> None:
+    _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
+    _define_agent(temp_db, "lane-manager", None)
+    root = _register(session_manager, str(sample_project["id"]), f"lane-root-{seat_type}")
+    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
+    seat = _seat_in_lane(temp_db, session_manager, root, f"seat-{seat_type}", seat_type, "7")
+    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
+    engine = RuleEngine(temp_db, session_manager=session_manager)
+
+    resumed = await engine.evaluate(
+        _spawn_event(manager.id, "spawn_agent", seat_type, resume_session_id=seat.id),
+        session_id=manager.id,
+        variables={},
+    )
+
+    assert resumed.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seat_type", "seat_lane", "resume"),
+    [
+        ("developer", "3", True),
+        ("orchestrator", "7", True),
+        ("developer", "7", False),
+    ],
+    ids=["other-lane-seat", "orchestrator-seat", "fresh-spawn"],
+)
+async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    seat_type: str,
+    seat_lane: str,
+    resume: bool,
+) -> None:
+    _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
+    _define_agent(temp_db, "lane-manager", None)
+    root = _register(session_manager, str(sample_project["id"]), f"lane-refuse-{seat_type}")
+    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
+    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, seat_lane)
+    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
+    engine = RuleEngine(temp_db, session_manager=session_manager)
+
+    refused = await engine.evaluate(
+        _spawn_event(
+            manager.id,
+            "spawn_agent",
+            seat_type,
+            resume_session_id=seat.id if resume else None,
+        ),
+        session_id=manager.id,
+        variables={},
+    )
+
+    assert refused.decision == "block"
