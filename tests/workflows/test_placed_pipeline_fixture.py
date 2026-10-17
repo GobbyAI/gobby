@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import pytest
 
 import tests.e2e.conftest as e2e_fixtures
 from gobby.agents import srt_runtime
+from gobby.agents.srt_socket_paths import SOCKET_DIRECTORY_ENV
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -236,7 +238,14 @@ def e2e_pre_daemon_setup(
         source="two-seat-placement-fixture",
     )
     try:
-        yield
+        # The shared /tmp socket root is real local state, and tmp_path is too long for
+        # the monitor socket's 104-byte sun_path, so the daemon gets a short private one.
+        sockets = Path(tempfile.mkdtemp(prefix="srt-"))
+        try:
+            monkeypatch.setenv(SOCKET_DIRECTORY_ENV, str(sockets))
+            yield
+        finally:
+            shutil.rmtree(sockets, ignore_errors=True)
     finally:
         _release_install(root)
 

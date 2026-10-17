@@ -667,7 +667,8 @@ def _classify_shell_segment_impl(
             for body in extra.get("canonical_script_bodies", ())
         ):
             extra["canonical_script_execution"] = True
-        base_paths = list(base_metadata.paths)
+        # Redirecting a read command does not turn its input operands into edits.
+        base_paths = list(base_metadata.paths) if base_metadata.repo_mutation else []
         base_write_paths = list(base_metadata.write_paths)
         return _ShellSegmentMetadata(
             "write",

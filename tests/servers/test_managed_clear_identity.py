@@ -389,7 +389,8 @@ def test_successor_chat_completion_keeps_issued_grant(seat: _Seat) -> None:
     }
     tool_chat = _FakeToolChatService(_chat_result())
     server = seat.server(
-        config=DaemonConfig(), services=SimpleNamespace(tool_chat_service=tool_chat)
+        config=DaemonConfig(),
+        services=SimpleNamespace(tool_chat_service=tool_chat, database=MagicMock()),
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)

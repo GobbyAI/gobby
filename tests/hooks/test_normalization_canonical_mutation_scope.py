@@ -27,6 +27,20 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
+def test_split_file_assembly_attributes_only_the_output(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "cat crates/gterminals/src/host/connect.head "
+        "crates/gterminals/src/host/connect.body > crates/gterminals/src/host/connect.rs",
+        tool_cwd=tmp_path,
+        project_path=tmp_path,
+    )
+
+    assert data["canonical_repo_mutation"] is True
+    assert [tmp_path / path for path in data["canonical_file_paths"]] == [
+        tmp_path / "crates/gterminals/src/host/connect.rs"
+    ]
+
+
 @pytest.mark.parametrize(
     "command",
     [
