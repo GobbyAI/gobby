@@ -166,6 +166,23 @@ def test_dumped_codex_config_is_served_from_cache_without_parsing(
     assert tomlkit.dumps(reread) == written
 
 
+def test_ensure_codex_project_trust_keeps_inline_projects_entries(tmp_path: Path) -> None:
+    import tomlkit
+
+    from gobby.agents.trust import ensure_codex_project_trust
+
+    project = tmp_path / "wt"
+    project.mkdir()
+    config = tomlkit.parse('projects = { "/opt/existing" = { trust_level = "trusted" } }\n')
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        ensure_codex_project_trust(config, project)
+
+    projects = tomllib.loads(tomlkit.dumps(config))["projects"]
+    assert projects["/opt/existing"] == {"trust_level": "trusted"}
+    assert projects[str(project)]["trust_level"] == "trusted"
+
+
 def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
     from gobby.cli.installers.codex import _normalized_codex_command_hook_hash
 
