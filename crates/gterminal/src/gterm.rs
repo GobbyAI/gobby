@@ -6,6 +6,7 @@ pub fn main_entry() {
     let mut args = std::env::args_os().skip(1);
     match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
         Some("host") => run_host(),
+        Some("--version") => println!("gterm {}", env!("CARGO_PKG_VERSION")),
         #[cfg(unix)]
         Some("gate") => {
             if args.next().as_deref() != Some(std::ffi::OsStr::new("--")) {

@@ -72,6 +72,18 @@ fn host_short_help_exits_zero() {
 }
 
 #[test]
+fn version_prints_the_package_version_and_exits_zero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_gterm"))
+        .arg("--version")
+        .output()
+        .expect("run gterm --version");
+
+    assert_eq!(output.status.code(), Some(0), "`--version` must exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout, format!("gterm {}\n", env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
 fn host_rejects_unknown_argument() {
     let dir = temp_dir("gterm-bogus");
     let output = run_host(dir.path(), &["--bogus"]);
