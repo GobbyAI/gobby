@@ -1575,6 +1575,11 @@ Verification planned:
     in place. 2.8 gains no item, because a test that already passes cannot
     give red evidence. The escalation paragraph is removed.
   - Consumer coverage: 1.3, 1.4 and 2.7 list the tests that #24505 added.
+- 2026-10-16: V1 consensus. Plan Writer gobby#16764 and Plan Adversary
+  gobby#16993 agree on this plan at `68ffc93ed0`, with no open findings.
+  Orchestrator gobby#15977 accepted the B1 refs, the N1 Target change, the
+  N2 note and the N5 no-change disposition. Bare validation exits 0 with no
+  warnings against a fresh code index.
 
 ## V2: Verification
 `kind: verification`
