@@ -15,6 +15,14 @@ failed run. Recalled text retains the original run's chronology and must arrive
 before implementation to earn RED credit. Existing recall regressions cover
 wrong IDs, duplicate IDs, failed retrieval, oversized output and pipes.
 
+`pytest-collection-0.51.0.txt` and `pytest-collection-1.0.1.txt` record the actual
+`pipe -f pytest` output for deterministic input
+`tests/e2e/test_live.py::test_live\n\n1 test collected in 0.01s\n`.
+Both versions erase the positive count as `Pytest: No tests collected` (exit 0).
+The fixtures add a trailing newline for the repository's end-of-file convention.
+Gate 10 rejects this output. Gobby's RTK proxy keeps collection commands unchanged
+so the original completed collection summary survives; other rewrites still apply.
+
 ## Close-gate inventory
 
 The checklist in `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` has these
