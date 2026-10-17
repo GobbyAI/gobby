@@ -795,6 +795,103 @@ async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result
 }
 
 #[tokio::test]
+async fn receipts_remove_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(true).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_restore_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(false).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+async fn receipt_cleanup_failure_does_not_stop_peers(acknowledged: bool) -> anyhow::Result<Value> {
+    let hub = FakeHub::start().await?;
+    let success = (
+        StatusCode::OK,
+        json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+    );
+    hub.script(
+        RECEIPTS,
+        vec![
+            if acknowledged {
+                success.clone()
+            } else {
+                (StatusCode::SERVICE_UNAVAILABLE, json!({"error":"offline"}))
+            },
+            success,
+        ],
+    );
+    let (entered, release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let first = ledger.inbox.join("first.json");
+    let second = ledger.inbox.join("second.json");
+    for path in [&first, &second] {
+        fs::write(path, serde_json::to_vec(&receipt())?)?;
+    }
+    let interfere = async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+        let original = if first.exists() { &second } else { &first };
+        let peer = if first.exists() { &first } else { &second };
+        let claimed = fs::read_dir(&ledger.inbox)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".claimed.tmp")
+            })
+            .expect("the paused acknowledgment owns a claim")
+            .path();
+        if acknowledged {
+            // Force remove_file to fail while preserving the receipt bytes.
+            let bytes = fs::read(&claimed)?;
+            fs::remove_file(&claimed)?;
+            fs::create_dir(&claimed)?;
+            fs::write(claimed.join("retained.json"), bytes)?;
+        } else {
+            // A file cannot be restored over a directory at its original path.
+            fs::create_dir(original)?;
+        }
+        release.send(()).expect("release the paused acknowledgment");
+        Ok::<_, anyhow::Error>((original, claimed, peer))
+    };
+    let (sweep, interference) = tokio::join!(sweep_receipts(&node.node, &ledger), interfere);
+    let (original, claimed, peer) = interference?;
+    sweep?;
+    assert_eq!(
+        hub.requests().len(),
+        2,
+        "cleanup failure must not stop the peer post"
+    );
+    assert!(!peer.exists());
+    assert!(
+        ledger
+            .is_processed(peer.file_stem().unwrap().to_str().unwrap())
+            .await?
+    );
+    assert!(original.is_dir());
+    let retained = if acknowledged {
+        original.join("retained.json")
+    } else {
+        claimed
+    };
+    let retained = serde_json::from_slice::<Value>(&fs::read(retained)?)?;
+    hub.shutdown().await;
+    Ok(retained)
+}
+
+#[tokio::test]
 async fn receipts_failed_post_and_orphan_restore() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
     hub.script(

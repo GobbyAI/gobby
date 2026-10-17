@@ -34,13 +34,14 @@ pub async fn sweep_receipts(node: &NodeServices, ledger: &Ledger) -> Result<()> 
             .and_then(|(original, _)| original.file_stem())
             .and_then(|stem| stem.to_str())
             .filter(|stem| !stem.is_empty());
-        match acknowledge(node, ledger, &claim.envelope, envelope_id).await {
-            Ok(()) => claim.remove().await?,
+        // A cleanup failure belongs to this claim and must not block its peers.
+        let _ = match acknowledge(node, ledger, &claim.envelope, envelope_id).await {
+            Ok(()) => claim.remove().await,
             Err(error) => {
                 eprintln!("node receipt forwarding failed; retaining acknowledgment: {error:#}");
-                claim.restore().await?;
+                claim.restore().await
             }
-        }
+        };
     }
     Ok(())
 }
