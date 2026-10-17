@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
@@ -256,6 +257,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         )
         try:
             worktree_path = ctx.task_manager.artifacts.get_artifacts(resolved_id).worktree_path
+            if isinstance(worktree_path, str):
+                try:
+                    Path(worktree_path).stat()
+                except (FileNotFoundError, NotADirectoryError):
+                    worktree_path = None
             repo_path = resolve_task_repo_path(
                 task_manager=ctx.task_manager,
                 project_manager=ctx.project_manager,
