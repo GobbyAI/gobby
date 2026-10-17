@@ -93,7 +93,7 @@ def create_commit_registry(
         auto_link_commits_fn: Function for auto-linking commits (injectable for testing)
         get_task_diff_page_fn: Function for paging task diffs (injectable for testing)
         git_timeout_seconds: Server-owned deadline for each git subprocess
-        session_manager: Session manager (unused, kept for interface compat)
+        session_manager: Resolves stored caller identity for receipt authorization.
 
     Returns:
         InternalToolRegistry with commit linking tools registered
