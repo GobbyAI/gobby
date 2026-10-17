@@ -148,7 +148,7 @@ def test_socket_directory_override_replaces_shared_root_and_stays_denied(
     directory = tmp_path / "sockets"
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ("deep-home-" * 12)))
     monkeypatch.setenv(srt_socket_paths.SOCKET_DIRECTORY_ENV, str(directory))
-    assert srt_socket_paths.private_srt_socket_roots()[1] == directory
+    assert srt_socket_paths.private_srt_socket_roots()[-1] == directory
     canonical = directory.parent.resolve() / directory.name
     assert srt_socket_paths.srt_socket_directory() == canonical
     assert srt_socket_paths.srt_mux_tmpdir() == canonical
@@ -156,6 +156,18 @@ def test_socket_directory_override_replaces_shared_root_and_stays_denied(
     assert str(directory) in sandbox_policy.sensitive_roots()
     with pytest.raises(ValueError, match="sensitive root"):
         sandbox_policy.assert_sensitive_path_contract([str(directory)])
+
+
+def test_socket_directory_override_keeps_shared_uid_root_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(srt_socket_paths.SOCKET_DIRECTORY_ENV, str(tmp_path / "sockets"))
+    uid_root = Path("/tmp") / f"gobby-srt-{os.getuid()}"
+    assert uid_root in srt_socket_paths.private_srt_socket_roots()
+    assert str(uid_root) in sandbox_policy.sensitive_roots()
+    assert str(uid_root) in sandbox_policy.sensitive_write_roots()
+    with pytest.raises(ValueError, match="sensitive root"):
+        sandbox_policy.assert_sensitive_path_contract([str(uid_root)])
 
 
 async def test_provider_cannot_grant_socket_access_to_private_monitor_root(

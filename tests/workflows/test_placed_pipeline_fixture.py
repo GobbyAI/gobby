@@ -228,10 +228,6 @@ def e2e_pre_daemon_setup(
     )
     # prepare_daemon_env copies os.environ, so the daemon resolves both stubs first.
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    # The shared /tmp socket root is real local state, and tmp_path is too long for
-    # the monitor socket's 104-byte sun_path, so the daemon gets a short private one.
-    sockets = Path(tempfile.mkdtemp(prefix="srt-"))
-    monkeypatch.setenv(SOCKET_DIRECTORY_ENV, str(sockets))
     root = _srt_root(e2e_config[0].parent)
     _write_srt_install(root, node=node)
     mutations = ConfigMutations(postgres_db)
@@ -242,10 +238,16 @@ def e2e_pre_daemon_setup(
         source="two-seat-placement-fixture",
     )
     try:
-        yield
+        # The shared /tmp socket root is real local state, and tmp_path is too long for
+        # the monitor socket's 104-byte sun_path, so the daemon gets a short private one.
+        sockets = Path(tempfile.mkdtemp(prefix="srt-"))
+        try:
+            monkeypatch.setenv(SOCKET_DIRECTORY_ENV, str(sockets))
+            yield
+        finally:
+            shutil.rmtree(sockets, ignore_errors=True)
     finally:
         _release_install(root)
-        shutil.rmtree(sockets, ignore_errors=True)
 
 
 @pytest.fixture
