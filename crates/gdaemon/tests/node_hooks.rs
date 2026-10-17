@@ -527,49 +527,126 @@ async fn ingress_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Exercise hyper's real HTTP/1 response framing rather than draining Body directly.
+async fn hook_http1_connection(
+    node: std::sync::Arc<gobby_daemon::state::NodeServices>,
+    envelope: &str,
+) -> anyhow::Result<(
+    tokio::net::TcpStream,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+)> {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr()?).await?;
+    let (stream, _) = listener.accept().await?;
+    let server = tokio::spawn(async move {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(stream),
+                hyper::service::service_fn(
+                    move |request: hyper::Request<hyper::body::Incoming>| {
+                        let node = node.clone();
+                        async move {
+                            Ok::<_, std::convert::Infallible>(
+                                call_hook(node, request.map(axum::body::Body::new)).await,
+                            )
+                        }
+                    },
+                ),
+            )
+            .await
+    });
+    let payload = serde_json::to_string(&json!({
+        "hook_type":"pre_tool_use", "response_capability":"hook-response.v1"
+    }))?;
+    let request = format!(
+        "POST /api/hooks/execute HTTP/1.1\r\nHost: localhost\r\n\
+         Authorization: Bearer {NODE_KEY}\r\nX-Gobby-Envelope-Id: {envelope}\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    client.write_all(request.as_bytes()).await?;
+    Ok((client, server))
+}
+
 #[tokio::test]
-async fn ingress_disconnect_after_first_frame_releases() -> anyhow::Result<()> {
-    use http_body_util::BodyExt;
+async fn ingress_http1_delivered_content_length_preserves_receipt() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt;
 
     let hub = FakeHub::start().await?;
     let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
     hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
     hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
-    let (release_entered, release) = hub.pause_next(RECEIPTS);
+    let (release_entered, _release) = hub.pause_next(RECEIPTS);
     let node = NodeHome::new(&hub)?;
-    let response = call_hook(
-        node.node.clone(),
-        hook_request(Some("partial-delivery"), "hook-response.v1", "pre_tool_use"),
+    let (mut client, server) = hook_http1_connection(node.node.clone(), "http1-delivered").await?;
+    let mut wire = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        client.read_to_end(&mut wire),
     )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut body = response.into_body();
-    let frame = body.frame().await.expect("response data frame")?;
-    assert_eq!(
-        serde_json::from_slice::<Value>(frame.data_ref().unwrap())?,
-        reply
-    );
-    drop(body);
-    let released = tokio::time::timeout(std::time::Duration::from_secs(3), release_entered).await;
+    .await??;
+    tokio::time::timeout(std::time::Duration::from_secs(3), server).await???;
+    let split = wire
+        .windows(4)
+        .position(|part| part == b"\r\n\r\n")
+        .unwrap();
+    let headers = std::str::from_utf8(&wire[..split])?.to_ascii_lowercase();
+    let body = &wire[split + 4..];
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(headers.contains(&format!("content-length: {}", body.len())));
+    assert_eq!(serde_json::from_slice::<Value>(body)?, reply);
     assert!(
-        released.is_ok(),
-        "dropping after one frame must release the receipt before terminal poll"
+        tokio::time::timeout(std::time::Duration::from_millis(100), release_entered)
+            .await
+            .is_err(),
+        "a delivered Content-Length response must keep its receipt"
     );
-    released??;
-    release.send(()).unwrap();
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(
+        node.node
+            .hook_ledger
+            .marker("http1-delivered")
+            .await?
+            .unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_http1_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (receipt_entered, receipt_release) = hub.pause_next(RECEIPTS);
+    let (forward_entered, forward_release) = hub.pause_next("/api/hooks/execute");
+    let node = NodeHome::new(&hub)?;
+    let (client, server) = hook_http1_connection(node.node.clone(), "http1-disconnected").await?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), forward_entered).await??;
+    drop(client);
+    // Hyper observes the socket closing and drops the handler's receiver while
+    // the durable forwarding task is still waiting for the hub response.
+    let _closed = tokio::time::timeout(std::time::Duration::from_secs(3), server).await??;
+    forward_release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), receipt_entered).await??;
+    receipt_release.send(()).unwrap();
+    let marker = node
+        .node
+        .hook_ledger
+        .marker("http1-disconnected")
+        .await?
+        .unwrap();
+    assert_eq!(marker["status"], "processed");
+    assert_eq!(marker["response"], reply);
     let requests = hub.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[1].path, RECEIPTS);
     assert_eq!(requests[1].body["op"], "release");
     assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
-    assert_eq!(
-        node.node
-            .hook_ledger
-            .marker("partial-delivery")
-            .await?
-            .unwrap()["status"],
-        "processed"
-    );
     hub.shutdown().await;
     Ok(())
 }

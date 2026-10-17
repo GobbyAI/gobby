@@ -6,8 +6,8 @@ use axum::{
     body::{Body, Bytes, to_bytes},
     http::{HeaderMap, Request, Response, StatusCode},
 };
-use futures_util::Stream;
 use hmac::digest::CtOutput;
+use hyper::body::{Body as HttpBody, Frame};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -42,7 +42,7 @@ impl HubOutcome {
     fn into_http(self, node: Arc<NodeServices>) -> Response<Body> {
         let (parts, bytes) = self.response.into_parts();
         let body = match self.receipt {
-            Some(receipt) => Body::from_stream(DeliveryBody {
+            Some(receipt) => Body::new(DeliveryBody {
                 bytes: Some(bytes),
                 receipt: Some(receipt),
                 node,
@@ -263,15 +263,23 @@ struct DeliveryBody {
     node: Arc<NodeServices>,
 }
 
-impl Stream for DeliveryBody {
-    type Item = Result<Bytes, Infallible>;
+impl HttpBody for DeliveryBody {
+    type Data = Bytes;
+    type Error = Infallible;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let bytes = self.bytes.take();
-        if bytes.is_none() {
-            self.receipt.take();
-        }
-        Poll::Ready(bytes.map(Ok))
+        // This buffered response has one final data frame. Once handed to the
+        // connection it counts as delivered, matching the hub's send boundary.
+        self.receipt.take();
+        Poll::Ready(bytes.map(|bytes| Ok(Frame::data(bytes))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.bytes.is_none()
     }
 }
 
