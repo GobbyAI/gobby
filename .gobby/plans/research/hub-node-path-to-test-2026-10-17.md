@@ -17,7 +17,9 @@ The dependency edges pull in **78 open tasks**, **65** of them leaves:
 
 The ready leaves are #24381 (Detection manifest engine) and #24350 (`gobby-mcp` crate and its daemon dialer). The landed or in-review leaves are #24368 (Node hook ingress arm), #24270 (Node routes: checkout registration and run reports), #24595 (Callers act only on machines they own), #24596 (Node-commands contract version 3) and #24582 (Node ledger prune test).
 
-The hub-mode and node-half plans are fully expanded. **Three tasks the edges pull in from outside hub-node still need planning before the path can finish.** Expanding #21586 would create new tasks, and the close cap you chose blocks that for now (option B: no new tasks until the close backlog is under 20).
+The hub-mode and node-half plans are fully expanded. **Correction, 16:05 CDT:** #23275 (`gobby-mcp` crate) needs no planning. Its plan took your four rulings, reached consensus and was expanded into #24350 through #24360 on 10-13. Its `needs-planning` flag and escalation were stale bookkeeping; both are now cleared. Only #21586 and #23276 still need planning.
+
+**Two tasks the edges pull in from outside hub-node still need planning before the path can finish.** Expanding #21586 would create new tasks, and the close cap you chose blocks that for now (option B: no new tasks until the close backlog is under 20).
 
 ## Tasks that need planning or expansion
 
@@ -26,8 +28,8 @@ The hub-mode and node-half plans are fully expanded. **Three tasks the edges pul
    - Its parent #21568 (Remaining route families) is itself gated on #21558 (Native WS transport in gdaemon) and #21560 (Tasks family). #21560 is gated on #21559 (Config, runtime handshake, and grant issuing), which has about 30 open leaves.
    - So as the edges stand, hub-node's test date waits on most of the rest of Stage 2.
 2. **#23276** (gcode index writes from a node need hub HTTP routes): escalated `needs-planning`, deferred behind the same code-index family gate. #24380 is also blocked by it.
-3. **#23275** (`gobby-mcp` crate: native MCP transports with OAuth and CIMD): escalated `needs-planning`.
-   - What it still needs: the gmcp-stdio narrative refresh and plan approval before dispatch. Its leaves exist, but their acceptance text is a placeholder.
+3. **#23275** (`gobby-mcp` crate: native MCP transports with OAuth and CIMD): no planning needed (see the correction above).
+   - It is already planned and expanded: leaves #24350 through #24360 carry full specs from the approved gmcp-stdio plan. The placeholder acceptance text belongs only to the #23275 holder itself.
    - Why it's on the path: two S2.7 node-half leaves wait on its leaves. #24372 (Worktree and clone preparation) and #24375 (Provider launch, exits and host reconciliation) wait on #24355 (Every launch site starts `~/.gobby/bin/gmcp`). #24373 (SRT policy for node runs) waits on #24357 (The sandbox drops the wrapper's read grant).
    - That puts six gmcp leaves on hub-node's critical path: #24350 → #24351 → #24352 → #24354 → #24358 → #24355.
 
@@ -165,14 +167,14 @@ The tree lists only open tasks. "Blocked by" names only open blockers. The statu
 
 ### Pulled in from outside hub-node by dependency edges
 
-- **#23275** `gobby-mcp` crate: native MCP transports with OAuth and CIMD. Status: open container (0/11 children closed), escalated; blocked by #21570 (MCP front door flip). Planning: NEEDS PLANNING (escalated needs-planning: gmcp-stdio narrative refresh and plan approval before dispatch; leaves exist, acceptance is a placeholder).
-  - **#24350** `gobby-mcp` crate and its daemon dialer. Status: ready. Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24351** `gmcp` serves the wrapper's tool surface over stdio. Status: blocked; blocked by #24350 (`gobby-mcp` crate and its daemon dialer). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24353** `gobby install` builds, promotes, and tracks `gmcp`. Status: blocked; blocked by #24351 (`gmcp` serves the wrapper's tool surface over stdio). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24352** `call_tool` keeps the wrapper's canonicalization, wait guard, and heartbeat. Status: blocked; blocked by #24351 (`gmcp` serves the wrapper's tool surface over stdio). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24354** E2e and server tests drive `gmcp` or the routes, not the wrapper. Status: blocked; blocked by #24352 (`call_tool` keeps the wrapper's canonicalization, wait gu...). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24358** `gmcp` starts a stopped local daemon at launch. Status: blocked; blocked by #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24355** Every launch site starts `~/.gobby/bin/gmcp`. Status: blocked; blocked by #24358 (`gmcp` starts a stopped local daemon at launch), #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24352 (`call_tool` keeps the wrapper's canonicalization, wait gu...), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: held by parent #23275 (needs planning approval before dispatch).
-  - **#24357** The sandbox drops the wrapper's read grant. Status: blocked; blocked by #24355 (Every launch site starts `~/.gobby/bin/gmcp`). Planning: held by parent #23275 (needs planning approval before dispatch).
+- **#23275** `gobby-mcp` crate: native MCP transports with OAuth and CIMD. Status: open container (0/11 children closed), escalated; blocked by #21570 (MCP front door flip). Planning: none: planned and expanded on 10-13; the stale needs-planning flag and escalation were cleared at 16:05.
+  - **#24350** `gobby-mcp` crate and its daemon dialer. Status: ready. Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24351** `gmcp` serves the wrapper's tool surface over stdio. Status: blocked; blocked by #24350 (`gobby-mcp` crate and its daemon dialer). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24353** `gobby install` builds, promotes, and tracks `gmcp`. Status: blocked; blocked by #24351 (`gmcp` serves the wrapper's tool surface over stdio). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24352** `call_tool` keeps the wrapper's canonicalization, wait guard, and heartbeat. Status: blocked; blocked by #24351 (`gmcp` serves the wrapper's tool surface over stdio). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24354** E2e and server tests drive `gmcp` or the routes, not the wrapper. Status: blocked; blocked by #24352 (`call_tool` keeps the wrapper's canonicalization, wait gu...). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24358** `gmcp` starts a stopped local daemon at launch. Status: blocked; blocked by #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24355** Every launch site starts `~/.gobby/bin/gmcp`. Status: blocked; blocked by #24358 (`gmcp` starts a stopped local daemon at launch), #24353 (`gobby install` builds, promotes, and tracks `gmcp`), #24352 (`call_tool` keeps the wrapper's canonicalization, wait gu...), #24354 (E2e and server tests drive `gmcp` or the routes, not the...). Planning: none: expanded leaf from the approved gmcp-stdio plan.
+  - **#24357** The sandbox drops the wrapper's read grant. Status: blocked; blocked by #24355 (Every launch site starts `~/.gobby/bin/gmcp`). Planning: none: expanded leaf from the approved gmcp-stdio plan.
 - **#21586** Migrate code-index orchestration and shared dependencies. Status: open, no children. Planning: NEEDS PLANNING AND EXPANSION: epic with no children; parent #21568 is gated on #21558 Native WS and #21560 Tasks family.
 - **#23276** gcode index writes from a node need hub HTTP routes. Status: blocked, escalated; blocked by #21586 (Migrate code-index orchestration and shared dependencies). Planning: NEEDS PLANNING (escalated needs-planning: deferred behind the Stage 2 native code-index family gate, #21586).
