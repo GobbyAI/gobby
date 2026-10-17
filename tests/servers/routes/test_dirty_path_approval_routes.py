@@ -117,7 +117,9 @@ def test_dirty_path_approval_route_refuses_without_a_verified_operator(
     client = TestClient(_server(db).app)
     headers: dict[str, str] = {}
     if case == "cookie":
-        login = client.post("/api/auth/login", json={"email": TEST_USER_EMAIL, "password": PASSWORD})
+        login = client.post(
+            "/api/auth/login", json={"email": TEST_USER_EMAIL, "password": PASSWORD}
+        )
         assert login.status_code == 200, login.text
     elif case == "forged":
         headers = {
@@ -155,7 +157,9 @@ def test_dirty_path_approval_route_records_a_verified_operator_approval(
     assert stored["approved_by"] == f"{TEST_USER_ID}/{key_id}"
     assert approved_dirty_paths(variables, str(tmp_path)) == {"a.txt"}
 
-    relative = operator.post(_route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"]})
+    relative = operator.post(
+        _route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"]}
+    )
     escape = operator.post(_route(seat.id), json=_body(tmp_path, ["../escape.txt"]))
     missing = operator.post(_route(str(uuid.uuid4())), json=_body(tmp_path))
 

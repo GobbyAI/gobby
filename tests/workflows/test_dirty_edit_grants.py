@@ -263,15 +263,15 @@ def test_approve_dirty_paths_cli_reports_the_daemon_refusal(
         return httpx.Response(400, json={"detail": "not an absolute path"}, request=request)
 
     with patch("gobby.cli.sessions_dirty_paths.httpx.post", side_effect=refuse):
-        result = CliRunner().invoke(approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "a"])
+        result = CliRunner().invoke(
+            approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "a"]
+        )
 
     assert result.exit_code != 0
     assert "approval refused (400): not an absolute path" in result.output
 
 
-@pytest.mark.parametrize(
-    "spelling", OBFUSCATED_SPELLINGS, ids=["variable-built", "printf-piped"]
-)
+@pytest.mark.parametrize("spelling", OBFUSCATED_SPELLINGS, ids=["variable-built", "printf-piped"])
 def test_obfuscated_approval_spellings_pass_the_rule_and_stop_at_the_cli(
     spelling: str, tmp_path: Path, bootstrap_home: Path
 ) -> None:
