@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -587,3 +587,62 @@ def test_report_byte_budgets(
     assert DaemonConfig().node_reports == NodeReportsConfig(
         max_request_bytes=8 * 1024 * 1024, max_pending_bytes_per_machine=16 * 1024 * 1024
     )
+
+
+def test_checkout_body_is_capped_before_parse_or_write(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _machines(temp_db)
+    checkouts = LocalProjectCheckoutManager(temp_db)
+    root = f"/node-only/capped/{uuid.uuid4()}"
+    config = SimpleNamespace(node_reports=NodeReportsConfig(max_request_bytes=2048))
+    oversized = {
+        "v": 2,
+        "project_id": sample_project["id"],
+        "root_path": root,
+        "padding": "x" * 4096,
+    }
+
+    def malformed() -> Iterator[bytes]:
+        yield b"{" * 4096
+
+    with _client(temp_db, monkeypatch, config) as client:
+        valid_too_large = _post(client, "checkouts", oversized)
+        chunked = client.post("/api/nodes/checkouts", headers=_headers(), content=malformed())
+
+    assert valid_too_large == (413, {"detail": "checkout_too_large"})
+    assert (chunked.status_code, chunked.json()) == (413, {"detail": "checkout_too_large"})
+    assert checkouts.list_for_machine(NODE) == []
+
+
+def test_out_of_order_duplicate_exit_is_charged_once() -> None:
+    run_id, terminal_id = str(uuid.uuid4()), str(uuid.uuid4())
+    large = _exit(run_id, terminal_id, _workspace("/node-only/" + "p" * 4096))
+    newer = ReportBody.model_validate(_report(None, 2, exits=[large]))
+    older = ReportBody.model_validate(_report(None, 1, exits=[_exit(run_id, terminal_id)]))
+    small = older.exits[0]
+    # Retained bytes: the newest snapshot without its exits, plus each gathered exit once.
+    real = node_reports.report_size(newer.model_copy(update={"exits": []}))
+    real += node_reports.report_size(small)
+    probe = node_reports.report_size(ReportBody.model_validate(_report(None, 3)))
+
+    inbox = node_reports.NodeReportInbox()
+    assert _admit(inbox, older)
+    assert _admit(inbox, newer)
+    _put(inbox, newer)
+    _put(inbox, older)
+    refused = inbox.admit(NODE, inbox.hub_epoch, 3, probe, real + probe - 1)
+    assert refused is node_reports.Admission.BACKLOG_FULL
+    assert inbox.admit(NODE, inbox.hub_epoch, 3, probe, real + probe) is (
+        node_reports.Admission.ADMITTED
+    )
+    inbox.release(NODE, probe)
+
+    taken = inbox.take()[NODE]
+    retained = node_reports.report_size(taken.snapshot)
+    retained += sum(node_reports.report_size(entry) for entry in taken.exits)
+    assert not taken.snapshot.exits
+    assert retained == real
+    assert inbox.admit(NODE, inbox.hub_epoch, 4, probe, probe) is node_reports.Admission.ADMITTED

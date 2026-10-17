@@ -3648,7 +3648,7 @@
     {
       "activation": "live",
       "default": 8388608,
-      "description": "Largest node report request body the hub reads; larger bodies get 413.",
+      "description": "Largest node request body the hub reads, for run reports and checkout registrations; larger bodies get 413.",
       "key": "node_reports.max_request_bytes",
       "machineExport": false,
       "namespace": "node_reports",

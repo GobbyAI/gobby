@@ -6,9 +6,10 @@ durable and the node's next fresh report refills the snapshot.
 
 Each machine's pending bytes stay within its budget. A report is measured as
 its compact JSON. Admission reserves that size, and `put` settles it into
-charges for what the inbox keeps: each gathered exit at its own size, and the
-installed snapshot at the rest. A report's compact JSON contains each of its
-exits', so the charges never exceed the reservation.
+charges for what the inbox keeps, each retained representation exactly once:
+each gathered exit at its own size, and the installed snapshot without its
+exits at its own size. A report's compact JSON contains each of its exits'
+and its snapshot's remainder, so the charges never exceed the reservation.
 """
 
 from __future__ import annotations
@@ -100,8 +101,9 @@ class NodeReportInbox:
                 held += incoming_bytes[key]
             if report.revision > self._published.get(machine_id, 0):
                 self._published[machine_id] = report.revision
-                self._snapshots[machine_id] = report
-                snapshot_bytes = size - sum(incoming_bytes.values())
+                snapshot = report.model_copy(update={"exits": []})
+                self._snapshots[machine_id] = snapshot
+                snapshot_bytes = report_size(snapshot)
                 held += snapshot_bytes - self._snapshot_bytes.get(machine_id, 0)
                 self._snapshot_bytes[machine_id] = snapshot_bytes
             self._held_bytes[machine_id] = held

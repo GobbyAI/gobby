@@ -13,7 +13,10 @@ class NodeReportsConfig(BaseModel):
     max_request_bytes: int = Field(
         default=8 * 1024 * 1024,
         ge=1,
-        description="Largest node report request body the hub reads; larger bodies get 413.",
+        description=(
+            "Largest node request body the hub reads, for run reports and checkout "
+            "registrations; larger bodies get 413."
+        ),
     )
     max_pending_bytes_per_machine: int = Field(
         default=16 * 1024 * 1024,

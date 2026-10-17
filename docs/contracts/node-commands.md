@@ -127,6 +127,7 @@ body's `run_id` or the run belongs to another machine.
 | `checkout_rejected` | 422 |
 | `stale_report` | 409 |
 | `report_too_large` | 413 |
+| `checkout_too_large` | 413 |
 | `report_backlog_full` | 429 |
 
 ## Commands
@@ -315,8 +316,9 @@ epoch, and sends a fresh report.
 
 ### Report budget refusals
 
-`report_too_large` (413) means the request body exceeds the hub's
-`node_reports.max_request_bytes`. The hub stops reading at that cap, before any
+`report_too_large` (413) means a `POST /api/nodes/report` body exceeds the hub's
+`node_reports.max_request_bytes`. `checkout_too_large` (413) is the same cap on
+`POST /api/nodes/checkouts`. The hub stops reading at that cap, before any
 parse, and writes nothing. `report_backlog_full` (429) means the report would
 push the machine's pending bytes past `node_reports.max_pending_bytes_per_machine`.
 The hub writes nothing and does not move the revision mark. Every 429 carries

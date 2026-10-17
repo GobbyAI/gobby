@@ -61,12 +61,12 @@ def _report_budgets(server: HTTPServer) -> NodeReportsConfig:
     return config.node_reports if config is not None else NodeReportsConfig()
 
 
-async def _capped_body(request: Request, cap: int) -> bytes:
+async def _capped_body(request: Request, cap: int, code: str) -> bytes:
     raw = bytearray()
     async for chunk in request.stream():
         raw += chunk
         if len(raw) > cap:
-            raise HTTPException(413, "report_too_large")
+            raise HTTPException(413, code)
     return bytes(raw)
 
 
@@ -115,7 +115,11 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
     @router.post("/checkouts")
     async def register_checkout(request: Request) -> dict[str, Any]:
         machine_id = _node_machine(server, request)
-        body = _body(await request.body(), CheckoutBody)
+        budgets = _report_budgets(server)
+        body = _body(
+            await _capped_body(request, budgets.max_request_bytes, "checkout_too_large"),
+            CheckoutBody,
+        )
         result: CheckoutResult = await server.run_db(_register_checkout, server, machine_id, body)
         return result.model_dump(mode="json")
 
@@ -123,7 +127,10 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
     async def report(request: Request) -> dict[str, Any] | JSONResponse:
         machine_id = _node_machine(server, request)
         budgets = _report_budgets(server)
-        body = _body(await _capped_body(request, budgets.max_request_bytes), ReportBody)
+        body = _body(
+            await _capped_body(request, budgets.max_request_bytes, "report_too_large"),
+            ReportBody,
+        )
         inbox = node_report_inbox()
         size = report_size(body)
         admission = inbox.admit(

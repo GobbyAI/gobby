@@ -3498,7 +3498,7 @@
           "activation": "live",
           "machineExport": false,
           "default": 8388608,
-          "description": "Largest node report request body the hub reads; larger bodies get 413."
+          "description": "Largest node request body the hub reads, for run reports and checkout registrations; larger bodies get 413."
         },
         "pipelines.nesting_depth_limit": {
           "type": "integer",
