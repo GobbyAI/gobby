@@ -55,6 +55,7 @@ class AuthDecision:
     user_id: str | None = None
     machine_id: str | None = None
     key_id: str | None = None
+    break_glass: bool = False
 
 
 class GrantPresenter(Protocol):

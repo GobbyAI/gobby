@@ -1893,6 +1893,73 @@ class TestMarkTaskNeedsReview:
         ]
         mock_task_manager.submit_for_review.assert_not_called()
 
+    async def test_mark_needs_review_checks_attribution_in_registered_worktree(
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
+        primary = tmp_path / "primary"
+        worktree = tmp_path / "worktree"
+        primary.mkdir()
+        worktree.mkdir()
+        (worktree / "outside.py").write_text("VALUE = 1\n")
+        task = _make_task(status="in_progress", description="Targets:\n- `declared.py`")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.artifacts.get_artifacts.return_value.worktree_path = str(worktree)
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as variables,
+            patch("gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_repo_path",
+                return_value=str(worktree),
+            ) as resolve_repo,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.require_root",
+                return_value=str(primary),
+            ),
+        ):
+            variables.return_value.get_variables.return_value = {
+                "task_edited_files": {task.id: ["outside.py"]}
+            }
+            registry = _create_stage_ops_registry(mock_task_manager)
+            result = await registry.call(
+                "submit_for_review", {"task_id": task.id, "stage_name": "planning"}
+            )
+
+        assert result["error"] == "task_scope_mismatch"
+        assert result["out_of_scope_paths"] == ["outside.py"]
+        assert resolve_repo.call_args.kwargs["project_path"] == str(worktree)
+        mock_task_manager.submit_for_review.assert_not_called()
+
+    async def test_mark_needs_review_uses_primary_when_registered_worktree_is_gone(
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
+        primary = tmp_path / "primary"
+        primary.mkdir()
+        (primary / "outside.py").write_text("VALUE = 1\n")
+        task = _make_task(status="in_progress", description="Targets:\n- `declared.py`")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.artifacts.get_artifacts.return_value.worktree_path = str(
+            tmp_path / "removed-worktree"
+        )
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as variables,
+            patch("gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"),
+            patch(
+                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                return_value=str(primary),
+            ),
+        ):
+            variables.return_value.get_variables.return_value = {
+                "task_edited_files": {task.id: ["outside.py"]}
+            }
+            registry = _create_stage_ops_registry(mock_task_manager)
+            result = await registry.call(
+                "submit_for_review", {"task_id": task.id, "stage_name": "planning"}
+            )
+
+        assert result["error"] == "task_scope_mismatch"
+        assert result["out_of_scope_paths"] == ["outside.py"]
+        mock_task_manager.submit_for_review.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_mark_needs_review_records_scope_justification(
         self, mock_task_manager: MagicMock
