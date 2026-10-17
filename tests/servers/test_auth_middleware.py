@@ -130,6 +130,7 @@ def test_stop_grace_keeps_protected_hook_admission_open() -> None:
             services=SimpleNamespace(
                 shutdown_in_progress=True,
                 http_admission_closed=False,
+                database=MagicMock(),
             ),
         ),
     )
@@ -269,7 +270,22 @@ async def test_repeated_front_door_identity_needs_no_database_or_secret_store(
         "X-Gobby-Machine-Id": "machine-1",
         "X-Gobby-Key-Id": "key-1",
     }
-    server = cast("HTTPServer", SimpleNamespace(auth_service=auth_service, run_db=_run_db))
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=_run_db,
+            services=SimpleNamespace(
+                database=SimpleNamespace(
+                    execute=lambda *_args, **_kwargs: None,
+                    fetchone=lambda *_args, **_kwargs: None,
+                    fetchall=lambda *_args, **_kwargs: None,
+                    transaction=lambda *_args, **_kwargs: None,
+                    transaction_immediate=lambda *_args, **_kwargs: None,
+                )
+            ),
+        ),
+    )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
 
@@ -319,7 +335,11 @@ async def test_session_cookie_validation_runs_off_event_loop(
     )
     server = cast(
         "HTTPServer",
-        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=_run_db,
+            services=SimpleNamespace(database=hub_db),
+        ),
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
@@ -364,7 +384,11 @@ async def test_concurrent_protected_requests_do_not_block_event_loop() -> None:
     auth_service.authenticate.side_effect = blocking_authentication
     server = cast(
         "HTTPServer",
-        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=_run_db,
+            services=SimpleNamespace(database=MagicMock()),
+        ),
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
