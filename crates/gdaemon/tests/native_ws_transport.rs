@@ -1193,9 +1193,9 @@ async fn failures_are_bounded_and_leave_no_residue() {
     h.bind_settings(settings(MAX_MESSAGE, 1, 1)).await;
     let (mut public, _leg) = h.admit(DIRECT, &[]).await;
     wait_connections(&h.broker, 1).await;
-    sleep(Duration::from_millis(2500)).await;
-    assert_eq!(public.close_code("ping timeout").await, 1011);
+    // Reading would answer the ping, so wait for the server to close on its own.
     wait_connections(&h.broker, 0).await;
+    assert_eq!(public.close_code("ping timeout").await, 1011);
 
     // Private EOF closes the public side within one second, 1011 without a
     // close code; a bridge close code passes through.
