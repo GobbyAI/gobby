@@ -18,7 +18,9 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import apply_schema
+from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
 from tests.fixtures.postgres import (
     TEST_USER_EMAIL,
     TEST_USER_ID,
@@ -773,6 +775,31 @@ def test_ownership_disabled_rls_public_defaults_and_operator_relations_are_denie
                         agent.execute(statement)
         finally:
             admin.execute(f"DROP FUNCTION public.{probe}()")
+
+
+def test_managed_execution_cannot_record_an_operator_dirty_path_approval(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path
+) -> None:
+    fixture = authorization_fixture
+    agent_db = PostgresHubDatabase(fixture.agent_url)
+    try:
+        with pytest.raises(psycopg.Error):
+            record_dirty_path_approval(
+                agent_db,
+                str(fixture.session_id),
+                checkout_root=str(tmp_path),
+                paths=["a.txt"],
+                approved_by="agent",
+            )
+    finally:
+        agent_db.close()
+    with psycopg.connect(fixture.database_url, row_factory=dict_row) as admin:
+        stored = admin.execute(
+            "SELECT count(*) AS n FROM session_variables WHERE session_id = %s",
+            (fixture.session_id,),
+        ).fetchone()
+
+    assert stored == {"n": 0}
 
 
 def test_lifecycle_uses_derived_quoted_roles_and_reconciles_expiry(

@@ -91,3 +91,17 @@ more than 64 KiB, so an output bound cannot silently run a denied command.
 The Orchestrator's criterion ruling requires this distinction alongside the
 captured 0/3/empty-2 forms and an explicit safe-to-upgrade close statement.
 Installed RTK remains 0.51.0; this task never replaces it.
+
+## Background reader rewrites
+
+`reader-rewrites.json` records stdout, stderr and exits from `rtk rewrite -- <command>`
+under installed 0.51.0 and the same verified 1.0.1 archive above, with isolated
+HOME, project, history and tee directories. The absolute probe path
+`/absolute/job.output` is replaced by `{path}`; all other bytes are unchanged.
+Cat becomes `rtk read`, tail becomes `rtk read --tail-lines`, and the Monitor
+pipeline preserves the following tail while wrapping grep. The tests use these
+captured hook forms, alongside explicit RTK/proxy/bypass readers.
+
+Background evidence accepts only raw single-file `rtk read` with its default
+level (or explicit `none`) and optional tail window. Structural/max-line, head
+window, line-number, compact and filtering options are deliberately refused.
