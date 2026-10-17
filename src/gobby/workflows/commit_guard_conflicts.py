@@ -1,6 +1,6 @@
 """Ownership conflict scope and actionable diagnostics, independent of I/O."""
 
-from collections.abc import Mapping, Set
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 
 from gobby.workflows.task_claim_state import task_edit_path_covers
@@ -90,7 +90,9 @@ def format_unverified_dirty_edit_reason(paths: Set[str]) -> str:
 
 
 def format_dirty_edit_reason(
-    conflicts: set[ForeignPathOwner], unowned: Set[str] = frozenset()
+    conflicts: set[ForeignPathOwner],
+    unowned: Set[str] = frozenset(),
+    approval_commands: Sequence[str] = (),
 ) -> str:
     ordered_conflicts = sorted(
         conflicts, key=lambda item: (item.path, item.session_ref, item.task_ref)
@@ -105,7 +107,20 @@ def format_dirty_edit_reason(
                 for owner in ordered_conflicts
             ],
             *[f"- {path} — no live session owns it" for path in sorted(unowned)],
-            "Ask each owner with `gobby-agents.send_message` to commit its work; ask the "
-            "user about unowned paths. Then retry.",
+            *(
+                ["Ask each owner with `gobby-agents.send_message` to commit its work."]
+                if conflicts
+                else []
+            ),
+            *(
+                [
+                    "Unowned paths need the operator's approval. Ask the user to run, in "
+                    "their own shell:",
+                    *[f"  {command}" for command in approval_commands],
+                ]
+                if unowned
+                else []
+            ),
+            "Then retry.",
         ]
     )

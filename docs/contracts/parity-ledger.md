@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1099. Unclassified: 0.
+Public surfaces and evidence gates: 1100. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -231,6 +231,7 @@ Public surfaces and evidence gates: 1099. Unclassified: 0.
 | `CLI gobby service status` | proxied | Python `src/gobby/cli/service.py::status (line 91)`; blocked on Rust CLI dispatcher for `gobby service status`. Owner: #21568 Remaining route families. |
 | `CLI gobby service uninstall` | proxied | Python `src/gobby/cli/service.py::uninstall (line 76)`; blocked on Rust CLI dispatcher for `gobby service uninstall`. Owner: #21568 Remaining route families. |
 | `CLI gobby sessions` | proxied | Python `src/gobby/cli/sessions.py::sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions approve-dirty-paths` | proxied | Python `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions backfill-context-windows` | proxied | Python `src/gobby/cli/sessions.py::backfill_context_windows`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions delete` | proxied | Python `src/gobby/cli/sessions.py::delete_session`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
 | `CLI gobby sessions list` | proxied | Python `src/gobby/cli/sessions.py::list_sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |

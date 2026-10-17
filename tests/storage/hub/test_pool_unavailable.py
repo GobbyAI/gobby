@@ -18,6 +18,12 @@ pytestmark = pytest.mark.unit
         PoolTimeout("couldn't get a connection after 5.00 sec"),
         psycopg.OperationalError("terminating connection due to administrator command"),
         psycopg.OperationalError("the connection is closed"),
+        psycopg.OperationalError(
+            "consuming input failed: server closed the connection unexpectedly"
+        ),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+        ),
     ],
 )
 def test_is_pool_unavailable_matches_outage_errors(exc: BaseException) -> None:
@@ -40,6 +46,13 @@ def test_is_pool_unavailable_matches_wrapped_cause() -> None:
     [
         RuntimeError("database unavailable"),
         psycopg.OperationalError("password authentication failed for user"),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: FATAL: '
+            'password authentication failed for user "gobby"'
+        ),
+        psycopg.errors.InvalidPassword("password authentication failed for user"),
+        psycopg.errors.InsufficientPrivilege("permission denied"),
+        psycopg.ProgrammingError("invalid query"),
         ValueError("nope"),
     ],
 )

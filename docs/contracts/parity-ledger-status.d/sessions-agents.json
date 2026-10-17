@@ -123,6 +123,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/cli/sessions.py::sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
   },
+  "CLI gobby sessions approve-dirty-paths": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
+  },
   "CLI gobby sessions backfill-context-windows": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/sessions.py::backfill_context_windows`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
