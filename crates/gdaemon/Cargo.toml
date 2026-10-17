@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.55"
+version = "0.4.56"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
