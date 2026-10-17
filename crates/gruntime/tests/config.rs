@@ -25,6 +25,23 @@ use uuid::Uuid;
 const MIGRATION: &str =
     include_str!("../../gcore/assets/schema/migrations/469_config_active_state.sql");
 
+/// The daemon role as `crates/gcore/assets/schema/baseline.sql` creates it: the
+/// same advisory lock, idempotent create and attributes. A fresh hub gets this
+/// role from the baseline; the isolated test hub needs it before migration 469's
+/// grant and the schema grant in `database_case` can run.
+const DAEMON_ROLE: &str =
+    "SELECT pg_advisory_xact_lock(hashtextextended('gobby:agent-authorization:v1', 0));
+DO $roles$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gobby_daemon_runtime') THEN
+        CREATE ROLE gobby_daemon_runtime;
+    END IF;
+    ALTER ROLE gobby_daemon_runtime
+        NOLOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB
+        NOREPLICATION NOBYPASSRLS;
+END
+$roles$;";
+
 struct TestDb {
     admin: Client,
     schema: String,
@@ -67,7 +84,8 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     let schema = format!("test_rust_runtime_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
-            "CREATE SCHEMA {schema}; GRANT USAGE ON SCHEMA {schema} TO gobby_daemon_runtime; {}",
+            "{DAEMON_ROLE}
+CREATE SCHEMA {schema}; GRANT USAGE ON SCHEMA {schema} TO gobby_daemon_runtime; {}",
             MIGRATION.replace("public.", &format!("{schema}."))
         ))
         .await?;
