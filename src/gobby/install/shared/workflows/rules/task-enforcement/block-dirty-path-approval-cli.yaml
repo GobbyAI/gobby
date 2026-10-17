@@ -11,12 +11,14 @@ rules:
         tools: [Bash]
         # The subcommand name is unique, so any unquoted occurrence in an
         # executable segment blocks, whatever launcher, wrapper, global option
-        # or variable names the CLI. Quoted data is not an invocation, so a
-        # refusal relaying the command to the user stays sendable; command
-        # substitution still blocks. Managed executions are also denied the
-        # session tables at the database, so this rule is not the only boundary.
+        # or variable names the CLI. A segment that names `sessions` and expands
+        # a variable or runs a substitution unquoted also blocks: the subcommand
+        # can then be assembled at run time, so the literal name never appears.
+        # Quoted data is not an invocation, so a refusal relaying the command to
+        # the user stays sendable. Managed executions are also denied the session
+        # tables at the database, so this rule is not the only boundary.
         mask_quoted: true
-        command_pattern: "(?<![\\w./-])approve-dirty-paths(?![\\w-])"
+        command_pattern: "(?<![\\w./-])approve-dirty-paths(?![\\w-])|(?=[\\s\\S]*(?<![\\w./-])sessions(?![\\w-]))(?=[\\s\\S]*[$`])"
         reason: |
           Approving unowned dirty paths is operator-only. Relay the exact
           `gobby sessions approve-dirty-paths ...` command from the refusal to
