@@ -2,6 +2,7 @@
 
 import gzip
 import json
+import os
 import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -812,10 +813,12 @@ def _archived_cycle(
     archive_owner: str = "closing",
     window_start: datetime = START,
     overlap: bool = False,
+    archive_mtime: datetime | None = None,
 ) -> TranscriptEvidence:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
     production = "src/feature.py"
-    early = _pair(
+    early = _pair(0, "Bash", {"command": "git status --short"}, "", cwd=str(tmp_path))
+    early += _pair(
         1,
         "Write",
         {"file_path": str(tmp_path / TEST_PATH), "content": "def test_feature(): assert 1 == 2"},
@@ -840,6 +843,9 @@ def _archived_cycle(
     archives.mkdir()
     with gzip.open(archives / f"{archive_owner}.jsonl.gz", "wt", encoding="utf-8") as stream:
         stream.write("\n".join(json.dumps(row) for row in early) + "\n")
+    if archive_mtime is not None:
+        stamp = archive_mtime.timestamp()
+        os.utime(archives / f"{archive_owner}.jsonl.gz", (stamp, stamp))
     session = Session(
         id="closing",
         external_id="closing",
@@ -881,6 +887,24 @@ def test_red_in_prior_transcript_of_closing_session_is_credited(
     assert result.red_runs == (_run(2, red=True).command,)
     assert evidence.sessions == ("closing",)
     assert str(tmp_path / "archives/closing.jsonl.gz") in evidence.attempted_paths
+    assert len(evidence.validation_runs) == 2
+    assert len(evidence.command_runs) == 1
+    assert len(evidence.edits) == 2
+
+
+def test_archive_written_before_claim_is_not_decompressed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with patch(
+        "gobby.tasks.transcript_evidence._iter_archive_lines",
+        side_effect=AssertionError("pre-window archive must not be decompressed"),
+    ) as archive_read:
+        evidence = _archived_cycle(
+            tmp_path, monkeypatch, archive_mtime=START - timedelta(seconds=1)
+        )
+    archive_read.assert_not_called()
+    assert len(evidence.validation_runs) == 1
+    assert not any(run.outcome == "failure" for run in evidence.validation_runs)
 
 
 @pytest.mark.parametrize("exclusion", ["unrelated", "before_claim"])
@@ -906,9 +930,27 @@ def test_named_unchanged_test_is_not_refused_for_missing_edit(has_red: bool) -> 
         validation_runs=(*((_run(2, red=True),) if has_red else ()), _run(4, red=False)),
     )
     result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
-    assert result.passed, result.findings
+    assert result.passed is has_red, result.findings
+    assert not any("no edit of the named test" in finding for finding in result.findings)
     assert result.red_runs == ((_run(2, red=True).command,) if has_red else ())
     assert result.details()["regression_tests"] == ([] if has_red else [_test().reference])
+
+
+def test_unchanged_regression_can_accompany_another_unchanged_tests_cycle() -> None:
+    regression = _test("tests/test_other.py", "test_other")
+    evidence = TranscriptEvidence(
+        edits=(_edit("src/feature.py", 3),),
+        validation_runs=(
+            _run(2, red=True),
+            _run(4, red=False),
+            replace(_run(5, red=False), command="uv run pytest tests/test_other.py -q"),
+        ),
+    )
+    result = evaluate_tdd_evidence(
+        (_test(), regression), evidence, implementation_paths=("src/feature.py",)
+    )
+    assert result.passed, result.findings
+    assert result.regression_tests == (regression.reference,)
 
 
 def test_unchanged_regression_still_requires_a_fresh_pass() -> None:
@@ -919,6 +961,13 @@ def test_unchanged_regression_still_requires_a_fresh_pass() -> None:
     result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
     assert not result.passed
     assert any("no pass" in finding for finding in result.findings)
+
+
+def test_unchanged_regression_requires_a_visible_production_edit() -> None:
+    evidence = TranscriptEvidence(validation_runs=(_run(4, red=False),))
+    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
+    assert not result.passed
+    assert any("production edit" in finding for finding in result.findings)
 
 
 def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
@@ -937,6 +986,73 @@ def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
     assert not result.passed
     assert not result.red_runs
     assert any(changed.reference in finding for finding in result.findings)
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "test_checkout_registration_uses_key_machine",
+        "test_checkout_registration_refusals",
+        "test_report_inbox_replaces_snapshot_and_merges_exits",
+        "test_node_routes_refuse_unverified_and_local_identity",
+        "test_report_order_and_epoch_barrier",
+        "test_reported_workspace_is_durable_before_200",
+        "test_reported_workspace_moves_updated_at",
+        "test_report_byte_budgets",
+        "test_checkout_body_is_capped_before_parse_or_write",
+    ],
+)
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["stub", "assertion_mentions_stub", "sibling_stub", "no_stub_frame", "foreign_stub_frame"],
+)
+def test_node_route_postproduction_not_implemented_is_attributed(
+    symbol: str, failure_kind: str
+) -> None:
+    test = _test("tests/servers/test_node_routes.py", symbol)
+    production = "src/gobby/servers/routes/nodes.py"
+    # Observed #24270 shape: --tb=short-style HTTP frames, no FAILED summary.
+    output = (
+        f"______________ {symbol} ______________\n"
+        f"{test.path}:612: in {symbol}\n"
+        '    valid_too_large = _post(client, "checkouts", oversized)\n'
+        f"{test.path}:209: in _post\n"
+        '    response = client.post(f"/api/nodes/{route}", headers=_headers(machine), json=body)\n'
+        ".venv/lib/python3.14/site-packages/starlette/testclient.py:356: in handle_request\n"
+        "    raise exc\n"
+        f"{production}:117: in register_checkout\n"
+        '    raise NotImplementedError("stub: checkout registration route")\n'
+    )
+    output += (
+        "E   NotImplementedError: stub: checkout registration route\n"
+        if failure_kind in {"stub", "no_stub_frame", "foreign_stub_frame"}
+        else "E   AssertionError: NotImplementedError was mentioned but not raised\n"
+    )
+    if failure_kind == "no_stub_frame":
+        output = output.replace(
+            f"{production}:117: in register_checkout\n"
+            '    raise NotImplementedError("stub: checkout registration route")\n',
+            "",
+        )
+    elif failure_kind == "foreign_stub_frame":
+        output = output.replace(production, "src/gobby/servers/routes/unrelated.py")
+    if failure_kind == "sibling_stub":
+        output += (
+            "______________ test_sibling ______________\n"
+            f"{test.path}:700: in test_sibling\n"
+            "E   NotImplementedError: sibling route stub\n"
+        )
+    output += "======================== 18 failed, 1 passed in 16.19s ========================\n"
+    command = f"uv run pytest {test.path} -q --timeout=120 --session-timeout=600"
+    evidence = TranscriptEvidence(
+        edits=(_edit(production, 0), _edit(test.path, 1), _edit(production, 3)),
+        validation_runs=(
+            replace(_run(2, red=True, output=output), command=command),
+            replace(_run(4, red=False), command=command),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is (failure_kind == "stub"), result.findings
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])

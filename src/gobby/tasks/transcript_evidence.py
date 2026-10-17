@@ -41,7 +41,7 @@ from gobby.tasks.transcript_background import (
     pending_background_run,
     recover_background_receipt,
 )
-from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     OutputDelivery,
     TranscriptEdit,
@@ -282,7 +282,9 @@ def _derive_transcript_evidence_sync(
     snapshot_key = f"{session.id}:{fingerprint}"
     if resume is None:
         resume = load_durable_snapshot(snapshot_key)
-    paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
+    paths, attempted_paths = _resolve_transcript_paths(
+        session, archive_dir, local_machine_id, window_start
+    )
     if not paths:
         raise TranscriptEvidenceUnavailable(
             f"No transcript was found for {session.source} session {session.ref}.",
@@ -321,7 +323,13 @@ def _derive_transcript_evidence_sync(
         )
         if resume is None or updated.checkpoint() != resume.checkpoint():
             store_durable_snapshot(snapshot_key, updated)
-    return merge_transcript_evidence(*(result[0] for result in results)), updated
+    return merge_transcript_evidence(
+        results[0][0],
+        *(
+            archive_before_live(evidence, results[0][0]) if path.endswith(".gz") else evidence
+            for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)
+        ),
+    ), updated
 
 
 def _derive_transcript_path_evidence(
@@ -492,6 +500,7 @@ def _resolve_transcript_paths(
     session: Session,
     archive_dir: str | None,
     local_machine_id: str,
+    window_start: datetime | None = None,
 ) -> tuple[list[str], list[str]]:
     primary, attempted = _resolve_transcript_path(session, archive_dir, local_machine_id)
     if primary is None:
@@ -500,8 +509,13 @@ def _resolve_transcript_paths(
     # A compact or account switch can replace a live file at the same path.
     # Read this session's archive as well; never scan other sessions' files.
     archive = str(get_archive_dir(archive_dir) / f"{session.external_id}.jsonl.gz")
-    if archive != primary and Path(archive).is_file():
-        supplemental.append(archive)
+    if Path(archive).is_file():
+        if window_start is not None and Path(archive).stat().st_mtime < window_start.timestamp():
+            if archive == primary:
+                return [], attempted
+            supplemental = [path for path in supplemental if path != archive]
+        elif archive != primary:
+            supplemental.append(archive)
     paths = list(dict.fromkeys((primary, *supplemental)))
     return paths, list(dict.fromkeys((*attempted, *supplemental)))
 

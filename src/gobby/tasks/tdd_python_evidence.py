@@ -9,6 +9,7 @@ import re
 import sys
 import textwrap
 from collections.abc import Iterable
+from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_paths import is_production_edit_path
@@ -322,6 +323,29 @@ def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST,
                 visited.add(item.id)
                 pending.append(bindings[item.id])
     return tuple(result)
+
+
+def _has_python_runtime_stub(
+    section: str, evidence: TranscriptEvidence, run: TranscriptValidationRun
+) -> bool:
+    """Require an actual raising frame from production attributed before RED."""
+    paths = {
+        PurePosixPath(edit.path).parts
+        for edit in evidence.edits
+        if edit.task_attributed
+        and edit.session_id == run.session_id
+        and edit.order < run.order
+        and edit.timestamp < run.started_at
+        and is_production_edit_path(edit.path)
+    }
+    rows = section.splitlines()
+    for row, source in zip(rows, rows[1:], strict=False):
+        frame = re.match(r"\s*(.+\.py):\d+: in \w+\s*$", row)
+        if frame and re.match(r"\s*raise NotImplementedError\b", source):
+            reported = PurePosixPath(frame[1]).parts
+            if any(reported[-len(path) :] == path for path in paths):
+                return True
+    return False
 
 
 def _has_python_keyword_stub(

@@ -31,6 +31,7 @@ from gobby.tasks.tdd_python_evidence import (
     _has_pytest_fail_placeholder,
     _has_python_keyword_stub,
     _has_python_module_stub,
+    _has_python_runtime_stub,
     _has_python_test_tightening,
     _has_python_unchanged_api,
     _original_test_module,
@@ -75,6 +76,11 @@ _FAILURE_SECTION_BOUNDARY_RE = re.compile(
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 # (path, symbol, session, run order, require_not_implemented, window edit order)
 _RedCacheKey = tuple[str, str, str, int, bool, int]
+
+
+_NOT_IMPLEMENTED_DETAIL_RE = re.compile(
+    r"(?m)^(?:\s*E\s+|[^\n]+\.py:\d+:\s*)NotImplementedError(?::|\s*$)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +148,8 @@ def evaluate_tdd_evidence(
     The caller supplies implementation_paths from the task's linked patch. Only
     test-category tasks may count non-test fixture modules under tests/ as code.
     Unchanged named tests contribute either a genuine cycle or regression runs.
+    Unchanged detection is file-granular: every named test in an edited file is
+    treated as changed. Regression listings accompany a genuine task-level cycle.
     """
     if not tests:
         return TddEvidenceResult(
@@ -196,6 +204,10 @@ def evaluate_tdd_evidence(
         default=None,
     )
     unchanged_reds: dict[str, TranscriptValidationRun] = {}
+    if unchanged and first_production is None:
+        return TddEvidenceResult(
+            False, False, ("Unchanged-test evidence has no attributable production edit.",)
+        )
     if first_production is not None:
         for test in unchanged:
             red, _ = _find_red_run(test, evidence, -1, first_production)
@@ -332,6 +344,8 @@ def evaluate_tdd_evidence(
         else max((edit.order for edit in task_edits), default=-1)
     )
     findings = []
+    if cycle is None:
+        findings.append("TDD requires at least one genuine RED-to-GREEN cycle for the task")
     green_commands: list[str] = []
     for test in tests:
         green = _find_green_run(
@@ -468,7 +482,8 @@ def _red_run_proof(
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
             reason = "test body is an unconditional pytest.fail placeholder"
         elif not require_not_implemented or (
-            _has_python_keyword_stub(test, evidence, run, parse_cache)
+            _has_runtime_stub(test, evidence, run, core_command)
+            or _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
             or _test_tightening_proof(test, evidence, run, parse_cache)
@@ -480,6 +495,28 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _has_runtime_stub(
+    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun, command: str
+) -> bool:
+    """Bind an HTTP/helper-mediated stub failure to its named test section."""
+    nodes, same_file = _selected_pytest_nodes(command, test)
+    lines = (run.output or "").splitlines()
+    for index, line in enumerate(lines):
+        header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        if header is None or not _header_names_artifact(
+            header.group("name"), test, nodes, same_file
+        ):
+            continue
+        section = _failure_section(lines, index)
+        if (
+            _section_has_artifact_location(section, test)
+            and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
+            and _has_python_runtime_stub(section, evidence, run)
+        ):
+            return True
+    return False
 
 
 def _test_tightening_proof(
@@ -549,7 +586,7 @@ def _has_original_source_failure(
             _path_matches_artifact(match.group("path"), test)
             and node.lineno < int(match.group("line")) <= (node.end_lineno or node.lineno)
             and _section_has_failure_detail(section)
-            and (not require_not_implemented or "NotImplementedError" in section)
+            and (not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section))
         ):
             return True
     return False
@@ -663,7 +700,7 @@ def _has_pytest_body_failure(
         ):
             has_attributable_section = True
             if _section_has_failure_detail(section) and (
-                not require_not_implemented or "NotImplementedError" in section
+                not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section)
             ):
                 return True, ""
     ordered_failure = _has_ordered_pytest_failure(
@@ -701,7 +738,7 @@ def _has_pytest_body_failure(
         has_attributable_section = True
         section = _failure_section(lines, index)
         if _section_has_failure_detail(section) and (
-            not require_not_implemented or "NotImplementedError" in section
+            not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section)
         ):
             return True, ""
     return False, _red_section_rejection(test, has_attributable_section)
@@ -749,7 +786,7 @@ def _has_ordered_pytest_failure(
             and _path_matches_artifact(path, test)
             and name.replace("::", ".").split("[", maxsplit=1)[0] == artifact
             and _section_has_failure_detail(section)
-            and (not require_not_implemented or "NotImplementedError" in section)
+            and (not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section))
         ):
             return True
     return False
