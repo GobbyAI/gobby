@@ -13,7 +13,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use super::broker::{Batch, ConnectionId, MAX_QUEUED_BYTES};
-use super::transport::{NativeWs, Op, Settings, Site, status_only};
+use super::transport::{NativeWs, Op, Settings, Site};
+use super::transport_support::status_only;
 
 const BIND: &str = "/_gobby/ws/bind";
 const PUBLISH: &str = "/_gobby/ws/publish";
