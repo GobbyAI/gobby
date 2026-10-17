@@ -3,9 +3,9 @@ header:
   plan_hash: 7db40fcb29e80528a4ddcedd2f76782b0c577fec3a8def2cb7ca88c9cde70619
   root_task_ref: '24538'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-17T02:08:10Z'
+  generated_at: '2026-10-17T02:20:11Z'
   task_tree_source: db
-  task_tree_source_hash: 2299048cfa227fa802d95296e8afcfb6870dfbc90e6654ec85811c6447b8d2cb
+  task_tree_source_hash: 01af768112adf28b793e263d433095a9fe04cadb4ee9195406c7cd837d364d5a
   evidence_summary: []
   evidence: []
 rows:
@@ -296,8 +296,13 @@ rows:
 - section_id: '2.5'
   item_id: 2.5.3
   plan_node_hash: a504d4f4722442838bb6cf9ba87675e0f2d562513a07caac9fd16ec5d59fd728
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24553'
+    validation_criteria_snippet: '2.5.1: `gdaemon run --bound 300 -- pytest x` is
+      rewritten to `gdaemon run --bound 300 -- rtk pytest x` with the prefix preserved
+      byte for byte. test: `tests/wo...'
+    matched_artifact_ref: tests/workflows/test_proxy_hooks.py::test_rtk_launcher_rewrite_skips_inner_collection
   deferral_target: null
   detail: ''
 - section_id: '3.1'
