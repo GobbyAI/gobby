@@ -545,7 +545,10 @@ async fn ingress_disconnect_after_first_frame_releases() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body();
     let frame = body.frame().await.expect("response data frame")?;
-    assert_eq!(serde_json::from_slice::<Value>(frame.data_ref().unwrap())?, reply);
+    assert_eq!(
+        serde_json::from_slice::<Value>(frame.data_ref().unwrap())?,
+        reply
+    );
     drop(body);
     let released = tokio::time::timeout(std::time::Duration::from_secs(3), release_entered).await;
     assert!(
@@ -560,7 +563,11 @@ async fn ingress_disconnect_after_first_frame_releases() -> anyhow::Result<()> {
     assert_eq!(requests[1].body["op"], "release");
     assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
     assert_eq!(
-        node.node.hook_ledger.marker("partial-delivery").await?.unwrap()["status"],
+        node.node
+            .hook_ledger
+            .marker("partial-delivery")
+            .await?
+            .unwrap()["status"],
         "processed"
     );
     hub.shutdown().await;
