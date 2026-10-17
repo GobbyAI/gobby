@@ -269,7 +269,6 @@ async def derive_close_transcript_evidence(
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
-        temporally_scoped_paths: frozenset[str] = frozenset()
         # Released pairs still prove the earlier worker's transcript edits after
         # a transfer. Live ownership checks continue to use only the live ledger.
         task_checkout_paths = task_edited_checkout_paths(
@@ -286,36 +285,73 @@ async def derive_close_transcript_evidence(
             )
         # Scratch edits must not invalidate the earlier worker's clean runs.
         task_checkout_paths = frozenset(committable_pairs)
+        task_links: list[dict[str, Any]] | None = None
+        observed: TranscriptEvidence | None = None
+        observed_pairs = task_checkout_paths
         owner_pairs_outside_window = False
         if (
             session_id == owner_session_id
+            and task_checkout_paths
             and (start := _evidence_epoch(effective_window)) is not None
         ):
+            task_links = await asyncio.to_thread(
+                ctx.session_task_manager.get_session_tasks, session_id
+            )
+            start = _earliest_task_epoch(
+                task_id, start, task_links, (), variables.get("task_selection_history")
+            )
+            # Known old stamps stay excluded unless an earlier claim is proved.
+            # Missing stamps still need transcript proof, across all roots at once.
+            known_pairs = task_checkout_paths_in_window(
+                variables, task_id, owner_pairs, float("-inf")
+            )
+            observed_pairs = task_checkout_paths - known_pairs
+            observed_pairs |= task_checkout_paths_in_window(variables, task_id, owner_pairs, start)
+            observed_files = task_edited_files | {path for _, path in observed_pairs}
+            # Parse all retained checkout pairs once. Claims in the same transcript
+            # can prove an earlier window; checkout identity survives normalization.
+            observed = await _derive_session_evidence_at_sync_point(
+                session,
+                session.created_at,
+                detection,
+                observed_files,
+                repo_path,
+                observed_pairs,
+                archive_dir=archive_dir,
+            )
+            claims = await _resolve_transcript_claims(
+                ctx, session, task_links, task_id, observed.task_claims
+            )
+            start = _earliest_task_epoch(
+                task_id, start, task_links, claims, variables.get("task_selection_history")
+            )
+            effective_window = datetime.fromtimestamp(start, UTC)
+            observed = replace(
+                observed,
+                edits=tuple(edit for edit in observed.edits if edit.timestamp.timestamp() >= start),
+                validation_runs=tuple(
+                    r for r in observed.validation_runs if r.started_at.timestamp() >= start
+                ),
+                command_runs=tuple(
+                    r for r in observed.command_runs if r.started_at.timestamp() >= start
+                ),
+            )
             scoped_pairs = task_checkout_paths_in_window(variables, task_id, owner_pairs, start)
-            # Older clean-path reconciliation discarded per-path timestamps.
-            # Recover only actual edits in this claim, proving each checkout
-            # separately so another root's same-named file cannot qualify it.
-            unproved_pairs = task_checkout_paths - scoped_pairs
-            for root in sorted({root for root, _ in unproved_pairs}):
-                root_pairs = frozenset(pair for pair in unproved_pairs if pair[0] == root)
-                observed = await _derive_session_evidence_at_sync_point(
-                    session,
-                    effective_window,
-                    detection,
-                    {path for _, path in root_pairs},
-                    repo_path,
-                    root_pairs,
-                    archive_dir=archive_dir,
-                )
-                edited_paths = {
-                    edit.path
+            scoped_pairs |= frozenset(
+                (edit.checkout_root, edit.path)
+                for edit in observed.edits
+                if edit.session_id == owner_session_id and edit.checkout_root is not None
+            )
+            # Synthetic evidence without checkout metadata can only prove one root.
+            if len(paths_by_root) == 1:
+                scoped_pairs |= frozenset(
+                    (root, edit.path)
+                    for root in paths_by_root
                     for edit in observed.edits
-                    if edit.session_id == owner_session_id and edit.timestamp.timestamp() >= start
-                }
-                scoped_pairs |= frozenset(pair for pair in root_pairs if pair[1] in edited_paths)
+                    if edit.session_id == owner_session_id and edit.checkout_root is None
+                )
             owner_pairs_outside_window = not task_checkout_paths.issubset(scoped_pairs)
             task_checkout_paths &= scoped_pairs
-        task_links: list[dict[str, Any]] | None = None
         window_end: float | None = None
         if session_id not in required:
             task_links = await asyncio.to_thread(
@@ -368,7 +404,6 @@ async def derive_close_transcript_evidence(
                 and min(at for at, _ in history) <= window_epoch
                 else frozenset()
             )
-            temporally_scoped_paths = frozenset(path for _, path in temporal_pairs)
             task_checkout_paths -= other_task_paths - temporal_pairs
             legacy_closed_tasks = _legacy_closed_other_tasks(
                 task_links,
@@ -386,14 +421,29 @@ async def derive_close_transcript_evidence(
         # The owner's live projection can shrink after commit or claim restoration.
         session_task_files = task_edited_files | {path for _, path in task_checkout_paths}
         try:
-            session_evidence = await _derive_session_evidence_at_sync_point(
-                session,
-                effective_window,
-                detection,
-                session_task_files,
-                repo_path,
-                task_checkout_paths,
-                archive_dir=archive_dir,
+            session_evidence = (
+                replace(
+                    observed,
+                    edits=tuple(
+                        edit
+                        for edit in observed.edits
+                        if (edit.checkout_root, edit.path) in task_checkout_paths
+                        or (
+                            edit.checkout_root is None
+                            and any(path == edit.path for _, path in task_checkout_paths)
+                        )
+                    ),
+                )
+                if observed is not None and task_checkout_paths <= observed_pairs
+                else await _derive_session_evidence_at_sync_point(
+                    session,
+                    effective_window,
+                    detection,
+                    session_task_files,
+                    repo_path,
+                    task_checkout_paths,
+                    archive_dir=archive_dir,
+                )
             )
             if (
                 "task_selection_history" in variables
@@ -428,7 +478,6 @@ async def derive_close_transcript_evidence(
                         session_evidence,
                         presence,
                         keep_edits=session_id == owner_session_id,
-                        temporally_scoped_paths=temporally_scoped_paths,
                     )
             try:
                 excluded = await derive_prelink_runs(
@@ -531,6 +580,34 @@ async def _resolve_transcript_claims(
     return await asyncio.to_thread(resolve_all)
 
 
+def _earliest_task_epoch(
+    task_id: str,
+    current: float,
+    task_links: Iterable[dict[str, Any]],
+    transcript_claims: Iterable[tuple[str | None, datetime]],
+    selection_history: object,
+) -> float:
+    """Recover this task's earlier windows without inferring ownership from edits."""
+    history = task_selection_events(selection_history) or []
+    history_start = min((epoch for epoch, _ in history), default=float("inf"))
+    candidates = [current, *(at for at, selected in history if selected == task_id)]
+    candidates.extend(
+        epoch
+        for row in task_links
+        if (row.get("action") or row.get("session_action")) == "claimed"
+        and (row.get("task_id") or getattr(row.get("task"), "id", None)) == task_id
+        and (epoch := _evidence_epoch(row.get("link_created_at") or row.get("created_at")))
+        is not None
+        and epoch < history_start
+    )
+    candidates.extend(
+        at.timestamp()
+        for selected, at in transcript_claims
+        if selected == task_id and at.timestamp() < history_start
+    )
+    return min(candidates)
+
+
 def _task_presence(
     task_links: Iterable[dict[str, Any]],
     task_id: str,
@@ -571,9 +648,15 @@ def _task_presence(
         return epoch > start and (history_start is None or epoch < history_start)
 
     events = [
-        (epoch, getattr(row.get("task"), "id", None) == task_id)
+        (epoch, action == "claimed" and getattr(row.get("task"), "id", None) == task_id)
         for row in task_links
-        if (row.get("action") or row.get("session_action")) == "claimed"
+        if (
+            (action := row.get("action") or row.get("session_action")) == "claimed"
+            or (
+                action in {"escalated", "closed"}
+                and getattr(row.get("task"), "id", None) == task_id
+            )
+        )
         and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
         and before_history(epoch)
     ]
@@ -593,15 +676,13 @@ def _while_on_task(
     presence: list[tuple[float, bool]],
     *,
     keep_edits: bool = False,
-    temporally_scoped_paths: frozenset[str] = frozenset(),
 ) -> TranscriptEvidence:
     """Keep only the runs and edits a linked session made while working this task.
 
     ``keep_edits`` keeps the owner's edits at any time: an owner edit to the task's
     files stales its earlier green even while another claim was active or no claim
-    call marked a return. ``temporally_scoped_paths``, the shared paths another task
-    also edited in this checkout, are carved out: selection history attributes each
-    of their edits by timestamp, so they count only while on this task.
+    call marked a return. Shared-path edits also remain as physical safety evidence;
+    selection history limits their affirmative credit through ``task_attributed``.
     Owner-away validation stays separate for Gate 10; it cannot supply TDD proof.
     """
 
@@ -623,6 +704,7 @@ def _while_on_task(
         off_task_author_runs=tuple(
             run for run in evidence.validation_runs if keep_edits and not on_task(run.started_at)
         ),
+        off_task_author_edits=evidence.edits if keep_edits else (),
         excluded_runs=(
             *evidence.excluded_runs,
             *(
@@ -632,9 +714,9 @@ def _while_on_task(
             ),
         ),
         edits=tuple(
-            edit
+            replace(edit, task_attributed=on_task(edit.timestamp))
             for edit in evidence.edits
-            if (keep_edits and edit.path not in temporally_scoped_paths) or on_task(edit.timestamp)
+            if keep_edits or on_task(edit.timestamp)
         ),
     )
 

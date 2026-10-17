@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.adapters.capabilities import get_provider_capabilities
+from gobby.config.shell_lexing import parse_shell_command
+from gobby.config.validation_detection import classify_validation_command
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
@@ -61,6 +64,24 @@ _RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
 
 # One WARNING per unavailability episode; DEBUG until RTK resolves again.
 _rtk_unavailable_warned = False
+
+
+def _pytest_collection_command(command: str) -> bool:
+    """Keep collection summaries that RTK 0.51.0 and 1.0.1 erase as zero tests."""
+    for segment in parse_shell_command(command).segments:
+        options = segment[: segment.index("--")] if "--" in segment else segment
+        collection_flags = {"--collect-only", "--co"}
+        if not collection_flags.intersection(options):
+            continue
+        # Use the existing launcher grammar without execution-suppression flags.
+        match = classify_validation_command(
+            shlex.join(word for word in segment if word not in collection_flags)
+        )
+        if match is not None and match.matcher_id == "python-tests":
+            runner = match.normalized_argv
+            if runner and (Path(runner[0]).name == "pytest" or runner[1:3] == ("-m", "pytest")):
+                return True
+    return False
 
 
 def _shell_context(command: str) -> str:
@@ -161,12 +182,12 @@ async def _read_bounded(
         return b""
     output = bytearray()
     while True:
-        chunk = await stream.read(min(8192, limit + 1 - len(output)))
+        chunk = await stream.read(8192)
         if not chunk:
             return bytes(output)
-        output.extend(chunk)
-        if len(output) > limit:
-            raise _OutputTooLarge
+        # Drain both pipes so the exit verdict remains available without
+        # retaining unbounded output. One extra byte marks an oversized stream.
+        output.extend(chunk[: max(0, limit + 1 - len(output))])
 
 
 async def _collect_process_output(
@@ -179,6 +200,8 @@ async def _collect_process_output(
     )
     try:
         stdout, stderr, code = await asyncio.gather(*tasks)
+        if max(len(stdout), len(stderr)) > _MAX_PROXY_OUTPUT_BYTES and code != 2:
+            raise _OutputTooLarge
         return code, stdout, stderr
     except BaseException:
         for task in tasks:
@@ -272,6 +295,8 @@ class ProxyHooksMixin:
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False
+        if _pytest_collection_command(command):
+            return False
         # This stage runs last (``core.py`` defers proxy transformations until
         # every original-input denial has passed), so a shared budget with a
         # zero floor would starve it alone and drop the rewrite exactly under
@@ -338,7 +363,7 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
-        if code == 2 and stdout.strip():
+        if code == 2 and stdout:
             # RTK pipeline denials carry a message; an empty exit 2 delegates
             # the original command to the host's existing permission rules.
             message = _ANSI_ESCAPE_RE.sub("", stdout[:4096].decode("utf-8", errors="replace"))

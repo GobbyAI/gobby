@@ -1152,6 +1152,107 @@ async def test_failed_reviewer_launch_remains_unsuccessful(
     assert store.finished_status == "error"
 
 
+_PLACEMENT = {"split": {"pane": str(uuid4()), "axis": "right", "title": "Close review #42"}}
+
+
+async def _launch_placed(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    replies: list[dict[str, object]],
+    placement: dict[str, Any] | None,
+    runs: type[_RunStore] | None = None,
+) -> tuple[dict[str, Any], AsyncMock, list[tuple[object, ...]]]:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(side_effect=replies))
+    _patch_store(monkeypatch, store)
+    if runs is not None:
+        monkeypatch.setattr(orchestration, "LocalAgentRunManager", runs)
+    lookups: list[tuple[object, ...]] = []
+
+    def lookup(*args: object) -> dict[str, Any] | None:
+        lookups.append(args)
+        return placement
+
+    monkeypatch.setattr(orchestration, "reviewer_placement", lookup)
+    evaluation = _evaluation()
+    result = await launch_close_review(
+        _ctx(registry=registry),
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+    return result, registry.call, lookups
+
+
+@pytest.mark.asyncio
+async def test_reviewer_splits_beside_the_callers_pane(monkeypatch: pytest.MonkeyPatch) -> None:
+    result, call, lookups = await _launch_placed(
+        monkeypatch,
+        replies=[{"success": True, "run_id": _FIRST_REVIEW_RUN_ID}],
+        placement=_PLACEMENT,
+    )
+
+    assert [args[1:] for args in lookups] == [("parent", "#42")]
+    call.assert_awaited_once()
+    launch_args = call.call_args.args[1]
+    assert launch_args["placement"] == _PLACEMENT
+    from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+    create_spawn_agent_registry(MagicMock())._prepare_call("spawn_agent", launch_args)
+    assert (launch_args["provider"], launch_args["model"], launch_args["reasoning_effort"]) == (
+        "codex",
+        "gpt-5.6-terra",
+        "auto",
+    )
+    assert result["reviewer_run_id"] == _FIRST_REVIEW_RUN_ID
+
+
+@pytest.mark.asyncio
+async def test_reviewer_without_a_caller_pane_launches_unplaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, call, _lookups = await _launch_placed(
+        monkeypatch,
+        replies=[{"success": True, "run_id": _FIRST_REVIEW_RUN_ID}],
+        placement=None,
+    )
+
+    call.assert_awaited_once()
+    assert "placement" not in call.call_args.args[1]
+    assert result["review_status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_refused_placement_relaunches_the_queued_reviewer_unplaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refused = {"success": False, "placement_error": "forbidden", "error": "other project"}
+    launched = {"success": True, "run_id": _FIRST_REVIEW_RUN_ID}
+    result, call, _lookups = await _launch_placed(
+        monkeypatch, replies=[refused, launched], placement=_PLACEMENT, runs=_QueuedRunStore
+    )
+
+    placed, unplaced = (launch.args[1] for launch in call.call_args_list)
+    assert placed == {**unplaced, "placement": _PLACEMENT}
+    assert "placement" not in unplaced
+    assert result["reviewer_run_id"] == _FIRST_REVIEW_RUN_ID
+    assert result["review_status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_failed_placed_launch_that_consumed_its_run_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed = {"success": False, "placement_error": "busy", "error": "pane taken"}
+    result, call, _lookups = await _launch_placed(
+        monkeypatch, replies=[failed], placement=_PLACEMENT
+    )
+
+    call.assert_awaited_once()
+    assert result["error"] == "agentic_review_launch_failed"
+    assert result["review_status"] == "error"
+
+
 @pytest.mark.asyncio
 async def test_finish_launch_error_in_background_close_is_surfaced(
     monkeypatch: pytest.MonkeyPatch,
@@ -2150,13 +2251,19 @@ class _RunStore:
     def fail(self, run_id: str, error: str) -> SimpleNamespace:
         return SimpleNamespace(id=run_id, error=error, status="failed", terminal_reason=None)
 
-    def get(self, _run_id: str) -> None:
+    def get(self, _run_id: str) -> SimpleNamespace | None:
         return None
 
 
 def _patch_store(monkeypatch: pytest.MonkeyPatch, store: _Store) -> None:
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     monkeypatch.setattr(orchestration, "LocalAgentRunManager", _RunStore)
+    monkeypatch.setattr(orchestration, "reviewer_placement", lambda *_args: None)
+
+
+class _QueuedRunStore(_RunStore):
+    def get(self, run_id: str) -> SimpleNamespace:
+        return SimpleNamespace(id=run_id, status="queued", terminal_reason=None)
 
 
 def _revalidate(evaluation: CloseEvaluation) -> Callable[..., Any]:

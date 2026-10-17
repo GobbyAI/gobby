@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess  # nosec B404 # needed for git error handling
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,29 +19,18 @@ from gobby.agents.isolation_models import (
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
-from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
-from gobby.worktrees.base_branch import WorktreeBaseError
+from gobby.worktrees.base_branch import select_worktree_base
 
 logger = logging.getLogger("gobby.agents.isolation")
 
 
-async def _capture_base_commit_sha(isolation_path: str) -> str:
-    result = await daemon_git.run(["rev-parse", "HEAD"], cwd=isolation_path, timeout=10)
-    if not isinstance(result, GitOk):
-        detail = result.stderr.strip() or "git rev-parse HEAD failed"
-        if isinstance(result, GitTimeout):
-            detail = f"git rev-parse HEAD timed out after {result.timeout}s"
-        raise RuntimeError(f"Failed to capture base_commit_sha for {isolation_path}: {detail}")
-    return result.stdout.strip()
-
-
 class CloneIsolationHandler(IsolationHandler):
     """
-    Clone isolation - create a shallow clone for full isolation.
+    Clone isolation - clone the local repository for full isolation.
 
     This handler:
     - Checks for existing clones by branch name
-    - Creates new shallow clones if needed
+    - Creates new clones at the selected fork commit if needed
     - Adds an isolation context banner to the prompt
     """
 
@@ -70,21 +58,17 @@ class CloneIsolationHandler(IsolationHandler):
         """
         Prepare clone environment.
 
+        - Select the fork commit once (omitted base: the caller's HEAD)
         - Generate branch name if not provided
         - Check for existing clone for the branch
-        - Create new shallow clone if needed
+        - Clone the local repository at the selected commit if needed
         - Return IsolationContext with clone info
         """
-        base_branch = config.base_branch
-        if base_branch is None:
-            base_branch = (
-                await self._git_manager.get_current_branch() if self._git_manager else None
-            )
-            if not base_branch:
-                raise WorktreeBaseError(
-                    "detached_head_requires_base",
-                    "Clone creation requires an explicit base on detached HEAD",
-                )
+        if self._git_manager is None:
+            raise RuntimeError("Clone isolation requires the source repository's git manager")
+        base_branch, base_commit_sha = await select_worktree_base(
+            self._git_manager, config.base_branch
+        )
 
         # Reset partial state
         state_key = spawn_state_key(config)
@@ -137,37 +121,16 @@ class CloneIsolationHandler(IsolationHandler):
                     )
                 await asyncio.to_thread(self._clone_storage.delete, existing.id)
 
-        use_local = False
-        if self._git_manager is not None:
-            # Check for unpushed commits on the base branch
-            try:
-                has_unpushed, unpushed_count = await self._git_manager.has_unpushed_commits(
-                    base_branch
-                )
-                if has_unpushed:
-                    use_local = True
-                    logger.info(
-                        "Using local repo for clone (%s unpushed commits on '%s')",
-                        unpushed_count,
-                        base_branch,
-                    )
-            except (subprocess.CalledProcessError, OSError):
-                logger.warning(
-                    "Failed to check unpushed commits for clone, using remote",
-                    exc_info=True,
-                )
-
         # Generate clone path
         project_name = Path(config.project_path).name
         clone_path = self._generate_clone_path(branch_name, project_name)
 
-        # Create clone (full when use_local, shallow otherwise)
+        # Clone the local repository at the selected commit
         result = await self._clone_manager.create_clone(
             clone_path=clone_path,
             branch_name=branch_name,
             base_branch=base_branch,
-            shallow=not use_local,
-            use_local=use_local,
+            base_commit_sha=base_commit_sha,
         )
 
         if not result.success:
@@ -189,9 +152,7 @@ class CloneIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         partial_state["id"] = clone.id
 
-        base_commit_sha: str | None = None
         if config.task_id is not None:
-            base_commit_sha = await _capture_base_commit_sha(clone_path)
             await asyncio.to_thread(
                 TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic,
                 config.task_id,
@@ -218,7 +179,7 @@ class CloneIsolationHandler(IsolationHandler):
             extra={
                 "source_repo": config.project_path,
                 "base_branch": base_branch,
-                **({"base_commit_sha": base_commit_sha} if base_commit_sha else {}),
+                "base_commit_sha": base_commit_sha,
             },
         )
 
@@ -286,7 +247,7 @@ class CloneIsolationHandler(IsolationHandler):
         working in a clone, not the original repository.
         """
         warning = (
-            "Clone context — you are working in an isolated shallow clone, "
+            "Clone context — you are working in an isolated clone, "
             "not the original repository.\n"
             f"- Branch: {ctx.branch_name}\n"
             f"- Clone path: {ctx.cwd}\n"

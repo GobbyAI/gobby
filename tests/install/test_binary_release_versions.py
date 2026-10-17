@@ -58,6 +58,25 @@ def binary(path: Path, version: str = "1.0.0") -> Path:
     return path
 
 
+@pytest.mark.parametrize("member", ["gcode", "ghook"])
+def test_source_identity_ignores_tests_rs_but_tracks_production_source(
+    workspace: Path, member: str
+) -> None:
+    source = workspace / "crates/gcore/src/ai/daemon"
+    source.mkdir(parents=True)
+    tests = source / "tests.rs"
+    tests.write_text("#[test] fn original() {}\n")
+    production = source / "operations.rs"
+    production.write_text("pub fn original() {}\n")
+    original = release.workspace_source_identity(workspace, member)
+
+    tests.write_text("#[test] fn changed() {}\n")
+    assert release.workspace_source_identity(workspace, member) == original
+
+    production.write_text("pub fn changed() {}\n")
+    assert release.workspace_source_identity(workspace, member) != original
+
+
 @pytest.mark.parametrize("member", ["gterm", "gclient"])
 def test_ignored_dependency_outputs_allow_same_source_repromotion(
     workspace: Path, tmp_path: Path, member: str

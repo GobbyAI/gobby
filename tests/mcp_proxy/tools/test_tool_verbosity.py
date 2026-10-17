@@ -100,7 +100,8 @@ async def test_worktree_verbosity_reduction() -> None:
     mock_storage.create.return_value = mock_wt
     mock_storage.get_by_branch.return_value = None  # Ensure no collision
     mock_git.create_worktree = AsyncMock(return_value=MagicMock(success=True))
-    mock_git.has_unpushed_commits = AsyncMock(return_value=(False, 0))
+    mock_git.get_current_branch = AsyncMock(return_value="main")
+    mock_git.get_local_commit = AsyncMock(return_value="abc123")
 
     # Mock resolve_project_context to avoid invalid repo errors
     with (
@@ -126,7 +127,7 @@ async def test_worktree_verbosity_reduction() -> None:
 
         assert result["success"] is True
         assert result["worktree_id"] == "wt-123"
-        mock_git.has_unpushed_commits.assert_awaited_once_with("main")
+        mock_git.get_local_commit.assert_awaited_once_with("HEAD^{commit}")
         mock_git.create_worktree.assert_awaited_once()
         # Should be minimal
 

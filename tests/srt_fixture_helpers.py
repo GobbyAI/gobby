@@ -10,6 +10,7 @@ from gobby.agents.srt_package_patch import (
     HTTP_PROXY_PATH,
     MACOS_PROFILE_PATH,
     MUX_PROXY_PATH,
+    WHICH_PATH,
     apply_srt_proxy_patch,
 )
 
@@ -19,12 +20,25 @@ def upstream_proxy_bytes(name: str = "http-proxy") -> bytes:
     return gzip.decompress(fixture.read_bytes())
 
 
+def write_srt_settings_fixture(root: Path) -> None:
+    """Materialize the real settings parser, dependencies and manager without launching SRT."""
+    fixture = Path(__file__).parent / "fixtures/srt/settings-loader-0.0.79.tar.gz"
+    payload = fixture.read_bytes()
+    expected = "c8b6152f8514389aa667948df67913edba8bf0592df839ed553a7fd1f5aa2925"
+    if hashlib.sha256(payload).hexdigest() != expected:
+        raise ValueError("Pinned SRT settings loader fixture checksum mismatch")
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        archive.extractall(root, filter="data")
+
+
 def write_srt_proxy_fixture(root: Path, *, patched: bool = True) -> Path:
     path = root / HTTP_PROXY_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(upstream_proxy_bytes())
     (root / MUX_PROXY_PATH).write_bytes(upstream_proxy_bytes("mux-proxy"))
     (root / MACOS_PROFILE_PATH).write_bytes(upstream_proxy_bytes("macos-sandbox-utils"))
+    (root / WHICH_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (root / WHICH_PATH).write_bytes(upstream_proxy_bytes("which"))
     if patched:
         apply_srt_proxy_patch(root)
     return path

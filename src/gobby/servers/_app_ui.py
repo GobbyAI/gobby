@@ -14,6 +14,7 @@ from starlette.requests import ClientDisconnect
 from websockets.typing import Subprotocol
 
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
+from gobby.servers.websocket.native_bridge import mount_native_bridge
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -76,6 +77,8 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
     @app.websocket("/ws")
     async def websocket_endpoint_root(websocket: WebSocket) -> None:
         await websocket_endpoint(websocket, "")
+
+    mount_native_bridge(app, server)
 
     logger.debug("ASGI WebSocket endpoint mounted at /ws")
 

@@ -13,7 +13,7 @@ Implementation lives in focused sibling modules:
 
 from __future__ import annotations
 
-from gobby.agents.isolation_clone import CloneIsolationHandler, _capture_base_commit_sha
+from gobby.agents.isolation_clone import CloneIsolationHandler
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.isolation_factory import get_isolation_handler
 from gobby.agents.isolation_models import (
@@ -43,7 +43,6 @@ __all__ = [
     "NoneIsolationHandler",
     "SpawnConfig",
     "WorktreeIsolationHandler",
-    "_capture_base_commit_sha",
     "_copy_cli_hooks",
     "_copy_droid_hooks_for_isolation",
     "_load_droid_isolation_hooks_template",

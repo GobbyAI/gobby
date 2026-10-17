@@ -247,7 +247,7 @@ async def test_isolated_fixture_enables_post_compact_before_any_launch(tmp_path:
     with (
         patch.object(fixture_module, "verify_binary_set", return_value=tmp_path / "native"),
         patch.object(fixture_module, "link_existing_auth") as auth,
-        patch.object(fixture_module, "link_operator_srt") as srt,
+        patch.object(fixture_module, "link_spawning_operator_srt") as srt,
         patch("tests.e2e.test_composer_live_proof.tempfile.mkdtemp", return_value=str(root)),
         patch.object(fixture_module, "ConfigMutations", return_value=mutations),
         patch("tests.e2e.test_composer_live_proof.subprocess.Popen") as launch,

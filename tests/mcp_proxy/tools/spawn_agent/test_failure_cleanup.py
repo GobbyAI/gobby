@@ -52,7 +52,6 @@ def _worktree_spawn_config(branch_name: str) -> SpawnConfig:
 async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
     git_manager = MagicMock(spec=WorktreeGitManager, repo_path="/repo")
     git_manager.get_current_branch.return_value = "main"
-    git_manager.has_unpushed_commits.return_value = (False, 0)
     git_manager.create_worktree.return_value = SimpleNamespace(success=True)
     worktree_storage = MagicMock(db=MagicMock())
     worktree_storage.get_by_branch.return_value = None

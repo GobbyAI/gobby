@@ -12,6 +12,50 @@ mod build_zig;
 
 use build_zig::resolve_zig;
 
+#[test]
+#[cfg(unix)]
+fn the_staged_build_root_copies_the_manifests_and_links_the_rest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vendored = temp.path().join("vendored");
+    for dir in ["src", "pkg", ".zig-cache", "zig-out", "zig-pkg"] {
+        fs::create_dir_all(vendored.join(dir)).expect("vendored dir");
+    }
+    for file in ["build.zig", "build.zig.zon", "VERSION"] {
+        fs::write(vendored.join(file), file).expect("vendored file");
+    }
+    let root = temp.path().join("root");
+
+    build_zig::stage_build_root(&vendored, &root).expect("first staging");
+    fs::create_dir_all(root.join("zig-pkg/fetched")).expect("a fetched package");
+    build_zig::stage_build_root(&vendored, &root).expect("restaging");
+
+    for manifest in ["build.zig", "build.zig.zon"] {
+        let staged = root.join(manifest);
+        let kind = fs::symlink_metadata(&staged).expect("staged manifest");
+        assert!(kind.file_type().is_file(), "{manifest} must be a real file");
+        assert_eq!(
+            fs::read_to_string(&staged).expect("read manifest"),
+            manifest
+        );
+    }
+    for linked in ["src", "pkg", "VERSION"] {
+        assert_eq!(
+            fs::read_link(root.join(linked)).expect("staged link"),
+            vendored.join(linked)
+        );
+    }
+    for output in [".zig-cache", "zig-out"] {
+        assert!(
+            fs::symlink_metadata(root.join(output)).is_err(),
+            "{output} must not be staged"
+        );
+    }
+    assert!(
+        root.join("zig-pkg/fetched").is_dir(),
+        "restaging keeps the packages Zig unpacked"
+    );
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -133,13 +177,16 @@ fn default_features_build_invokes_no_zig() {
 fn darwin_nonsimd_archive_links_every_member() {
     let temp = tempfile::tempdir().expect("tempdir");
     let vendor = workspace_root().join("crates/gterminal/vendor/libghostty-vt");
+    let root = temp.path().join("build-root");
+    build_zig::stage_build_root(&vendor, &root).expect("stage the Zig build root");
     let prefix = temp.path().join("install");
     let cache = temp.path().join("cache");
+    let global_cache = temp.path().join("global-cache");
     let version = fs::read_to_string(vendor.join("VERSION")).expect("vendor version");
     let mut command =
         Command::new(build_zig::machine_zig().expect("Zig 0.16 for the vendored build"));
     command
-        .current_dir(&vendor)
+        .current_dir(&root)
         .args([
             "build",
             "-Demit-lib-vt",
@@ -152,7 +199,9 @@ fn darwin_nonsimd_archive_links_every_member() {
         .arg("--prefix")
         .arg(&prefix)
         .arg("--cache-dir")
-        .arg(&cache);
+        .arg(&cache)
+        .arg("--global-cache-dir")
+        .arg(&global_cache);
     if let Some(system_dir) = std::env::var_os("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
         command.arg("--system").arg(system_dir);
     }

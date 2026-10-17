@@ -11,11 +11,11 @@ from gobby.hooks._normalization_operands import (
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
-    _has_perl_inplace_option,
     _looks_path_target,
     _rebase_shell_paths,
     _shell_positional_args,
 )
+from gobby.hooks._perl_arguments import perl_inplace_operands
 
 
 def classify_file_command(
@@ -40,11 +40,10 @@ def classify_file_command(
                 extra={"_canonical_repo_mutation_scope_unknown": True} if unknown else None,
             )
 
-    if cmd == "perl" and _has_perl_inplace_option(parts):
-        positional = _shell_positional_args(parts)
-        candidate = positional[-1] if positional else None
-        paths = [candidate] if candidate and _looks_path_target(candidate) else []
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
+    inplace = perl_inplace_operands(parts) if cmd == "perl" else None
+    if inplace is not None:
+        paths = [candidate for candidate in inplace if _looks_path_target(candidate)]
+        rebased_paths = tuple(dict.fromkeys(_rebase_shell_paths(paths, cwd)))
         return _ShellSegmentMetadata(
             "write",
             paths=rebased_paths,

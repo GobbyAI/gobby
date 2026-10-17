@@ -498,23 +498,26 @@ fn leader_exit_under_kill_emits_no_terminal_exited() {
     send_json(&mut events, &json!({"method": "subscribe_events"}));
     assert_eq!(recv_json(&mut events)["gap"], false);
     // The leader dies on SIGTERM; the background sleep ignores it and keeps
-    // the group alive until the kill escalates.
-    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+    // the group alive until the kill escalates. The marker proves the trap is
+    // set, and an ignored signal stays ignored across exec. A marker, not
+    // pgrep: a sandboxed run cannot list processes.
+    let trap_set = dir.path().join("trap-set");
+    let script = format!(
+        "(trap '' TERM; : > '{}'; exec sleep 30) & exec sleep 30",
+        trap_set.display()
+    );
+    let (terminal_id, spawn_key, host_terminal_id, _) = prepare_terminal(
         &mut stream,
         &mut host,
         1,
         "kill-exit-event",
-        &["sh", "-c", "(trap '' TERM; exec sleep 30) & exec sleep 30"],
+        &["sh", "-c", &script],
         BTreeMap::from([("PATH", "/bin:/usr/bin")]),
     );
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
-    wait_until("both sleeps in the group", || {
-        let listed = std::process::Command::new("pgrep")
-            .args(["-g", &pgid.to_string(), "sleep"])
-            .output()
-            .expect("pgrep");
-        String::from_utf8_lossy(&listed.stdout).lines().count() == 2
+    wait_until("the background sleep to ignore SIGTERM", || {
+        trap_set.exists()
     });
     send_json(
         &mut stream,

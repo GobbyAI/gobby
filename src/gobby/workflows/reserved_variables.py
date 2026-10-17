@@ -23,6 +23,12 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "handoff_compact_continue_pending",
         "handoff_pull_pending",
         "operator_claim_hold",
+        # Operator approval of exact unowned dirty paths; only the operator CLI writes it.
+        "operator_dirty_path_approvals",
+        # Edit ledgers the foreign-dirty edit gate trusts; only the edit observer writes them.
+        "session_dirty_file_checkouts",
+        "session_dirty_files",
+        "task_edited_file_checkouts",
         "grok_pending_briefing",
         "grok_pending_delivery",
         "grok_pending_turn_context",

@@ -152,6 +152,21 @@ task-close rules in control.
 Active durable agent/task waits consume no attempts. Bundled stop-gate rules pair it with `max_stop_attempts`
 to prevent permanent stop blocking.
 
+A standing seat with no claimed task can go idle without a wait, but only at a
+step its definition marks `idle: true` (the developer's `claim`, the code
+reviewer's `await`, the researcher's `serve`, the consolidator's `consolidate`).
+Native `set_variable` otherwise passes every step as an infrastructure tool; at
+an idle step it must meet the step's `allowed_tools`, and the step guard also
+admits the declaration itself: `set_variable` of `seat_idle` to true, in session
+scope, on the caller's own session. An idle step that does not list
+`set_variable`, such as the developer's `claim`, refuses every other write. The engine
+projects the current step's flag as `current_step_idle`, and
+`require-step-completion` allows the stop while `seat_idle` and
+`current_step_idle` are true and `task_claimed` is false. The
+`clear-seat-idle-on-turn-start` rule clears `seat_idle` on the next turn start
+(a message or assignment), and leaving the idle step ends the exemption within
+the same turn.
+
 ### Turn-Start Reset
 
 On `turn_start`, the engine resets transient stop-cycle state such as:

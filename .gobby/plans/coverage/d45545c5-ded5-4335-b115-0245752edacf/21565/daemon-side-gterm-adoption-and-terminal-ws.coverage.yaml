@@ -3,7 +3,7 @@ header:
   plan_hash: cb9d43cedd8b8d66b3170769fc699ad4fdbfc1b8f4c600d2861dd4d548218db5
   root_task_ref: '21565'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-16T06:36:52Z'
+  generated_at: '2026-10-16T08:47:08Z'
   task_tree_source: db
   task_tree_source_hash: a7f0dccdf2e562af5b753eb805f07c8bb323701f3dc86d4c343494c9a63922e1
   evidence_summary: []
@@ -1431,55 +1431,5 @@ rows:
       HTTP and WS dispatch; `Proxy` delegates, `Native` serves both `/api/terminals`
       GETs and the terminal mes...'
     matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::daemon_restart_preserves_live_terminal
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.1
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.1' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.1
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.2
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.2' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.2
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.3
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.3' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.3
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.4
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.4' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.4
-  deferral_target: null
-  detail: ''
-- section_id: '1.8'
-  item_id: 1.8.5
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23214'
-    validation_criteria_snippet: item '1.8.5' is not present in section '1.8'
-    matched_artifact_ref: covers:daemon-side-gterm-adoption-and-terminal-ws:1.8:1.8.5
   deferral_target: null
   detail: ''

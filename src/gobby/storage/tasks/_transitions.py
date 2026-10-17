@@ -83,9 +83,18 @@ def reopen_closed_ancestors_in_txn(conn: Any, task_id: str) -> list[str]:
     parent, the state #22570 stops create and reparent from reaching. The walk
     continues past an already-open ancestor because legacy rows can have a closed
     grandparent above an open parent. An open ancestor is left untouched, so its
-    updated_at does not move.
+    updated_at does not move. Every ancestor is locked, nearest first.
     """
-    reopened: list[str] = []
+    return [
+        ancestor_id
+        for ancestor_id in ancestor_ids_in_txn(conn, task_id)
+        if clear_closure_in_txn(conn, ancestor_id)
+    ]
+
+
+def ancestor_ids_in_txn(conn: Any, task_id: str) -> list[str]:
+    """Return a task's ancestor ids, nearest first, read without row locks."""
+    ancestor_ids: list[str] = []
     row = conn.execute(
         "SELECT parent_task_id FROM tasks WHERE id = %s",
         (task_id,),
@@ -100,10 +109,9 @@ def reopen_closed_ancestors_in_txn(conn: Any, task_id: str) -> list[str]:
         ).fetchone()
         if parent is None:
             break
-        if clear_closure_in_txn(conn, parent_id):
-            reopened.append(parent_id)
+        ancestor_ids.append(parent_id)
         parent_id = parent["parent_task_id"]
-    return reopened
+    return ancestor_ids
 
 
 def _reopen_closed_ancestors(db: HubDatabase, task_id: str) -> list[str]:

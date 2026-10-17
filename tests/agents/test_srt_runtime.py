@@ -38,6 +38,7 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
     render_srt_settings,
     verify_srt_installation,
+    verify_srt_installation_for_launch,
 )
 from gobby.utils import spawn
 from gobby.utils.dependency_requirements import (
@@ -117,6 +118,81 @@ def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
     superseded = previous_run_write_paths({})
 
     assert str((gobby_home / "hooks" / "inbox").resolve()) not in superseded
+
+
+@pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])
+def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None, tmp_path: Path) -> None:
+    from tests.srt_fixture_helpers import upstream_proxy_bytes, write_srt_settings_fixture
+
+    paths = ResolvedSandboxPaths(
+        workspace_path="/workspace",
+        read_paths=["/workspace"],
+        write_paths=["/workspace"],
+        allow_external_network=False,
+        provider=provider,
+    )
+    settings = render_srt_settings(paths)
+    baseline = render_srt_settings(paths.model_copy(update={"provider": None}))
+    expected = baseline | {
+        "network": baseline["network"] | {"allowMachLookup": ["com.apple.windowserver.active"]}
+    }
+    assert "allowMachLookup" not in baseline
+
+    # Exercise the pinned generator: the setting must grant precisely this
+    # global-name, while every other Seatbelt rule stays byte-for-byte equal.
+    node = shutil.which("node")
+    assert node is not None
+    write_srt_settings_fixture(tmp_path)
+    script = r"""
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const root = process.argv[1];
+const {SandboxRuntimeConfigSchema} = await import(
+  pathToFileURL(path.join(root, 'dist/sandbox/sandbox-config.js')));
+const {source, settings} = JSON.parse(fs.readFileSync(0, 'utf8'));
+const parsed = SandboxRuntimeConfigSchema.parse(settings);
+const manager = fs.readFileSync(path.join(root, 'dist/sandbox/sandbox-manager.js'), 'utf8');
+const getter = manager.match(/^function getAllowMachLookup\(\) \{[\s\S]*?^}/m);
+const call = manager.match(/return wrapCommandWithSandboxMacOS\(\{([\s\S]*?)^\s*}\);/m);
+const argument = call?.[1].match(/^\s*allowMachLookup: (.+),$/m);
+if (!getter || !argument) throw new Error('missing pinned manager Mach argument path');
+const lookup = new Function('config', `${getter[0]}; return ${argument[1]};`)(parsed);
+const body = source.match(/^function generateSandboxProfile\([\s\S]*?^}\n/m);
+if (!body) throw new Error('missing pinned profile generator');
+const factory = new Function(
+  'generateReadRules', 'generateWriteRules', 'writeRootEntries', 'resolveReadConfig',
+  'escapePath',
+  `return (${body[0]})`);
+const generate = factory(() => [], () => [], () => [], () => undefined, JSON.stringify);
+const base = {libraryDenyEntries: [], needsNetworkRestriction: true, logTag: 'test-seat'};
+console.log(JSON.stringify({
+  parsed, profiles: [generate(base), generate({...base, allowMachLookup: lookup})],
+}));
+"""
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script, str(tmp_path)],
+        input=json.dumps(
+            {"source": upstream_proxy_bytes("macos-sandbox-utils").decode(), "settings": settings}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["parsed"] == settings
+    assert settings == (expected if provider == "grok" else baseline)
+    original, rendered = output["profiles"]
+    anchor = "\n\n; POSIX IPC - shared memory"
+    rule = (
+        "\n; User-specified XPC/Mach services"
+        '\n(allow mach-lookup (global-name "com.apple.windowserver.active"))'
+    )
+    assert original.count(anchor) == 1
+    expected_profile = original.replace(anchor, rule + anchor) if provider == "grok" else original
+    assert rendered == expected_profile
 
 
 def test_render_settings_uses_srt_credential_schema() -> None:
@@ -818,6 +894,11 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     # The daemon rebuilds the Zig mirror below this root before each run, so no run
     # may plant links there for the next one to follow.
     assert str(sandbox_cache.resolve()) not in allowed_writes
+    # Every platform reads the pinned runtime, read-only, but nothing beside it.
+    srt_root = gobby_home / "tools" / "srt"
+    assert str((srt_root / SRT_RELEASE.version).resolve()) in allowed_reads
+    assert str(srt_root.resolve()) not in allowed_reads
+    assert not any(Path(path).is_relative_to(srt_root.resolve()) for path in allowed_writes)
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads
@@ -1104,7 +1185,15 @@ def test_verify_srt_installation_wraps_missing_lockfile(
         caplog.at_level("WARNING"),
         pytest.raises(SrtRuntimeError, match="missing or invalid"),
     ):
-        verify_srt_installation(
+        verify_srt_installation()
+    # Status probes share this verification, so it raises without a lockout record.
+    assert "Managed SRT validation failed closed" not in caplog.messages
+
+    with (
+        caplog.at_level("WARNING"),
+        pytest.raises(SrtRuntimeError, match="missing or invalid"),
+    ):
+        verify_srt_installation_for_launch(
             run_id="run-lockout",
             provider="codex",
             policy_hash="policy-hash",

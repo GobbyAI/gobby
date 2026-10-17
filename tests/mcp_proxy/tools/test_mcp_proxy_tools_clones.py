@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -116,6 +116,11 @@ def registry(
         "gobby.mcp_proxy.tools._clones_operations.new_stash_marker",
         lambda _operation: "test-stash-marker",
     )
+    monkeypatch.setattr("gobby.mcp_proxy.tools._clones_creation.WorktreeGitManager", MagicMock())
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools._clones_creation.select_worktree_base",
+        AsyncMock(return_value=("main", "abc123")),
+    )
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
@@ -183,8 +188,8 @@ class TestCreateClone:
     async def test_create_clone_success(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
-        """Create clone successfully."""
-        mock_git_manager.shallow_clone.return_value = MagicMock(success=True)
+        """Create a local clone at the selected commit."""
+        mock_git_manager.create_clone.return_value = MagicMock(success=True)
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-123",
@@ -209,14 +214,19 @@ class TestCreateClone:
 
         assert result["success"] is True
         assert result["clone"]["id"] == "clone-123"
-        mock_git_manager.shallow_clone.assert_called_once()
+        assert result["base_commit_sha"] == "abc123"
+        assert result["index_source"] == "local"
+        mock_git_manager.create_clone.assert_awaited_once_with(
+            "/tmp/clones/test", "main", "main", base_commit_sha="abc123"
+        )
+        mock_git_manager.shallow_clone.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_clone_git_failure(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
         """Create clone fails when git operation fails."""
-        mock_git_manager.shallow_clone.return_value = MagicMock(success=False, error="Clone failed")
+        mock_git_manager.create_clone.return_value = MagicMock(success=False, error="Clone failed")
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
 
         result = await registry.call(
@@ -319,7 +329,7 @@ class TestCreateClone:
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
         """Create clone linked to a task."""
-        mock_git_manager.shallow_clone.return_value = MagicMock(success=True)
+        mock_git_manager.create_clone.return_value = MagicMock(success=True)
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-123",
@@ -436,53 +446,33 @@ class TestCreateClone:
         assert mock_clone_storage.create.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_create_clone_use_local(
-        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    async def test_create_clone_selection_refusal_creates_nothing(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Create clone with use_local clones base_branch then creates new branch."""
-        mock_git_manager.full_clone.return_value = MagicMock(success=True)
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0)
-        mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
-        mock_clone_storage.create.return_value = Clone(
-            id="clone-local",
-            project_id="11111111-1111-4111-8111-111111110001",
-            branch_name="feature",
-            clone_path="/tmp/clones/local",
-            base_branch="main",
-            task_id=None,
-            agent_session_id=None,
-            status="active",
-            remote_url="https://github.com/user/repo.git",
-            last_sync_at=None,
-            cleanup_after=None,
-            created_at=RECENT_TIMESTAMP,
-            updated_at=RECENT_TIMESTAMP,
+        """A refused fork selection returns its code before any clone exists."""
+        from gobby.worktrees.base_branch import WorktreeBaseError
+
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools._clones_creation.select_worktree_base",
+            AsyncMock(side_effect=WorktreeBaseError("detached_head_requires_base", "Detached")),
         )
 
         result = await registry.call(
             "create_clone",
-            {
-                "branch_name": "feature",
-                "clone_path": "/tmp/clones/local",
-                "use_local": True,
-            },
+            {"branch_name": "feature", "clone_path": "/tmp/clones/local"},
         )
 
-        assert result["success"] is True
-        assert result["clone"]["id"] == "clone-local"
-        # Should use full_clone with base_branch (not branch_name) when use_local=True
-        mock_git_manager.full_clone.assert_called_once()
-        mock_git_manager.shallow_clone.assert_not_called()
-        # Source should be the local repo path, branch should be base_branch
-        call_args = mock_git_manager.full_clone.call_args
-        assert call_args.kwargs["remote_url"] == str(mock_git_manager.repo_path)
-        assert call_args.kwargs["branch"] == "main"
-        # Should create new branch in the clone since branch_name != base_branch
-        mock_git_manager.run_git_command.assert_called_once_with(
-            ["checkout", "-b", "feature"],
-            cwd="/tmp/clones/local",
-            check=True,
-        )
+        assert result == {
+            "success": False,
+            "error": "Detached",
+            "error_code": "detached_head_requires_base",
+        }
+        mock_git_manager.create_clone.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
 
 
 class TestGetClone:

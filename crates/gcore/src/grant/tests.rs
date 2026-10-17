@@ -331,6 +331,59 @@ fn bootstrap_daemon_url_configuration_error_from_process_and_request() {
     }
 }
 
+#[test]
+fn invalid_daemon_url_syntax_is_configuration_error() {
+    let harness = Harness::new();
+    let _env = PoisonedEnv::apply(&harness.home.join("unused-bootstrap.json"));
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores these values on drop.
+    unsafe {
+        std::env::set_var("GOBBY_HOME", &harness.home);
+        for name in [
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+            "GOBBY_AGENT_RUN_ID",
+            "GOBBY_MANAGED_EXECUTION_ID",
+            crate::local_token::AGENT_API_TOKEN_ENV,
+            "GOBBY_PORT",
+            "GOBBY_DAEMON_PORT",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+    for url in [
+        "http://127.0.0.1:not-a-port",
+        "http://127.0.0.1:65536",
+        "http://:60887",
+        "http://[::1]:not-a-port",
+        "http://[]:60887",
+    ] {
+        for from_override in [false, true] {
+            fs::write(
+                harness.home.join("bootstrap.yaml"),
+                format!("daemon_url: '{url}'\n"),
+            )
+            .unwrap();
+            // SAFETY: The environment lock and restoration remain held above.
+            unsafe {
+                if from_override {
+                    std::env::set_var("GOBBY_DAEMON_URL", url);
+                    fs::write(harness.home.join("bootstrap.yaml"), "{}\n").unwrap();
+                } else {
+                    std::env::remove_var("GOBBY_DAEMON_URL");
+                }
+            }
+            let request = AcquireRequest::from_process(&harness.project_root).unwrap();
+            let error = acquire_with(&request).expect_err("invalid daemon URL");
+            assert_eq!(
+                error,
+                GrantError::BootstrapConfig("invalid daemon url".into()),
+                "url={url}, override={from_override}"
+            );
+            assert_eq!(error.exit_status(), 2);
+            assert!(!error.is_retryable_presentation());
+        }
+    }
+}
+
 struct PoisonedEnv {
     _lock: MutexGuard<'static, ()>,
     saved: [(&'static str, Option<OsString>); 10],

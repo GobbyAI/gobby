@@ -106,6 +106,16 @@ def fake_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             )
 
         mode = os.environ.get("FAKE_RTK_MODE", "rewrite")
+        if mode.startswith("release_"):
+            captures = json.loads(
+                (Path(__file__).parents[1] / "fixtures/rtk/contracts-1.0.1.json").read_text()
+            )
+            result = captures[mode.removeprefix("release_")]
+            return FakeProcess(
+                code=result["exit"],
+                stdout=result["stdout"].encode(),
+                stderr=result["stderr"].encode(),
+            )
         if mode == "pass":
             return FakeProcess(code=1)
         if mode == "deny":
@@ -324,9 +334,59 @@ async def test_rtk_rewrite_exit_contract(
         assert event.data["tool_input"]["command"] == "git status"
 
 
+@pytest.mark.parametrize("mode", ["allow", "ask", "deny"])
+async def test_rtk_101_captured_rewrite_contract(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    _create_rule(manager, "rtk-release-contract", [_proxy_effect()], priority=90)
+    monkeypatch.setenv("FAKE_RTK_MODE", f"release_{mode}")
+    event = _event()
+    response = await RuleEngine(db).evaluate(event, SESSION_ID, {})
+    assert response.decision == "allow"
+    assert response.permission_decision is None
+    expected = None if mode == "deny" else {"command": "rtk git status"}
+    assert response.modified_input == expected
+    assert event.data["tool_input"]["command"] == (
+        "git status" if mode == "deny" else "rtk git status"
+    )
+
+
+async def test_rtk_defensive_message_uses_native_101_hook_reason(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1.0.1 rewrite does not emit messages; this is its advertised defensive contract.
+    captures = json.loads(
+        (Path(__file__).parents[1] / "fixtures/rtk/contracts-1.0.1.json").read_text()
+    )
+    native = json.loads(captures["hook_pipeline_deny"]["stdout"])
+    message = native["hookSpecificOutput"]["permissionDecisionReason"]
+    monkeypatch.setenv("FAKE_RTK_MODE", "pipeline_deny")
+    monkeypatch.setenv("FAKE_RTK_DENY_MESSAGE", message)
+    _create_rule(manager, "rtk-defensive-deny", [_proxy_effect()], priority=90)
+    event = _event()
+    response = await RuleEngine(db).evaluate(event, SESSION_ID, {})
+    assert response.decision == "block"
+    assert response.reason == message
+    assert response.modified_input is None
+    assert event.data["tool_input"]["command"] == "git status"
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
-    [("\x1b[31mDenied\x1b[0m\x00\x07", "Denied"), ("x" * 5000, "x" * 4096)],
+    [
+        ("\x1b[31mDenied\x1b[0m\x00\x07", "Denied"),
+        ("x" * 5000, "x" * 4096),
+        ("Denied " + "x" * (70 * 1024), "Denied " + "x" * (4096 - 7)),
+        (" " * (70 * 1024) + "Denied", "RTK pipeline denied command."),
+    ],
+    ids=["sanitize", "bounded", "oversized", "message-beyond-limit"],
 )
 async def test_rtk_pipeline_denial_is_bounded_plain_text_and_stops_rewrites(
     db: HubDatabase,
@@ -342,12 +402,14 @@ async def test_rtk_pipeline_denial_is_bounded_plain_text_and_stops_rewrites(
     monkeypatch.setenv("FAKE_RTK_DENY_MESSAGE", message.replace("\x00", ""))
     outcomes = _record_rtk_outcomes(monkeypatch)
     variables: dict[str, Any] = {}
-    response = await RuleEngine(db).evaluate(_event(), SESSION_ID, variables)
+    event = _event()
+    response = await RuleEngine(db).evaluate(event, SESSION_ID, variables)
     assert response.decision == "block"
     assert response.reason == expected
     assert response.modified_input is None
     assert len(outcomes) == 1
     assert "_rewrite_input" not in variables
+    assert event.data["tool_input"]["command"] == "git status"
 
 
 async def test_rtk_rewrite_is_permission_neutral(
@@ -393,6 +455,42 @@ async def test_unsupported_rtk_jq_rewrite_falls_back_to_original_command(
     )
 
     assert response.modified_input is None
+    assert response.permission_decision is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest tests/e2e/test_live.py --collect-only -q",
+        "uv run pytest tests/e2e/test_live.py --co -q",
+        "python -m pytest --collect-only tests/e2e/test_live.py",
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_live.py --collect-only -q",
+    ],
+)
+async def test_pytest_collection_keeps_raw_positive_count(
+    command: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+    assert response.modified_input is None
+    assert response.permission_decision is None
+
+
+@pytest.mark.parametrize(
+    "command", ["echo pytest --co", "uv run echo pytest --co", "coverage run script.py --co"]
+)
+async def test_collection_looking_arguments_keep_other_rtk_rewrites(
+    command: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+    assert response.modified_input == {"command": f"rtk {command}"}
     assert response.permission_decision is None
 
 

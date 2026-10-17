@@ -20,6 +20,7 @@ from gobby.config.validation_detection import default_validation_detection_confi
 from gobby.sessions.transcripts.base import RawLine
 from gobby.storage.session_models import Session
 from gobby.tasks import (
+    transcript_background,
     transcript_evidence,
     transcript_evidence_cache,
     transcript_evidence_snapshots,
@@ -484,6 +485,119 @@ async def test_pre_rtk_parity_checkpoint_is_rederived(
     refreshed = await _derive(session, BASE_TIME, set(), tmp_path)
     assert parse_counts == [len(records), len(records)]
     assert refreshed.validation_runs[0].outcome == "success"
+
+
+@pytest.mark.parametrize("reader_kind", ["grep", "read", "monitor"])
+async def test_pre_rtk_reader_checkpoint_replays_original_bound_output(
+    tmp_path: Path, parse_counts: list[int], monkeypatch: pytest.MonkeyPatch, reader_kind: str
+) -> None:
+    """A restart upgrades an unrecovered v38 checkpoint from the original transcript."""
+    transcript = tmp_path / "rtk-reader-version.jsonl"
+    output_path = tmp_path / "tasks" / "job.output"
+    test_path = "tests/tasks/test_a.py"
+    command = f"uv run rtk pytest {test_path} -q"
+    monitor = reader_kind == "monitor"
+    output = "Pytest: 1 passed in 0.01s"
+    launch_receipt = (
+        "Command running in background with ID: job. Output is being written to: "
+        f"{output_path}. You will be notified when it completes."
+    )
+    records = _claude_tool_pair(
+        command=command,
+        call_id="job-call",
+        start=BASE_TIME,
+        result=launch_receipt,
+    )
+    records[0]["message"]["content"][0]["input"]["run_in_background"] = True
+    records.append(
+        {
+            "type": "user",
+            "timestamp": (BASE_TIME + timedelta(seconds=2)).isoformat(),
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>job</task-id><tool-use-id>job-call</tool-use-id>"
+                f"<output-file>{output_path}</output-file><status>completed</status>"
+                f'<summary>Background command "{command}" completed (exit code 0)</summary>'
+                "</task-notification>",
+            },
+        }
+    )
+    reader = _claude_tool_pair(
+        command=(
+            f"rtk tail -n +1 -f {output_path} | rtk grep -E --line-buffered 'passed|failed'"
+            if monitor
+            else (
+                f"rtk read {output_path} --tail-lines=40"
+                if reader_kind == "read"
+                else f"rtk grep -E 'passed|failed' {output_path}"
+            )
+        ),
+        call_id="reader",
+        start=BASE_TIME + timedelta(seconds=3),
+        result=(
+            "Monitor started (task watcher, expires in 30m unless the source ends first)."
+            if monitor
+            else output
+        ),
+    )
+    if monitor:
+        reader[0]["message"]["content"][0]["name"] = "Monitor"
+    records += reader
+    if monitor:
+        records.append(
+            {
+                "type": "user",
+                "timestamp": (BASE_TIME + timedelta(seconds=5)).isoformat(),
+                "message": {
+                    "role": "user",
+                    "content": '<task-notification><task-id>watcher</task-id><summary>Monitor event: "tests"'
+                    f"</summary><event>{output}</event></task-notification>",
+                },
+            }
+        )
+    records += _claude_tool_pair(
+        command=f"uv run gobby test-types audit {test_path} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new",
+        call_id="audit",
+        start=BASE_TIME + timedelta(seconds=6),
+        result="0 new type findings",
+    )
+    _write_jsonl(transcript, records)
+    original_bytes = transcript.read_bytes()
+    session = _session("claude", transcript)
+    original_dumps = json.dumps
+
+    def legacy_dumps(value: Any, **kwargs: Any) -> str:
+        if isinstance(value, dict) and "derivation_version" in value:
+            value = {**value, "derivation_version": 38}
+        return original_dumps(value, **kwargs)
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(json, "dumps", legacy_dumps)
+        legacy.setattr(transcript_background, "_reader_command", lambda argv: argv)
+        legacy.setattr(transcript_background, "_rtk_read_path", lambda args: None)
+        old = await _derive(session, BASE_TIME, {test_path}, tmp_path)
+        snapshot = _stored_snapshot(session, tmp_path, task_files={test_path})
+        assert snapshot is not None
+        assert snapshot.watermark == len(original_bytes)
+        assert old.validation_runs[0].output != output
+        assert old.validation_runs[0].background_monitor_id is None
+
+    refreshed = await _derive(session, BASE_TIME, {test_path}, tmp_path)
+    assert parse_counts == [len(records), len(records)]
+    assert transcript.read_bytes() == original_bytes
+    expected_output = f"{launch_receipt}\n{output}" if monitor else output
+    assert refreshed.validation_runs[0].output == expected_output
+    assert refreshed.validation_runs[0].exit_code == 0
+    assert refreshed.validation_runs[0].background_monitor_id == ("watcher" if monitor else None)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=refreshed,
+        has_attributed_edits=True,
+        changed_paths=(test_path,),
+        close_root=str(tmp_path),
+    )
+    assert gate.passed, gate.to_dict()
 
 
 @pytest.mark.parametrize(

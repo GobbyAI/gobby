@@ -19,6 +19,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from types import NoneType, UnionType
 from typing import TYPE_CHECKING, Any, Final, cast, get_args, get_type_hints
 
+from gobby.servers.websocket.native_bridge import add_server_subscriptions
 from gobby.servers.websocket.terminal_ws_create import _bounded_code
 from gobby.storage.workspaces import Workspace, WorkspacePane
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
@@ -174,9 +175,10 @@ class WorkspaceWsMixin:
             log_slow(_bounded_code(exc.code, "invalid_op"), None, read_done, read_done)
             return
         read_done = time.monotonic()
-        if getattr(websocket, "subscriptions", None) is None:
-            websocket.subscriptions = set()
-        websocket.subscriptions.add(f"workspace_event:workspace_id={snapshot.workspace.id}")
+        # A native leg's broker has the subscription before the attach is confirmed.
+        await add_server_subscriptions(
+            websocket, f"workspace_event:workspace_id={snapshot.workspace.id}"
+        )
         reply = self._snapshot_reply(data, snapshot)
         reply_done = time.monotonic()
         await self._send_json(websocket, reply)
@@ -279,10 +281,11 @@ class WorkspaceWsMixin:
         snapshot = await self._read_workspace(data)
         # Register every client before yielding after the snapshot fence opens.
         # A mutation already queued on that fence must reach these subscribers.
+        # Native subscribe operations enqueue here without yielding, ahead of that mutation.
         for websocket in waiters:
-            if getattr(websocket, "subscriptions", None) is None:
-                websocket.subscriptions = set()
-            websocket.subscriptions.add(f"workspace_event:workspace_id={snapshot.workspace.id}")
+            add_server_subscriptions(
+                websocket, f"workspace_event:workspace_id={snapshot.workspace.id}"
+            )
         # Capture before this task yields its result to clients. This includes
         # default workspace creation while preventing a later reply's live
         # watermark from hiding changes published after the rows were read.

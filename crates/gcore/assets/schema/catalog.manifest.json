@@ -1517,6 +1517,22 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "config_active_state.deployment_token",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "config_active_state.published_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "config_active_state.revision",
+      "definition": "bigint|int8|NO||NEVER"
+    },
+    {
+      "name": "config_active_state.state",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
       "name": "config_state.id",
       "definition": "boolean|bool|NO||NEVER"
     },
@@ -6339,6 +6355,10 @@
       "definition": "PRIMARY KEY (completion_id, session_id)"
     },
     {
+      "name": "config_active_state.config_active_state_pkey",
+      "definition": "PRIMARY KEY (deployment_token)"
+    },
+    {
       "name": "config_state.config_state_id_check",
       "definition": "CHECK (id)"
     },
@@ -8181,6 +8201,10 @@
     {
       "name": "completion_subscribers_pkey",
       "definition": "CREATE UNIQUE INDEX completion_subscribers_pkey ON $schema.completion_subscribers USING btree (completion_id, session_id)"
+    },
+    {
+      "name": "config_active_state_pkey",
+      "definition": "CREATE UNIQUE INDEX config_active_state_pkey ON $schema.config_active_state USING btree (deployment_token)"
     },
     {
       "name": "config_state_pkey",

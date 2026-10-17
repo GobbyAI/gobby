@@ -910,6 +910,15 @@ def _record_edit(
                 timestamp=timestamp,
                 order=order,
                 tool_name=tool_name,
+                checkout_root=next(
+                    (
+                        root
+                        for root, known in state.task_checkout_paths or ()
+                        if known == task_file
+                        and Path(root, known).resolve() == Path(path).resolve()
+                    ),
+                    None,
+                ),
                 source_after=source_after,
                 source_fragment=fragment,
                 source_replaced=replaced,

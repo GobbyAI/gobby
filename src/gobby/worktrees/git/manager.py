@@ -106,9 +106,6 @@ class WorktreeGitManager(GitRunner):
     async def get_current_branch(self) -> str | None:
         return await _branch.get_current_branch(self)
 
-    async def has_unpushed_commits(self, branch: str | None = None) -> tuple[bool, int]:
-        return await _branch.has_unpushed_commits(self, branch=branch)
-
     async def get_local_commit(self, branch: str) -> str | None:
         return await _branch.get_local_commit(self, branch)
 

@@ -47,6 +47,7 @@ from tests.e2e.conftest import (
     link_operator_srt,
     native_daemon_command,
     prepare_daemon_env,
+    skip_unless_seat,
     spawn_daemon_instance,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -428,7 +429,7 @@ def _real_cli_env(config_path: Path) -> dict[str, str]:
     # `gobby start` requires the managed SRT and Impeccable installs under its home.
     managed_tools = Path.home() / ".gobby" / "tools"
     if not managed_tools.is_dir():
-        pytest.skip("gobby start needs the managed SRT and Impeccable installs")
+        skip_unless_seat("gobby start needs the managed SRT and Impeccable installs")
     link_operator_srt(gobby_home)
     # Impeccable's launcher embeds its home, so activate the copy for this one.
     impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version

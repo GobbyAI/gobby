@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import Path
@@ -296,6 +298,87 @@ def test_srt_status_invalid_installations(
     assert status.state == "invalid"
     assert status.installed_version == package_version
     assert verification_error in (status.error or "")
+
+
+_LOCKOUT_MESSAGE = "Managed SRT validation failed closed"
+
+
+def _unverifiable_srt_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point the real verifier at a pinned package that has no receipt or runner."""
+    root = tmp_path / "srt"
+    package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(srt_runtime, "srt_install_root", lambda: root)
+    monkeypatch.setattr(srt_runtime, "_verified_srt_cache", None)
+
+
+def test_srt_status_reports_invalid_without_a_lockout_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _unverifiable_srt_install(monkeypatch, tmp_path)
+
+    with caplog.at_level("WARNING"):
+        status = srt_dependency_status()
+
+    assert status.state == "invalid"
+    assert _LOCKOUT_MESSAGE not in caplog.messages
+    # The same install still refuses a launch, and the launch path records it.
+    with caplog.at_level("WARNING"), pytest.raises(SrtRuntimeError):
+        srt_runtime.verify_srt_installation_for_launch(
+            run_id="run", provider=None, policy_hash=None
+        )
+    assert caplog.messages.count(_LOCKOUT_MESSAGE) == 1
+
+
+def test_srt_status_probe_abandoned_at_the_deadline_logs_no_lockout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _unverifiable_srt_install(monkeypatch, tmp_path)
+    healthy = DependencyStatus(
+        state="healthy",
+        installed_version="99.0.0",
+        minimum_version=None,
+        expected_version=None,
+        path="/bin/tool",
+        error=None,
+    )
+    monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_command_status", lambda **_kwargs: healthy)
+    monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "impeccable_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
+    release, finished = threading.Event(), threading.Event()
+    verify = srt_runtime.verify_srt_installation
+
+    def held_verify() -> SrtInstallation:
+        try:
+            release.wait(5)
+            return verify()
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", held_verify)
+
+    with caplog.at_level("WARNING"):
+        report = requirements.collect_dependency_report(
+            managed_services=False,
+            include_srt=True,
+            deadline=time.monotonic() + 0.2,
+        )
+        release.set()
+        assert finished.wait(5)
+
+    assert "srt" in report.timed_out
+    assert report.required["srt"].state == "timed_out"
+    assert _LOCKOUT_MESSAGE not in caplog.messages
 
 
 def test_external_services_skip_compose_requirement(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -110,7 +110,9 @@ def _ctx(
     manager.db = MagicMock()
     manager.get_task.return_value = task
     manager.list_tasks.return_value = []
-    close_session = SimpleNamespace(id=task.claimed_by_session_id, machine_id=_MACHINE_ID)
+    close_session = SimpleNamespace(
+        id=task.claimed_by_session_id, machine_id=_MACHINE_ID, parent_session_id=None
+    )
     return cast(
         RegistryContext,
         SimpleNamespace(
@@ -1521,6 +1523,10 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.LocalAgentRunManager",
             return_value=run_manager,
         ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.reviewer_placement",
+            return_value=None,
+        ),
     ):
         async with asyncio.timeout(5), asyncio.TaskGroup() as task_group:
             first_close = task_group.create_task(
@@ -2760,14 +2766,13 @@ async def test_closing_schedules_the_parent_and_ancestor_broadcasts() -> None:
 
     manager.close_task.side_effect = record_close
 
-    scheduled: list[str] = []
+    scheduled_tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
     previous_factory = loop.get_task_factory()
 
     def factory(target_loop: Any, coro: Any, **kwargs: Any) -> asyncio.Task[None]:
         created: asyncio.Task[None] = asyncio.Task(coro, loop=target_loop, **kwargs)
-        if created.get_name().startswith("gobby-parent-notification-"):
-            scheduled.append(created.get_name())
+        scheduled_tasks.append(created)
         return created
 
     loop.set_task_factory(cast(Any, factory))
@@ -2795,6 +2800,12 @@ async def test_closing_schedules_the_parent_and_ancestor_broadcasts() -> None:
         notifications.clear()
 
     assert result["closed"] is True
+    # Python 3.13 applies create_task's name after the task factory returns.
+    scheduled = [
+        created.get_name()
+        for created in scheduled_tasks
+        if created.get_name().startswith("gobby-parent-notification-")
+    ]
     # Ancestors are described and notified before the task's own broadcast.
     assert scheduled == [
         f"gobby-parent-notification-{ancestor.id}-closed",

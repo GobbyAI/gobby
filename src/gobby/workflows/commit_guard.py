@@ -28,6 +28,11 @@ from gobby.workflows.commit_guard_conflicts import (
     format_unverified_dirty_edit_reason,
     scope_foreign_owners,
 )
+from gobby.workflows.dirty_edit_grants import (
+    approved_dirty_paths,
+    claimed_task_carriers,
+    dirty_path_approval_command,
+)
 from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
     parse_git_commit_invocations,
@@ -48,6 +53,7 @@ from gobby.workflows.task_claim_state import (
     resolve_edit_pair,
     task_edit_path_covers,
     task_edited_file_set_for_checkout,
+    task_selection_events,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
@@ -290,6 +296,7 @@ async def foreign_dirty_edit_conflict(
                 roots.setdefault(root, set()).add(rel)
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
+        approval_commands: list[str] = []
         for root, rels in roots.items():
             rels = await asyncio.to_thread(_git_backed_targets, root, rels)
             if not rels:
@@ -321,19 +328,39 @@ async def foreign_dirty_edit_conflict(
                 if not any(task_edit_path_covers(path, child) for child in dirty)
             }
             await asyncio.to_thread(_release_clean_ledger_entries, db, scoped, clean, root)
+            if not dirty:
+                continue
+            own_tasks, carriers = await asyncio.to_thread(
+                claimed_task_carriers, db, session_id=session_id, checkout_root=root
+            )
+            approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
+            root_unowned: set[str] = set()
             for path in dirty:
                 if path in operation_paths or any(task_edit_path_covers(p, path) for p in own):
                     continue
-                holders = tuple(
+                overlapping = [
                     owner
                     for ledger in overlapping_task_edit_paths(scoped, [path])
                     for owner in scoped[ledger]
-                )
+                ]
+                # A holder working a task this session now claims is this session's past self.
+                holders = [owner for owner in overlapping if owner.owner_task_id not in own_tasks]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
-                else:
-                    unowned.add(path)
-        return format_dirty_edit_reason(conflicts, unowned) if conflicts or unowned else ""
+                elif not (
+                    overlapping
+                    or path in approved
+                    or any(task_edit_path_covers(carrier, path) for carrier in carriers)
+                ):
+                    root_unowned.add(path)
+            if root_unowned:
+                unowned |= root_unowned
+                approval_commands.append(
+                    dirty_path_approval_command(session_id, root, root_unowned)
+                )
+        if not (conflicts or unowned):
+            return ""
+        return format_dirty_edit_reason(conflicts, unowned, approval_commands)
     except (psycopg.OperationalError, PoolTimeout) as exc:
         return (
             f"Edit blocked: Gobby could not verify dirty-path ownership "
@@ -465,6 +492,7 @@ def _live_path_owners(
                 "claimed_tasks",
                 "task_edited_file_checkouts",
                 "task_live_edit_starts",
+                "task_selection_history",
             ),
         )
         held = session_dirty_file_set_for_checkout(variables, checkout_root)
@@ -475,6 +503,11 @@ def _live_path_owners(
         live = variables.get("task_live_edit_starts")
         live_starts = live if isinstance(live, dict) else {}
         root_key = normalize_task_checkout_root(checkout_root) or ""
+        # Only a claim selects a task, so a task's latest selection is its current claim.
+        claimed_at: dict[str, float] = {}
+        for at, selected in task_selection_events(variables.get("task_selection_history")) or []:
+            if selected is not None:
+                claimed_at[selected] = max(at, claimed_at.get(selected, at))
         session_ref = format_session_ref(
             row["session_seq_num"],
             owner_session_id,
@@ -483,7 +516,9 @@ def _live_path_owners(
         )
         for path in held:
             # Edit history outlives a clean reconcile; the live interval names the owner.
-            task_id = _live_interval_task(live_starts, claimed_tasks, root_key, path) or next(
+            task_id = _live_interval_task(
+                live_starts, claimed_tasks, claimed_at, root_key, path
+            ) or next(
                 (
                     task
                     for task in claimed_tasks
@@ -505,11 +540,19 @@ def _live_path_owners(
 
 
 def _live_interval_task(
-    live_starts: dict[str, Any], claimed_tasks: dict[str, Any], root_key: str, path: str
+    live_starts: dict[str, Any],
+    claimed_tasks: dict[str, Any],
+    claimed_at: dict[str, float],
+    root_key: str,
+    path: str,
 ) -> str | None:
-    """The claim whose live attribution interval covers path; the latest start wins."""
-    best: tuple[float, int, str] | None = None
-    for order, task in enumerate(claimed_tasks):
+    """The claim whose live attribution interval covers path.
+
+    The latest start wins and an equal start goes to the later claim. A claim with no
+    recorded selection ranks oldest; the task id keeps the order total.
+    """
+    candidates: list[tuple[float, float, str]] = []
+    for task in claimed_tasks:
         by_root = live_starts.get(task)
         starts = by_root.get(root_key) if isinstance(by_root, dict) else None
         if not isinstance(starts, dict):
@@ -519,9 +562,9 @@ def _live_interval_task(
             for entry, stamp in starts.items()
             if isinstance(stamp, (int, float)) and task_edit_path_covers(entry, path)
         ]
-        if stamps and (best is None or (max(stamps), order) > best[:2]):
-            best = (max(stamps), order, task)
-    return best[2] if best is not None else None
+        if stamps:
+            candidates.append((max(stamps), claimed_at.get(task, 0.0), task))
+    return max(candidates)[2] if candidates else None
 
 
 def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -> set[str]:

@@ -7,11 +7,53 @@ validation. ``docs/contracts/node-commands.md`` is the contract.
 from __future__ import annotations
 
 import json
+import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
+
+from gobby.utils.terminal_output import redact_terminal_output
+
+CONTRACT_VERSION = 2
 
 _LIST_LIMIT = 1000
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_SRT_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+_OPERATION = re.compile(r"[a-z][a-z0-9*-]*")
+
+
+def _sha256_hex(value: str) -> str:
+    if _SHA256_HEX.fullmatch(value) is None:
+        raise ValueError("must be a lowercase SHA-256 hex digest")
+    return value
+
+
+def _srt_version(value: str) -> str:
+    if _SRT_VERSION.fullmatch(value) is None:
+        raise ValueError("must be a <digits>.<digits>.<digits> version")
+    return value
+
+
+def _operation_name(value: str) -> str:
+    if value != "unclassified" and (
+        _OPERATION.fullmatch(value) is None or redact_terminal_output(value) != value
+    ):
+        raise ValueError("must be unclassified or a plain operation name")
+    return value
+
+
+Digest = Annotated[str, AfterValidator(_sha256_hex)]
+Count = Annotated[int, Field(ge=0)]
+Version = Annotated[int, Field(ge=1)]
 
 
 class NodeModel(BaseModel):
@@ -20,14 +62,38 @@ class NodeModel(BaseModel):
 
 class Sandbox(NodeModel):
     enabled: bool
-    network: Literal["none", "trusted"]
+    backend: Literal["srt", "provider-native"]
+    mode: Literal["permissive", "restrictive"]
+    allow_network: bool
+    extra_read_paths: list[str]
     extra_write_paths: list[str]
+    extra_deny_read_paths: list[str]
+    extra_deny_write_paths: list[str]
+    allowed_domains: list[str]
+    denied_domains: list[str]
+    allow_git_network: bool
+    allow_package_registries: bool
+    allow_unix_sockets: list[str]
 
 
 class SpawnWorkspace(NodeModel):
-    mode: Literal["none", "worktree", "clone"]
+    mode: Literal["none", "worktree", "clone", "existing"]
+    path: str | None
     branch_name: str | None
     base_branch: str | None
+
+    @model_validator(mode="after")
+    def _path_names_existing(self) -> SpawnWorkspace:
+        if (self.mode == "existing") != (self.path is not None):
+            raise ValueError("path is required with mode existing and null otherwise")
+        return self
+
+
+class SpawnMonitor(NodeModel):
+    auto_enter_agent_terminals: bool
+    auto_enter_agent_interval_seconds: int
+    auto_enter_approval_prompts: bool
+    init_timeout_seconds: int
 
 
 class SpawnPayload(NodeModel):
@@ -49,6 +115,19 @@ class SpawnPayload(NodeModel):
     title: str | None
     source_root: str
     workspace: SpawnWorkspace
+    agent_name: str | None
+    api_base: str | None
+    api_token: str | None
+    codex_oss_provider: str | None
+    resume_session_id: str | None
+    execution_mode: str | None
+    code_index_preflight: str | None
+    task_id: str | None
+    extra_env: dict[str, str]
+    codex_config_overrides: list[str]
+    droid_mode: Literal["exec", "interactive"]
+    prewarm_pre_commit_store: bool
+    monitor: SpawnMonitor
 
 
 class CancelPayload(NodeModel):
@@ -67,7 +146,7 @@ class WritePayload(NodeModel):
 
 class SpawnCommand(NodeModel):
     type: Literal["command"]
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     request_id: str
     command: Literal["agent.spawn"]
     payload: SpawnPayload
@@ -75,7 +154,7 @@ class SpawnCommand(NodeModel):
 
 class CancelCommand(NodeModel):
     type: Literal["command"]
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     request_id: str
     command: Literal["agent.cancel"]
     payload: CancelPayload
@@ -83,7 +162,7 @@ class CancelCommand(NodeModel):
 
 class WriteCommand(NodeModel):
     type: Literal["command"]
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     request_id: str
     command: Literal["terminal.write"]
     payload: WritePayload
@@ -109,7 +188,7 @@ class ErrorBody(NodeModel):
 
 class OkReply(NodeModel):
     type: Literal["reply"]
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     request_id: str
     ok: Literal[True]
     result: AcceptedResult | StoppedResult | EmptyResult
@@ -117,14 +196,14 @@ class OkReply(NodeModel):
 
 class ErrReply(NodeModel):
     type: Literal["reply"]
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     request_id: str
     ok: Literal[False]
     error: ErrorBody
 
 
 class CheckoutBody(NodeModel):
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     project_id: str
     root_path: str
 
@@ -141,6 +220,63 @@ class ReportWorkspace(NodeModel):
     base_branch: str | None
 
 
+class AttentionOption(NodeModel):
+    option: int
+    label: str
+
+
+class AttentionPayload(NodeModel):
+    kind: str
+    excerpt: str
+    options: list[AttentionOption]
+    fingerprint: Digest
+
+
+class PaneAttention(NodeModel):
+    reason: str
+    kind: str
+    fingerprint: Digest
+    payload: AttentionPayload
+    dismissed: bool
+
+
+class PaneComposer(NodeModel):
+    state: Literal["empty", "draft", "unknown"]
+    line: str | None
+
+
+class PaneQuota(NodeModel):
+    provider: str
+    reset_time: str | None
+
+
+class PaneIdle(NodeModel):
+    status: Literal["unknown", "context_full", "idle", "active"]
+    turn_in_flight: bool
+    unsubmitted_input: bool
+    queued_message_prompt: bool
+    capacity_message: str | None
+    quota: PaneQuota | None
+
+
+class ReportPane(NodeModel):
+    attention: PaneAttention | None
+    injections: Count
+    composer: PaneComposer
+    idle: PaneIdle | None
+    tail: Annotated[str, Field(max_length=2000)]
+
+
+class ReportSandbox(NodeModel):
+    runtime_version: Annotated[str, AfterValidator(_srt_version)]
+    policy_schema_version: int
+    policy_hash: Digest
+    violation_count: Annotated[int, Field(ge=0, le=10_000)]
+    violation_count_truncated: bool
+    denial_operations: dict[Annotated[str, AfterValidator(_operation_name)], Count]
+    recent_violations: Annotated[list[dict[str, JsonValue]], Field(max_length=100)] | None
+
+
 class ReportAgent(NodeModel):
     run_id: str
     terminal_id: str
@@ -148,6 +284,14 @@ class ReportAgent(NodeModel):
     locator: str
     locator_key: str
     workspace: ReportWorkspace | None
+    pane: ReportPane | None
+    sandbox: ReportSandbox | None
+
+    @model_validator(mode="after")
+    def _counts_only(self) -> ReportAgent:
+        if self.sandbox is not None and self.sandbox.recent_violations is not None:
+            raise ValueError("an agent entry's sandbox carries no recent_violations")
+        return self
 
 
 class ReportExit(NodeModel):
@@ -163,10 +307,17 @@ class ReportExit(NodeModel):
         "exited",
     ]
     workspace: ReportWorkspace | None
+    sandbox: ReportSandbox | None
+
+    @model_validator(mode="after")
+    def _carries_events(self) -> ReportExit:
+        if self.sandbox is not None and self.sandbox.recent_violations is None:
+            raise ValueError("an exit's sandbox carries recent_violations")
+        return self
 
 
 class ReportBody(NodeModel):
-    v: Annotated[int, Field(ge=1)]
+    v: Version
     hub_epoch: int | None
     revision: Annotated[int, Field(ge=1)]
     host_epoch: int
@@ -180,6 +331,66 @@ class StaleReport(NodeModel):
     hub_epoch: int
 
 
+class PromptDeliveryFailureBody(NodeModel):
+    v: Version
+    run_id: str
+    code: str
+    detail: str
+    pane: str | None
+
+
+class PromptDeliveryFailureResult(NodeModel):
+    failed: bool
+
+
+class CodeIndexWarning(NodeModel):
+    preflight: str
+    cwd: str
+    message: str
+
+
+class CodeIndexWarningBody(NodeModel):
+    v: Version
+    run_id: str
+    warning: CodeIndexWarning
+    prompt: str
+
+
+class CodeIndexWarningResult(NodeModel):
+    prompt: str
+
+
+class TerminateCheckpoint(NodeModel):
+    ref_name: str
+    commit_sha: str
+    parent_sha: str
+    files_changed: Count
+    message: str
+
+
+class TerminateBody(NodeModel):
+    v: Version
+    run_id: str
+    cause: Literal["doom_loop", "provider_stall", "timeout", "init_timeout"]
+    detail: str
+    pane_tail: str
+    checkpoint: TerminateCheckpoint | None
+
+
+class TerminateResult(NodeModel):
+    terminated: bool
+    retry: bool
+
+
+class DetectionManifestEntry(NodeModel):
+    provider_id: str
+    content: str
+
+
+class DetectionManifestsResult(NodeModel):
+    manifests: list[DetectionManifestEntry]
+
+
 CommandFrame = SpawnCommand | CancelCommand | WriteCommand
 ReplyFrame = OkReply | ErrReply
 
@@ -190,6 +401,13 @@ _PARSERS: dict[str, TypeAdapter[NodeModel]] = {
     "checkout_result": TypeAdapter(CheckoutResult),
     "report": TypeAdapter(ReportBody),
     "stale_report": TypeAdapter(StaleReport),
+    "prompt_delivery_failure": TypeAdapter(PromptDeliveryFailureBody),
+    "prompt_delivery_failure_result": TypeAdapter(PromptDeliveryFailureResult),
+    "code_index_warning": TypeAdapter(CodeIndexWarningBody),
+    "code_index_warning_result": TypeAdapter(CodeIndexWarningResult),
+    "terminate": TypeAdapter(TerminateBody),
+    "terminate_result": TypeAdapter(TerminateResult),
+    "detection_manifests": TypeAdapter(DetectionManifestsResult),
 }
 
 

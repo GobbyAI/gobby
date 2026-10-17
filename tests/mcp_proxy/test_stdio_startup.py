@@ -392,7 +392,7 @@ from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
 
 health_checks = []
 
-async def check_health(port, timeout=2.0, *, base_url=None):
+async def check_health(port, timeout=2.0, *, base_url=None, tolerate_busy=False):
     health_checks.append(port)
     return True
 

@@ -20,6 +20,7 @@ from gobby.tasks.acceptance_artifacts import (
 from gobby.tasks.tdd_paths import is_implementation_edit_path
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
+    _executed_python_nodes,
     _has_python_keyword_stub,
     _has_python_module_stub,
     _has_python_test_tightening,
@@ -42,8 +43,10 @@ _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
     re.IGNORECASE,
 )
-_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
-_RTK_FAILURE_HEADER_RE = re.compile(r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>\S+)\s*$")
+_PYTEST_FAILURE_HEADER_RE = re.compile(r"^_+\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s+_+\s*$")
+_RTK_FAILURE_HEADER_RE = re.compile(
+    r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>[^\s\[]+(?:\[[^\r\n]*\])?)\s*$"
+)
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):(?P<line>\d+):"
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
@@ -62,7 +65,7 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"^(?:_+\s+\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
     r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
@@ -159,10 +162,12 @@ def evaluate_tdd_evidence(
     red_cache: dict[_RedCacheKey, tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
+    # Attribution limits affirmative anchors; safety checks need physical history.
+    task_edits = tuple(edit for edit in evidence.edits if edit.task_attributed)
     for test in tests:
         test_paths = (test.path, *(renamed_test_paths or {}).get(test.path, ()))
         test_edits = sorted(
-            (edit for edit in evidence.edits if edit.path in test_paths),
+            (edit for edit in task_edits if edit.path in test_paths),
             key=lambda edit: edit.order,
         )
         if not test_edits:
@@ -185,7 +190,7 @@ def evaluate_tdd_evidence(
             production_edits = sorted(
                 (
                     edit
-                    for edit in evidence.edits
+                    for edit in task_edits
                     if edit.order > test_edit.order
                     and is_implementation_edit_path(
                         edit.path,
@@ -504,77 +509,6 @@ def _has_pytest_fail_placeholder(
     return False
 
 
-def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
-    """Visit eager evaluations before their call or conditional boundary."""
-    children: Iterable[ast.AST]
-    if isinstance(statement, ast.Assign):
-        children = [statement.value, *statement.targets]
-    elif isinstance(statement, ast.AnnAssign):
-        # Local annotations are not evaluated, even with no assigned value.
-        children = [*(() if statement.value is None else (statement.value,)), statement.target]
-    elif isinstance(statement, ast.AugAssign):
-        children = [statement.target, statement.value]
-    elif isinstance(statement, ast.Dict):
-        children = (
-            child
-            for key, value in zip(statement.keys, statement.values, strict=True)
-            for child in (key, value)
-            if child is not None
-        )
-    elif isinstance(statement, ast.Call):
-        # Starred positional arguments run before keywords, even when written later.
-        children = [statement.func, *statement.args, *(kw.value for kw in statement.keywords)]
-    elif isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-        decorators = getattr(statement, "decorator_list", [])
-        children = [
-            *decorators,
-            *statement.args.defaults,
-            *(value for value in statement.args.kw_defaults if value is not None),
-            *_decorator_applications(decorators),
-        ]
-    elif isinstance(statement, ast.ClassDef):
-        children = [
-            *statement.decorator_list,
-            *statement.bases,
-            *(kw.value for kw in statement.keywords),
-            *statement.body,
-            *_decorator_applications(statement.decorator_list),
-        ]
-    elif isinstance(statement, ast.Compare) and len(statement.comparators) > 1:
-        # Later comparators run only when every earlier comparison holds.
-        children = [statement.left, statement.comparators[0]]
-    elif isinstance(statement, ast.TypeAlias):
-        children = ()
-    elif isinstance(statement, ast.If | ast.While | ast.IfExp | ast.Assert):
-        children = [statement.test]
-    elif isinstance(statement, ast.BoolOp):
-        children = statement.values[:1]
-    elif isinstance(statement, ast.For | ast.AsyncFor | ast.comprehension):
-        children = [statement.iter]
-    elif isinstance(statement, ast.With | ast.AsyncWith):
-        children = [item.context_expr for item in statement.items]
-    elif isinstance(statement, ast.Match):
-        children = [statement.subject]
-    elif isinstance(statement, ast.Try | ast.TryStar):
-        children = ()
-    elif isinstance(statement, ast.GeneratorExp):
-        # Construction evaluates only the first iterator; the body stays lazy.
-        children = [statement.generators[0].iter]
-    elif isinstance(statement, ast.ListComp | ast.SetComp | ast.DictComp):
-        # The remaining clauses and body are conditional on the first iterator.
-        children = statement.generators[:1]
-    else:
-        children = ast.iter_child_nodes(statement)
-    for child in children:
-        yield from _executed_python_nodes(child)
-    yield statement
-
-
-def _decorator_applications(decorators: list[ast.expr]) -> list[ast.Call]:
-    """Model each decorator's call on the defined object, innermost first."""
-    return [ast.Call(func=decorator, args=[], keywords=[]) for decorator in reversed(decorators)]
-
-
 def _has_original_source_failure(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
@@ -624,7 +558,7 @@ def _has_named_red_failure(
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
-    if _has_failed_node_summary(output, test):
+    if _has_failed_node_summary(output, test) or _has_compacted_pytest_failure(output, test):
         return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
@@ -694,6 +628,50 @@ def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
         ) and is_assertion_failure(detail):
             return True
     return False
+
+
+def _has_compacted_pytest_failure(output: str, test: AcceptanceTest) -> bool:
+    """Credit a primary diagnostic only when a compacted run has one failed node."""
+    if not test.path.endswith(".py") or not re.search(
+        r"(?m)^\[full output: rtk recall [0-9a-f]{12,64}\]$", output
+    ):
+        return False
+    lines = output.splitlines()
+    if re.search(r"(?m)^ERROR\s|\b[1-9]\d* errors?\b|\[XPASS\(strict\)\]", output):
+        return False
+    if any(
+        _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        for line in lines
+    ):
+        return False  # Complete reports keep their existing section attribution.
+    failed = [
+        (index, match)
+        for index, line in enumerate(lines)
+        if (match := re.fullmatch(r"FAILED (\S+\.py)::(\S+)(?:\s+-\s+.*)?", line))
+    ]
+    if len(failed) != 1:
+        return False
+    summary = re.search(r"(?m)^[= ]*(\d+) failed\b", output)
+    if summary is None or int(summary[1]) != len(failed):
+        return False
+    # Multiple traceback frames can belong to one sibling, so their order/count
+    # cannot bind diagnostics to multiple FAILED nodes. Other parsers own reports
+    # with explicit node headers or locations proven against the run's source.
+    index, node = failed[0]
+    expected = test.symbol.replace("::", ".")
+    reported = node[2].replace("::", ".")
+    if "[" not in expected:
+        reported = reported.split("[", maxsplit=1)[0]
+    return (
+        _path_matches_artifact(node[1], test)
+        and reported == expected
+        and any(
+            re.match(r"^[ \t]*E[ \t]+assert(?:[ \t]|$)", line)
+            or _PYTHON_EXCEPTION_DETAIL_RE.match(line)
+            or _PYTEST_FAIL_DETAIL_RE.match(line)
+            for line in lines[:index]
+        )
+    )
 
 
 def _has_pytest_body_failure(

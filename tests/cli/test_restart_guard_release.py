@@ -38,7 +38,7 @@ def test_restart_guard_survives_real_runner_gate_fencing(
     monkeypatch.setattr(lifecycle, "daemon_auth_headers", lambda: {})
     monkeypatch.setattr(lifecycle, "_is_process_alive", lambda _pid: False)
 
-    def readiness(_port: int) -> bool:
+    def readiness(_port: int, *, max_wait: float) -> bool:
         with psycopg.connect(db.conninfo, autocommit=True) as conn:
             with conn.transaction():
                 acquired = conn.execute(
@@ -93,4 +93,5 @@ def test_restart_guard_survives_real_runner_gate_fencing(
         assert result.exception is None
     else:
         assert isinstance(result.exception, SystemExit)
-    poll.assert_called_once_with(61987)
+    poll.assert_called_once()
+    assert poll.call_args.args == (61987,)

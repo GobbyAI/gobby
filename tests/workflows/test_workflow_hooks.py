@@ -120,8 +120,10 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler: WorkflowHoo
     assert response.decision == "allow"
 
 
-def test_hook_manager_integration() -> None:
+def test_hook_manager_integration(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
     """HookManager delegates workflow hook evaluation when daemon health is cached."""
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
     with (
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
@@ -139,7 +141,7 @@ def test_hook_manager_integration() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(database=MagicMock(), config=DaemonConfig())
+        manager = HookManager(database=temp_db, config=DaemonConfig())
         try:
             event = HookEvent(
                 event_type=HookEventType.BEFORE_TOOL,
@@ -148,6 +150,7 @@ def test_hook_manager_integration() -> None:
                 timestamp=MOCK_TIMESTAMP,
                 data={},
                 metadata={"_platform_session_id": MOCK_SESSION_ID},
+                machine_id=machine_id,
             )
 
             with patch.object(
@@ -166,7 +169,11 @@ def test_hook_manager_integration() -> None:
             manager.shutdown()
 
 
-def test_hook_manager_blocks_on_workflow() -> None:
+def test_hook_manager_blocks_on_workflow(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
     with (
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
@@ -186,7 +193,7 @@ def test_hook_manager_blocks_on_workflow() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(database=MagicMock(), config=DaemonConfig())
+        manager = HookManager(database=temp_db, config=DaemonConfig())
         try:
             event = HookEvent(
                 event_type=HookEventType.BEFORE_TOOL,
@@ -195,6 +202,7 @@ def test_hook_manager_blocks_on_workflow() -> None:
                 timestamp=MOCK_TIMESTAMP,
                 data={},
                 metadata={"_platform_session_id": MOCK_SESSION_ID},
+                machine_id=machine_id,
             )
 
             with patch.object(

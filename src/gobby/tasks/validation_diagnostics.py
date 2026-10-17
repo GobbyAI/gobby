@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 import shlex
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import PurePosixPath
 from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
@@ -233,6 +234,49 @@ def _command_priority(
     return priority
 
 
+def gap_covering_records(
+    records: Iterable[Mapping[str, object]], details: Mapping[str, Any]
+) -> set[int]:
+    """Identify diagnostic records addressing current gaps, without granting credit."""
+    commands = {
+        classify_validation_command_equivalence(
+            str(gap.get("core_command") or gap["command"])
+        ).core_command
+        for gap in details.get("criterion_command_gaps", [])
+    } - {None}
+    paths = set(details.get("pytest_uncovered_paths", []))
+    paths.update(details.get("test_types_audit_uncovered_paths", []))
+    for tests in details.get("python_source_uncovered_tests", {}).values():
+        paths.update(tests)
+    for path in details.get("vitest_related_uncovered_paths", []):
+        paths.update((path, path.removeprefix("web/")))
+    path_suffixes = {
+        str(part)
+        for path in paths
+        for part in (PurePosixPath(path), *PurePosixPath(path).parents)
+        if str(part) != "."
+    }
+    matches: set[int] = set()
+    if not commands and not paths:
+        return matches
+    for record in records:
+        command = str(record["command"])
+        core = record.get("core_command")
+        if not isinstance(core, str):
+            core = classify_validation_command_equivalence(command).core_command
+        if core is not None and core in commands:
+            matches.add(id(record))
+            continue
+        for segment in parse_shell_command(core or command).segments:
+            for argument in segment[1:]:
+                target = argument.split("::", 1)[0].removeprefix("./").rstrip("/")
+                if target and any(
+                    target == path or target.endswith("/" + path) for path in path_suffixes
+                ):
+                    matches.add(id(record))
+    return matches
+
+
 def _select_command_records(
     records: list[dict[str, object]],
     *,
@@ -316,8 +360,9 @@ def _bound_criterion_commands(
 def bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, Any]:
     """Bound presentation only; gate decisions retain all definitive category outcomes.
 
-    Complete referenced commands are selected first. Never shorten a credited
-    command: an omitted script cannot accidentally compare equal to a criterion.
+    Gap-covering commands precede referenced commands and recent diagnostics.
+    Never shorten a credited command: an omitted script cannot accidentally
+    compare equal to a criterion.
     """
     records: dict[str, list[dict[str, object]]] = {
         "latest_runs": details["latest_runs"],
@@ -338,8 +383,13 @@ def bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, An
             equivalence := classify_validation_command_equivalence(match.group(1).strip())
         ).core_command
     )
+    gap_records = gap_covering_records(
+        (record for entries in records.values() for record in entries), details
+    )
     priorities = {
-        id(record): _command_priority(record, criteria, criterion_cores)
+        id(record): 4
+        if id(record) in gap_records
+        else _command_priority(record, criteria, criterion_cores)
         for entries in records.values()
         for record in entries
     }
@@ -354,7 +404,7 @@ def bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, An
     key_order = [
         key for key in ("excluded_runs", "latest_runs", "uncredited_runs") if key in records
     ]
-    for priority in (3, 2, 1, 0):
+    for priority in (4, 3, 2, 1, 0):
         for key in key_order:
             additions, remaining = _select_command_records(
                 records[key],

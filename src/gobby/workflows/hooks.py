@@ -453,10 +453,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 step_context.status_message or ""
                             )
                             variables["current_step_description"] = step_context.description or ""
+                            variables["current_step_idle"] = step_context.idle
                         else:
                             variables["current_step"] = ""
                             variables["current_step_status_message"] = ""
                             variables["current_step_description"] = ""
+                            variables["current_step_idle"] = False
                     except _DATABASE_TIMEOUTS:
                         raise
                     except Exception as e:

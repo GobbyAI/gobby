@@ -342,10 +342,13 @@ worktree is not enough isolation.
 
 Clone CLI examples:
 
-Remote creation clones the requested existing source branch (shallow depth 1
-by default); it does not create `feature/auth` from `main`. The following create
-example therefore assumes that feature branch already exists at the remote.
-For a new local branch with unpushed base commits, use MCP `use_local=True`.
+Without `remote_url`, creation clones the local repository and starts the new
+branch at one selected commit: the caller's HEAD when the base is omitted
+(detached HEAD is refused), a local branch, or `origin/<branch>` after a fetch.
+Unpushed local commits carry over. With MCP `remote_url`, creation instead
+shallow-clones that external repository (depth 1 by default) at the requested
+branch, which must already exist there. The result reports `base_commit_sha` and
+`index_source` (`local`, or `cold` for an external clone).
 
 ```bash
 gobby clones create feature/auth ~/.gobby/clones/feature-auth --task '#123' --json
@@ -366,7 +369,6 @@ call_tool(
         "clone_path": "~/.gobby/clones/feature-auth",
         "base_branch": "main",
         "task_id": "#123",
-        "use_local": False,
     },
 )
 
