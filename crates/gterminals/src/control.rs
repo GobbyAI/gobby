@@ -33,6 +33,10 @@ pub enum ControlError {
     EpochChanged { expected: String, actual: String },
     #[error("malformed host line: {0}")]
     Malformed(String),
+    /// A request over the ceiling, refused before any byte is written.
+    #[error("request exceeds the control line ceiling")]
+    RequestTooLarge,
+    /// A reply over the ceiling, read after the request was written.
     #[error("control line exceeds the control line ceiling")]
     LineTooLong,
     #[error("event buffer overflow")]
@@ -690,7 +694,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
             serde_json::to_vec(&fields).map_err(|err| ControlError::Malformed(err.to_string()))?;
         line.push(b'\n');
         if line.len() > MAX_CONTROL_LINE {
-            return Err(ControlError::LineTooLong);
+            return Err(ControlError::RequestTooLarge);
         }
         self.stream.write_all(&line).await?;
         self.stream.flush().await?;

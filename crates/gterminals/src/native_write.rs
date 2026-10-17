@@ -72,6 +72,7 @@ impl NativeWrite {
         stage: Stage,
     ) -> Result<Delivery, WriteFailure> {
         let mut slot = self.connection.lock().await;
+        discard_stale(&mut slot, terminal.host_epoch.as_deref().into_iter());
         let connection = self
             .open(&mut slot)
             .await
@@ -110,9 +111,9 @@ impl Runtime for NativeWrite {
                 data: data.to_vec(),
                 submit,
             };
-            let data = step.payload.as_bytes();
+            let data = step_bytes(step.kind, &step.payload)?;
             if step.kind == Kind::Text && step.submit {
-                let text = request(WriteKind::Text, data, Some(false));
+                let text = request(WriteKind::Text, &data, Some(false));
                 let delivery = self.send(terminal, text, Stage::None).await?;
                 if delivery != Delivery::Delivered {
                     return Ok(delivery);
@@ -122,7 +123,7 @@ impl Runtime for NativeWrite {
                 return self.send(terminal, enter, Stage::Partial).await;
             }
             let submit = (step.kind == Kind::Text).then_some(false);
-            let single = request(write_kind(step.kind), data, submit);
+            let single = request(write_kind(step.kind), &data, submit);
             self.send(terminal, single, Stage::None).await
         })
     }
@@ -139,6 +140,12 @@ impl BatchRuntime for NativeWrite {
     ) -> BoxFuture<'_, Result<Vec<BatchResult>, String>> {
         Box::pin(async move {
             let mut slot = self.connection.lock().await;
+            discard_stale(
+                &mut slot,
+                targets
+                    .iter()
+                    .filter_map(|target| target.terminal.host_epoch.as_deref()),
+            );
             let connection = match self.open(&mut slot).await {
                 Ok(connection) => connection,
                 Err(error) => {
@@ -172,22 +179,17 @@ impl BatchRuntime for NativeWrite {
                             "host epoch changed",
                         )))
                     }
-                    Some(id) => {
-                        sent.push(WriteBatchTarget {
-                            recipient_id: target.result_id.clone(),
-                            host_terminal_id: id.into(),
-                            operations: target
-                                .operations
-                                .iter()
-                                .map(|operation| WriteBatchOp {
-                                    kind: write_kind(operation.kind),
-                                    data: operation.payload.as_bytes().to_vec(),
-                                    delay_ms: operation.delay_ms,
-                                })
-                                .collect(),
-                        });
-                        None
-                    }
+                    Some(id) => match batch_operations(target) {
+                        Ok(operations) => {
+                            sent.push(WriteBatchTarget {
+                                recipient_id: target.result_id.clone(),
+                                host_terminal_id: id.into(),
+                                operations,
+                            });
+                            None
+                        }
+                        Err(failure) => Some(Err(failure)),
+                    },
                 };
                 outcomes.push(outcome);
             }
@@ -220,6 +222,80 @@ impl BatchRuntime for NativeWrite {
                 .collect())
         })
     }
+}
+
+/// Drops a held connection when a row's epoch differs from it, so the next
+/// open authenticates the host that now serves those rows.
+fn discard_stale<'a>(slot: &mut Option<Connection>, mut epochs: impl Iterator<Item = &'a str>) {
+    let stale = slot
+        .as_ref()
+        .is_some_and(|held| epochs.any(|epoch| epoch != held.epoch));
+    if stale {
+        *slot = None;
+    }
+}
+
+/// The bytes one step writes. An unknown key name refuses before any byte.
+fn step_bytes(kind: Kind, payload: &str) -> Result<Vec<u8>, WriteFailure> {
+    if kind != Kind::Key {
+        return Ok(payload.as_bytes().to_vec());
+    }
+    key_bytes(payload)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| refused(Stage::None, "invalid_key", format!("unknown key {payload}")))
+}
+
+/// The bytes a named key writes, as `key_bytes.encode_named_key` encodes them
+/// with the default cursor and keypad modes. `enter` stays a name: gterm maps
+/// it to the carriage return the oracle sends.
+fn key_bytes(name: &str) -> Option<&'static [u8]> {
+    let bytes: &[u8] = match name {
+        "enter" => b"enter",
+        "escape" => b"\x1b",
+        "tab" => b"\t",
+        "backspace" => b"\x7f",
+        "delete" => b"\x1b[3~",
+        "ctrl_c" => b"\x03",
+        "ctrl_k" => b"\x0b",
+        "ctrl_l" => b"\x0c",
+        "ctrl_u" => b"\x15",
+        "up" => b"\x1b[A",
+        "down" => b"\x1b[B",
+        "right" => b"\x1b[C",
+        "left" => b"\x1b[D",
+        "kp0" => b"0",
+        "kp1" => b"1",
+        "kp2" => b"2",
+        "kp3" => b"3",
+        "kp4" => b"4",
+        "kp5" => b"5",
+        "kp6" => b"6",
+        "kp7" => b"7",
+        "kp8" => b"8",
+        "kp9" => b"9",
+        "kpdecimal" => b".",
+        "kpminus" => b"-",
+        "kpplus" => b"+",
+        "kpmul" => b"*",
+        "kpdiv" => b"/",
+        "kpenter" => b"\r",
+        _ => return None,
+    };
+    Some(bytes)
+}
+
+/// One target's operations with each payload encoded. A failed encoding
+/// refuses the whole target before any of it is sent.
+fn batch_operations(target: &BatchTarget) -> Result<Vec<WriteBatchOp>, WriteFailure> {
+    let mut operations = Vec::with_capacity(target.operations.len());
+    for operation in &target.operations {
+        operations.push(WriteBatchOp {
+            kind: write_kind(operation.kind),
+            data: step_bytes(operation.kind, &operation.payload)?,
+            delay_ms: operation.delay_ms,
+        });
+    }
+    Ok(operations)
 }
 
 /// The host terminal a row's locator names.
@@ -265,7 +341,7 @@ fn settle(
             let detail = detail.unwrap_or_else(|| error.clone());
             Ok(refused(stage, &error, detail))
         }
-        ControlError::LineTooLong => Ok(refused(stage, "request_too_large", error)),
+        ControlError::RequestTooLarge => Ok(refused(stage, "request_too_large", error)),
         error => {
             *slot = None;
             Err(error.to_string())

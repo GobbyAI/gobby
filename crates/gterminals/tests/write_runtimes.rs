@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gobby_terminals::control::PROTOCOL_VERSION;
+use gobby_terminals::control::{MAX_CONTROL_LINE, PROTOCOL_VERSION};
 use gobby_terminals::host::{
     EpochAuthority, EpochBinding, HostFailure, HostOptions, HostSupervisor,
 };
@@ -50,6 +50,7 @@ struct Logged {
 struct FakeHost {
     dir: TempDir,
     process: Child,
+    epoch: Arc<Mutex<&'static str>>,
     log: Arc<Mutex<Vec<Logged>>>,
     connections: Arc<AtomicUsize>,
     task: JoinHandle<()>,
@@ -84,12 +85,14 @@ impl FakeHost {
         std::fs::write(dir.path().join("gterm.pid"), pid.to_string()).unwrap();
         std::fs::write(dir.path().join("gterm-control.token"), format!("{TOKEN}\n")).unwrap();
         let listener = UnixListener::bind(dir.path().join("gterm-control.sock")).unwrap();
+        let epoch = Arc::new(Mutex::new(EPOCH));
         let log = Arc::new(Mutex::new(Vec::new()));
         let connections = Arc::new(AtomicUsize::new(0));
         let ping_pid = if bad_pid { pid + 1 } else { pid };
         let task = tokio::spawn(serve(
             listener,
             ping_pid,
+            epoch.clone(),
             script,
             log.clone(),
             connections.clone(),
@@ -97,10 +100,17 @@ impl FakeHost {
         Self {
             dir,
             process,
+            epoch,
             log,
             connections,
             task,
         }
+    }
+
+    /// Makes the host report `epoch` from now on, as after a restart. Held
+    /// connections keep serving; only new handshakes see the new epoch.
+    fn replace_epoch(&self, epoch: &'static str) {
+        *self.epoch.lock().unwrap() = epoch;
     }
 
     fn options(&self) -> HostOptions {
@@ -151,13 +161,14 @@ impl Drop for FakeHost {
 async fn serve(
     listener: UnixListener,
     ping_pid: u32,
+    epoch: Arc<Mutex<&'static str>>,
     script: Script,
     log: Arc<Mutex<Vec<Logged>>>,
     connections: Arc<AtomicUsize>,
 ) {
     while let Ok((stream, _)) = listener.accept().await {
         let connection = connections.fetch_add(1, Ordering::SeqCst) + 1;
-        let (script, log) = (script.clone(), log.clone());
+        let (epoch, script, log) = (epoch.clone(), script.clone(), log.clone());
         tokio::spawn(async move {
             let (reader, mut writer) = stream.into_split();
             let mut lines = BufReader::new(reader).lines();
@@ -168,14 +179,15 @@ async fn serve(
                     connection,
                     request: request.clone(),
                 });
+                let current = *epoch.lock().unwrap();
                 let mut reply = match request["method"].as_str() {
                     Some("hello") if request["control_token"] == TOKEN => json!({
                         "ok": true, "protocol_version": PROTOCOL_VERSION,
-                        "host_epoch": EPOCH, "version": "fixture", "capabilities": [],
+                        "host_epoch": current, "version": "fixture", "capabilities": [],
                     }),
                     Some("hello") => json!({"ok": false, "error": "invalid_token"}),
                     Some("ping") => json!({
-                        "ok": true, "host_epoch": EPOCH, "version": "fixture", "host_pid": ping_pid,
+                        "ok": true, "host_epoch": current, "version": "fixture", "host_pid": ping_pid,
                     }),
                     _ => match script(&request) {
                         Answer::Reply(reply) => reply,
@@ -289,21 +301,24 @@ async fn native_write_matches_python_stage_semantics() {
     );
 
     // One step of every other shape is one write; only text carries submit.
-    for (kind, name, field) in [
-        (Kind::Text, "text", Some(false)),
-        (Kind::Key, "key", None),
-        (Kind::Paste, "paste", None),
-        (Kind::Input, "input", None),
+    for (kind, name, payload, data, field) in [
+        (Kind::Text, "text", "x", "eA==", Some(false)),
+        (Kind::Key, "key", "ctrl_c", "Aw==", None),
+        (Kind::Paste, "paste", "x", "eA==", None),
+        (Kind::Input, "input", "x", "eA==", None),
     ] {
         let terminal = format!("single-{name}");
         let outcome = runtime
-            .write(&row(Some(&terminal), Some(EPOCH)), &step(kind, "x", false))
+            .write(
+                &row(Some(&terminal), Some(EPOCH)),
+                &step(kind, payload, false),
+            )
             .await;
         assert_eq!(outcome, Ok(Delivery::Delivered), "{name}");
         let writes = host.writes_to(&terminal);
         assert_eq!(writes.len(), 1, "{name}: {writes:?}");
         let mut expected = json!({"method": "write", "host_terminal_id": terminal,
-            "kind": name, "encoding": "utf8-b64", "data": "eA=="});
+            "kind": name, "encoding": "utf8-b64", "data": data});
         if let Some(submit) = field {
             expected["submit"] = json!(submit);
         }
@@ -655,4 +670,136 @@ async fn open_control_authenticates_an_independent_connection() {
         .await;
     assert_eq!(refusal(outcome).0, Stage::None);
     assert!(impostor.logged("write").is_empty());
+}
+
+#[tokio::test]
+async fn native_write_reopens_once_after_host_epoch_changes() {
+    let host = FakeHost::new(|_| ok());
+    let runtime = NativeWrite::new(host.options());
+    let outcome = runtime
+        .write(
+            &row(Some("before"), Some(EPOCH)),
+            &step(Kind::Text, "x", false),
+        )
+        .await;
+    assert_eq!(outcome, Ok(Delivery::Delivered));
+    assert_eq!(host.connections(), 1);
+
+    // The host restarts under a new epoch. The held connection still answers
+    // but was authenticated under the old one, so the row must reopen once.
+    host.replace_epoch("epoch-E2");
+    let outcome = runtime
+        .write(
+            &row(Some("after"), Some("epoch-E2")),
+            &step(Kind::Text, "x", false),
+        )
+        .await;
+    assert_eq!(outcome, Ok(Delivery::Delivered));
+    assert_eq!(host.writes_to("after").len(), 1);
+    assert_eq!(host.connections(), 2, "exactly one reopen");
+}
+
+/// The host delivers every target of a batch in order.
+fn batch_ok(request: &Value) -> Answer {
+    let results: Vec<Value> = request["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|target| {
+            json!({
+                "recipient_id": target["recipient_id"],
+                "host_terminal_id": target["host_terminal_id"],
+                "ok": true,
+                "written": true,
+            })
+        })
+        .collect();
+    Answer::Reply(json!({"ok": true, "results": results}))
+}
+
+#[tokio::test]
+async fn native_batch_reopens_once_after_host_epoch_changes() {
+    let host = FakeHost::new(batch_ok);
+    let runtime = NativeWrite::new(host.options());
+    let batch = runtime
+        .batch()
+        .expect("the Native runtime has an atomic batch");
+    let results = batch
+        .write_batch(vec![target(
+            "r1",
+            row(Some("before"), Some(EPOCH)),
+            &[(Kind::Text, "x", 0)],
+        )])
+        .await
+        .expect("a delivered batch has a result per target");
+    assert_eq!(outcomes(results), vec![("r1".into(), json!("delivered"))]);
+
+    host.replace_epoch("epoch-E2");
+    let results = batch
+        .write_batch(vec![target(
+            "r2",
+            row(Some("after"), Some("epoch-E2")),
+            &[(Kind::Text, "x", 0)],
+        )])
+        .await
+        .expect("a delivered batch has a result per target");
+    assert_eq!(outcomes(results), vec![("r2".into(), json!("delivered"))]);
+    assert_eq!(host.connections(), 2, "exactly one reopen");
+}
+
+/// Named keys reach the PTY as the bytes `encode_named_key` produces, not as
+/// their names. `ctrl_c` is `\x03` and `up` is `ESC [ A`.
+#[tokio::test]
+async fn native_write_encodes_named_keys_as_terminal_bytes() {
+    let host = FakeHost::new(|_| ok());
+    let runtime = NativeWrite::new(host.options());
+    for (name, terminal) in [("ctrl_c", "ht-1"), ("up", "ht-2")] {
+        let outcome = runtime
+            .write(
+                &row(Some(terminal), Some(EPOCH)),
+                &step(Kind::Key, name, false),
+            )
+            .await;
+        assert_eq!(outcome, Ok(Delivery::Delivered), "{name}");
+    }
+    assert_eq!(host.writes_to("ht-1")[0].request["data"], "Aw==");
+    assert_eq!(host.writes_to("ht-2")[0].request["data"], "G1tB");
+}
+
+/// A reply longer than the control line ceiling is read after the write may
+/// have landed, so it is uncertain and drops the connection; the next write
+/// reopens and is delivered.
+#[tokio::test]
+async fn native_write_oversized_reply_is_uncertain_and_reopens() {
+    let calls = AtomicUsize::new(0);
+    let host = FakeHost::new(move |_| {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Answer::Reply(json!({
+                "ok": true,
+                "written": true,
+                "pad": "x".repeat(MAX_CONTROL_LINE),
+            }))
+        } else {
+            ok()
+        }
+    });
+    let runtime = NativeWrite::new(host.options());
+    let outcome = runtime
+        .write(
+            &row(Some("ht-1"), Some(EPOCH)),
+            &step(Kind::Text, "x", false),
+        )
+        .await;
+    assert!(
+        matches!(outcome, Ok(Delivery::Uncertain { .. })),
+        "{outcome:?}"
+    );
+    let outcome = runtime
+        .write(
+            &row(Some("ht-2"), Some(EPOCH)),
+            &step(Kind::Text, "x", false),
+        )
+        .await;
+    assert_eq!(outcome, Ok(Delivery::Delivered));
+    assert_eq!(host.connections(), 2, "the uncertain connection is dropped");
 }
