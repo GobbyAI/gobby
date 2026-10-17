@@ -19,9 +19,9 @@ logger = logging.getLogger("gobby.daemon.control")
 DaemonShutdownIntent = Literal["stop", "restart"]
 DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
-# Above `gobby start`'s own health (120 s) and readiness (300 s) waits, leaving
+# Above `gobby start`'s own health (300 s) and readiness (300 s) waits, leaving
 # room for managed services and the schema apply.
-DAEMON_START_TIMEOUT_SECONDS = 600.0
+DAEMON_START_TIMEOUT_SECONDS = 900.0
 _START_OUTPUT_TAIL_CHARS = 2000
 
 

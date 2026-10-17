@@ -72,6 +72,19 @@
   ],
   "operations": [
     {
+      "surface": "cli",
+      "command": "gobby sessions approve-dirty-paths",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions_dirty_paths.py",
+        "symbol": "approve_dirty_paths"
+      },
+      "verification": [
+        "dirty-path-approval-source"
+      ],
+      "audience": "operator only; refused to agent sessions"
+    },
+    {
       "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
       "implementation": {
@@ -1357,6 +1370,13 @@
     ]
   },
   "evidence": [
+    {
+      "id": "dirty-path-approval-source",
+      "kind": "source-audit",
+      "status": "passed",
+      "command": "gcode symbol-at src/gobby/cli/sessions_dirty_paths.py:14; registered Click cli_verbs inventory",
+      "result": "The registered gobby sessions approve-dirty-paths command requires SESSION_REF, --checkout ROOT and PATHS. approve_dirty_paths records content-fingerprinted operator approval; a later approval replaces the earlier approval for that checkout. Its docstring identifies block-dirty-path-approval-cli as the agent-session refusal. Existing regression: tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_records_the_operator_approval (source inspected, not rerun for this docs correction)."
+    },
     {
       "id": "source-audit",
       "kind": "implementation-and-schema",

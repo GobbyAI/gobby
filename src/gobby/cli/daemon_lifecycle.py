@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 
 import click
@@ -57,7 +58,14 @@ __all__ = ["kill_all_gobby_daemons"]
 
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
-DAEMON_HEALTH_TIMEOUT_SECONDS = 120.0
+# Startup readiness budget. Serving /api/health is one early step of subsystem
+# init, so the health wait reuses this budget: a loaded boot that is still
+# initializing must not be reported as a failed start. Subsystem startup is
+# fail-soft and progress-terminal, so an unfinished poll means "still
+# initializing", never "broken". Sized against measured time-to-ready, which
+# reached 168s on a loaded machine.
+STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
+DAEMON_HEALTH_TIMEOUT_SECONDS = STARTUP_READINESS_TIMEOUT_SECONDS
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
@@ -75,11 +83,13 @@ def _wait_for_daemon_health(
     *,
     timeout: float = DAEMON_HEALTH_TIMEOUT_SECONDS,
     interval: float = 0.5,
+    child_exited: Callable[[], bool] | None = None,
 ) -> float | None:
     """Wait for the daemon health endpoint to respond successfully.
 
     Each probe may use the rest of the wait, so a loaded daemon that answers
-    slower than a decision probe allows still counts as healthy.
+    slower than a decision probe allows still counts as healthy. A launched
+    child that has exited ends the wait at once: it cannot become healthy.
     """
     start = time.monotonic()
     deadline = start + timeout
@@ -87,6 +97,8 @@ def _wait_for_daemon_health(
     while (remaining := deadline - time.monotonic()) > 0:
         if _is_daemon_healthy(http_port, timeout=remaining):
             return time.monotonic() - start
+        if child_exited is not None and child_exited():
+            return None
         time.sleep(interval)
 
     return None
@@ -525,7 +537,7 @@ def _restart_backend(
     """Restart a serving backend; None requires a full lifecycle replacement."""
     from gobby.cli.runtime import get_cli_runtime
 
-    from .daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS, _poll_startup_progress
+    from .daemon_start import _poll_startup_progress
 
     runtime = get_cli_runtime(ctx)
     port = runtime.read_only_operational_config().daemon_port

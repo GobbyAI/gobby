@@ -677,7 +677,7 @@ answers 200 with the reply frame, or with a gdaemon error frame for
 `node_offline`, `node_timeout`, or `channel_closed`.
 
 gdaemon admits a request only from a loopback peer whose
-`X-Gobby-Backend-Secret` equals `GOBBY_FRONT_DOOR_SECRET`, compared in
+`X-Gobby-Backend-Secret` equals the per-boot front-door secret, compared in
 constant time. Every other request, and every request to a standalone or node
 front door, gets 404. gdaemon answers 404 only before it sends any frame.
 

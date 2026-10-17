@@ -1,8 +1,10 @@
 """Tests for the MCP proxy stdio module."""
 
 import asyncio
+import contextlib
 import os
 import signal
+import socket
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable, Coroutine
@@ -338,16 +340,21 @@ class TestStartDaemonProcess:
         ):
             result = await start_daemon_process()
 
+        from gobby.mcp_proxy.daemon_control import DAEMON_START_TIMEOUT_SECONDS
+
         assert result["success"] is False
-        assert result["message"] == "gobby start timed out after 600s"
+        expected = f"gobby start timed out after {DAEMON_START_TIMEOUT_SECONDS:.0f}s"
+        assert result["message"] == expected
         mock_proc.terminate.assert_called_once_with()
         mock_proc.kill.assert_called_once_with()
         assert mock_proc.wait.await_count == 3
 
     def test_start_bound_exceeds_gobby_start_waits(self) -> None:
         """The bound must not cut off a start that `gobby start` would still finish."""
-        from gobby.cli.daemon_lifecycle import DAEMON_HEALTH_TIMEOUT_SECONDS
-        from gobby.cli.daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS
+        from gobby.cli.daemon_lifecycle import (
+            DAEMON_HEALTH_TIMEOUT_SECONDS,
+            STARTUP_READINESS_TIMEOUT_SECONDS,
+        )
         from gobby.mcp_proxy.daemon_control import DAEMON_START_TIMEOUT_SECONDS
 
         own_waits = DAEMON_HEALTH_TIMEOUT_SECONDS + STARTUP_READINESS_TIMEOUT_SECONDS
@@ -960,6 +967,66 @@ class TestDaemonProxy:
         assert "localhost:60887" in result["error"]
         assert "gobby restart --verbose" in result["error"]
         mock_client_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preflight_lets_a_slow_health_answer_from_a_live_daemon_through(self) -> None:
+        """A health answer slower than the 2 s preflight limit must not fail a live call (#24292)."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        health_requested = asyncio.Event()
+        release = asyncio.Event()
+
+        async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            request_line = await reader.readuntil(b"\r\n")
+            await reader.readuntil(b"\r\n\r\n")
+            if b" /api/health " in request_line:
+                health_requested.set()
+                await release.wait()
+                body = b'{"status": "healthy"}'
+            else:
+                body = b'{"success": true, "result": "ok"}'
+            head = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n\r\n"
+            )
+            with contextlib.suppress(ConnectionError):
+                writer.write(head.encode() + body)
+                await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(serve, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        proxy = DaemonProxy(port, base_url=f"http://127.0.0.1:{port}")
+        try:
+            result = await proxy._request("GET", "/some/path", preflight=True)
+        finally:
+            release.set()
+            await proxy.aclose()
+            server.close()
+            await server.wait_closed()
+
+        assert health_requested.is_set()
+        assert result == {"success": True, "result": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_preflight_reports_a_down_daemon_unavailable_on_a_real_socket(self) -> None:
+        """With nothing listening on the port, preflight answers DAEMON_UNAVAILABLE (#24292)."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        proxy = DaemonProxy(port, base_url=f"http://127.0.0.1:{port}")
+        try:
+            result = await proxy._request("GET", "/some/path", preflight=True)
+        finally:
+            await proxy.aclose()
+
+        assert result["success"] is False
+        assert result["error_code"] == "DAEMON_UNAVAILABLE"
+        assert f"localhost:{port}" in result["error"]
 
     @pytest.mark.asyncio
     async def test_request_preflight_caches_successful_health_check(self) -> None:

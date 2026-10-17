@@ -16,6 +16,32 @@ if TYPE_CHECKING:
     from gobby.config.bootstrap import BootstrapConfig
 
 
+FRONT_DOOR_SECRET_FD_ENV = "GOBBY_FRONT_DOOR_SECRET_FD"
+
+_front_door_secret: str | None = None
+
+
+def take_front_door_secret() -> None:
+    """Read the per-boot front-door secret from its inherited pipe."""
+    global _front_door_secret
+    raw_fd = os.environ.pop(FRONT_DOOR_SECRET_FD_ENV, None)
+    if raw_fd is None:
+        return
+    fd = int(raw_fd)
+    chunks: list[bytes] = []
+    try:
+        while chunk := os.read(fd, 4096):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    _front_door_secret = b"".join(chunks).decode() or None
+
+
+def front_door_secret() -> str | None:
+    """Return the secret ``take_front_door_secret`` read, if gdaemon supplied one."""
+    return _front_door_secret
+
+
 class _WindowsCrt(Protocol):
     def open_osfhandle(self, handle: int, flags: int) -> int: ...
 
