@@ -74,6 +74,29 @@ if args[-1:] == ["--preflight"]:
         sys.stderr.write("stub SRT refused preflight " + str(count) + "\\n")
         raise SystemExit(1)
     raise SystemExit(0)
+if args[1:2] == ["--monitor"]:
+    import socket
+
+    # Stand in for the darwin shared violation broker: answer identity probes,
+    # then exit after 30s idle as the real broker does.
+    path, ready_fd = args[2], int(args[3])
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen()
+    server.settimeout(30)
+    os.write(ready_fd, b"ready\\n")
+    os.close(ready_fd)
+    reply = json.dumps({{"ready": True, "identity": {identity!r}}}).encode() + b"\\n"
+    try:
+        while True:
+            client, _ = server.accept()
+            with client, client.makefile("rb") as stream:
+                stream.readline(4096)
+                client.sendall(reply)
+    except TimeoutError:
+        raise SystemExit(0)
+    finally:
+        Path(path).unlink(missing_ok=True)
 if "--" in args:
     command = args[args.index("--") + 1 :]
     # One read at the exec boundary, never retried: this spawn's terminal and its pane.
@@ -136,7 +159,7 @@ def _srt_root(gobby_home: Path) -> Path:
 
 
 def _write_srt_install(root: Path, *, node: Path) -> None:
-    """Lay down a pinned install that verifies; its runner never runs."""
+    """Lay down a pinned install that verifies; the node stub stands in for its runner."""
     from tests.srt_fixture_helpers import write_srt_proxy_fixture
 
     write_srt_proxy_fixture(root)
@@ -193,6 +216,7 @@ def e2e_pre_daemon_setup(
             python=sys.executable,
             state=str(seat_state),
             real=shutil.which("node"),
+            identity=SRT_RELEASE.runner_sha256,
             # The daemon's own schema-scoped URL, so the wrapper reads what the daemon wrote.
             dsn=e2e_fixtures._postgres_url_for_schema(postgres_database_url, postgres_schema),
         ),
