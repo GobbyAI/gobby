@@ -75,7 +75,7 @@ def _bash_event(command: str) -> HookEvent:
     [{"is_spawned_agent": True}, {}],
     ids=["spawned", "interactive"],
 )
-async def test_dirty_path_approval_cli_is_blocked_for_every_session(
+async def test_dirty_path_approval_rules_match_criterion_4_scope(
     temp_db: HubDatabase, variables: dict[str, object]
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
