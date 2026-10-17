@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
+from gobby.tasks.close_integration_credit import LandedCandidateCredit
 from gobby.tasks.close_pytest_collection import collection_target, operator_guard_file
 from gobby.tasks.command_equivalence import (
     pytest_targets,
@@ -668,15 +669,19 @@ def _runs_test(
 ) -> bool:
     """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
 
-    A tree other than ``root`` must hold the candidate's bytes for ``test`` and every
-    changed path, or it tests other code.
+    With a candidate, differing bytes require a clean landed integration descendant,
+    including in ``root``. Exact candidate bytes retain copy credit independently.
     """
-    return any(
-        not copy_only
-        if tree == root
-        else all(_same_bytes(tree, root, path, candidate) for path in (test, *changed_paths))
-        for tree in _target_trees(target, test)
-    )
+    for tree in _target_trees(target, test):
+        if tree == root and copy_only:
+            continue
+        if tree == root and candidate is None:
+            return True
+        if all(_same_bytes(tree, root, path, candidate) for path in (test, *changed_paths)):
+            return True
+        if candidate is not None and candidate.integration.credits(tree):
+            return True
+    return False
 
 
 def _target_trees(target: str, test: str) -> Iterator[str]:
@@ -730,6 +735,10 @@ class CloseCandidate:
     commit: str
 
     @cached_property
+    def integration(self) -> LandedCandidateCredit:
+        return LandedCandidateCredit(self.root, self.commit)
+
+    @cached_property
     def blobs(self) -> Mapping[str, str] | None:
         """Blob ids by repo path in the commit's tree, or None when git cannot list it."""
         try:
@@ -775,6 +784,7 @@ def coverage_failure_messages(
     differing_paths: tuple[str, ...] = (),
     unread_runs: Sequence[TranscriptValidationRun] = (),
     close_root: str | None = None,
+    rejected_trees: tuple[str, ...] = (),
 ) -> list[tuple[str, str]]:
     """Name and describe every uncovered test obligation in checklist priority order.
 
@@ -807,8 +817,9 @@ def coverage_failure_messages(
         name, message = failures[-1]
         failures[-1] = (
             name,
-            f"{message} A run from another tree is credited only when that tree matches the "
-            "close candidate commit, or the close checkout without one; these paths differ: "
+            f"{message} A differing tree needs proven clean landed integration ancestry; "
+            "otherwise it must match the close candidate or the close checkout without one. "
+            "These paths differ: "
             f"{', '.join(f'`{path}`' for path in differing_paths)}.",
         )
     if failures and unread_runs:
@@ -822,6 +833,9 @@ def coverage_failure_messages(
             "recognized form (Read, `cat`, `tail` or `grep` of the output file), so no pytest "
             f"summary proves them: {runs}.",
         )
+    if failures and rejected_trees:
+        name, message = failures[-1]
+        failures[-1] = (name, f"{message} Integration credit refused: {'; '.join(rejected_trees)}.")
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
         display = ", ".join(f"`{path}`" for path in web_paths)
