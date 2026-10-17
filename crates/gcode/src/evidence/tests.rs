@@ -1464,7 +1464,11 @@ fn large_batched_bound_blob_read_completes_past_the_stdin_pipe_limit() -> anyhow
         .zip(&names)
         .map(|(oid, name)| format!("100644 {oid}\t{name}\n"))
         .collect::<String>();
-    git_input(repo, &["update-index", "--index-info"], index_info.as_bytes())?;
+    git_input(
+        repo,
+        &["update-index", "--index-info"],
+        index_info.as_bytes(),
+    )?;
     let commit_oid = commit(repo, "many files")?;
     let binding = RepositoryBinding {
         project_id: "project-1".to_string(),
@@ -1475,7 +1479,10 @@ fn large_batched_bound_blob_read_completes_past_the_stdin_pipe_limit() -> anyhow
     let blobs = super::provenance::read_bound_blobs(repo, &binding, &paths);
     assert_eq!(blobs.len(), FILES);
     for (name, blob) in names.iter().zip(&blobs) {
-        let read = blob.as_ref().map(Vec::as_slice).map_err(ToString::to_string);
+        let read = blob
+            .as_ref()
+            .map(Vec::as_slice)
+            .map_err(ToString::to_string);
         assert_eq!(read, Ok(name.as_bytes()));
     }
     Ok(())
