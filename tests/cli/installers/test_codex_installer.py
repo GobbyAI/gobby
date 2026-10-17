@@ -108,6 +108,64 @@ def test_set_toml_value_raises_when_descending_through_scalar() -> None:
         _set_toml_value(config, "foo.bar", True)
 
 
+def test_load_toml_config_parses_each_distinct_text_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tomlkit
+
+    from gobby.cli.installers import codex
+
+    monkeypatch.setattr(codex, "_codex_config_cache", {})
+    real_parse = tomlkit.parse
+    parsed_texts: list[str] = []
+
+    def counting_parse(content: str) -> Any:
+        parsed_texts.append(content)
+        return real_parse(content)
+
+    monkeypatch.setattr(tomlkit, "parse", counting_parse)
+
+    first = codex._load_toml_config('foo = "bar"\n')
+    first["foo"] = "mutated"
+    second = codex._load_toml_config('foo = "bar"\n')
+
+    assert second["foo"] == "bar"
+    assert len(parsed_texts) == 1
+
+    changed = codex._load_toml_config('foo = "baz"\n')
+
+    assert changed["foo"] == "baz"
+    assert len(parsed_texts) == 2
+
+
+def test_dumped_codex_config_is_served_from_cache_without_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tomlkit
+
+    from gobby.cli.installers import codex
+
+    monkeypatch.setattr(codex, "_codex_config_cache", {})
+    config_path = tmp_path / "config.toml"
+    config = codex._load_toml_config('# keep me\nfoo = "bar"\n')
+    codex._set_toml_value(config, "features.hooks", True)
+    codex._dump_toml_config(config_path, config)
+    written = config_path.read_text(encoding="utf-8")
+
+    real_parse = tomlkit.parse
+    parsed_texts: list[str] = []
+
+    def counting_parse(content: str) -> Any:
+        parsed_texts.append(content)
+        return real_parse(content)
+
+    monkeypatch.setattr(tomlkit, "parse", counting_parse)
+
+    reread = codex._load_toml_config(written)
+
+    assert parsed_texts == []
+    assert tomllib.loads(written)["features"]["hooks"] is True
+    assert tomlkit.dumps(reread) == written
+
+
 def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
     from gobby.cli.installers.codex import _normalized_codex_command_hook_hash
 
@@ -981,6 +1039,88 @@ class TestInstallCodexProjectHooks:
         assert state[live_key]["trusted_hash"] == "sha256:x"
         assert state[user_key]["trusted_hash"] == "sha256:x"
         _assert_gobby_trust_state(config_data, project_path / ".codex" / "hooks.json")
+
+    def test_two_new_worktrees_parse_the_codex_config_once(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Trust rides in the codex dump, so the second install's read is a cache hit."""
+        import tomlkit
+
+        from gobby.cli.installers import codex
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        codex_home = mock_home / ".codex"
+        codex_home.mkdir()
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            '# keep me\n[model_providers.local]\nname = "local"\n', encoding="utf-8"
+        )
+        monkeypatch.setattr(codex, "_codex_config_cache", {})
+        real_parse = tomlkit.parse
+        parsed_texts: list[str] = []
+
+        def counting_parse(content: str) -> Any:
+            parsed_texts.append(content)
+            return real_parse(content)
+
+        monkeypatch.setattr(tomlkit, "parse", counting_parse)
+        project_a = mock_home / "wt-a"
+        project_b = mock_home / "wt-b"
+        project_a.mkdir()
+        project_b.mkdir()
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            first = install_codex_project_hooks(project_a)
+            second = install_codex_project_hooks(project_b)
+
+        assert first["success"] is True
+        assert second["success"] is True
+        assert len(parsed_texts) == 1
+        # Nothing was pending after the dump, so seed_cli_trust wrote no file.
+        assert second["trust"]["files_written"] == []
+        assert {entry["status"] for entry in second["trust"]["entries"]} == {"existing"}
+
+        config_text = config_path.read_text(encoding="utf-8")
+        assert "# keep me" in config_text
+        config_data = _load_toml_file(config_path)
+        assert config_data["model_providers"]["local"]["name"] == "local"
+        assert config_data["projects"][str(project_a)]["trust_level"] == "trusted"
+        assert config_data["projects"][str(project_b)]["trust_level"] == "trusted"
+
+    def test_project_install_prunes_stale_generated_project_trust(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """A deleted Gobby worktree's trusted project entry is pruned; a user project stays."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        worktrees = mock_home / ".gobby" / "worktrees"
+        worktrees.mkdir(parents=True)
+        dead_project = worktrees / "gobby" / "deleted"
+        user_project = mock_home / "user-project"
+        user_project.mkdir()
+        codex_home = mock_home / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text(
+            f'[projects.{json.dumps(str(dead_project))}]\ntrust_level = "trusted"\n\n'
+            f'[projects.{json.dumps(str(user_project))}]\ntrust_level = "trusted"\n',
+            encoding="utf-8",
+        )
+        project_path = worktrees / "gobby" / "new"
+        project_path.mkdir(parents=True)
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            result = install_codex_project_hooks(project_path)
+
+        assert result["success"] is True
+        projects = _load_toml_file(codex_home / "config.toml")["projects"]
+        assert str(dead_project) not in projects
+        assert projects[str(user_project)]["trust_level"] == "trusted"
+        assert projects[str(project_path)]["trust_level"] == "trusted"
 
 
 class TestUninstallCodex:
