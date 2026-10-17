@@ -15,6 +15,7 @@ import re
 import sqlite3
 import stat
 import zlib
+from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -67,21 +68,21 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
 
 def delivered_proof_runs(
     run: TranscriptValidationRun, production_at: datetime | None
-) -> list[TranscriptValidationRun]:
+) -> Iterator[TranscriptValidationRun]:
     """Each pre-cutoff delivery proved alone, then the authenticated full output.
 
     Deliveries are never joined: a newline between two reads would make unrelated
     lines adjacent to a failure section. Without a production cutoff there is no
-    retained output to authenticate, so only the deliveries are returned.
+    retained output to authenticate, so only the deliveries are yielded. Lazy, so
+    the retained output is read only when no earlier delivery has already proved RED.
     """
-    runs = [
-        replace(run, output=delivery.text, output_truncated=delivery.truncated)
-        for delivery in recovered_deliveries(run, production_at)
-    ]
-    retained = retained_red_output(run, production_at) if production_at is not None else None
+    for delivery in recovered_deliveries(run, production_at):
+        yield replace(run, output=delivery.text, output_truncated=delivery.truncated)
+    if production_at is None:
+        return
+    retained = retained_red_output(run, production_at)
     if retained is not None:
-        runs.append(replace(run, output=retained))
-    return runs
+        yield replace(run, output=retained)
 
 
 def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | None:

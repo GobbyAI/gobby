@@ -7,6 +7,7 @@ import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from itertools import chain
 from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import (
@@ -428,7 +429,7 @@ def _find_red_run(
             # delivery is proved alone, then the authenticated retained output.
             candidates = [] if run.background_output_path is not None else [run]
             cached = (False, None)
-            for proof_run in candidates + delivered_proof_runs(run, production_at):
+            for proof_run in chain(candidates, delivered_proof_runs(run, production_at)):
                 matched, proof_reason = _red_run_proof(
                     test,
                     evidence,

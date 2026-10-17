@@ -267,3 +267,15 @@ def test_identical_text_deliveries_each_authenticate_on_their_own(
     assert retained_red_output(run, production_at) is None
     monkeypatch.setattr(tdd_retained_output, "_job_output", lambda *_: f"{text}\n")
     assert retained_red_output(run, production_at) == f"{text}\n"
+
+
+def test_bare_panic_header_rejection_names_the_thread(tmp_path: Path) -> None:
+    job = tmp_path / "tasks/job.output"
+    read = _read(job, "panicked at")
+    result = _red_result(tmp_path, [(5, read, THREAD)], retained=None)
+    assert not result.passed
+    reason = (
+        f"its reads before the implementation edit ({read}) name the panic thread for "
+        f"{QUALIFIED} but no failure message after it"
+    )
+    assert any(reason in finding for finding in result.findings), result.findings

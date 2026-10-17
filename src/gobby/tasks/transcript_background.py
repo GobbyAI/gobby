@@ -10,6 +10,7 @@ from datetime import datetime
 from defusedxml import ElementTree
 
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.tasks.acceptance_artifacts import panic_has_message
 from gobby.tasks.transcript_evidence_models import OutputDelivery, TranscriptValidationRun
 from gobby.tasks.transcript_evidence_snapshots import PendingTool
 from gobby.tasks.transcript_outcomes import extract_outcome, extract_output
@@ -410,18 +411,18 @@ def recovered_deliveries(
 
 def unread_reason(run: TranscriptValidationRun, before: datetime | None, name: str) -> str:
     """Why a background run's pre-cutoff reads did not prove RED for ``name``."""
+    deliveries = recovered_deliveries(run, before)
     readers = list(
-        dict.fromkeys(
-            delivery.reader or str(delivery.source)
-            for delivery in recovered_deliveries(run, before)
-        )
+        dict.fromkeys(delivery.reader or str(delivery.source) for delivery in deliveries)
     )
     if not readers:
         return "its output was never read in a recognized form before the implementation edit"
-    return (
-        f"its reads before the implementation edit ({', '.join(readers)}) "
-        f"name no runner row for {name}"
-    )
+    reads = f"its reads before the implementation edit ({', '.join(readers)})"
+    # A bare panic header names the thread but not the failure it carries.
+    named = [delivery for delivery in deliveries if f"thread '{name}'" in (delivery.text or "")]
+    if named and not any(panic_has_message(delivery.text or "") for delivery in named):
+        return f"{reads} name the panic thread for {name} but no failure message after it"
+    return f"{reads} name no runner row for {name}"
 
 
 def _reader_command(argv: list[str]) -> list[str]:
