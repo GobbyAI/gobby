@@ -276,9 +276,12 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
 async def test_ws_auth(daemon_instance: DaemonInstance) -> None:
     token = daemon_token(daemon_instance.gobby_home)
     await _assert_handshake_rejected(daemon_instance.ws_url, status_code=401)
-    await _assert_websocket_frames(
+    # The direct listener admits only verified front-door identity, so a bare
+    # bootstrap key is refused by contract (tests/servers/test_auth_service.py).
+    await _assert_handshake_rejected(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {token}")],
+        status_code=403,
     )
 
     async with websockets.connect(
@@ -315,14 +318,16 @@ async def test_ws_rotation(daemon_instance: DaemonInstance) -> None:
     old_token, new_token = _rotate_isolated_token(daemon_instance)
     _wait_for_old_token_rejection(daemon_instance, old_token)
 
+    # Bare keys are refused on the direct listener before and after rotation.
     await _assert_handshake_rejected(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {old_token}")],
-        status_code=401,
+        status_code=403,
     )
-    await _assert_websocket_frames(
+    await _assert_handshake_rejected(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {new_token}")],
+        status_code=403,
     )
     await _assert_websocket_frames(
         f"ws://localhost:{daemon_instance.http_port}/ws",
