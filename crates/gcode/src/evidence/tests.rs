@@ -1406,6 +1406,40 @@ fn bound_reads_refuse_missing_commit_path_and_mismatched_tree() -> anyhow::Resul
 }
 
 #[test]
+fn batched_bound_blob_reads_keep_per_path_results_in_request_order() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let paths = [
+        "binary.bin",
+        "untracked.rs",
+        "src/lib.rs",
+        "source-link",
+        "vendor/dependency",
+        "binary.bin",
+    ];
+    let blobs = super::provenance::read_bound_blobs(temporary.path(), &binding, &paths);
+    assert_eq!(blobs.len(), paths.len());
+    let read = |index: usize| {
+        blobs[index]
+            .as_ref()
+            .map(Vec::as_slice)
+            .map_err(ToString::to_string)
+    };
+    assert_eq!(read(0), Ok(&b"plain prefix\0binary"[..]));
+    assert_eq!(read(2), Ok(SOURCE.as_bytes()));
+    assert_eq!(read(5), Ok(&b"plain prefix\0binary"[..]));
+    for (index, reason) in [
+        (1, "path is absent from the bound commit"),
+        (3, "bound path is not a regular file"),
+        (4, "bound path is not a regular file"),
+    ] {
+        let detail = read(index).expect_err("unreadable bound path");
+        assert!(detail.contains(paths[index]), "{detail}");
+        assert!(detail.ends_with(reason), "{detail}");
+    }
+    Ok(())
+}
+
+#[test]
 fn bound_index_offsets_refuse_a_different_blob() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let mut facts = FakeFacts::for_source(&binding);

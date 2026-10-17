@@ -277,6 +277,8 @@ pub struct EvidenceLibrary {
     facts: Arc<dyn EvidenceFacts>,
     hybrid: Option<Arc<dyn HybridSearch>>,
     working_tree: bool,
+    /// Binding commit verification, run at most once per evidence invocation.
+    bound_commit: std::sync::OnceLock<std::result::Result<(), String>>,
 }
 
 impl EvidenceLibrary {
@@ -311,6 +313,7 @@ impl EvidenceLibrary {
             facts,
             hybrid: None,
             working_tree: false,
+            bound_commit: std::sync::OnceLock::new(),
         })
     }
 

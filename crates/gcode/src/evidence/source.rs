@@ -27,10 +27,36 @@ impl EvidenceLibrary {
         Ok(())
     }
 
+    /// Blobs at the binding commit, one result per path in order.
+    fn bound_blobs(&self, paths: &[&str]) -> Vec<Result<Vec<u8>>> {
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        let verified = self.bound_commit.get_or_init(|| {
+            super::provenance::verify_bound_commit(&self.repository_root, &self.binding)
+        });
+        match verified {
+            Ok(()) => {
+                super::provenance::read_bound_blobs(&self.repository_root, &self.binding, paths)
+            }
+            Err(detail) => paths
+                .iter()
+                .map(|path| {
+                    Err(super::provenance::bound_blob_unavailable(
+                        &self.binding,
+                        path,
+                        detail.clone(),
+                    ))
+                })
+                .collect(),
+        }
+    }
+
     pub(super) fn read_file(&self, path: &str) -> Result<Vec<u8>> {
         validate_repo_path(path)?;
         if !self.working_tree {
-            return super::provenance::read_bound_blob(&self.repository_root, &self.binding, path);
+            let mut blobs = self.bound_blobs(&[path]);
+            return blobs.pop().expect("one result per requested path");
         }
         let entry = self.entry(path)?;
         let stale = |error: std::io::Error| EvidenceError::StaleRange {
@@ -106,11 +132,12 @@ impl EvidenceLibrary {
                 _ => None,
             })
             .collect::<std::collections::BTreeMap<_, _>>();
+        let paths = cited.keys().copied().collect::<Vec<_>>();
+        let bound = self.bound_blobs(&paths);
         cited
             .into_iter()
-            .filter_map(|(path, hash)| {
-                let bound =
-                    super::provenance::read_bound_blob(&self.repository_root, &self.binding, path);
+            .zip(bound)
+            .filter_map(|((path, hash), bound)| {
                 let state = match bound {
                     Ok(bytes) if gobby_core::indexing::content_hash(&bytes) == hash => return None,
                     Ok(_) => "differ from",
