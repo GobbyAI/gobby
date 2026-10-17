@@ -427,52 +427,56 @@ fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>
         operation: format!("git {}", args.join(" ")),
         message: error.to_string(),
     })?;
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(error) = stdin.write_all(input.unwrap_or_default())
-    {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(EvidenceError::Git {
-            operation: format!("git {}", args.join(" ")),
-            message: error.to_string(),
-        });
-    }
-    // Drain both pipes while waiting: waiting before reading deadlocks once a
-    // large commit diff fills the pipe. Readers also cap retained output bytes.
-    let read = |stream: Box<dyn std::io::Read + Send>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            stream.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-            Ok::<_, std::io::Error>(bytes)
-        })
-    };
-    let stdout = read(Box::new(child.stdout.take().expect("piped stdout")));
-    let stderr = read(Box::new(child.stderr.take().expect("piped stderr")));
-    let status = child.wait_timeout(Duration::from_secs(10));
-    if !matches!(status, Ok(Some(_))) {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
     let failure = |message: String| EvidenceError::Git {
         operation: format!("git {}", args.join(" ")),
         message,
     };
-    let stdout = stdout
-        .join()
-        .map_err(|_| failure("stdout reader failed".into()))?
-        .map_err(|error| failure(error.to_string()))?;
-    let stderr = stderr
-        .join()
-        .map_err(|_| failure("stderr reader failed".into()))?
-        .map_err(|error| failure(error.to_string()))?;
-    let status = status
-        .map_err(|error| failure(error.to_string()))?
-        .ok_or_else(|| failure("provenance command exceeded 10 seconds".into()))?;
-    if stdout.len() > 16 * 1024 * 1024 || stderr.len() > 16 * 1024 * 1024 {
-        return Err(failure("provenance output exceeds its byte bound".into()));
-    }
-    if !status.success() {
-        return Err(failure(String::from_utf8_lossy(&stderr).trim().to_string()));
-    }
-    Ok(stdout)
+    // Stdin, stdout, and stderr are serviced concurrently, and the wait runs under
+    // the timeout. Writing all of stdin before draining stdout deadlocks once git
+    // fills its stdout pipe while stdin is still unread, and a blocked write never
+    // reaches the timeout. Readers also cap retained output bytes.
+    std::thread::scope(|scope| -> Result<Vec<u8>> {
+        let writer = scope.spawn(move || match stdin {
+            Some(mut stdin) => stdin.write_all(input.unwrap_or_default()),
+            None => Ok(()),
+        });
+        let stdout = scope.spawn(move || read_capped(stdout));
+        let stderr = scope.spawn(move || read_capped(stderr));
+        let status = child.wait_timeout(Duration::from_secs(10));
+        if !matches!(status, Ok(Some(_))) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let stdout = stdout
+            .join()
+            .map_err(|_| failure("stdout reader failed".into()))?
+            .map_err(|error| failure(error.to_string()))?;
+        let stderr = stderr
+            .join()
+            .map_err(|_| failure("stderr reader failed".into()))?
+            .map_err(|error| failure(error.to_string()))?;
+        let written = writer
+            .join()
+            .map_err(|_| failure("stdin writer failed".into()))?;
+        let status = status
+            .map_err(|error| failure(error.to_string()))?
+            .ok_or_else(|| failure("provenance command exceeded 10 seconds".into()))?;
+        if stdout.len() > 16 * 1024 * 1024 || stderr.len() > 16 * 1024 * 1024 {
+            return Err(failure("provenance output exceeds its byte bound".into()));
+        }
+        if !status.success() {
+            return Err(failure(String::from_utf8_lossy(&stderr).trim().to_string()));
+        }
+        written.map_err(|error| failure(error.to_string()))?;
+        Ok(stdout)
+    })
+}
+
+fn read_capped(stream: impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    stream.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }

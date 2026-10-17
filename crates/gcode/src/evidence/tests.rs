@@ -1440,6 +1440,48 @@ fn batched_bound_blob_reads_keep_per_path_results_in_request_order() -> anyhow::
 }
 
 #[test]
+fn large_batched_bound_blob_read_completes_past_the_stdin_pipe_limit() -> anyhow::Result<()> {
+    // 10000 cat-file requests send about 410 KB of stdin, enough to fill git's stdout
+    // pipe several times over. Writing all of stdin before draining stdout hung here.
+    const FILES: usize = 10_000;
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join("batch"))?;
+    let names = (0..FILES)
+        .map(|index| format!("batch/file-{index:05}.txt"))
+        .collect::<Vec<_>>();
+    for name in &names {
+        std::fs::write(repo.join(name), name)?;
+    }
+    let oids = git_input(
+        repo,
+        &["hash-object", "-w", "--stdin-paths"],
+        names.join("\n").as_bytes(),
+    )?;
+    let index_info = oids
+        .lines()
+        .zip(&names)
+        .map(|(oid, name)| format!("100644 {oid}\t{name}\n"))
+        .collect::<String>();
+    git_input(repo, &["update-index", "--index-info"], index_info.as_bytes())?;
+    let commit_oid = commit(repo, "many files")?;
+    let binding = RepositoryBinding {
+        project_id: "project-1".to_string(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+    };
+    let paths = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let blobs = super::provenance::read_bound_blobs(repo, &binding, &paths);
+    assert_eq!(blobs.len(), FILES);
+    for (name, blob) in names.iter().zip(&blobs) {
+        let read = blob.as_ref().map(Vec::as_slice).map_err(ToString::to_string);
+        assert_eq!(read, Ok(name.as_bytes()));
+    }
+    Ok(())
+}
+
+#[test]
 fn bound_index_offsets_refuse_a_different_blob() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let mut facts = FakeFacts::for_source(&binding);
