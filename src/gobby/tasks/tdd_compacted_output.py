@@ -40,7 +40,9 @@ def has_compacted_pytest_failure(
     if not test.path.endswith(".py") or not _COMPACTED_RECALL_RE.search(output):
         return False
     lines = output.splitlines()
-    summary = _PYTEST_SUMMARY_RE.search(output)
+    # Pytest's final summary line is the last match; an earlier `N failed` line is text.
+    summaries = list(_PYTEST_SUMMARY_RE.finditer(output))
+    summary = summaries[-1] if summaries else None
     if (
         re.search(r"(?m)^ERROR\s|\[XPASS\(strict\)\]", output)
         or summary is None

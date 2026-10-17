@@ -65,7 +65,17 @@ async def test_cancel_retry_preserves_caller_cancellation(
 
 
 @pytest.mark.parametrize(
-    "error", [psycopg.OperationalError("connection is closed"), PoolTimeout("pool busy")]
+    "error",
+    [
+        psycopg.OperationalError("connection is closed"),
+        PoolTimeout("pool busy"),
+        psycopg.OperationalError(
+            "consuming input failed: server closed the connection unexpectedly"
+        ),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+        ),
+    ],
 )
 async def test_retry_recovers_from_store_outage(harness: ChannelHarness, error: Exception) -> None:
     harness.fail_initializations(httpx.ConnectError("offline"), count=1)

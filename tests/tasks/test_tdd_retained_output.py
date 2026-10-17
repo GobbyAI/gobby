@@ -844,6 +844,22 @@ def test_expired_recall_ignores_error_count_text_in_a_failure_detail(
     assert result.passed, result.findings
 
 
+def test_expired_recall_anchors_the_count_to_the_final_summary_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An earlier `N failed` line is text, not pytest's summary; the final line decides.
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    output = (
+        "2 failed checks\n"
+        ">       assert feature() == 2\nE       assert 1 == 2\n\n"
+        ">       assert other() == 3\nE       assert 1 == 3\n\n"
+        f"FAILED {PY_TEST}::test_first\nFAILED {PY_TEST}::test_second\n"
+        f"2 failed, 1 error in 0.5s\n[full output: rtk recall {RECALL}]"
+    )
+    result = _expired_recall_result(tmp_path, output, PY_TEST, ("test_first",), source=MULTI_SOURCE)
+    assert_uncredited(result)
+
+
 SIBLING_SOURCE = "def test_feature():\n    assert feature() == 2\n\n\ndef test_other():\n    assert other() == 3\n"
 
 

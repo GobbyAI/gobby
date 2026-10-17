@@ -182,8 +182,8 @@ Orchestrator-accepted defaults that Josh rules on when he approves the stamped p
   is promoted through `promote_workspace_binary_set`. A gcore asset change (1.1)
   reaches `gcode`, `gdaemon`, `ghook`, `gclient` and the `gobby-terminals` library.
   Installing a new gdaemon needs a global restart announcement and a quiet window.
-- **Monolith ceiling.** `transcript_outcomes.py` (877 lines) and
-  `validation_detection.py` (926 lines, after #24507) are above the 850-line heuristic, so 2.4
+- **Monolith ceiling.** `transcript_outcomes.py` (893 lines) and
+  `validation_detection.py` (957 lines, after #24507, #24608 and #24535) are above the 850-line heuristic, so 2.4
   moves code out of both before adding to them. `_lifecycle_close.py` (929 lines) is
   not targeted: reuse records reach the gate through `load_confinement_context`.
 - **Test isolation.** Python tests use the isolated test hub
@@ -224,12 +224,12 @@ is a shared Target across 1.1, 2.2 and 2.3, ordered by dependencies.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/469_validation_run_records.sql`
-- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 469
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 469 in the embedded asset list
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 469
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 469
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 469
+- `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: catalog entry for migration 472
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: registers migration 472 in the embedded asset list
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-identity carrier for migration 472
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract expectations for migration 472
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity expectations for migration 472
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated expected schema identity
 - `crates/gcore/Cargo.toml`
 - `crates/gcode/Cargo.toml`
@@ -239,8 +239,12 @@ Targets:
 - `Cargo.lock`
 
 Research context. Migrations live under `crates/gcore/assets/schema/migrations/`;
-the latest is `468_terminal_host_epochs.sql`, landed with its carriers in
-`3fa292372e`. The derived-carriers lint requires every carrier listed above in the
+the latest is `469_config_active_state.sql` (#24445, `39eb1255af`), and
+`468_terminal_host_epochs.sql` landed with its carriers in `3fa292372e`. The
+Orchestrator's migration ledger (2026-10-16 18:19 CDT) reserves 470 for #24617 (Host
+e2e harness) and 471 for #23861, and assigns 472 to this deliverable. Next-free rule:
+if 472 is taken when 1.1 is implemented, use the next free number and update every
+carrier below to match. The derived-carriers lint requires every carrier listed above in the
 same deliverable. Follow 468's grant pattern: `REVOKE ALL ... FROM PUBLIC` and grant
 to `gobby_daemon_runtime`, the role both gdaemon and the Python daemon use; the
 Python gate needs SELECT, gdaemon needs SELECT, INSERT and DELETE.
@@ -273,8 +277,8 @@ patch version of each listed binary crate and `gobby-core`, and update `Cargo.lo
 
 **Acceptance:**
 
-- 1.1.1 - Migration 469 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/469_validation_run_records.sql`.
-- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 469, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 1.1.1 - Migration 472 creates `validation_run_records` with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime` SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`.
+- 1.1.2 - The schema catalog, asset registry, grant bundle and expected identity carry migration 472, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`. file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 1.1.3 - `gobby-core` and every dependent shipped binary carry a patch-version bump with `Cargo.lock` updated. file: `Cargo.lock`.
 
 ## P2: Bounded-run launcher
@@ -550,7 +554,7 @@ delimiter. Add `_wrapper_rule("gdaemon-run", "gdaemon run", "delimiter",
 criterion `uv run pytest x`. Any Target under `src/gobby/config/` requires the
 `runtime_config_contract.json` carrier.
 
-Both files are above the 850-line heuristic (877 and 926 lines). Move
+Both files are above the 850-line heuristic (893 and 957 lines). Move
 `_launcher_arguments` and its option tables from `transcript_outcomes.py` into the
 new `src/gobby/tasks/transcript_launchers.py`, imported by `_first_executable`
 (its only caller). Move `default_validation_wrapper_rules` and `_wrapper_rule` from
@@ -710,8 +714,8 @@ Targets:
 - `src/gobby/tasks/validation_reuse.py`
 - `tests/tasks/test_validation_reuse.py`
 
-Research context. New module, so `close_checklist.py` (805 lines) and
-`close_test_coverage.py` (812 lines) only gain wiring. Inputs: the record rows
+Research context. New module, so `close_checklist.py` (838 lines) and
+`close_test_coverage.py` (919 lines) only gain wiring. Inputs: the record rows
 (loaded in 3.3), the close root, the candidate commit, the module paths to
 evaluate (required modules plus criterion pytest targets, 3.3), and the close's
 transcript evidence. Output: a frozen `ReuseCredit` (new) mapping each reused
@@ -834,7 +838,7 @@ standard form) are stripped before judging that form, unless one sets a 2.2
 denylisted variable. Set its `status` to `"reused"` and add its
 `reused_modules`. Every other criterion command stays fresh-only. The marking
 helper, `apply_criterion_reuse`, lives in `validation_reuse.py`, so
-`close_checklist.py` (805 lines) gains only call sites and the details entries. Fresh transcript
+`close_checklist.py` (838 lines) gains only call sites and the details entries. Fresh transcript
 evidence keeps priority: a reused module never hides a fresh failure, and
 `unresolved_failures` still blocks.
 `has_success` for the required `test` category is also true when reuse covered at
@@ -980,6 +984,13 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   3.3.5 now quote their command examples instead of backticking them, because
   update_task's close-command validator treats a backticked command span as a
   mandatory exact close command and rejects bare pytest and placeholder forms.
+- 2026-10-16: After the 09:06 cutover, the adversary bounced the 478d474 stamp:
+  migration 469 is taken by `469_config_active_state.sql` (#24445). 1.1 now uses
+  migration 472 throughout, per the Orchestrator's 18:19 CDT migration ledger (470
+  for #24617, 471 for #23861), with the next-free rule stated in 1.1's research
+  context. The monolith figures now read 893 and 957 lines (Constraints and 2.4)
+  and 838 lines for `close_checklist.py` (3.2 and 3.3), and 3.2 reads 919 lines for
+  `close_test_coverage.py`.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -989,12 +1000,12 @@ that rewritten launcher must exit non-zero and write a `failed` record.
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.1.1: Migration 469 creates `validation_run_records` with
+  validation_criteria: '1.1.1: Migration 472 creates `validation_run_records` with
     the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
-    SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/469_validation_run_records.sql`.
+    SELECT, INSERT and DELETE. file: `crates/gcore/assets/schema/migrations/472_validation_run_records.sql`.
 
     1.1.2: The schema catalog, asset registry, grant bundle and expected identity
-    carry migration 469, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+    carry migration 472, and the schema contract tests pass. file: `crates/gcore/assets/schema/catalog.manifest.json`.
     file: `src/gobby/storage/schema_expected_identity.json`. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 
     1.1.3: `gobby-core` and every dependent shipped binary carry a patch-version bump
