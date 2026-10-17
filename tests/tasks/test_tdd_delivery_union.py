@@ -185,6 +185,15 @@ def test_red_rejection_names_the_delivered_read(tmp_path: Path) -> None:
     assert any(reason in finding for finding in result.findings), result.findings
 
 
+def test_unauthenticated_retained_output_is_named_in_rejection(tmp_path: Path) -> None:
+    job = tmp_path / "tasks/job.output"
+    read = _read(job, "left:|right:")
+    result = _red_result(tmp_path, [(5, read, _grep(RED, "left:|right:"))], retained=None)
+    assert not result.passed
+    note = f"its retained full output at {job} could not be authenticated"
+    assert any(note in finding for finding in result.findings), result.findings
+
+
 def _monitor_event(at: float, text: str) -> dict[str, Any]:
     return _queued(
         at,
