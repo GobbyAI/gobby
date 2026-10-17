@@ -315,6 +315,39 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
     result.add_file_written(config_path)
 
 
+def ensure_codex_project_trust(config: TOMLDocument, directory: PathValue) -> None:
+    """Trust ``directory``'s Codex project paths in a parsed config, in place.
+
+    The document-level counterpart of ``_seed_codex_trust``: the caller writes the
+    config, so trust rides in that write instead of a second text write. Like the
+    text path, stale generated projects are pruned only when a path is pending.
+    """
+    paths = _trust_path_strings(directory)
+    raw_projects = config.get("projects")
+    existing: Mapping[str, Any] = raw_projects if isinstance(raw_projects, Mapping) else {}
+    pending: list[str] = []
+    for path in paths:
+        entry = existing.get(path)
+        if not (isinstance(entry, Mapping) and entry.get("trust_level") == "trusted"):
+            pending.append(path)
+    if not pending:
+        return
+
+    projects = raw_projects if isinstance(raw_projects, Table) else tomlkit.table()
+    if projects is not raw_projects:
+        # An inline ``projects = {...}`` keeps its entries when it becomes a table.
+        projects.update(existing)
+        config["projects"] = projects
+    for path in list(projects):
+        if path not in paths and is_stale_generated_path(path):
+            del projects[path]
+    for path in pending:
+        entry = projects.get(path)
+        project_config = entry if isinstance(entry, Table) else tomlkit.table()
+        project_config["trust_level"] = "trusted"
+        projects[path] = project_config
+
+
 def _append_codex_trust_entry(content: str, path: str) -> str:
     prefix = f"{content.rstrip()}\n\n" if content.strip() else ""
     quoted_path = json.dumps(path, ensure_ascii=False)
