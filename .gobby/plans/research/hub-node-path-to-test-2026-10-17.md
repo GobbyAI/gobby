@@ -17,7 +17,7 @@ The dependency edges pull in **78 open tasks**, **65** of them leaves:
 
 The ready leaves are #24381 (Detection manifest engine) and #24350 (`gobby-mcp` crate and its daemon dialer). The landed or in-review leaves are #24368 (Node hook ingress arm), #24270 (Node routes: checkout registration and run reports), #24595 (Callers act only on machines they own), #24596 (Node-commands contract version 3) and #24582 (Node ledger prune test).
 
-The hub-mode and node-half plans are fully expanded. **Three tasks the edges pull in from outside hub-node still need planning before the path can finish.** Two of them (#21586 and #23275) are blocked anyway by the close cap you chose (option B: no new tasks until the close backlog is under 20).
+The hub-mode and node-half plans are fully expanded. **Three tasks the edges pull in from outside hub-node still need planning before the path can finish.** Expanding #21586 would create new tasks, and the close cap you chose blocks that for now (option B: no new tasks until the close backlog is under 20).
 
 ## Tasks that need planning or expansion
 
@@ -61,7 +61,7 @@ The second spine starts at the just-landed ingress arm: #24368 (Node hook ingres
 | #24368 Node hook ingress arm | Landed at cac3ed622b (gdaemon 0.4.52). Its cutover activation runs after this report; the focused retest and close follow. |
 | #24270 Node routes: checkout registration and run reports | Landed (f0a600e55c), close pending. |
 | #24595 Callers act only on machines they own | In review at 6059529d0e; its 24-file rerun is waiting on a test slot. This one unblocks the most hub-mode leaves. |
-| #24596 Node-commands contract version 3 | In review. |
+| #24596 Node-commands contract version 3 | Landed (f770f3317d). Its close waits on the #24642 close gate 10 fix. |
 | #24582 Node ledger prune test | Reviewer LAND; waiting on its activation receipt, then close. |
 | #24584 Node receipt sweep | Final-source clippy and nextest waiting on test slots. |
 | #24594 gdaemon internal node-command route | Claimed, blocked behind #24370. |
@@ -100,7 +100,7 @@ The tree lists only open tasks. "Blocked by" names only open blockers. The statu
 - **#24267** P3: Machine-aware roster and attention. Status: open container (2/3 children closed). Planning: none: expanded.
   - **#24279** Attention respond on another machine's entry. Status: blocked; blocked by #24595 (Callers act only on machines they own), #24273 (Remote terminal writes go through the node). Planning: none: expanded leaf.
 - **#24592** P4: Remote workspaces and the machine-scoped project view. Status: open container (0/8 children closed). Planning: none: expanded.
-  - **#24596** Node-commands contract version 3: workspace and checkout commands. Status: in review (candidate sent). Planning: none: expanded leaf.
+  - **#24596** Node-commands contract version 3: workspace and checkout commands. Status: landed (f770f3317d), close waits on the #24642 close gate 10 fix. Planning: none: expanded leaf.
   - **#24598** Hub remote workspace module and tool routing. Status: blocked; blocked by #24595 (Callers act only on machines they own), #24270 (Node routes: checkout registration and run reports), #24596 (Node-commands contract version 3: workspace and checkout...). Planning: none: expanded leaf.
   - **#24597** Node workspace.merge and workspace.remove handlers. Status: blocked; blocked by #24596 (Node-commands contract version 3: workspace and checkout...), #24384 (Node sandbox reaping and records). Planning: none: expanded leaf.
   - **#24602** Hub projects and source-control status take machine_id. Status: blocked; blocked by #24598 (Hub remote workspace module and tool routing), #24595 (Callers act only on machines they own). Planning: none: expanded leaf.
