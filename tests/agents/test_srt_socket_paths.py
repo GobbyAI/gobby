@@ -142,6 +142,22 @@ def test_mux_directory_secures_fallback_parent_and_child(
         assert path.stat().st_uid == os.getuid()
 
 
+def test_socket_directory_override_replaces_shared_root_and_stays_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "sockets"
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ("deep-home-" * 12)))
+    monkeypatch.setenv(srt_socket_paths.SOCKET_DIRECTORY_ENV, str(directory))
+    assert srt_socket_paths.private_srt_socket_roots()[1] == directory
+    canonical = directory.parent.resolve() / directory.name
+    assert srt_socket_paths.srt_socket_directory() == canonical
+    assert srt_socket_paths.srt_mux_tmpdir() == canonical
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    assert str(directory) in sandbox_policy.sensitive_roots()
+    with pytest.raises(ValueError, match="sensitive root"):
+        sandbox_policy.assert_sensitive_path_contract([str(directory)])
+
+
 async def test_provider_cannot_grant_socket_access_to_private_monitor_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

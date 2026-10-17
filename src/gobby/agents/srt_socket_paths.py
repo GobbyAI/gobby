@@ -10,13 +10,18 @@ from gobby.paths import get_gobby_home
 # Reserve 40 bytes for SRT's PID/sequence name, separator, and terminating NUL
 # in macOS's 104-byte sun_path. The returned directory is always canonical.
 _SOCKET_DIRECTORY_BUDGET = 63
+# Replaces the shared /tmp root and is used verbatim as the socket directory, so
+# an isolated daemon (tests under a seat sandbox) never touches real local state.
+# It stays a private root, denied to providers like the root it replaces.
+SOCKET_DIRECTORY_ENV = "GOBBY_SRT_SOCKET_DIR"
 
 
 def private_srt_socket_roots(gobby_home: Path | None = None) -> tuple[Path, Path]:
     """Return both private roots, including other homes' UID-scoped sockets."""
+    override = os.environ.get(SOCKET_DIRECTORY_ENV)
     return (
         (gobby_home if gobby_home is not None else get_gobby_home()) / "runtime" / "srt-sock",
-        Path("/tmp") / f"gobby-srt-{os.getuid()}",
+        Path(override) if override else Path("/tmp") / f"gobby-srt-{os.getuid()}",
     )
 
 
@@ -24,6 +29,8 @@ def srt_socket_directory(gobby_home: Path | None = None) -> Path:
     """Select a stable bounded directory without creating policy-side state."""
     home = gobby_home if gobby_home is not None else get_gobby_home()
     home_root, short_root = private_srt_socket_roots(home)
+    if os.environ.get(SOCKET_DIRECTORY_ENV):
+        return short_root.parent.resolve() / short_root.name
     home_root = home_root.parent.resolve() / home_root.name
     if len(os.fsencode(home_root)) <= _SOCKET_DIRECTORY_BUDGET:
         return home_root

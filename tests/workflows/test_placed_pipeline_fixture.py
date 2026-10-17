@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import pytest
 
 import tests.e2e.conftest as e2e_fixtures
 from gobby.agents import srt_runtime
+from gobby.agents.srt_socket_paths import SOCKET_DIRECTORY_ENV
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -226,6 +228,10 @@ def e2e_pre_daemon_setup(
     )
     # prepare_daemon_env copies os.environ, so the daemon resolves both stubs first.
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    # The shared /tmp socket root is real local state, and tmp_path is too long for
+    # the monitor socket's 104-byte sun_path, so the daemon gets a short private one.
+    sockets = Path(tempfile.mkdtemp(prefix="srt-"))
+    monkeypatch.setenv(SOCKET_DIRECTORY_ENV, str(sockets))
     root = _srt_root(e2e_config[0].parent)
     _write_srt_install(root, node=node)
     mutations = ConfigMutations(postgres_db)
@@ -239,6 +245,7 @@ def e2e_pre_daemon_setup(
         yield
     finally:
         _release_install(root)
+        shutil.rmtree(sockets, ignore_errors=True)
 
 
 @pytest.fixture
