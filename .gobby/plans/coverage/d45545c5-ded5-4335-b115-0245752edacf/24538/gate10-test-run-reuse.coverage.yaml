@@ -1,33 +1,33 @@
 header:
   plan_id: gate10-test-run-reuse
-  plan_hash: a50e11f37288fa9ab493d2ab82f8df00a96ee76da01159c8edf0f98e7b6d70e0
+  plan_hash: 298bb5fe4c4152450738173601c50a198ea2da586cc4bbd2a292f1eb448d3313
   root_task_ref: '24538'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-17T04:38:45Z'
+  generated_at: '2026-10-17T14:57:12Z'
   task_tree_source: db
-  task_tree_source_hash: 01af768112adf28b793e263d433095a9fe04cadb4ee9195406c7cd837d364d5a
+  task_tree_source_hash: bb5d2996972509509b5b3e27d83f42c3dd118fdc240e8bee5139fefb0920cb05
   evidence_summary: []
   evidence: []
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
-  plan_node_hash: 6035792edb0b07052c090adcb5a1968227b22ff177eabec041d0f22d01b854a2
+  plan_node_hash: 8102129526ae7dc52610e70886adc1901c57a6d4d32727865507ed74e4f8f57b
   status: covered
   leaves:
   - leaf_task_ref: '#24548'
-    validation_criteria_snippet: '1.1.1: Migration 472 creates `validation_run_records`
+    validation_criteria_snippet: '1.1.1: Migration 470 creates `validation_run_records`
       with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
       SELECT, INSERT...'
-    matched_artifact_ref: crates/gcore/assets/schema/migrations/472_validation_run_records.sql
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/470_validation_run_records.sql
   deferral_target: null
   detail: ''
 - section_id: '1.1'
   item_id: 1.1.2
-  plan_node_hash: e0f345bfac564eb952aed3c698ebf5b26c1233772fc77d45fad5a15110535232
+  plan_node_hash: 68691d2747c3a8a425876430fd4c45df1c57968441366f25156232ab6a64e44f
   status: covered
   leaves:
   - leaf_task_ref: '#24548'
-    validation_criteria_snippet: '1.1.1: Migration 472 creates `validation_run_records`
+    validation_criteria_snippet: '1.1.1: Migration 470 creates `validation_run_records`
       with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
       SELECT, INSERT...'
     matched_artifact_ref: crates/gcore/assets/schema/catalog.manifest.json
@@ -39,7 +39,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#24548'
-    validation_criteria_snippet: '1.1.1: Migration 472 creates `validation_run_records`
+    validation_criteria_snippet: '1.1.1: Migration 470 creates `validation_run_records`
       with the columns, checks and index above, revokes PUBLIC and grants `gobby_daemon_runtime`
       SELECT, INSERT...'
     matched_artifact_ref: Cargo.lock
