@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -13,6 +14,7 @@ import pytest
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import derive_close_transcript_evidence
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from tests.mcp_proxy.tools.tasks.test_close_codex_edit_context import _patch_records, _record
 from tests.mcp_proxy.tools.tasks.test_close_evidence_sessions import (
     IMPLEMENTER,
     _claude_edit_session,
@@ -122,6 +124,16 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
     shared = case.startswith(("shared-", "reclaimed-shared-"))
     shared_path = "settings.toml" if case.endswith("shared-source-stale") else _TEST
     shared_edit_seconds = 25 if case.endswith("shared-before-run") else 40
+    if case == "reclaimed-shared-before-run":
+        records += _claude_shell_records(
+            start,
+            65,
+            "reclaim-audit",
+            f"cd {root} && uv run gobby test-types audit {_TEST} "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+            "Files scanned: 1\nErrors: 0\nNew errors: 0",
+            0,
+        )
     if shared:
         edit = json.loads(json.dumps(records[0]))
         edit["timestamp"] = (start + timedelta(seconds=shared_edit_seconds)).isoformat()
@@ -207,11 +219,12 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
     if case == "stale":
         assert any(edit.timestamp == start + timedelta(seconds=40) for edit in evidence.edits)
     if shared:
-        # Gate 12 must still exclude the later claim's shared-path edits.
-        assert all(
-            edit.timestamp != start + timedelta(seconds=shared_edit_seconds)
+        # The later claim's shared-path edit stays as unattributed safety evidence.
+        assert [
+            edit.task_attributed
             for edit in evidence.edits
-        )
+            if edit.timestamp == start + timedelta(seconds=shared_edit_seconds)
+        ] == [False]
     if case == "unknown":
         assert any(run.outcome == "unknown" for run in evidence.off_task_author_runs)
     source_only = case == "author-source-only"
@@ -232,11 +245,149 @@ async def test_handed_off_author_run_requires_targeted_fresh_candidate_proof(
         "author-copy",
         "author-source-only",
         "author-later-failure",
-        "shared-before-run",
         "reclaimed-shared-before-run",
     }
     assert gate.passed is expected, gate.message
     if source_only:
         assert gate.details["python_source_uncovered_tests"] == {}
     else:
-        assert gate.details["pytest_uncovered_paths"] == ([] if expected else [_TEST])
+        credited = expected or case == "shared-before-run"
+        assert gate.details["pytest_uncovered_paths"] == ([] if credited else [_TEST])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["author", "foreign", "different-bytes"])
+async def test_original_codex_five_file_packet_credits_only_its_author_candidate(
+    tmp_path: Path, case: str
+) -> None:
+    """Reproduce #24506's existing 861-pass packet without executing that packet."""
+    paths = (
+        "tests/tasks/test_acceptance_rust_modules.py",
+        "tests/tasks/test_acceptance_artifacts.py",
+        "tests/mcp_proxy/tools/tasks/test_close_candidate.py",
+        "tests/mcp_proxy/tools/tasks/test_close_codex_edit_context.py",
+        "tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py",
+    )
+    root = tmp_path / "repo"
+    for path in (*paths, _SOURCE):
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 2\n", encoding="utf-8")
+    for args in (
+        ("init", "-q"),
+        ("add", "."),
+        ("-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "candidate"),
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    start = datetime(2026, 10, 12, 2, tzinfo=UTC)
+    transcript = tmp_path / "author.jsonl"
+    author = replace(
+        _claude_edit_session(transcript, IMPLEMENTER, root / paths[0], start), source="codex"
+    )
+    command = (
+        "RTK_DISABLED=1 "
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        "GOBBY_TEST_PROTECT=1 uv run pytest "
+        + " ".join(paths)
+        + " -q --no-cov -p no:cacheprovider --timeout=60 --timeout-method=signal "
+        "--session-timeout=120"
+    )
+    records = [_record(0, "session_meta", {"cwd": str(root)})]
+    for offset, path in enumerate((*paths, _SOURCE), 5):
+        records.extend(_patch_records(offset, path))
+    for offset, call_id, argv, output in (
+        (
+            15,
+            "audit",
+            "uv run gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+            "Files scanned: 5\nErrors: 0\nNew errors: 0",
+        ),
+        (30, "original-861", command, "861 passed in 51.24s"),
+    ):
+        records.extend(
+            [
+                _record(
+                    offset,
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "call_id": call_id,
+                        "arguments": json.dumps({"cmd": argv}),
+                    },
+                ),
+                _record(
+                    offset + 1,
+                    "response_item",
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": json.dumps({"exit_code": 0, "output": output}),
+                    },
+                ),
+            ]
+        )
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+    if case == "different-bytes":
+        (root / _SOURCE).write_text("VALUE = 3\n", encoding="utf-8")
+    sessions = {IMPLEMENTER: author}
+    owner = IMPLEMENTER
+    if case == "foreign":
+        owner = "other-owner"
+        sessions[owner] = _claude_edit_session(
+            tmp_path / "other.jsonl", owner, root / "other.txt", start
+        )
+    ctx = _context([_link(IMPLEMENTER, "claimed", start.isoformat())], sessions)
+    ctx.session_var_manager.get_variables.return_value = {
+        "task_edited_file_checkouts": {"task": {str(root): [*paths, _SOURCE]}},
+        "task_selection_history": [
+            {"epoch": start.isoformat(), "task_id": "task"},
+            {"epoch": (start + timedelta(seconds=20)).isoformat(), "task_id": "later-task"},
+        ],
+    }
+    ctx.session_task_manager.get_session_tasks.return_value = []
+    with (
+        patch(
+            f"{_SUPPORT}.resolve_validation_detection_config",
+            return_value=default_validation_detection_config(),
+        ),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=owner,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start=start.isoformat(),
+            task_edited_files={*paths, _SOURCE},
+            repo_path=str(root),
+        )
+    assert all(run.command != command for run in evidence.validation_runs)
+    assert any(run.command == command for run in evidence.excluded_runs)
+    assert any(run.command == command for run in evidence.off_task_author_runs) is (
+        case != "foreign"
+    )
+    with patch(
+        "gobby.tasks.close_checklist.related_python_source_tests_in_pool",
+        return_value={_SOURCE: paths},
+    ):
+        gate = evaluate_validation_commands(
+            task_category="code",
+            evidence=evidence,
+            has_attributed_edits=True,
+            changed_paths=(*paths, _SOURCE),
+            close_root=str(root),
+            candidate_commit_sha=candidate,
+        )
+    assert gate.passed is (case == "author"), gate.message
+    assert gate.details["pytest_uncovered_paths"] == ([] if case == "author" else sorted(paths))
+    assert {
+        source: set(tests)
+        for source, tests in gate.details["python_source_uncovered_tests"].items()
+    } == ({} if case == "author" else {_SOURCE: set(paths)})
+    assert any(record["command"] == command for record in gate.details["excluded_runs"]) is (
+        case != "author"
+    )

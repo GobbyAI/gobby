@@ -1,12 +1,18 @@
 # Node commands
 
-Version 2 of the hub-node command contract. The golden messages live in
+Version 3 of the hub-node command contract. The golden messages live in
 `crates/gdaemon/tests/fixtures/node_commands/corpus.json`. The Rust types in
 `crates/gdaemon/src/node_commands.rs` and the Python models in
 `src/gobby/hub/node_commands.py` parse every message and re-encode it to the
-same bytes. Payloads, results, and node bodies reject unknown fields.
+same bytes. Payloads, results, and node bodies reject unknown fields. The
+corpus's `invalid` list holds messages that both sides must refuse.
 
-Both sides define `CONTRACT_VERSION` as 2: a Rust `pub const` and a Python
+Every field is required, including a nullable one: a field this contract
+gives as "or null" accepts an explicit `null` and fails when it is missing.
+Values are not coerced: a string never parses as a number, and a number never
+parses as a boolean.
+
+Both sides define `CONTRACT_VERSION` as 3: a Rust `pub const` and a Python
 module constant. Every frame and every node body carries it as `v`; answers
 carry no `v`. A new command or field bumps `v`. Every handler and route
 refuses a `v` other than `CONTRACT_VERSION` with `unsupported_version`: a node
@@ -19,19 +25,19 @@ request rather than fail in the parser.
 Hub to node:
 
 ```json
-{"type":"command","v":2,"request_id":"<uuid>","command":"<name>","payload":{}}
+{"type":"command","v":3,"request_id":"<uuid>","command":"<name>","payload":{}}
 ```
 
 Node to hub, success:
 
 ```json
-{"type":"reply","v":2,"request_id":"<uuid>","ok":true,"result":{}}
+{"type":"reply","v":3,"request_id":"<uuid>","ok":true,"result":{}}
 ```
 
 Node to hub, or gdaemon when it must answer for the node:
 
 ```json
-{"type":"reply","v":2,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
+{"type":"reply","v":3,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
 ```
 
 A command frame's fields are `type` (`"command"`), `v`, `request_id`,
@@ -126,6 +132,9 @@ body's `run_id` or the run belongs to another machine.
 | `checkout_root_taken` | 409 |
 | `checkout_rejected` | 422 |
 | `stale_report` | 409 |
+| `report_too_large` | 413 |
+| `checkout_too_large` | 413 |
+| `report_backlog_full` | 429 |
 
 ## Commands
 
@@ -210,6 +219,96 @@ Payload: `{terminal_id, kind, data, submit}`. `kind` is `"text"`, `"key"`,
 
 Result: `{}`. A failure after the write may have reached the pane uses
 `command_failed` with `stage` `"partial"`.
+
+## v3 commands
+
+Version 3 adds three hub-to-node commands. They name no run. A node merges
+and removes only its own workspaces and reads only its own checkouts.
+Expected refusals are ok results with an `outcome`, so callers branch on
+data. Error replies are `invalid_payload`, `not_found`, and
+`command_failed`, each with the stage rule below.
+
+### `workspace.merge`
+
+Payload, in order:
+
+| Field | JSON |
+| --- | --- |
+| `project_id` | string |
+| `mode` | `"worktree"` or `"clone"` |
+| `path` | string |
+| `branch_name`, `target_branch` | string |
+| `source_root` | string |
+
+`path` is the node's workspace, `<home>/worktrees/<project_id>/<run_id>`
+or `<home>/clones/<project_id>/<run_id>`. `branch_name` is the workspace's
+branch, and the merge lands on `target_branch` in `source_root`, the node's
+checkout the workspace branched from.
+
+Result, in order:
+
+| Field | JSON |
+| --- | --- |
+| `outcome` | `"merged"`, `"already_merged"`, `"conflict"`, `"target_dirty"`, or `"busy"` |
+| `merge_sha` | string or null |
+| `target_head_sha` | string or null |
+| `conflicted_files` | array of strings |
+| `dirty_paths` | array of strings |
+
+`merge_sha` is set only with `merged`. `target_head_sha` is set with
+`merged` and `already_merged`. `conflicted_files` is non-empty only with
+`conflict`, and `dirty_paths` only with `target_dirty`. Every other
+combination carries null and empty arrays.
+
+Stage rule: every check runs before any effect, so `invalid_payload`,
+`not_found`, and a `command_failed` for a detached HEAD or a refused
+checkout of `target_branch` carry `stage` `"none"`. A `command_failed`
+from the merge itself carries `"partial"`.
+
+### `workspace.remove`
+
+Payload, in order:
+
+| Field | JSON |
+| --- | --- |
+| `project_id` | string |
+| `mode` | `"worktree"` or `"clone"` |
+| `path` | string |
+| `branch_name` | string |
+| `source_root` | string |
+| `force`, `force_delete_branch` | boolean |
+| `merged_into` | string or null |
+
+`merged_into` names the branch the workspace's branch must already be
+merged into, or null for any other local branch in `source_root`.
+
+Result: `{outcome}`, where `outcome` is `"removed"`, `"dirty"`,
+`"unmerged"`, or `"busy"`.
+
+Stage rule: `invalid_payload` and `not_found` carry `stage` `"none"`. A
+`command_failed` from a failed prune, branch deletion, or workspace removal
+carries `"partial"`.
+
+### `checkout.status`
+
+Payload: `{project_id, root_path}`, both strings. `root_path` is the node's
+registered checkout.
+
+Result, in order:
+
+| Field | JSON |
+| --- | --- |
+| `current_branch` | string or null |
+| `branch_count` | number |
+| `ahead`, `behind` | number or null |
+
+The fields are the ones `get_status`
+(`src/gobby/servers/routes/source_control.py`) computes locally.
+`current_branch` is null on a detached HEAD, and `ahead` and `behind` are
+null when the current branch has no upstream.
+
+Stage rule: the command is read-only, so every error it answers carries
+`stage` `"none"`.
 
 ## Node bodies
 
@@ -311,6 +410,17 @@ Body: `{code, hub_epoch}` with `code` equal to `"stale_report"` and
 `hub_epoch` the hub's current epoch. The node parses this body, adopts the
 epoch, and sends a fresh report.
 
+### Report budget refusals
+
+`report_too_large` (413) means a `POST /api/nodes/report` body exceeds the hub's
+`node_reports.max_request_bytes`. `checkout_too_large` (413) is the same cap on
+`POST /api/nodes/checkouts`. The hub stops reading at that cap, before any
+parse, and writes nothing. `report_backlog_full` (429) means the report would
+push the machine's pending bytes past `node_reports.max_pending_bytes_per_machine`.
+The hub writes nothing and does not move the revision mark. Every 429 carries
+`Retry-After: 30`, the node's report interval, so the node retries the same
+fresh report after one interval. Nothing accepted is dropped.
+
 ### `POST /api/nodes/runs/prompt-delivery-failure`
 
 Request: `{v, run_id, code, detail, pane}`. `code` and `detail` are strings.
@@ -406,6 +516,85 @@ Commands that name the same `run_id` run one at a time in arrival order.
   `cancelled`.
 - A cancel for a run with nothing accepted or live answers `not_found`.
 
+`workspace.merge` and `workspace.remove`:
+
+- The node runs them outside the per-run queues, after its `v`, command,
+  and payload checks. No handler treats a successful parse as
+  authorization: every path the hub names is checked against the node's
+  own roots.
+- Checks before any effect, each answering `invalid_payload` with `stage`
+  `"none"`: `path` names a directory directly under
+  `<home>/worktrees/<project_id>/` for `"worktree"` or
+  `<home>/clones/<project_id>/` for `"clone"`. An existing path must
+  canonicalize to a directory directly under the canonical root, so a
+  symlink cannot escape it. A missing path's parent must canonicalize to
+  that root and its file name must be one plain component, which admits an
+  already-removed workspace. `source_root` is absolute and equals its
+  `git rev-parse --show-toplevel`. `branch_name`, `target_branch`, and
+  `merged_into` pass `git check-ref-format --branch`.
+- `busy`: the node answers `busy` while an accepted or live run's workspace
+  record or a launched workspace record names `path`, while a run with mode
+  `"none"` runs in `source_root`, or while another merge or removal holds
+  `path` or `source_root`. Otherwise it holds both until the command ends.
+  A spawn whose `existing` path is held, or named by a pending removal
+  record, fails with `prepare_failed`.
+
+`workspace.merge`, in order:
+
+1. Clone mode fetches `branch_name` from `path` into
+   `refs/heads/clone-merge/<branch_name>` in `source_root` and merges that
+   ref; worktree mode merges `branch_name`. A missing branch or clone path
+   answers `not_found`. The temporary ref is deleted on every path after the
+   fetch.
+2. A source that is already an ancestor of `target_branch` answers
+   `already_merged`.
+3. Staged entries in `source_root`, or unstaged and untracked paths that
+   `git diff --name-only <target_branch>...<source>` names, answer
+   `target_dirty` with those paths. `.gobby/` paths count too. The node
+   stashes nothing.
+4. The node records the current branch and checks out `target_branch` when
+   it differs. A detached HEAD or a refused checkout answers
+   `command_failed` with `stage` `"none"`.
+5. `git merge --no-ff --no-edit <source>` answers `merged` with `merge_sha`
+   and `target_head_sha`. A conflict reads the conflicted files, runs
+   `git merge --abort`, and answers `conflict` with them. Any other failure
+   aborts a merge in progress and answers `command_failed` with `stage`
+   `"partial"`.
+6. In every case after step 4, the node checks out the recorded branch
+   again.
+
+`workspace.remove`, in order:
+
+1. Without `force`, an existing path with `git status --porcelain` output
+   answers `dirty`.
+2. Without `force_delete_branch`, a branch that still exists must have its
+   head be an ancestor of `merged_into` in `source_root`, or, with
+   `merged_into` null, of another local branch there; otherwise `unmerged`.
+   A worktree's branch lives in `source_root`; a clone's lives in the clone,
+   and a head that `source_root` does not hold is unmerged. This check runs
+   for a missing path too, so a missing directory never authorizes deleting
+   an unmerged branch.
+3. A missing path removes what remains: worktree mode prunes worktrees and
+   deletes the branch if it exists. It answers `removed`.
+4. An existing path commits a pending removal record for the path and
+   branch, then removes the workspace under the preparation record's retry
+   rule. Success deletes the record and answers `removed`.
+
+Steps 1 and 2 change nothing, so `dirty` and `unmerged` leave the workspace
+and branch as they were. A failed prune, branch deletion, or removal
+answers `command_failed` with `stage` `"partial"`; a failed removal keeps
+its record for the retry.
+
+`checkout.status`:
+
+- The node runs it outside the per-run queues. `root_path` must be absolute
+  and equal its `git rev-parse --show-toplevel`, else `invalid_payload`.
+- It runs the same `git for-each-ref` as `get_status`, with a 10-second
+  deadline, and answers the fields as `get_status` computes them. A failed
+  or late git answers `command_failed`.
+- The command is read-only: every error it answers carries `stage`
+  `"none"`.
+
 Checkouts: the node registers each checkout it serves before the hub can
 route a spawn of that project to it.
 
@@ -488,7 +677,7 @@ answers 200 with the reply frame, or with a gdaemon error frame for
 `node_offline`, `node_timeout`, or `channel_closed`.
 
 gdaemon admits a request only from a loopback peer whose
-`X-Gobby-Backend-Secret` equals `GOBBY_FRONT_DOOR_SECRET`, compared in
+`X-Gobby-Backend-Secret` equals the per-boot front-door secret, compared in
 constant time. Every other request, and every request to a standalone or node
 front door, gets 404. gdaemon answers 404 only before it sends any frame.
 

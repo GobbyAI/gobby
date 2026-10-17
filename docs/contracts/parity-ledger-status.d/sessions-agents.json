@@ -123,6 +123,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/cli/sessions.py::sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
   },
+  "CLI gobby sessions approve-dirty-paths": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
+  },
   "CLI gobby sessions backfill-context-windows": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/sessions.py::backfill_context_windows`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts."
@@ -382,6 +386,10 @@
   "HTTP POST /api/sessions/{session_id}/variables/set": {
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/sessions/variables.py::set_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts."
+  },
+  "HTTP POST /api/sessions/{session_ref}/dirty-path-approvals": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/sessions/dirty_paths.py::register_dirty_path_routes`; operator-only, admitted only with a verified front-door identity. Rust blocker: implement native operator approval with the front-door check. Owner: #21562 Sessions and transcripts."
   },
   "HTTP PUT /api/agents/definitions/{definition_id}": {
     "status": "proxied",

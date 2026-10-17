@@ -13,6 +13,7 @@ from pathlib import Path
 
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.config.validation_detection import normalize_validation_evidence_command
+from gobby.tasks.validation_launchers import first_executable
 
 # Keep the original spelling until operators and redirections have been identified.
 # shlex alone erases whether a token such as '|' was a literal argument.
@@ -456,6 +457,25 @@ def _pytest_reporting_option(option: str) -> bool:
     return name in _PYTEST_REPORTING_OPTIONS or name.startswith("-r")
 
 
+def pytest_collection_target(command: str) -> str | None:
+    """Return one complete file explicitly selected by a collection-only command.
+
+    Reporting options are already removed by ``_path_scope``. Other selection or
+    execution options, directory scopes, node IDs and multiple files fail closed.
+    """
+    scoped = _path_scope(command, allow_outside=True)
+    if scoped is None:
+        return None
+    prefix, paths = scoped
+    if "pytest" not in prefix or len(paths) != 1:
+        return None
+    options = prefix[prefix.index("pytest") + 1 :]
+    if not options or any(option not in {"--co", "--collect-only"} for option in options):
+        return None
+    path = paths[0]
+    return path if path.endswith(".py") and "::" not in path else None
+
+
 def pytest_targets(command: str) -> tuple[str, ...] | None:
     """Return path targets for a pytest command.
 
@@ -548,9 +568,14 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
     for env_directory in env_directories:
         location = posixpath.normpath(posixpath.join(location, env_directory))
     words = list(core.segments[0]) if len(core.segments) == 1 else list(parsed.segments[-1])
-    if words and posixpath.basename(words[0]) == "env":
-        return None  # An unproven env invocation cannot attribute repository coverage.
-    directory = _drop_neutral_uv_options(words)[1].get("--directory", ".")
+    words, uv_locations = _drop_neutral_uv_options(words)
+    nested_directories: list[str | None] = []
+    resolved = first_executable(
+        ParsedShellCommand((tuple(words),), ()), directories=nested_directories
+    )
+    if resolved is None or nested_directories:
+        return None  # Unproven or nested directory-changing launchers cannot earn coverage.
+    directory = uv_locations.get("--directory", ".")
     return posixpath.normpath(posixpath.join(location, directory))
 
 

@@ -277,14 +277,8 @@ step_workflow:
           when: >-
             (tool_output.get('result') or tool_output).get('closed_at') is not None
             or ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
-        # Selecting a task resumes its ordinary implementation/submit lifecycle.
-        - server: gobby-tasks
-          tool: claim_task
-          action: set_variable
-          variable: _developer_handoff_tasks
-          value: >-
-            [task_id for task_id in vars.get('_developer_handoff_tasks', [])
-             if task_id != (tool_output.get('result') or tool_output).get('task_id')]
+        # A reclaimed hand-off keeps its entry, so the developer can still
+        # de-escalate it; only its close or an observed close removes it.
         - &forget_closed_handoff
           server: gobby-tasks
           tool: close_task
@@ -463,6 +457,9 @@ step_workflow:
         If the assigned task needs no changes and no candidate was sent, close
         it here with reason already_implemented and evidence in changes_summary;
         the ordinary close checklist still applies. No candidate or manual step-variable write is needed.
+        A reply wait ends at the owner's next message. If that message is an
+        interim status and the dependency is still unresolved, re-arm the wait
+        before you stop; a stop without an active wait is re-prompted.
         For an Orchestrator-directed handoff, use escalate_task with a reason
         starting exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
@@ -677,11 +674,18 @@ step_workflow:
         yield; after the verdict arrives, read the task with
         get_task(task_id=assigned_task_id). A closed task returns you to claim.
         Remove a superseded candidate SHA here with unlink_commit.
-        When the Orchestrator directs a hand-off of the assigned task, a
-        successful escalate_task also resets task state and returns you to claim.
-        The reason must start exactly with "Handed off: reviewer LAND", for example:
+        A reply wait ends at the owner's next message. If that message is an
+        interim status and the dependency is still unresolved, re-arm the wait
+        before you stop; a stop without an active wait is re-prompted.
+        Once the candidate has landed and only retest or activation remains,
+        escalate_task is the supported release: a successful call resets task
+        state and returns you to claim for the next task. The reason must start
+        exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
         decision. Developer closes after landing."
+        The task stays in your hand-off list until it closes. On release,
+        de_escalate_task it, then close it with close_task, whether or not you
+        reclaimed it.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
         task open, call the top-level set_variable(name="bounced", value=true,
         scope="step") to return to implement.

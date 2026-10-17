@@ -17,6 +17,678 @@ use node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
 const RECEIPTS: &str = "/api/nodes/receipts";
 const ACK_ID: &str = "n-1730000000000-ack-envelope";
 
+#[tokio::test]
+async fn ingress_body_overflow_is_rejected_before_forwarding() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .body(axum::body::Body::from(serde_json::to_vec(&json!({
+            "tool_output":"x".repeat(16 * 1024 * 1024)
+        }))?))?;
+    let response = call_hook(node.node.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(hub.requests().is_empty(), "oversized input must stay local");
+    assert!(!node.node.hook_ledger.inbox.exists());
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_body_stall_is_rejected_before_forwarding() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let stream = futures_util::stream::pending::<Result<axum::body::Bytes, std::io::Error>>();
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .body(axum::body::Body::from_stream(stream))?;
+    tokio::time::pause();
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(11),
+        call_hook(node.node.clone(), request),
+    )
+    .await;
+    tokio::time::resume();
+    assert!(
+        response.is_ok(),
+        "ingress must terminate a stalled body read"
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::REQUEST_TIMEOUT);
+    assert!(hub.requests().is_empty(), "stalled input must stay local");
+    assert!(!node.node.hook_ledger.inbox.exists());
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_body_large_tool_output_preserves_delivered_receipt() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    let node = NodeHome::new(&hub)?;
+    let payload = json!({
+        "hook_type":"post_tool_use", "response_capability":"hook-response.v1",
+        "input_data":{"tool_name":"Bash", "tool_response":"x".repeat(1024 * 1024)}
+    });
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("x-gobby-envelope-id", "large-delivered")
+        .body(axum::body::Body::from(serde_json::to_vec(&payload)?))?;
+    let response = call_hook(node.node.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (release_entered, _release) = hub.pause_next(RECEIPTS);
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await?;
+    assert_eq!(serde_json::from_slice::<Value>(&bytes)?, reply);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), release_entered)
+            .await
+            .is_err(),
+        "a fully consumed response must retain its delivery receipt"
+    );
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body, payload);
+    assert_eq!(
+        node.node
+            .hook_ledger
+            .marker("large-delivered")
+            .await?
+            .unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_forwards_and_finalizes() -> anyhow::Result<()> {
+    use axum::{body::Body, http::Request};
+    use gobby_daemon::front_door::FrontDoor;
+
+    let hub = FakeHub::start().await?;
+    let response = json!({"decision":"allow", "reason":"node hook accepted"});
+    hub.script(
+        "/api/hooks/execute",
+        vec![(StatusCode::OK, response.clone())],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    let payload = json!({"hook_type":"pre_tool_use", "response_capability":"hook-response.v1"});
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("x-gobby-envelope-id", "ingress-envelope")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&payload)?))?;
+    let answer = FrontDoor::node(node.node.clone(), false)
+        .handle(request, "127.0.0.1:12345".parse()?, false)
+        .await;
+    assert_eq!(answer.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(answer.into_body(), 1024 * 1024).await?;
+    assert_eq!(bytes.as_ref(), serde_json::to_vec(&response)?);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::POST);
+    assert_eq!(requests[0].path, "/api/hooks/execute");
+    assert_eq!(
+        requests[0].headers["x-gobby-envelope-id"],
+        "ingress-envelope"
+    );
+    assert_eq!(
+        requests[0].headers["authorization"],
+        format!("Bearer {NODE_KEY}")
+    );
+    assert_eq!(requests[0].body, payload);
+    let marker = ledger.marker("ingress-envelope").await?;
+    assert!(
+        marker.is_some(),
+        "successful ingress must finalize its claim"
+    );
+    let marker = marker.unwrap();
+    assert_eq!(marker["status"], "processed");
+    assert_eq!(marker["response"], response);
+    assert_eq!(marker["hook_type"], "pre_tool_use");
+    hub.shutdown().await;
+    Ok(())
+}
+
+fn hook_request(
+    id: Option<&str>,
+    capability: &str,
+    hook: &str,
+) -> axum::http::Request<axum::body::Body> {
+    let mut request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/hooks/execute")
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("content-type", "application/json");
+    if let Some(id) = id {
+        request = request.header("x-gobby-envelope-id", id);
+    }
+    request
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({
+                "hook_type": hook,
+                "response_capability": capability,
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+}
+
+async fn call_hook(
+    node: std::sync::Arc<gobby_daemon::state::NodeServices>,
+    request: axum::http::Request<axum::body::Body>,
+) -> axum::http::Response<axum::body::Body> {
+    gobby_daemon::front_door::FrontDoor::node(node, false)
+        .handle(request, "127.0.0.1:12345".parse().unwrap(), false)
+        .await
+}
+
+#[tokio::test]
+async fn ingress_unauthenticated_no_ledger_effects() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let cached = json!({"decision":"allow", "reason":"private cached response"});
+    let refused = json!({"error":"hub authentication required"});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, cached.clone())]);
+    let node = NodeHome::new(&hub)?;
+    let ledger = &node.node.hook_ledger;
+    let seeded = call_hook(
+        node.node.clone(),
+        hook_request(Some("auth-cached"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(seeded.status(), StatusCode::OK);
+    let seeded_body = axum::body::to_bytes(seeded.into_body(), 1024).await?;
+    assert_eq!(serde_json::from_slice::<Value>(&seeded_body)?, cached);
+    let marker = fs::read(marker_path(ledger, "auth-cached"))?;
+    let ack = ledger.inbox.join(format!("{ACK_ID}.json"));
+    let pending = serde_json::to_vec(&receipt())?;
+    fs::write(&ack, &pending)?;
+
+    // These credentials are outside the node-key ledger contract, including
+    // managed-run tokens that only the hub can validate or revoke.
+    for authorization in [
+        None,
+        Some("malformed"),
+        Some("Basic wrong"),
+        Some("Bearer wrong"),
+        Some("Bearer gobby-agent-v1.revoked"),
+    ] {
+        for id in ["auth-cached", "auth-fresh"] {
+            hub.script(
+                "/api/hooks/execute",
+                vec![(StatusCode::UNAUTHORIZED, refused.clone())],
+            );
+            let mut request = hook_request(Some(id), "hook-response.v1", "pre_tool_use");
+            request.headers_mut().remove("authorization");
+            if let Some(value) = authorization {
+                request
+                    .headers_mut()
+                    .insert("authorization", value.parse()?);
+            }
+            let expected_headers = request.headers().clone();
+            let before = hub.requests().len();
+            let answer = call_hook(node.node.clone(), request).await;
+            assert_eq!(
+                answer.status(),
+                StatusCode::UNAUTHORIZED,
+                "non-node credentials must reach hub, never replay: {authorization:?}, {id}"
+            );
+            let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+            assert_eq!(serde_json::from_slice::<Value>(&body)?, refused);
+            let requests = hub.requests();
+            assert_eq!(requests.len(), before + 1, "no receipt sweep");
+            let forwarded = requests.last().unwrap();
+            assert_eq!(forwarded.path, "/api/hooks/execute");
+            assert_eq!(
+                forwarded.headers.get("authorization"),
+                expected_headers.get("authorization")
+            );
+            assert_eq!(forwarded.headers["x-gobby-envelope-id"], id);
+            assert_eq!(
+                forwarded.body,
+                json!({"hook_type":"pre_tool_use", "response_capability":"hook-response.v1"})
+            );
+            assert_eq!(fs::read(marker_path(ledger, "auth-cached"))?, marker);
+            assert!(ledger.marker("auth-fresh").await?.is_none());
+            assert_eq!(fs::read(&ack)?, pending);
+        }
+    }
+    // A node credential cannot authorize local state if its key source is gone
+    // or unreadable as a bootstrap document.
+    for contents in [Some("not: [valid yaml"), None] {
+        if let Some(contents) = contents {
+            fs::write(&node.node.bootstrap_path, contents)?;
+        } else {
+            fs::remove_file(&node.node.bootstrap_path)?;
+        }
+        hub.script(
+            "/api/hooks/execute",
+            vec![(StatusCode::UNAUTHORIZED, refused.clone())],
+        );
+        let before = hub.requests().len();
+        let answer = call_hook(
+            node.node.clone(),
+            hook_request(Some("auth-cached"), "hook-response.v1", "pre_tool_use"),
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+        assert_eq!(serde_json::from_slice::<Value>(&body)?, refused);
+        assert_eq!(hub.requests().len(), before + 1);
+        assert_eq!(fs::read(marker_path(ledger, "auth-cached"))?, marker);
+        assert_eq!(fs::read(&ack)?, pending);
+    }
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_dedupes_retries() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let response = json!({"decision":"allow"});
+    hub.script(
+        "/api/hooks/execute",
+        vec![(StatusCode::OK, response.clone())],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = node.node.hook_ledger.clone();
+    let (entered, release) = hub.pause_next("/api/hooks/execute");
+    let forwarding = tokio::spawn(call_hook(
+        node.node.clone(),
+        hook_request(Some("renewed"), "hook-response.v1", "pre_tool_use"),
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+    let initial = ledger.marker("renewed").await?.unwrap();
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(16)).await;
+    assert!(started.elapsed() >= std::time::Duration::from_secs(16));
+    tokio::time::resume();
+    let renewed = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let marker = ledger.marker("renewed").await?.unwrap();
+            if marker["lease_expires_at"].as_str() > initial["lease_expires_at"].as_str() {
+                return Ok::<_, std::io::Error>(marker);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(renewed.is_ok(), "lease must renew while the hub is blocked");
+    let renewed = renewed.unwrap()?;
+    assert!(
+        renewed["lease_expires_at"].as_str() > initial["lease_expires_at"].as_str(),
+        "lease must move forward before the slow hub returns"
+    );
+    assert!(!forwarding.is_finished());
+    let duplicate = call_hook(
+        node.node.clone(),
+        hook_request(Some("renewed"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    let bytes = axum::body::to_bytes(duplicate.into_body(), 1024).await?;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes)?,
+        json!({"status":"processing", "reason":"duplicate envelope already processing"})
+    );
+    release.send(()).unwrap();
+    assert_eq!(forwarding.await?.status(), StatusCode::OK);
+    let replay = call_hook(
+        node.node.clone(),
+        hook_request(Some("renewed"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(replay.into_body(), 1024).await?;
+    assert_eq!(serde_json::from_slice::<Value>(&bytes)?, response);
+    assert_eq!(hub.requests().len(), 1, "retries must not reach the hub");
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_failure_dispositions() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let ledger = node.node.hook_ledger.clone();
+    for (id, status, response, processed) in [
+        (
+            "retry",
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"status":"retry"}),
+            false,
+        ),
+        (
+            "busy",
+            StatusCode::CONFLICT,
+            json!({"status":"processing"}),
+            false,
+        ),
+        (
+            "error",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error":"failed"}),
+            false,
+        ),
+        (
+            "done",
+            StatusCode::CONFLICT,
+            json!({"status":"processed"}),
+            true,
+        ),
+    ] {
+        hub.script("/api/hooks/execute", vec![(status, response.clone())]);
+        let answer = call_hook(
+            node.node.clone(),
+            hook_request(Some(id), "hook-response.v1", "pre_tool_use"),
+        )
+        .await;
+        assert_eq!(answer.status(), status, "response status for {id}");
+        let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+        assert_eq!(serde_json::from_slice::<Value>(&body)?, response);
+        let marker = ledger.marker(id).await?;
+        if processed {
+            let marker = marker.expect("terminal hub409 must retain a marker");
+            assert_eq!(marker["status"], "processed");
+            assert!(marker.get("response").is_none_or(Value::is_null));
+        } else {
+            assert!(marker.is_none(), "retryable {id} must release its claim");
+        }
+    }
+    assert_eq!(hub.requests().len(), 4, "core must never release a receipt");
+    let offline = NodeHome::new(&hub)?;
+    hub.shutdown().await;
+    let answer = call_hook(
+        offline.node.clone(),
+        hook_request(Some("offline"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert!(answer.status().is_server_error());
+    assert!(offline.node.hook_ledger.marker("offline").await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_sweeps_receipts_first() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true, "carrying_envelope_ids":[]}),
+        )],
+    );
+    hub.script(
+        "/api/hooks/execute",
+        vec![(StatusCode::OK, json!({"decision":"allow"}))],
+    );
+    let node = NodeHome::new(&hub)?;
+    let inbox = &node.node.hook_ledger.inbox;
+    fs::create_dir_all(inbox)?;
+    let ack = inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&ack, serde_json::to_vec(&receipt())?)?;
+    let answer = call_hook(
+        node.node.clone(),
+        hook_request(Some("after-ack"), "hook-response.v1", "pre_tool_use"),
+    )
+    .await;
+    assert_eq!(answer.status(), StatusCode::OK);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].path, RECEIPTS);
+    assert_eq!(requests[0].body["op"], "ack");
+    assert_eq!(requests[1].path, "/api/hooks/execute");
+    assert!(!ack.exists());
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_session_start_bumps_epoch() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let ledger = &node.node.hook_ledger;
+    assert!(ledger.read_stop_epoch().await?.is_none());
+    for hook in ["session_start", "SessionStart"] {
+        let before = OffsetDateTime::now_utc();
+        hub.script(
+            "/api/hooks/execute",
+            vec![(StatusCode::OK, json!({"decision":"allow"}))],
+        );
+        let answer = call_hook(
+            node.node.clone(),
+            hook_request(Some(hook), "hook-response.v1", hook),
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::OK);
+        let epoch = ledger.read_stop_epoch().await?;
+        assert!(
+            epoch.is_some(),
+            "successful session start must bump STOP epoch"
+        );
+        assert!(epoch.unwrap() >= before);
+    }
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
+    for drop_during_forward in [true, false] {
+        let hub = FakeHub::start().await?;
+        let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+        hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+        hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+        let (receipt_entered, receipt_release) = hub.pause_next(RECEIPTS);
+        let node = NodeHome::new(&hub)?;
+        let (entered, release) = hub.pause_next("/api/hooks/execute");
+        let handler = tokio::spawn(call_hook(
+            node.node.clone(),
+            hook_request(Some("disconnected"), "hook-response.v1", "pre_tool_use"),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+        if drop_during_forward {
+            handler.abort();
+            assert!(handler.await.unwrap_err().is_cancelled());
+            release.send(()).unwrap();
+        } else {
+            release.send(()).unwrap();
+            let response = handler.await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            drop(response);
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), receipt_entered).await??;
+        receipt_release.send(()).unwrap();
+        let marker = node.node.hook_ledger.marker("disconnected").await?;
+        assert_eq!(
+            marker.as_ref().map(|m| &m["status"]),
+            Some(&json!("processed"))
+        );
+        assert_eq!(marker.unwrap()["response"], reply);
+        let requests = hub.requests();
+        assert_eq!(
+            requests.len(),
+            2,
+            "undeliverable response must release its receipt"
+        );
+        assert_eq!(requests[1].path, RECEIPTS);
+        assert_eq!(requests[1].body["op"], "release");
+        assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
+        hub.shutdown().await;
+    }
+    Ok(())
+}
+
+// Exercise hyper's real HTTP/1 response framing rather than draining Body directly.
+async fn hook_http1_connection(
+    node: std::sync::Arc<gobby_daemon::state::NodeServices>,
+    envelope: &str,
+) -> anyhow::Result<(
+    tokio::net::TcpStream,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+)> {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr()?).await?;
+    let (stream, _) = listener.accept().await?;
+    let server = tokio::spawn(async move {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(stream),
+                hyper::service::service_fn(
+                    move |request: hyper::Request<hyper::body::Incoming>| {
+                        let node = node.clone();
+                        async move {
+                            Ok::<_, std::convert::Infallible>(
+                                call_hook(node, request.map(axum::body::Body::new)).await,
+                            )
+                        }
+                    },
+                ),
+            )
+            .await
+    });
+    let payload = serde_json::to_string(&json!({
+        "hook_type":"pre_tool_use", "response_capability":"hook-response.v1"
+    }))?;
+    let request = format!(
+        "POST /api/hooks/execute HTTP/1.1\r\nHost: localhost\r\n\
+         Authorization: Bearer {NODE_KEY}\r\nX-Gobby-Envelope-Id: {envelope}\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    client.write_all(request.as_bytes()).await?;
+    Ok((client, server))
+}
+
+#[tokio::test]
+async fn ingress_http1_delivered_content_length_preserves_receipt() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (release_entered, _release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let (mut client, server) = hook_http1_connection(node.node.clone(), "http1-delivered").await?;
+    let mut wire = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        client.read_to_end(&mut wire),
+    )
+    .await??;
+    tokio::time::timeout(std::time::Duration::from_secs(3), server).await???;
+    let split = wire
+        .windows(4)
+        .position(|part| part == b"\r\n\r\n")
+        .unwrap();
+    let headers = std::str::from_utf8(&wire[..split])?.to_ascii_lowercase();
+    let body = &wire[split + 4..];
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(headers.contains(&format!("content-length: {}", body.len())));
+    assert_eq!(serde_json::from_slice::<Value>(body)?, reply);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), release_entered)
+            .await
+            .is_err(),
+        "a delivered Content-Length response must keep its receipt"
+    );
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(
+        node.node
+            .hook_ledger
+            .marker("http1-delivered")
+            .await?
+            .unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_http1_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (receipt_entered, receipt_release) = hub.pause_next(RECEIPTS);
+    let (forward_entered, forward_release) = hub.pause_next("/api/hooks/execute");
+    let node = NodeHome::new(&hub)?;
+    let (client, server) = hook_http1_connection(node.node.clone(), "http1-disconnected").await?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), forward_entered).await??;
+    drop(client);
+    // Hyper observes the socket closing and drops the handler's receiver while
+    // the durable forwarding task is still waiting for the hub response.
+    let _closed = tokio::time::timeout(std::time::Duration::from_secs(3), server).await??;
+    forward_release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), receipt_entered).await??;
+    receipt_release.send(()).unwrap();
+    let marker = node
+        .node
+        .hook_ledger
+        .marker("http1-disconnected")
+        .await?
+        .unwrap();
+    assert_eq!(marker["status"], "processed");
+    assert_eq!(marker["response"], reply);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].path, RECEIPTS);
+    assert_eq!(requests[1].body["op"], "release");
+    assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_unledgered_passthrough() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    for (id, capability) in [
+        (None, "hook-response.v1"),
+        (Some("legacy"), "hook-response.v0"),
+    ] {
+        let response = json!({"decision":"allow"});
+        hub.script(
+            "/api/hooks/execute",
+            vec![(StatusCode::OK, response.clone())],
+        );
+        let request = hook_request(id, capability, "pre_tool_use");
+        let answer = call_hook(node.node.clone(), request).await;
+        assert_eq!(answer.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(answer.into_body(), 1024).await?;
+        assert_eq!(serde_json::from_slice::<Value>(&body)?, response);
+        let requests = hub.requests();
+        let last = requests.last().unwrap();
+        assert_eq!(last.body["response_capability"], capability);
+        assert_eq!(last.body["hook_type"], "pre_tool_use");
+        assert_eq!(last.headers["authorization"], format!("Bearer {NODE_KEY}"));
+        assert_eq!(
+            last.headers
+                .get("x-gobby-envelope-id")
+                .map(|h| h.to_str().unwrap()),
+            id
+        );
+    }
+    assert!(
+        !node.node.hook_ledger.inbox.exists(),
+        "passthrough must never claim"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
 fn receipt() -> Value {
     json!({
         "schema_version": 1,

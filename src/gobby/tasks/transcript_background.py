@@ -23,6 +23,7 @@ _BACKGROUND = re.compile(
 _MAX_RECOVERED_CHARS = 64_000
 # The Read tool renders each line behind its number and a tab.
 _READ_LINE_NUMBER = re.compile(r"(?m)^ *\d+\t")
+_GREP_LINE_NUMBER = re.compile(r"(?m)^\d+[:-]")
 _TAIL_COUNT = re.compile(r"\+?\d+")
 _TAIL_OPTION = re.compile(r"-(?:\d+|[nc]\+?\d+|q)")
 # shlex's punctuation_chars set: a token made only of these is a shell operator.
@@ -119,20 +120,29 @@ def recover_background_receipt(
     if _recover_monitor_receipt(runs, message, pending):
         return
     if message.content_type == "tool_result" and pending is not None:
-        path = _read_path(pending)
-        if path is None or extract_outcome(message.tool_result)[0] != "success":
+        shape = _read_shape(pending)
+        if shape is None or extract_outcome(message.tool_result)[0] != "success":
             return
+        path, numbered, context = shape
         matches = [i for i, run in enumerate(runs) if run.background_output_path == path]
         if len(matches) != 1:
             return
         index = matches[0]
-        run = runs[index]
         output, truncated = extract_output(message.tool_result, max_chars=_MAX_RECOVERED_CHARS)
         if output and pending.name.lower() == "read":
             output = _READ_LINE_NUMBER.sub("", output)
-        if output and message.timestamp >= run.started_at:
+        if output and numbered:
+            output = _GREP_LINE_NUMBER.sub("", output)
+        if not output or message.timestamp < runs[index].started_at:
+            return
+        reader = _reader(pending, path)
+        # Each grep -A group is its own delivery, so separate groups never become adjacent.
+        for group in _context_groups(output) if context else (output,):
             runs[index] = deliver_output(
-                run, OutputDelivery(message.timestamp, path, output, truncated, appends=False)
+                runs[index],
+                OutputDelivery(
+                    message.timestamp, path, group, truncated, appends=False, reader=reader
+                ),
             )
         return
     notice = _notification(message)
@@ -216,6 +226,9 @@ def _recover_monitor_receipt(
         # Non-POSIX lexing keeps quotes on their words, so only the unquoted pipe
         # lexes as ``|`` and any other separator or redirection breaks the shape.
         argv = _shell_words(pending.arguments.get("command"), posix=False)
+        if argv is not None and argv.count("|") == 1:
+            pipe = argv.index("|")
+            argv = _reader_command(argv[:pipe]) + ["|"] + _reader_command(argv[pipe + 1 :])
         if (
             argv is None
             or len(argv) != 10
@@ -250,7 +263,12 @@ def _recover_monitor_receipt(
         runs[index] = deliver_output(
             run,
             OutputDelivery(
-                message.timestamp, run.background_output_path, event, False, appends=True
+                message.timestamp,
+                run.background_output_path,
+                event,
+                False,
+                appends=True,
+                reader=f"Monitor {run.background_monitor_id}",
             ),
         )
     return True
@@ -305,27 +323,156 @@ def _expands(command: str) -> bool:
 
 
 def _read_path(pending: PendingTool) -> str | None:
+    shape = _read_shape(pending)
+    return shape[0] if shape is not None else None
+
+
+def _read_shape(pending: PendingTool) -> tuple[str, bool, bool] | None:
+    """The one file a read names, and whether its grep printed line numbers and -A groups."""
     if pending.name.lower() == "read":
         path = pending.arguments.get("file_path")
-        return path if isinstance(path, str) else None
+        return (path, False, False) if isinstance(path, str) else None
     if pending.name.lower() != "bash":
         return None
     argv = _shell_words(pending.arguments.get("command"), posix=True)
     if argv is None:
         return None
+    if argv[:2] == ["rtk", "read"]:
+        path = _rtk_read_path(argv[2:])
+        return (path, False, False) if path is not None else None
+    argv = _reader_command(argv)
     if len(argv) == 2 and argv[0] == "cat":
-        return argv[1]
+        return argv[1], False, False
     if argv[:1] == ["tail"]:
-        return _tail_path(argv[1:])
-    if len(argv) == 3 and argv[0] == "grep" and not argv[1].startswith("-"):
-        return argv[2]
-    if (
-        len(argv) == 4
-        and argv[:2] in (["grep", "-E"], ["grep", "-F"])
-        and not argv[2].startswith("-")
-    ):
-        return argv[3]
+        path = _tail_path(argv[1:])
+        return (path, False, False) if path is not None else None
+    if argv[:1] == ["grep"]:
+        return _grep_shape(argv[1:])
     return None
+
+
+def _grep_shape(args: list[str]) -> tuple[str, bool, bool] | None:
+    """``grep`` with only -n, -E, -F and -A N (or -AN), then one pattern and one file."""
+    numbered = context = False
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        option = args[index]
+        if option == "-n":
+            numbered = True
+        elif option == "-A" and index + 1 < len(args) and args[index + 1].isdigit():
+            context = True
+            index += 1
+        elif re.fullmatch(r"-A\d+", option):
+            context = True
+        elif option not in ("-E", "-F"):
+            return None
+        index += 1
+    if len(args) - index != 2 or args[index].startswith("-"):
+        return None
+    return args[index + 1], numbered, context
+
+
+def _reader(pending: PendingTool, path: str) -> str:
+    """The call that delivered output: ``Read <path>``, or the Bash command."""
+    if pending.name.lower() == "read":
+        return f"Read {path}"
+    return str(pending.arguments.get("command"))
+
+
+def _context_groups(output: str) -> list[str]:
+    """Each contiguous group grep -A printed, split at its ``--`` separators."""
+    groups: list[list[str]] = [[]]
+    for line in output.splitlines():
+        if line == "--":
+            groups.append([])
+        else:
+            groups[-1].append(line)
+    return ["\n".join(group) for group in groups if any(line.strip() for line in group)]
+
+
+def recovered_deliveries(
+    run: TranscriptValidationRun, before: datetime | None
+) -> list[OutputDelivery]:
+    """Each recovered delivery before ``before``, in delivery order.
+
+    Gate 12 proves each one alone: deliveries are never joined, since a newline between
+    two reads would make unrelated lines adjacent to a failure section. Identical text is
+    not deduplicated: each delivery has its own provenance and must validate on its own.
+    """
+    return [
+        delivery
+        for delivery in run.output_deliveries
+        if delivery.source is not None
+        and delivery.text
+        and (before is None or delivery.delivered_at < before)
+    ]
+
+
+def unread_reason(run: TranscriptValidationRun, before: datetime | None, name: str) -> str:
+    """Why a background run's pre-cutoff reads did not prove RED for ``name``."""
+    readers = list(
+        dict.fromkeys(
+            delivery.reader or str(delivery.source)
+            for delivery in recovered_deliveries(run, before)
+        )
+    )
+    if not readers:
+        return "its output was never read in a recognized form before the implementation edit"
+    return (
+        f"its reads before the implementation edit ({', '.join(readers)}) "
+        f"name no runner row for {name}"
+    )
+
+
+def _reader_command(argv: list[str]) -> list[str]:
+    """Strip only RTK's direct execution prefixes from one reader command.
+
+    Keep lexing and the reader's strict argument grammar in charge of shell safety.
+    Proxy (0.x) and bypass (1.x) execute the same reader without output filtering.
+    """
+    if argv[:1] != ["rtk"]:
+        return argv
+    argv = argv[1:]
+    if argv[:1] in (["proxy"], ["bypass"]):
+        argv = argv[1:]
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    return argv
+
+
+def _rtk_read_path(args: list[str]) -> str | None:
+    """RTK read's raw single-file mode, optionally keeping its final N lines.
+
+    Head windows and every structural/filtering/numbering option stay unsupported.
+    A bare shell ``read`` or a bypass-wrapped ``read`` is never this RTK subcommand.
+    """
+    path: str | None = None
+    seen: set[str] = set()
+    index = 0
+    while index < len(args):
+        token = args[index]
+        option, equals, value = token.partition("=")
+        if option in {"--tail-lines", "--level", "-l"}:
+            key = "--level" if option == "-l" else option
+            if key in seen:
+                return None
+            seen.add(key)
+            if not equals:
+                index += 1
+                if index >= len(args):
+                    return None
+                value = args[index]
+            if key == "--level":
+                if value != "none":
+                    return None
+            elif re.fullmatch(r"[0-9]+", value) is None:
+                return None
+        elif token.startswith("-") or path is not None:
+            return None
+        else:
+            path = token
+        index += 1
+    return path
 
 
 def _tail_path(args: list[str]) -> str | None:

@@ -25,6 +25,7 @@ use tokio::sync::{Mutex, watch};
 pub struct NodeServices {
     pub bootstrap_path: PathBuf,
     pub relay: HubRelay,
+    pub hook_ledger: crate::nodes::hooks::ledger::Ledger,
 }
 
 impl NodeServices {
@@ -66,6 +67,7 @@ impl NodeServices {
             Arc::new(Self {
                 bootstrap_path: path.to_owned(),
                 relay,
+                hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
             }),
             claim,
         )))
@@ -102,9 +104,7 @@ impl RuntimeState {
         let lease_state = Some(lease.subscribe());
         let lease = Some(Arc::new(Mutex::new(lease)));
         let mut config = BackendConfig::from_environment(home)?;
-        config
-            .environment
-            .insert("GOBBY_FRONT_DOOR_SECRET".into(), secret.into());
+        config.front_door_secret = Some(secret.to_owned());
         // The route serve.rs latched from this bootstrap; the backend refuses a
         // bootstrap that names another route as restart-required.
         let route = match crate::front_door::routes::terminal_route(&bootstrap.front_door.routes) {

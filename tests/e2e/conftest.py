@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -28,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import httpx
 import psutil
@@ -493,8 +494,18 @@ def prepare_daemon_env(
     return env
 
 
+def skip_unless_seat(reason: str) -> NoReturn:
+    """Skip a missing operator prerequisite, but fail inside a seat sandbox.
+
+    A seat close gate credits skips as clean, so a seat must see the gap.
+    """
+    if os.environ.get("SANDBOX_RUNTIME") == "1":
+        pytest.fail(f"{reason} (seat sandbox)")
+    pytest.skip(reason)
+
+
 def link_operator_srt(home: Path) -> None:
-    """Link the operator's managed SRT into an isolated home, or skip.
+    """Link the operator's managed SRT into an isolated home, or skip (fail in a seat).
 
     Spawns fail closed without managed SRT. The isolated home borrows the
     operator install through a symlink and never installs, downloads, or
@@ -502,7 +513,7 @@ def link_operator_srt(home: Path) -> None:
     """
     operator = Path.home() / ".gobby" / "tools" / "srt" / SRT_RELEASE.version
     if not operator.is_dir():
-        pytest.skip(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
+        skip_unless_seat(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
     link = home / "tools" / "srt" / SRT_RELEASE.version
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(operator, target_is_directory=True)
@@ -511,10 +522,21 @@ def link_operator_srt(home: Path) -> None:
         try:
             verify_srt_installation()
         except (OSError, SrtRuntimeError) as exc:
-            pytest.skip(
+            skip_unless_seat(
                 f"managed SRT {SRT_RELEASE.version} failed verification: {exc}; "
                 f"cause: {exc.__cause__}"
             )
+
+
+def link_spawning_operator_srt(home: Path) -> None:
+    """Link the operator SRT for a test that launches agents under it.
+
+    macOS refuses a nested Seatbelt profile (sandbox_apply EPERM), so a seat
+    sandbox can never run these spawns; fail there instead of skipping.
+    """
+    if os.environ.get("SANDBOX_RUNTIME") == "1":
+        pytest.fail("SRT agent spawns cannot run inside a seat sandbox: nested sandbox refused")
+    link_operator_srt(home)
 
 
 def find_free_port(max_retries: int = 20) -> int:
@@ -834,9 +856,25 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
-def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
+def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
+    """Create a fresh directory named ``prefix`` plus three hex digits.
+
+    An AF_UNIX path must fit ``sun_path`` (104 bytes on macOS), and sandbox temp
+    bases leave little room, so e2e socket directories keep their names short.
+    """
+    base = root if root is not None else Path(tempfile.gettempdir())
+    while True:
+        path = base / f"{prefix}{secrets.randbelow(0x1000):03x}"
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        return path.resolve()
+
+
+def create_host_socket_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a gterm host socket directory owned by this pytest process."""
-    socket_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=root)).resolve()
+    socket_dir = create_short_dir(root, prefix)
     (socket_dir / E2E_HOST_OWNER_FILE).write_text(str(os.getpid()))
     return socket_dir
 

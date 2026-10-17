@@ -42,7 +42,7 @@ from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
     copy_daemon_api_key,
-    link_operator_srt,
+    link_spawning_operator_srt,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -108,7 +108,7 @@ async def composer_fixture(
     nested = home / ".gobby"
     nested.mkdir(mode=0o700, exist_ok=True)
     (nested / "bin").symlink_to(native_bin, target_is_directory=True)
-    link_operator_srt(home)
+    link_spawning_operator_srt(home)
     # Short private socket root accommodates macOS AF_UNIX limits.
     root = Path(tempfile.mkdtemp(prefix="p"))
     host = root / "h"

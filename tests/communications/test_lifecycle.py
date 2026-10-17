@@ -65,7 +65,34 @@ async def test_cancel_retry_preserves_caller_cancellation(
 
 
 @pytest.mark.parametrize(
-    "error", [psycopg.OperationalError("connection is closed"), PoolTimeout("pool busy")]
+    "error",
+    [
+        psycopg.OperationalError("connection is closed"),
+        PoolTimeout("pool busy"),
+        psycopg.OperationalError(
+            "consuming input failed: server closed the connection unexpectedly"
+        ),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+        ),
+        psycopg.errors.ConnectionFailure("SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError("consuming input failed: SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError(
+            "consuming input failed: could not receive data from server: Connection reset by peer"
+        ),
+        psycopg.OperationalError(
+            "sending query failed: could not send data to server: Broken pipe"
+        ),
+        psycopg.errors.SerializationFailure("serialization conflict"),
+        psycopg.errors.DeadlockDetected("deadlock detected"),
+        psycopg.errors.TooManyConnections("connection slots exhausted"),
+        psycopg.errors.AdminShutdown("server shutting down"),
+        psycopg.errors.CrashShutdown("server recovering"),
+        psycopg.errors.CannotConnectNow("server starting up"),
+        psycopg.errors.IdleSessionTimeout("idle connection expired"),
+        psycopg.OperationalError("could not connect to server: Connection timed out"),
+        psycopg.OperationalError("no connection to the server"),
+    ],
 )
 async def test_retry_recovers_from_store_outage(harness: ChannelHarness, error: Exception) -> None:
     harness.fail_initializations(httpx.ConnectError("offline"), count=1)
@@ -88,7 +115,9 @@ async def test_retry_recovers_from_store_outage(harness: ChannelHarness, error: 
         await asyncio.gather(next_wait, return_exceptions=True)
 
 
-@pytest.mark.parametrize("condition", ["missing", "disabled", "replaced", "query", "auth"])
+@pytest.mark.parametrize(
+    "condition", ["missing", "disabled", "replaced", "query", "auth", "database_dropped"]
+)
 async def test_retry_stops_for_permanent_lookup_condition(
     harness: ChannelHarness, condition: str
 ) -> None:
@@ -99,6 +128,8 @@ async def test_retry_stops_for_permanent_lookup_condition(
         harness.store.get_channel_by_name.side_effect = psycopg.ProgrammingError("invalid query")
     elif condition == "auth":
         harness.store.get_channel_by_name.side_effect = psycopg.errors.InvalidPassword("denied")
+    elif condition == "database_dropped":
+        harness.store.get_channel_by_name.side_effect = psycopg.errors.DatabaseDropped("dropped")
     else:
         current = {
             "missing": None,

@@ -41,6 +41,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.conftest import _init_git_repo
 
 pytestmark = pytest.mark.unit
 
@@ -597,9 +598,7 @@ async def test_implement_close_blocks_other_tasks_and_dispositions(
 
 
 @pytest.mark.parametrize("has_commit", [False, True])
-async def test_reclaimed_handoff_restores_ordinary_close_gate(
-    seats: _Seats, has_commit: bool
-) -> None:
+async def test_reclaimed_handoff_keeps_its_close_rights(seats: _Seats, has_commit: bool) -> None:
     manager = LocalTaskManager(seats.db)
     registry = create_task_registry(manager)
     claim_task(seats.db, seats.task_id, seats.former)
@@ -650,7 +649,7 @@ async def test_reclaimed_handoff_restores_ordinary_close_gate(
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
-    assert instance.variables["_developer_handoff_tasks"] == []
+    assert instance.variables["_developer_handoff_tasks"] == [seats.task_id]
     instance.variables.update(skills_routed=True, additional_skills_loaded=True)
     instances.save(instance)
     await engine._process_step_after_tool(
@@ -679,12 +678,66 @@ async def test_reclaimed_handoff_restores_ordinary_close_gate(
         assert _current_step(seats.db, seats.former) == "submit"
     close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
     close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
-    response = engine._check_step_tool_enforcement(close_event, seats.former, {})
-    if has_commit:
-        assert response is None
-    else:
-        assert response is not None and response.decision == "block"
-        assert "Finish only a task this developer handed off" in str(response.reason)
+    # The hand-off entry lasts until the close, so implement admits it too.
+    assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
+
+
+@pytest.mark.parametrize("close_step", ["implement", "submit"])
+async def test_reclaim_before_de_escalation_keeps_the_reviewed_close(
+    seats: _Seats, tmp_path: Path, close_step: str
+) -> None:
+    """A seat reclaiming its handed-off task still de-escalates it and reaches review (#24610)."""
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(repo))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    proxy = _task_proxy(seats, full_hooks=True)
+    handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(seats.db),
+        task_manager=tasks,
+        session_manager=SessionManager(seats.db),
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(seats.former):
+            result = await proxy.call_tool(
+                "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
+            )
+        completion = _after_tool(seats.former, tool, arguments, result)
+        completion.metadata["_platform_session_id"] = seats.former
+        completion.cwd = str(repo)
+        await handler._evaluate_rules(completion)
+        return cast(dict[str, Any], result)
+
+    handoff = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at abc"}
+    assert await call("escalate_task", handoff) == {}
+    assert _current_step(seats.db, seats.former) == "claim"
+    claimed = await call("claim_task", {"task_id": seats.ref})
+    assert claimed["task_id"] == seats.task_id
+    assert tasks.get_task(seats.task_id).is_escalated
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    assert instance.variables["_developer_handoff_tasks"] == [seats.task_id]
+    instance.current_step = close_step
+    instance.variables.update(implementation_complete=close_step == "submit")
+    instances.save(instance)
+
+    released = await call("de_escalate_task", {"task_id": seats.ref, "reason": "Landed"})
+    assert "error_code" not in released, released
+    assert not tasks.get_task(seats.task_id).is_escalated
+    result = await call(
+        "close_task", {"task_id": seats.ref, "changes_summary": "Landed and released."}
+    )
+    # Gates 1-12 pass and the ordinary Gate 13 review runs; this harness has no reviewer.
+    assert result["blocking_reasons"] == [
+        "close_review: The task-close criteria reviewer is not configured."
+    ]
+    assert tasks.get_task(seats.task_id).validation_override_reason is None
 
 
 @pytest.mark.parametrize("step", ["claim", "implement", "submit"])
@@ -969,6 +1022,138 @@ def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(seats: _Sea
     )
 
     assert _current_step(seats.db, seats.former) == "claim"
+
+
+@pytest.mark.parametrize("starting_step", ["claim", "implement"])
+async def test_developer_reclaim_rebinds_assigned_task(
+    seats: _Seats, starting_step: str, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
+    other = tasks.create_task(
+        project_id, "Next claim", validation_criteria="Claim follows selection."
+    )
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, starting_step)
+    with session_context_for_test(seats.former):
+        claimed = await _task_proxy(seats).call_tool(
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": f"#{other.seq_num}"},
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+    assert claimed["task_id"] == other.id
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(seats.former, "claim_task", {"task_id": f"#{other.seq_num}"}, claimed),
+        seats.former,
+        SessionVariableManager(seats.db).get_variables(seats.former),
+    )
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "route_skills"
+    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (
+        other.id,
+        f"#{other.seq_num}",
+    )
+    escalation = replace(
+        _after_tool(
+            seats.former,
+            "escalate_task",
+            {"task_id": f"#{other.seq_num}", "reason": "Handed off: reviewer LAND"},
+            {},
+        ),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    assert RuleEngine(seats.db)._check_step_tool_enforcement(escalation, seats.former, {}) is None
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_unselected_or_failed_claim_completion_does_not_rebind(
+    seats: _Seats, failed: bool
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    selected = tasks.create_task(
+        project_id, "Selected", validation_criteria="Selection stays current."
+    )
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    claim_task(seats.db, selected.id, seats.former)
+    output = (
+        {"success": False, "error": "Claim failed", "task_id": selected.id}
+        if failed
+        else {"success": True, "task_id": seats.task_id, "ref": seats.ref}
+    )
+    event = _after_tool(seats.former, "claim_task", {"task_id": output["task_id"]}, output)
+    if failed:
+        # The proxy delivers internal tool failures directly, without a success wrapper.
+        event.data["tool_output"] = output
+    await RuleEngine(seats.db)._process_step_after_tool(
+        event,
+        seats.former,
+        SessionVariableManager(seats.db).get_variables(seats.former),
+    )
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "implement"
+    assert state["assigned_task_id"] == seats.task_id
+    assert (
+        SessionVariableManager(seats.db).get_variables(seats.former)["active_task_id"]
+        == selected.id
+    )
+
+
+async def test_relaunched_developer_recovers_handoff_close_preview(
+    seats: _Seats, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(repo))
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    proxy = _task_proxy(seats)
+    engine = RuleEngine(seats.db)
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(seats.former):
+            result = await proxy.call_tool(
+                "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
+            )
+        await engine._process_step_after_tool(
+            _after_tool(seats.former, tool, arguments, result),
+            seats.former,
+            SessionVariableManager(seats.db).get_variables(seats.former),
+        )
+        return cast(dict[str, Any], result)
+
+    handoff = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at linked commit"}
+    assert await call("escalate_task", handoff) == {}
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    # A fresh relaunch has lost the old instance's handoff permission.
+    _seat(seats, seats.former, "claim", bound=False)
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == []
+    claimed = await call("claim_task", {"task_id": seats.ref})
+    assert claimed["task_id"] == seats.task_id
+    assert _current_step(seats.db, seats.former) == "route_skills"
+    # Repeating the authorized handoff releases the reclaimed escalated task
+    # and rebuilds close rights through ordinary tool effects, without variable writes.
+    assert await call("escalate_task", handoff) == {}
+    assert _current_step(seats.db, seats.former) == "claim"
+    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    assert "error" not in await call(
+        "de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"}
+    )
+    preview = await call(
+        "close_task",
+        {"task_id": seats.ref, "preview": True, "changes_summary": "Landed and released."},
+    )
+    assert preview["preview"] is True
+    assert preview["blocking_reasons"] == [
+        "Deterministic gates passed; a real close requires independent review."
+    ]
+    assert tasks.get_task(seats.task_id).closed_at is None
 
 
 @pytest.mark.parametrize("closed_bound", [False, True])

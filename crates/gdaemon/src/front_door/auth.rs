@@ -103,7 +103,7 @@ impl AuthState {
         bootstrap_path: PathBuf,
     ) -> Result<Self> {
         if secret.is_empty() || HeaderValue::from_str(&secret).is_err() {
-            anyhow::bail!("GOBBY_FRONT_DOOR_SECRET must be nonempty and a valid header value");
+            anyhow::bail!("front-door secret must be nonempty and a valid header value");
         }
         Ok(Self {
             secret,

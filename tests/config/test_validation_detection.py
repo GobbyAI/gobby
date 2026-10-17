@@ -700,7 +700,9 @@ def test_env_with_unsafe_options_or_no_command_is_not_credited(command: str) -> 
         ("env -i A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
     ],
 )
-def test_evidence_normalizer_strips_env_assignment_prefix_only(command: str, expected: str) -> None:
+def test_evidence_normalizer_strips_env_assignments_and_safe_options(
+    command: str, expected: str
+) -> None:
     assert normalize_validation_evidence_command(command) == expected
 
 

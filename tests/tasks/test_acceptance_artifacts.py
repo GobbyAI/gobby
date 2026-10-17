@@ -1546,6 +1546,74 @@ class TestFeature:
         ),
         (
             """
+            from unittest.mock import patch
+
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                with patch.dict(globals(), {"_assert_ok": lambda receipt: None}):
+                    _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(_assert_ok=lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update([("_assert_ok", lambda receipt: None)])
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(zip(["_assert_ok"], [lambda receipt: None]))
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update({name: lambda receipt: None for name in ["_assert_ok"]})
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature(monkeypatch):
+                monkeypatch.setattr("test_feature-extra._assert_ok", lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
             class Meta(type):
                 def __new__(mcs, name, bases, namespace):
                     namespace["_assert_ok"] = lambda self, receipt: None
@@ -1625,6 +1693,12 @@ class TestFeature:
         "patch_object",
         "patch_dotted_path",
         "globals_subscript",
+        "patch_dict_literal_key",
+        "update_keyword_name",
+        "globals_update_pairs",
+        "globals_update_zip",
+        "globals_update_comprehension",
+        "monkeypatch_hyphenated_module_target",
         "metaclass_namespace",
         "module_staticmethod_rebinding",
         "imported_staticmethod_alias",
@@ -1640,6 +1714,24 @@ def test_assert_helper_string_named_or_shadowed_binding_is_flagged(
 
     assert result.passed is False
     assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_named_in_non_identifier_literal_stays_credited(tmp_path: Path) -> None:
+    result = _committed_python_result(
+        tmp_path,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            message = "_assert_ok failed"
+            _assert_ok("ok")
+        """,
+        {},
+    )
+
+    assert result.passed is True
+    assert result.findings == ()
 
 
 @pytest.mark.parametrize(
@@ -3954,6 +4046,63 @@ def test_validation_matchers_compare_credited_core_command() -> None:
     assert validation_run_covers_test(prefixed.core_command, prefixed.output, test)
     assert not validation_run_names_test(wrapped.core_command, wrapped.command, test)
     assert not validation_run_covers_test(wrapped.core_command, wrapped.command, test)
+
+
+@pytest.mark.parametrize(
+    "header,symbol",
+    [
+        (
+            "_ test_env_unset_chdir_ignore_environment_options_are_credited"
+            "[env -u A -u B -C /wt] _",
+            "test_env_unset_chdir_ignore_environment_options_are_credited",
+        ),
+        (
+            "________ test_env_options_command_equivalence_matches_bare[-u X -C /wt] ________",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+        (
+            "1. [FAIL] test_env_options_command_equivalence_matches_bare[-u X -C /wt]",
+            "test_env_options_command_equivalence_matches_bare",
+        ),
+    ],
+)
+@pytest.mark.parametrize("case", ["bound", "other-test", "other-path", "no-detail", "sibling"])
+def test_tdd_pytest_spaced_headers_bind_failure_body(header: str, symbol: str, case: str) -> None:
+    started = datetime(2026, 10, 16, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference=f"tests/tasks/test_transcript_outcomes.py::{symbol}",
+        path="tests/tasks/test_transcript_outcomes.py",
+        symbol=symbol,
+        body=f"def {symbol}(): assert feature() == 1",
+    )
+    reported_header = header.replace(symbol, "test_other") if case == "other-test" else header
+    reported_path = "tests/test_other.py" if case == "other-path" else test.path
+    detail = "E   AssertionError: assert 0 == 1\n" if case != "no-detail" else ""
+    if case == "sibling":
+        # A recognized target header must not borrow a sibling's assertion,
+        # including when that sibling uses pytest's shortest padding.
+        reported_header = f"________ {symbol} ________"
+        detail = "_ test_other[env -u A] _\nE   AssertionError: assert 0 == 1\n"
+    red_output = f"{reported_header}\n{reported_path}:37: in {symbol}\n{detail}"
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command=f"pytest {test.path} -k {symbol}",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is (case == "bound"), result.findings
+    assert result.red_runs == ((red.command,) if case == "bound" else ())
 
 
 def test_tdd_evidence_rejection_names_run_and_unattributed_symbol() -> None:

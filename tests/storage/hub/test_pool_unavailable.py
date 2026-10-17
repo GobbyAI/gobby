@@ -18,6 +18,29 @@ pytestmark = pytest.mark.unit
         PoolTimeout("couldn't get a connection after 5.00 sec"),
         psycopg.OperationalError("terminating connection due to administrator command"),
         psycopg.OperationalError("the connection is closed"),
+        psycopg.OperationalError(
+            "consuming input failed: server closed the connection unexpectedly"
+        ),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+        ),
+        psycopg.errors.ConnectionFailure("SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError("consuming input failed: SSL SYSCALL error: EOF detected"),
+        psycopg.OperationalError(
+            "consuming input failed: could not receive data from server: Connection reset by peer"
+        ),
+        psycopg.OperationalError(
+            "sending query failed: could not send data to server: Broken pipe"
+        ),
+        psycopg.errors.SerializationFailure("serialization conflict"),
+        psycopg.errors.DeadlockDetected("deadlock detected"),
+        psycopg.errors.TooManyConnections("connection slots exhausted"),
+        psycopg.errors.AdminShutdown("server shutting down"),
+        psycopg.errors.CrashShutdown("server recovering"),
+        psycopg.errors.CannotConnectNow("server starting up"),
+        psycopg.errors.IdleSessionTimeout("idle connection expired"),
+        psycopg.OperationalError("could not connect to server: Connection timed out"),
+        psycopg.OperationalError("no connection to the server"),
     ],
 )
 def test_is_pool_unavailable_matches_outage_errors(exc: BaseException) -> None:
@@ -40,6 +63,16 @@ def test_is_pool_unavailable_matches_wrapped_cause() -> None:
     [
         RuntimeError("database unavailable"),
         psycopg.OperationalError("password authentication failed for user"),
+        psycopg.OperationalError(
+            'connection to server at "127.0.0.1", port 5432 failed: FATAL: '
+            'password authentication failed for user "gobby"'
+        ),
+        psycopg.errors.InvalidPassword("password authentication failed for user"),
+        psycopg.errors.InsufficientPrivilege("permission denied"),
+        psycopg.errors.InvalidPassword("connection refused"),
+        psycopg.errors.QueryCanceled("query canceled"),
+        psycopg.errors.DatabaseDropped("database dropped"),
+        psycopg.ProgrammingError("invalid query"),
         ValueError("nope"),
     ],
 )

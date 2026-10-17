@@ -42,7 +42,9 @@ def _make_tarball_package(parent: Path, pkgid: str, marker: str) -> Path:
 
 
 def _materialize(source: Path, cache_root: Path, vendored_zig_pkg: Path | None) -> bool:
-    return materialize_zig_packages(source, cache_root, vendored_zig_pkg, report=print)
+    return materialize_zig_packages(
+        source, cache_root, vendored_zig_pkg, manifest=None, report=print
+    )
 
 
 def test_materialize_extracts_tarball_only_package(tmp_path: Path) -> None:
@@ -186,8 +188,10 @@ def test_isolated_child_env_gives_every_run_the_same_zig_system_dir(
     first_root.mkdir()
     second_root.mkdir()
 
-    first = _isolated_child_env(first_root, {"PATH": "/bin"})
-    second = _isolated_child_env(second_root, {"PATH": "/bin"})
+    # A repo with no vendored manifest pins nothing beyond the fixture cache.
+    repo = tmp_path / "repo"
+    first = _isolated_child_env(first_root, {"PATH": "/bin"}, repo=repo)
+    second = _isolated_child_env(second_root, {"PATH": "/bin"}, repo=repo)
 
     system_dir = Path(first["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"])
     assert second["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(system_dir)

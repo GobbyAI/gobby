@@ -3636,6 +3636,28 @@
     },
     {
       "activation": "live",
+      "default": 16777216,
+      "description": "Report data the hub holds for one machine until it is taken; a report that would exceed it gets 429 and is retried.",
+      "key": "node_reports.max_pending_bytes_per_machine",
+      "machineExport": false,
+      "namespace": "node_reports",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8388608,
+      "description": "Largest node request body the hub reads, for run reports and checkout registrations; larger bodies get 413.",
+      "key": "node_reports.max_request_bytes",
+      "machineExport": false,
+      "namespace": "node_reports",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 10,
       "description": "Maximum nesting depth for invoke_pipeline steps. Prevents stack overflow from recursive/circular pipelines.",
       "key": "pipelines.nesting_depth_limit",

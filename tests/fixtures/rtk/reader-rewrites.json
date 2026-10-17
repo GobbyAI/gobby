@@ -1,0 +1,14 @@
+{
+  "0.51.0": {
+    "cat": {"command": "cat {path}", "stdout": "rtk read {path}", "stderr": "", "exit_code": 3},
+    "tail": {"command": "tail -n 40 {path}", "stdout": "rtk read {path} --tail-lines 40", "stderr": "", "exit_code": 3},
+    "grep": {"command": "grep -E 'passed|failed' {path}", "stdout": "rtk grep -E 'passed|failed' {path}", "stderr": "", "exit_code": 3},
+    "monitor": {"command": "tail -n +1 -f {path} | grep -E --line-buffered 'passed|failed'", "stdout": "tail -n +1 -f {path} | rtk grep -E --line-buffered 'passed|failed'", "stderr": "", "exit_code": 3}
+  },
+  "1.0.1": {
+    "cat": {"command": "cat {path}", "stdout": "rtk read {path}", "stderr": "", "exit_code": 3},
+    "tail": {"command": "tail -n 40 {path}", "stdout": "rtk read {path} --tail-lines 40", "stderr": "", "exit_code": 3},
+    "grep": {"command": "grep -E 'passed|failed' {path}", "stdout": "rtk grep -E 'passed|failed' {path}", "stderr": "", "exit_code": 3},
+    "monitor": {"command": "tail -n +1 -f {path} | grep -E --line-buffered 'passed|failed'", "stdout": "tail -n +1 -f {path} | rtk grep -E --line-buffered 'passed|failed'", "stderr": "", "exit_code": 3}
+  }
+}

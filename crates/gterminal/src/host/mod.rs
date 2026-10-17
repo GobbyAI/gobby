@@ -164,6 +164,8 @@ pub async fn run() -> io::Result<()> {
             )
         }
         None => {
+            check_socket_path(&control_path)?;
+            check_socket_path(&frames_path)?;
             let running_image = run_from_pin(&images_dir)
                 .map_err(|err| io::Error::new(err.kind(), format!("gterm image pin: {err}")))?;
             prepare_socket_path(&control_path, |path| {
@@ -587,6 +589,21 @@ fn run_from_pin(images_dir: &Path) -> io::Result<image::PinnedImage> {
         .arg0(arg0)
         .args(argv)
         .exec())
+}
+
+/// Refuses a socket path the kernel cannot bind or connect to. `sun_path` caps
+/// unix socket paths (104 bytes on macOS), and clients reach this socket by the
+/// same path, so a host past the cap could never be reached. Runs before the
+/// image pin, so a refused host leaves nothing behind.
+fn check_socket_path(path: &Path) -> io::Result<()> {
+    std::os::unix::net::SocketAddr::from_pathname(path)
+        .map(|_| ())
+        .map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("socket path {} is too long: {err}", path.display()),
+            )
+        })
 }
 
 fn write_pidfile(path: &Path, pid: u32) -> io::Result<()> {

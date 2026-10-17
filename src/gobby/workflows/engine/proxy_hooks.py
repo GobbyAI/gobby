@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.adapters.capabilities import get_provider_capabilities
+from gobby.config.shell_lexing import parse_shell_command
+from gobby.config.validation_detection import classify_validation_command
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
@@ -61,6 +64,24 @@ _RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
 
 # One WARNING per unavailability episode; DEBUG until RTK resolves again.
 _rtk_unavailable_warned = False
+
+
+def _pytest_collection_command(command: str) -> bool:
+    """Keep collection summaries that RTK 0.51.0 and 1.0.1 erase as zero tests."""
+    for segment in parse_shell_command(command).segments:
+        options = segment[: segment.index("--")] if "--" in segment else segment
+        collection_flags = {"--collect-only", "--co"}
+        if not collection_flags.intersection(options):
+            continue
+        # Use the existing launcher grammar without execution-suppression flags.
+        match = classify_validation_command(
+            shlex.join(word for word in segment if word not in collection_flags)
+        )
+        if match is not None and match.matcher_id == "python-tests":
+            runner = match.normalized_argv
+            if runner and (Path(runner[0]).name == "pytest" or runner[1:3] == ("-m", "pytest")):
+                return True
+    return False
 
 
 def _shell_context(command: str) -> str:
@@ -273,6 +294,8 @@ class ProxyHooksMixin:
             return False
         command = tool_input.get("command")
         if not isinstance(command, str):
+            return False
+        if _pytest_collection_command(command):
             return False
         # This stage runs last (``core.py`` defers proxy transformations until
         # every original-input denial has passed), so a shared budget with a

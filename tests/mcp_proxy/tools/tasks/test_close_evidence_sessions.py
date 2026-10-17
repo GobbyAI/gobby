@@ -28,6 +28,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptTaskClaim,
+    TranscriptValidationRun,
 )
 from gobby.utils.machine_id import get_machine_id
 from tests.tasks.test_close_checklist import _run
@@ -37,6 +38,102 @@ QA = "qa-session"
 IMPLEMENTER = "implementer-session"
 CREATOR = "creator-session"
 REVIEWER = "reviewer-session"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("departure", ["escalated", "closed"])
+async def test_pre_history_departure_bounds_the_original_claim(departure: str) -> None:
+    before = _run_at(QA, "2026-09-29T20:05:00+00:00", "success", 1)
+    away = _run_at(QA, "2026-09-29T20:20:00+00:00", "success", 2)
+    returned = _run_at(QA, "2026-09-29T20:45:00+00:00", "success", 3)
+    links = [
+        _session_link("task", "2026-09-29T20:00:00+00:00"),
+        {**_session_link("task", "2026-09-29T20:10:00+00:00"), "action": departure},
+        # Another task's terminal event cannot end this task's pre-history window.
+        {**_session_link("other", "2026-09-29T20:02:00+00:00"), "action": departure},
+    ]
+    evidence = await _owner_evidence(
+        links,
+        (),
+        (before, away, returned),
+        selection_history=[{"epoch": "2026-09-29T20:40:00+00:00", "task_id": "task"}],
+    )
+
+    assert evidence.validation_runs == (before, returned)
+    assert evidence.off_task_author_runs == (away,)
+    assert [run.exclusion_reason for run in evidence.excluded_runs] == ["off-task", "off-task"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("away_edit", ["prior-production", "after-green"])
+async def test_shared_off_task_edits_preserve_negative_checks_and_green_freshness(
+    away_edit: str,
+) -> None:
+    start = datetime(2026, 9, 29, 20, tzinfo=UTC)
+    test_path, production_path = "tests/test_shared.py", "src/shared.py"
+    body = "def test_shared():\n    assert run() == 2\n"
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_shared", path=test_path, symbol="test_shared", body=body
+    )
+
+    def edit(path: str, order: int) -> TranscriptEdit:
+        return TranscriptEdit(
+            session_id=QA,
+            source="codex",
+            path=path,
+            timestamp=start + timedelta(seconds=order),
+            order=order,
+            tool_name="apply_patch",
+            source_after=body if path == test_path else "def run():\n    return 2\n",
+            source_confirmed=True,
+            source_confirmed_at=start + timedelta(seconds=order, milliseconds=100),
+        )
+
+    def run(order: int, outcome: str) -> TranscriptValidationRun:
+        return replace(
+            _run(order, outcome=outcome),
+            session_id=QA,
+            command=f"pytest {test_path} -q",
+            started_at=start + timedelta(seconds=order),
+            completed_at=start + timedelta(seconds=order, milliseconds=500),
+            output=(
+                "________________ test_shared ________________\nE   assert 1 == 2\n"
+                f"{test_path}:2: AssertionError\nFAILED {test_path}::test_shared - assert 1 == 2\n"
+            )
+            if outcome == "failure"
+            else "1 passed",
+        )
+
+    red, green = run(5, "failure"), run(9, "success")
+    extra = edit(production_path, 1 if away_edit == "prior-production" else 11)
+    original = TranscriptEvidence(
+        edits=(extra, edit(test_path, 3), edit(production_path, 7)),
+        validation_runs=(red, green),
+        command_runs=(red, green),
+    )
+    evidence = await _owner_evidence(
+        [_session_link("task", start.isoformat())],
+        (),
+        (red, green),
+        original.edits,
+        selection_history=[
+            {"epoch": start.isoformat(), "task_id": "other"},
+            {"epoch": (start + timedelta(seconds=2)).isoformat(), "task_id": "task"},
+            {"epoch": (start + timedelta(seconds=10)).isoformat(), "task_id": "other"},
+        ],
+        shared_paths=(test_path, production_path),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+
+    # Prior production constrains RED; a later edit stales Gate 10's final GREEN.
+    assert result.passed is (away_edit == "after-green"), result
+    assert replace(extra, task_attributed=False) in evidence.edits
+    assert gate.passed is (away_edit == "prior-production"), gate.message
+    clean = replace(original, edits=original.edits[1:])
+    assert evaluate_tdd_evidence((test,), clean).passed
 
 
 def _link(session_id: str, action: str, created_at: str) -> dict[str, Any]:
@@ -1367,15 +1464,27 @@ async def _owner_evidence(
     edits: tuple[TranscriptEdit, ...] = (),
     *,
     selection_history: list[dict[str, str | None]] | None = None,
+    shared_paths: tuple[str, ...] = (),
 ) -> TranscriptEvidence:
     """Derive close evidence where QA alone owns and closes the task."""
     ctx = _context(
         [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
         {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
     )
-    ctx.session_var_manager.get_variables.return_value = (
+    variables: dict[str, Any] = (
         {"task_selection_history": selection_history} if selection_history is not None else {}
     )
+    if shared_paths:
+        variables.update(
+            task_edited_file_checkouts_history={
+                "task": {"/repo": list(shared_paths)},
+                "other": {"/repo": list(shared_paths)},
+            },
+            task_edited_file_checkouts_history_started_at=datetime(
+                2026, 9, 29, 20, tzinfo=UTC
+            ).timestamp(),
+        )
+    ctx.session_var_manager.get_variables.return_value = variables
     ctx.session_task_manager.get_session_tasks.return_value = db_claims
 
     async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
@@ -1400,7 +1509,7 @@ async def _owner_evidence(
             owner_session_id=QA,
             closing_session_id=QA,
             owner_window_start="2026-09-29T20:00:00+00:00",
-            task_edited_files=set(),
+            task_edited_files=set(shared_paths),
             repo_path="/repo",
         )
     (evidence,) = merged
@@ -1607,10 +1716,16 @@ async def test_codex_precompact_tdd_survives_later_task_editing_the_same_paths(
     assert result.passed, result.findings
     assert result.red_runs == (command,)
     assert result.green_runs == (command,)
-    assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
-        (test_path, start + timedelta(seconds=10)),
-        (production_path, start + timedelta(seconds=30)),
+    assert [(edit.path, edit.timestamp, edit.task_attributed) for edit in evidence.edits] == [
+        (test_path, start + timedelta(seconds=10), True),
+        (production_path, start + timedelta(seconds=30), True),
+        (test_path, start + timedelta(seconds=70), False),
     ]
+    # Historical TDD credit survives; a physical edit still requires fresh validation.
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+    assert not gate.passed, gate.message
 
 
 @pytest.mark.asyncio
