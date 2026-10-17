@@ -20,6 +20,7 @@ from starlette.responses import JSONResponse
 from gobby.hub.caller_scope import current_caller, require_machine_owned
 from gobby.hub.node_client import NodeCommandError
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.runtime_grants import encode_grant_header
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
@@ -41,6 +42,11 @@ from tests.servers.conftest import (
     TEST_FRONT_DOOR_SECRET,
     authenticate_as,
 )
+from tests.servers.test_auth_service import (
+    _GRANT_NOW,
+    _grant_service,
+    _signed_presentation_grant,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -57,6 +63,21 @@ class _MachinesRaise:
     def fetchone(self, query: str, params: tuple[object, ...] = ()) -> Any:
         if "machines" in query:
             raise RuntimeError("machine lookup failed")
+        return self._inner.fetchone(query, params)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _SessionsRaise:
+    """Database proxy whose session reads fail and whose other reads pass through."""
+
+    def __init__(self, inner: HubDatabase) -> None:
+        self._inner = inner
+
+    def fetchone(self, query: str, params: tuple[object, ...] = ()) -> Any:
+        if "user_id" in query and "auth_sessions" in query:
+            raise RuntimeError("session lookup failed")
         return self._inner.fetchone(query, params)
 
     def __getattr__(self, name: str) -> Any:
@@ -217,6 +238,71 @@ def test_authenticate_resolves_caller_user(
     assert decision.allowed is True
     assert decision.user_id is None
     assert decision.break_glass is True
+
+    service.bind_runtime(
+        grant_service=_grant_service(),
+        clock=lambda: _GRANT_NOW + 10,
+        local_machine_id=hub,
+        front_door_secret=_FRONT_DOOR_SECRET,
+    )
+    front_door_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub))
+    grant_front_door = service.authenticate(
+        _request(
+            {
+                "X-Gobby-Front-Door": _FRONT_DOOR_SECRET,
+                "X-Gobby-User-Id": TEST_USER_ID,
+                "X-Gobby-Machine-Id": hub,
+                "X-Gobby-Key-Id": "key-1",
+                "X-Gobby-Runtime-Grant": front_door_grant,
+            },
+            method="POST",
+            path="/api/admin/savings/record",
+        )
+    )
+    assert grant_front_door.allowed is True
+    assert grant_front_door.user_id == TEST_USER_ID
+
+    bearer_headers = _bearer(temp_db, session_manager, sample_project, hub)
+    agent_grant = encode_grant_header(
+        _signed_presentation_grant(
+            kind="agent_run",
+            machine_id=hub,
+            project_id=sample_project["id"],
+            session_id="session-123",
+            execution_id=bearer_headers["X-Gobby-Agent-Run-Id"],
+        )
+    )
+    grant_bearer = service.authenticate(
+        _request(
+            bearer_headers | {"X-Gobby-Runtime-Grant": agent_grant},
+            method="POST",
+            path="/api/embeddings",
+        )
+    )
+    assert grant_bearer.allowed is True
+    assert grant_bearer.user_id == TEST_USER_ID
+
+    cookie_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub))
+    grant_cookie = service.authenticate(
+        _request(
+            {
+                "Cookie": f"gobby_session={token}",
+                "X-Gobby-Runtime-Grant": cookie_grant,
+            },
+            method="POST",
+            path="/api/admin/savings/record",
+        )
+    )
+    assert grant_cookie.allowed is True
+    assert grant_cookie.user_id == TEST_USER_ID
+
+    raising_cookie = _service(
+        cast(HubDatabase, _SessionsRaise(temp_db)),
+        tmp_path / "raising-cookie",
+    )
+    raised_cookie = raising_cookie.authenticate(_request({"Cookie": f"gobby_session={token}"}))
+    assert raised_cookie.allowed is True
+    assert raised_cookie.user_id is None
 
 
 def _probe(server: HTTPServer, path: str) -> None:

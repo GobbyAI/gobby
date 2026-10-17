@@ -380,10 +380,14 @@ class AuthService:
         return machine.owner_user_id
 
     def _cookie_user(self, request: HTTPConnection) -> str | None:
+        """Return the session user. A failed lookup has no user."""
         token = request.cookies.get(_SESSION_COOKIE)
         if not token:
             return None
-        return AuthStore(self._database_getter()).session_user_id(token)
+        try:
+            return AuthStore(self._database_getter()).session_user_id(token)
+        except Exception:
+            return None
 
     def _legacy_rejection(self, request: HTTPConnection) -> str | None:
         """Return why operator, browser, or managed credentials were refused, or None."""
