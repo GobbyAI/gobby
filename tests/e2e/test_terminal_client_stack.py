@@ -1322,6 +1322,15 @@ def _claim_for_seat(
     return owner_id
 
 
+def _wait_for_live_seats(client: httpx.Client, run_ids: tuple[str, str], label: str) -> None:
+    wait_for_condition(
+        lambda: _live_native_items(client, run_ids),
+        timeout=120.0,
+        interval=0.2,
+        description=f"live native terminals {label}",
+    )
+
+
 def _restart_seat_state(client: httpx.Client, run_id: str, task_id: str) -> dict[str, Any]:
     """Read the seat fields that a restart must not change."""
     run_response = client.get(f"/api/agents/runs/{run_id}")
@@ -1408,37 +1417,37 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
             assert state["worktree_id"], state
             assert state["task_claimed_by"] == seat["owner_id"], state
         owners_before = _srt_owner_records(daemon_instance.gobby_home)
-
-        _restart_daemon_preserving_host(daemon_instance)
-        client.close()
-        client = _http(daemon_instance)
-        host_after = _wait_for_host(client, daemon_instance)
-        assert host_after["host_epoch"] == host_before["host_epoch"], host_after
-        wait_for_condition(
-            lambda: _live_native_items(client, run_ids),
-            timeout=120.0,
-            interval=0.2,
-            description=f"live native terminals after restart for {run_ids}",
-        )
-        after = {
-            seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
-            for seat in seats
-        }
+        restarts: list[dict[str, Any]] = []
+        # Two real restarts. The second shutdown runs in a runner that may have adopted
+        # the broker the first runner started rather than started it itself.
+        for restart in (1, 2):
+            _restart_daemon_preserving_host(daemon_instance)
+            client.close()
+            client = _http(daemon_instance)
+            host_after = _wait_for_host(client, daemon_instance)
+            assert host_after["host_epoch"] == host_before["host_epoch"], host_after
+            _wait_for_live_seats(client, run_ids, f"after restart {restart} for {run_ids}")
+            after = {
+                seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
+                for seat in seats
+            }
+            restarts.append(
+                {
+                    "restart": restart,
+                    "after": after,
+                    "owners": _srt_owner_records(daemon_instance.gobby_home),
+                }
+            )
+            for seat in seats:
+                assert after[seat["run_id"]] == before[seat["run_id"]], (restart, seat)
+                assert Path(seat["worktree_path"]).is_dir(), seat
         (tmp_path / "seat-restart.json").write_text(
             json.dumps(
-                {
-                    "before": before,
-                    "after": after,
-                    "owners_before": owners_before,
-                    "owners_after": _srt_owner_records(daemon_instance.gobby_home),
-                },
+                {"before": before, "owners_before": owners_before, "restarts": restarts},
                 indent=2,
                 default=str,
             )
         )
-        for seat in seats:
-            assert after[seat["run_id"]] == before[seat["run_id"]], seat
-            assert Path(seat["worktree_path"]).is_dir(), seat
     finally:
         for seat in seats:
             _cancel_stack_run(client, str(seat["run_id"]))
