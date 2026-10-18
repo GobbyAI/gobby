@@ -7,7 +7,7 @@ import re
 import textwrap
 from pathlib import PurePosixPath
 
-from gobby.tasks.tdd_compacted_output import _PYTEST_FAILURE_HEADER_RE
+from gobby.tasks.tdd_compacted_output import _PYTEST_FAILURE_HEADER_RE, _RTK_FAILURE_HEADER_RE
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -297,31 +297,43 @@ def runtime_pytest_output(
     return "\n".join(trusted)
 
 
-def terminal_runtime_frame(section: str, original_section: str) -> str | None:
-    """Require the sanitized terminal stub to agree with the original final exception."""
-    exception = r"(?:[A-Za-z_][\w.]*(?:Error|Exception)|Failed)"
+def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
+    """Reject missing, conflicting or ambiguous original exception locations."""
+    exception = r"[A-Za-z_][\w.]*"
     detail_pattern = re.compile(rf"E[ \t]+(?P<exception>{exception})(?::|[ \t]*$)")
-    location_pattern = re.compile(rf"\S+\.py:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
-    for candidate in (original_section, section):
-        rows = candidate.splitlines()
-        frame_start = 0
-        terminal_start: int | None = None
-        terminal_exception: str | None = None
-        location_exception: str | None = None
-        for index, row in enumerate(rows):
-            if _SHORT.fullmatch(row) or _DEFINITION.match(row):
-                frame_start = index
-            detail = detail_pattern.match(row)
-            if detail is not None:
-                terminal_start = frame_start
-                terminal_exception = detail["exception"]
-            location = location_pattern.fullmatch(row)
-            if location is not None:
-                location_exception = location["exception"]
-        if (
-            terminal_start is None
-            or terminal_exception != "NotImplementedError"
-            or (location_exception or terminal_exception) != terminal_exception
-        ):
-            return None
+    location_pattern = re.compile(rf"\S+:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
+    original_rows = original_tail.splitlines()
+    original_exceptions = {
+        location["exception"]
+        for row in original_rows
+        if (location := location_pattern.fullmatch(row)) is not None
+    }
+    # Headers are never endpoints: a repr can forge them. Any later header makes
+    # attribution ambiguous, even when the later failure has the same exception.
+    if original_exceptions != {"NotImplementedError"} or any(
+        _PYTEST_FAILURE_HEADER_RE.match(row) or _RTK_FAILURE_HEADER_RE.match(row)
+        for row in original_rows[1:]
+    ):
+        return None
+    rows = section.splitlines()
+    frame_start = 0
+    terminal_start: int | None = None
+    terminal_exception: str | None = None
+    location_exception: str | None = None
+    for index, row in enumerate(rows):
+        if _SHORT.fullmatch(row) or _DEFINITION.match(row):
+            frame_start = index
+        detail = detail_pattern.match(row)
+        if detail is not None:
+            terminal_start = frame_start
+            terminal_exception = detail["exception"]
+        location = location_pattern.fullmatch(row)
+        if location is not None:
+            location_exception = location["exception"]
+    if (
+        terminal_start is None
+        or terminal_exception != "NotImplementedError"
+        or (location_exception or terminal_exception) != terminal_exception
+    ):
+        return None
     return "\n".join(rows[terminal_start:])

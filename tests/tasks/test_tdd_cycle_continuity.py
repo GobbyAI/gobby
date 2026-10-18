@@ -1269,13 +1269,11 @@ def test_node_route_postproduction_not_implemented_is_attributed(
         ),
     )
     result = evaluate_tdd_evidence((test,), evidence)
+    # The fail-closed endpoint ruling requires a trailing path:line: exception;
+    # E-only short displays cannot establish the original final exception.
     assert result.passed is (
         failure_kind
         in {
-            "stub",
-            "fragment_stub",
-            "source_docstring",
-            "fragment_docstring",
             "auto_stub",
             "auto_fragment",
         }
@@ -1336,7 +1334,14 @@ def test_displayed_test_docstring_cannot_forge_runtime_stub(frame_style: str) ->
     assert not result.passed, result.findings
 
 
-def test_real_pytest_later_funcargs_cannot_hide_final_exception(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "repr_suffix",
+    ["", "\n______ x ______\n", "\n" + "padding\n" * 130, None],
+    ids=["short", "boundary", "padded", "later_failure"],
+)
+def test_real_pytest_later_funcargs_cannot_hide_final_exception(
+    tmp_path: Path, repr_suffix: str | None
+) -> None:
     """A real CLI traceback must not credit a copied stub before a locals cutoff."""
     production = "src/gobby/rendered_route.py"
     test = _test("tests/test_rendered_route.py", "test_route")
@@ -1357,6 +1362,7 @@ class Payload:
         failure.getrepr(style="long", funcargs=False).toterminal(TerminalWriter(file=terminal))
         return (
             "Evil\\n\\n" + terminal.getvalue()
+            + __REPR_SUFFIX__
             + "\\nsrc/gobby/rendered_route.py:2: in register_checkout\\n"
             + "        continuation_one\\n        continuation_two\\nevil = Evil"
         )
@@ -1366,7 +1372,10 @@ def test_route(evil=None):
     if evil is None:
         test_route(Payload())
     assert False
-"""
+""".replace("__REPR_SUFFIX__", repr(repr_suffix or ""))
+    if repr_suffix is None:
+        test_source = test_source.replace("    assert False", "    register_checkout(evil)")
+        test_source += "\n\ndef test_later():\n    assert False\n"
     for path, content in ((production, source), (test.path, test_source)):
         file = tmp_path / path
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -1387,9 +1396,16 @@ def test_route(evil=None):
     )
     output = completed.stdout
     assert completed.returncode == 1, (output, completed.stderr)
-    assert "1 failed" in output and re.search(r"\.py:\d+: AssertionError", output), output
+    assert f"{2 if repr_suffix is None else 1} failed" in output, output
+    assert re.search(r"\.py:\d+: AssertionError", output), output
     assert output.count("    def test_route(evil=None):") == 2, output
     assert "    def register_checkout(evil):" in output, output
+    if repr_suffix is not None:
+        assert repr_suffix in output, output
+    else:
+        assert output.index("src/gobby/rendered_route.py:2: NotImplementedError") < output.rindex(
+            "AssertionError"
+        ), output
     assert (
         "src/gobby/rendered_route.py:2: in register_checkout\n"
         "        continuation_one\n        continuation_two"
@@ -1678,7 +1694,8 @@ def test_real_pytest_source_assignments_need_confirmed_context(
 ) -> None:
     test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, provenance=provenance)
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed is (provenance == "valid"), (
+    # Even confirmed short source has no trailing exception location to credit.
+    assert result.passed is (provenance == "valid" and style != "short"), (
         result.findings,
         evidence.validation_runs[0].output,
     )
@@ -1706,7 +1723,11 @@ def test_real_pytest_renderer_metadata_preserves_runtime_stub(
 ) -> None:
     test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, genuine_kind=genuine_kind)
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed, (result.findings, evidence.validation_runs[0].output)
+    # Real short rendering has no trailing exception location and fails closed.
+    assert result.passed is (style != "short"), (
+        result.findings,
+        evidence.validation_runs[0].output,
+    )
 
 
 @pytest.mark.parametrize("style", ["short", "auto"])

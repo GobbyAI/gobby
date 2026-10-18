@@ -522,11 +522,10 @@ def _has_runtime_stub(
             header.group("name"), test, nodes, same_file
         ):
             continue
-        original_section = _failure_section(lines, index)
-        section = runtime_pytest_output(original_section, evidence, run, parse_cache)
+        section = runtime_pytest_output(_failure_section(lines, index), evidence, run, parse_cache)
         if section is None or section not in source_output:
             continue
-        terminal = terminal_runtime_frame(section, original_section)
+        terminal = terminal_runtime_frame(section, "\n".join(lines[index:]))
         if (
             _section_has_artifact_location(section, test)
             and terminal is not None
