@@ -345,7 +345,7 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         assert instance is not None
         assert instance.current_step == "tick"
         assert instance.variables["tick_done"] is False
-        assert instance.variables["tick_window"] is None
+        assert instance.variables["tick_window"] == "sample-window"
 
         # The first durable report opens the next window without a native setter.
         notice = await send(recipient.id, recipient.seq_num)
@@ -453,8 +453,8 @@ def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link
     assert "fresh independent_review_approval for its full SHA" in replacement
     assert "Finish the active unit before reading a different queued task" in replacement
     resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
-    assert 'action="reviewing"' in resume
-    assert "before landing or review-only completion" in resume
+    assert "Restore the reviewing assignment before landing." in resume
+    assert 'action="reviewing"' in prompt.split("- Review.", 1)[1].split("\n    - ", 1)[0]
     assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["verdict"])
     status = steps["verdict"].status_message
     assert status is not None
@@ -661,7 +661,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`landed_by_session_id` names another session" in prompt
     assert "neither your current session ID nor `unknown`" in prompt
     assert (
-        "EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
+        "EVENT=ALREADY_LANDED TASK=#NNNNN SHA= TASK_TITLE= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
     ) in prompt
     assert "original `receipt_id` and original `landed_by_session_id`" in prompt
     assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
@@ -679,7 +679,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
     assert (
-        "EVENT=LANDED TASK=#NNNNN TASK_TITLE= SHA= BRANCH= RECEIPT= MODE= LANDED_TIP= "
+        "EVENT=LANDED TASK=#NNNNN SHA= TASK_TITLE= BRANCH= RECEIPT= MODE= LANDED_TIP= "
         "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= "
         "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
     ) in prompt
