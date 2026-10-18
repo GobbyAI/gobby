@@ -101,13 +101,23 @@ async def _reap_remaining_child_processes(
             return
 
         if preserve_agents:
-            from gobby.agents.srt_monitor import live_monitor_identities, pinned_monitor_identities
+            from gobby.agents.srt_monitor import (
+                live_monitor_identities,
+                pinned_monitor_identities,
+                verified_monitor_paths,
+            )
 
             monitor_identities: dict[int, float] = {}
             pinned_only: set[int] = set()
             if preserve_srt_monitor:
                 registered = await asyncio.to_thread(live_monitor_identities)
-                pinned = await asyncio.to_thread(pinned_monitor_identities, children)
+                paths = await asyncio.to_thread(verified_monitor_paths)
+                pinned: dict[int, float] = {}
+                if paths is not None:
+                    node, runner = paths
+                    pinned = await asyncio.to_thread(
+                        pinned_monitor_identities, children, node, runner
+                    )
                 pinned_only = set(pinned) - set(registered)
                 monitor_identities = {**pinned, **registered}
             preserved_pids = _expand_preserved_agent_processes(
