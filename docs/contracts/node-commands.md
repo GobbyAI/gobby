@@ -12,7 +12,7 @@ gives as "or null" accepts an explicit `null` and fails when it is missing.
 Values are not coerced: a string never parses as a number, and a number never
 parses as a boolean.
 
-Both sides define `CONTRACT_VERSION` as 3: a Rust `pub const` and a Python
+Both sides define `CONTRACT_VERSION` as 4: a Rust `pub const` and a Python
 module constant. Every frame and every node body carries it as `v`; answers
 carry no `v`. A new command or field bumps `v`. Every handler and route
 refuses a `v` other than `CONTRACT_VERSION` with `unsupported_version`: a node
@@ -25,19 +25,19 @@ request rather than fail in the parser.
 Hub to node:
 
 ```json
-{"type":"command","v":3,"request_id":"<uuid>","command":"<name>","payload":{}}
+{"type":"command","v":4,"request_id":"<uuid>","command":"<name>","payload":{}}
 ```
 
 Node to hub, success:
 
 ```json
-{"type":"reply","v":3,"request_id":"<uuid>","ok":true,"result":{}}
+{"type":"reply","v":4,"request_id":"<uuid>","ok":true,"result":{}}
 ```
 
 Node to hub, or gdaemon when it must answer for the node:
 
 ```json
-{"type":"reply","v":3,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
+{"type":"reply","v":4,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
 ```
 
 A command frame's fields are `type` (`"command"`), `v`, `request_id`,
@@ -73,6 +73,8 @@ A node produces these.
 | `not_found` | `"none"` |
 | `cancelled` | `"none"` |
 | `command_failed` | `"none"` or `"partial"` |
+| `no_project_root` | `"none"` |
+| `outside` | `"none"` |
 
 `not_found` for `agent.cancel` also proves that nothing runs for that
 `run_id` now or later. `{stopped:false}` means the agent may still run.
@@ -309,6 +311,44 @@ null when the current branch has no upstream.
 
 Stage rule: the command is read-only, so every error it answers carries
 `stage` `"none"`.
+
+## v4 commands
+
+### `checkout.read`
+
+Read-only. The hub sends `checkout.read` with a `cwd` and one `query`. The node
+replies with a result, or fails with an error whose `stage` is `"none"`.
+
+Payload:
+
+```json
+{"cwd":"<path>","query":{"kind":"files","paths":["<path>"],"read_limit":1024}}
+{"cwd":"<path>","query":{"kind":"git","args":["<arg>"],"stdin":null,"timeout_ms":5000}}
+```
+
+- `query.kind` is `files` or `git`. A query carries only the fields of its form.
+- `files`: `paths` holds at most 1,000 entries. `read_limit` is `null` or a
+  number from 0 to 8,388,608.
+- `git`: `args` lists the git arguments. `stdin` is base64 or `null`.
+  `timeout_ms` is from 1 to 600,000.
+
+The result is `{root, project_id, home, temp_dir, files, git}`. `root` is R0,
+and `project_id` is its marker id. `home` and `temp_dir` are the node's
+canonical home and temporary directories. `files` is a list of entries or
+`null`, and `git` is a result or `null`. Every nullable field is required.
+
+Each `files` entry has the fields `path`, `resolved`, `kind`, `checkout_root`,
+`git_common_dir`, `project_root`, `project_id`, `data`, and `truncated`. `kind`
+is `file`, `dir`, `other`, `missing`, or `outside`. For an admitted path, the four location fields are
+set, and `data` is base64 of the first `read_limit` bytes of a `file`, or
+`null`. An `outside` entry carries `path`, `resolved`, and `kind`; its other
+fields are `null`, and `truncated` is `false`.
+
+The git result has the fields `exit_code`, `timed_out`, `stdout`, `stderr`, and
+`truncated`. `stdout` is base64. `stderr` is UTF-8 with replacement, at most 64 KiB.
+
+Errors, each with `stage` `"none"`: `invalid_payload`, `no_project_root`, and
+`outside`. Node duties below say when each applies.
 
 ## Node bodies
 
@@ -618,6 +658,33 @@ Reports:
   `launched:true` exit names the run's workspace. A `launched:false` exit
   names none. Each exit carries the run's `sandbox` record with its recent
   violations.
+
+`checkout.read`:
+
+- It is read-only. Every error carries `stage` `"none"`.
+- It computes R0 from the canonical `cwd`: the nearest ancestor holding
+  `.gobby/project.json`. With none, it answers `no_project_root`.
+- It classifies each path in this order: under R0 is admitted; a temp agent
+  scratchpad is outside; a path whose nearest checkout shares R0's git common
+  dir is admitted; every other path is outside. A path under the node's gobby
+  home is outside unless it is under `<home>/worktrees/` or `<home>/clones/`.
+  It returns no content or git result for an outside path.
+- It runs `git` only with the global options `-c core.fsmonitor=false`,
+  `--literal-pathspecs`, `--no-optional-locks`, and `--no-pager`, plus `-C`,
+  `--git-dir`, and `--work-tree` when they name an admitted path. The
+  subcommand is one of `rev-parse`, `diff`, `ls-files`, `ls-tree`, `status`,
+  `log`, `check-ignore`, `merge-base`, or `rev-list`.
+- It refuses `--output` and `--output=*`, `--no-index`, `--ext-diff`,
+  `--textconv`, `-O*`, `--orderfile*`, `--exclude-from*`, and
+  `--open-files-in-pager` anywhere in the arguments, with `invalid_payload`. It
+  answers `outside` for a `-C`, `--git-dir`, or `--work-tree` path it does not
+  admit.
+- It removes every `GIT_*` variable from git's environment, sets
+  `GIT_OPTIONAL_LOCKS=0`, and kills git at `timeout_ms`.
+- It fills the 8 MiB reply budget in request order over `data` and git
+  `stdout`. An entry cut by the budget has `truncated` `true`.
+- A `files` query with more than 1,000 paths, or a `cwd` that is not a
+  directory, is `invalid_payload`.
 
 The node-duty test cases owned by #24148 are out-of-order and retried
 reports, a `stale_report` refusal, more than 1,000 pending exits, a spawn at
