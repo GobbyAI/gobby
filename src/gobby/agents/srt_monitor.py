@@ -33,7 +33,7 @@ _RECORD_SUFFIX = ".owner.json"
 _RECORD_LIMIT = 65536
 _SOL_LOCAL = 0  # macOS sys/un.h
 _LOCAL_PEERPID = 2  # macOS sys/un.h
-_SO_PEERCRED = 17  # Linux asm-generic/socket.h
+_PROBE_TIMEOUT_SECONDS = 2
 
 
 def live_monitor_identities() -> dict[int, float]:
@@ -49,11 +49,11 @@ def live_monitor_identities() -> dict[int, float]:
                     identities[child.pid] = started
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        recorded = _verified_recorded_broker()
-        if recorded is not None:
-            broker_pid, broker_started = recorded
-            identities.setdefault(broker_pid, broker_started)
-        return identities
+    recorded = _verified_recorded_broker()
+    if recorded is not None:
+        broker_pid, broker_started = recorded
+        identities.setdefault(broker_pid, broker_started)
+    return identities
 
 
 def _verified_recorded_broker() -> tuple[int, float] | None:
@@ -86,7 +86,7 @@ def _verified_recorded_broker() -> tuple[int, float] | None:
     ):
         return None
     try:
-        listener = _connect(path)
+        listener = _connect(path, timeout=_PROBE_TIMEOUT_SECONDS)
     except (OSError, ValueError, RuntimeError):
         return None
     if listener != pid:
@@ -151,6 +151,8 @@ def _write_owner_record(path: Path, record: Mapping[str, object]) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary, dir_fd=dir_fd)
         os.close(dir_fd)
 
 
@@ -176,10 +178,10 @@ def _argv_is_pinned(argv: list[Any], node: str, path: Path) -> bool:
     )
 
 
-def _connect(path: Path) -> int | None:
+def _connect(path: Path, *, timeout: float = 30) -> int | None:
     """Probe the broker and return the pid listening on its socket, or None if unprovable."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(30)
+        client.settimeout(timeout)
         client.connect(str(path))
         client.sendall(b'{"suffix":"_gobbyprobe_SBX"}\n')
         with client.makefile("rb") as stream:
@@ -190,13 +192,16 @@ def _connect(path: Path) -> int | None:
 
 
 def _listener_pid(client: socket.socket) -> int | None:
-    """Return the pid that owns the listening end of a connected unix socket."""
-    if sys.platform == "darwin":
-        raw = client.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i"))
-        return int(struct.unpack("i", raw)[0])
-    if sys.platform.startswith("linux"):
-        raw = client.getsockopt(socket.SOL_SOCKET, _SO_PEERCRED, struct.calcsize("3i"))
-        return int(struct.unpack("3i", raw)[0])
+    """Return the listening pid of a connected unix socket, or None if it cannot be read."""
+    try:
+        if sys.platform == "darwin":
+            raw = client.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i"))
+            return int(struct.unpack("i", raw)[0])
+        if sys.platform.startswith("linux"):
+            raw = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+            return int(struct.unpack("3i", raw)[0])
+    except OSError:
+        return None
     return None
 
 

@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 import psutil
 import pytest
@@ -653,6 +653,41 @@ asyncio.run(main())
     )
     assert result.returncode == 0, result.stderr
     assert f"drifted pin refused: {drift}" in result.stdout
+
+
+def test_recorded_broker_is_verified_outside_the_monitor_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held: list[bool] = []
+
+    def verify() -> tuple[int, float] | None:
+        held.append(srt_monitor._lock.locked())
+        return None
+
+    monkeypatch.setattr(srt_monitor, "_verified_recorded_broker", verify)
+    srt_monitor.live_monitor_identities()
+    assert held == [False]
+
+
+def test_unreadable_listener_pid_is_none_not_a_failed_probe() -> None:
+    class Unreadable:
+        def getsockopt(self, *_args: object) -> bytes:
+            raise OSError("not connected")
+
+    assert srt_monitor._listener_pid(cast(socket.socket, Unreadable())) is None
+
+
+def test_failed_owner_record_write_leaves_no_temporary_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("replace refused")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(OSError, match="replace refused"):
+        srt_monitor._write_owner_record(tmp_path / "v-test", {"pid": 1})
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_registration_survives_slow_identity_work(monitor_harness: MonitorHarness) -> None:
