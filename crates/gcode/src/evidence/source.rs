@@ -27,7 +27,8 @@ impl EvidenceLibrary {
         Ok(())
     }
 
-    /// Blobs at the binding commit, one result per path in order.
+    /// Blobs at the binding commit, one result per path in order. Paths not yet cached
+    /// are read in one batch; every later request for a path reuses its result.
     fn bound_blobs(&self, paths: &[&str]) -> Vec<Result<Vec<u8>>> {
         if paths.is_empty() {
             return Vec::new();
@@ -35,21 +36,47 @@ impl EvidenceLibrary {
         let verified = self.bound_commit.get_or_init(|| {
             super::provenance::verify_bound_commit(&self.repository_root, &self.binding)
         });
-        match verified {
-            Ok(()) => {
-                super::provenance::read_bound_blobs(&self.repository_root, &self.binding, paths)
-            }
-            Err(detail) => paths
-                .iter()
-                .map(|path| {
-                    Err(super::provenance::bound_blob_unavailable(
-                        &self.binding,
-                        path,
-                        detail.clone(),
-                    ))
-                })
-                .collect(),
+        let mut cache = self.blob_cache.lock().expect("bound blob cache lock");
+        let missing = paths
+            .iter()
+            .copied()
+            .filter(|path| !cache.contains_key(*path))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let fetched: Vec<Result<Vec<u8>>> = match verified {
+                Ok(()) => super::provenance::read_bound_blobs(
+                    &self.repository_root,
+                    &self.binding,
+                    &missing,
+                ),
+                Err(detail) => missing
+                    .iter()
+                    .map(|path| {
+                        Err(super::provenance::bound_blob_unavailable(
+                            &self.binding,
+                            path,
+                            detail.clone(),
+                        ))
+                    })
+                    .collect(),
+            };
+            cache.extend(missing.into_iter().map(str::to_owned).zip(fetched));
         }
+        paths.iter().map(|path| cache[*path].clone()).collect()
+    }
+
+    /// Reads the bound blobs for `paths` in one batch, so the per-path reads that
+    /// follow hit the cache. Working-tree reads never use the cache, so this is a no-op.
+    pub(super) fn prefetch_bound_blobs<'a>(&self, paths: impl Iterator<Item = &'a str>) {
+        if self.working_tree {
+            return;
+        }
+        let paths = paths
+            .filter(|path| validate_repo_path(path).is_ok())
+            .collect::<Vec<_>>();
+        self.bound_blobs(&paths);
     }
 
     pub(super) fn read_file(&self, path: &str) -> Result<Vec<u8>> {

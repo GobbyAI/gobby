@@ -2145,3 +2145,176 @@ fn communities_selector_rejects_invalid_bounds() -> anyhow::Result<()> {
     assert_eq!(community_ids(&widest), vec![1]);
     Ok(())
 }
+
+/// Three cited files, each holding one public function named for its file.
+const CITED_FILES: [(&str, &str); 3] = [
+    ("src/one.rs", "pub fn shared_one() {}\n"),
+    ("src/two.rs", "pub fn shared_two() {}\n"),
+    ("src/three.rs", "pub fn shared_three() {}\n"),
+];
+
+/// Commits at a fixed date so commit OIDs and OID-derived output repeat across runs.
+fn fixed_commit(repo: &Path, message: &str) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "-c",
+            "user.name=Evidence Test",
+            "-c",
+            "user.email=evidence@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ])
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git commit: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+fn cited_paths_repo() -> anyhow::Result<(tempfile::TempDir, RepositoryBinding)> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join("src"))?;
+    for (path, body) in CITED_FILES {
+        std::fs::write(repo.join(path), body)?;
+        git(repo, &["add", path])?;
+    }
+    let commit_oid = fixed_commit(repo, "cited paths")?;
+    let binding = RepositoryBinding {
+        project_id: "project-1".to_string(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+    };
+    Ok((temporary, binding))
+}
+
+/// Indexed facts for `files`: one file per entry, each with one function on its first line.
+fn cited_paths_facts(binding: &RepositoryBinding, files: &[(&str, &str)]) -> FakeFacts {
+    let mut facts = FakeFacts::for_source(binding);
+    facts.files = files
+        .iter()
+        .map(|&(path, body)| FileFact {
+            id: FileId::new(path),
+            path: path.to_string(),
+            language: "rust".to_string(),
+            symbol_count: 1,
+            content_hash: gobby_core::indexing::content_hash(body.as_bytes()),
+        })
+        .collect();
+    facts.symbols = files
+        .iter()
+        .map(|&(path, body)| {
+            let stem = path.trim_start_matches("src/").trim_end_matches(".rs");
+            let name = format!("shared_{stem}");
+            let byte_end = body.trim_end_matches('\n').len();
+            SymbolFact {
+                id: name.clone(),
+                file: FileId::new(path),
+                file_path: path.to_string(),
+                qualified_name: format!("crate::{name}"),
+                name,
+                kind: "function".to_string(),
+                language: "rust".to_string(),
+                byte_start: 0,
+                byte_end,
+                line_start: 1,
+                line_end: body.trim_end_matches('\n').lines().count(),
+                signature: None,
+                docstring: None,
+                parent_symbol_id: None,
+                file_content_hash: gobby_core::indexing::content_hash(body.as_bytes()),
+                content_hash: gobby_core::indexing::content_hash(&body.as_bytes()[..byte_end]),
+                summary: None,
+            }
+        })
+        .collect();
+    facts
+}
+
+/// Git calls of one evidence invocation, counted by the test-only provenance counter.
+/// The response is echoed as one `output:` line so before and after runs can be diffed.
+fn git_calls(
+    library: &EvidenceLibrary,
+    request: EvidenceRequest,
+) -> anyhow::Result<(usize, usize)> {
+    provenance::GIT_INVOCATIONS.with(|count| count.set(0));
+    let response = library.query(request)?;
+    let calls = provenance::GIT_INVOCATIONS.with(std::cell::Cell::get);
+    eprintln!("output: {}", serde_json::to_string(&response)?);
+    Ok((response.items.len(), calls))
+}
+
+/// Git calls for a one-symbol and a three-symbol search, each on a fresh library.
+/// The exact symbol lane needs a full name, so the lexical lane matches "shared" to all three.
+fn cited_path_git_calls(
+    binding: &RepositoryBinding,
+    open: impl Fn() -> anyhow::Result<EvidenceLibrary>,
+) -> anyhow::Result<(usize, usize)> {
+    let search = |query: &str| {
+        request(
+            binding,
+            EvidenceOperation::Search {
+                search: search_selector(SearchLane::LexicalSymbol, query),
+            },
+        )
+    };
+    let (one_items, one) = git_calls(&open()?, search("shared_one"))?;
+    let (three_items, three) = git_calls(&open()?, search("shared"))?;
+    anyhow::ensure!(
+        (one_items, three_items) == (1, 3),
+        "expected 1 and 3 cited symbols, found {one_items} and {three_items}"
+    );
+    Ok((one, three))
+}
+
+#[test]
+fn evidence_git_calls_do_not_grow_with_cited_paths() -> anyhow::Result<()> {
+    let (temporary, binding) = cited_paths_repo()?;
+    let root = temporary.path();
+    let bound = || -> anyhow::Result<EvidenceLibrary> {
+        let facts = Arc::new(cited_paths_facts(&binding, &CITED_FILES));
+        Ok(EvidenceLibrary::new(root, binding.clone(), facts)?)
+    };
+    let clean_tree = || -> anyhow::Result<EvidenceLibrary> { Ok(bound()?.with_working_tree()) };
+    let explicit = cited_path_git_calls(&binding, &bound)?;
+    let clean = cited_path_git_calls(&binding, clean_tree)?;
+
+    // Rewrite two cited files in the working tree and index the rewritten bytes.
+    let dirty_files = [
+        CITED_FILES[0],
+        ("src/two.rs", "pub fn shared_two() {}\npub fn unstaged() {}\n"),
+        ("src/three.rs", "pub fn shared_three() {}\npub fn unstaged() {}\n"),
+    ];
+    for (path, body) in &dirty_files[1..] {
+        std::fs::write(root.join(path), body)?;
+    }
+    let dirty_tree = || -> anyhow::Result<EvidenceLibrary> {
+        let facts = Arc::new(cited_paths_facts(&binding, &dirty_files));
+        Ok(EvidenceLibrary::new(root, binding.clone(), facts)?.with_working_tree())
+    };
+    let dirty = cited_path_git_calls(&binding, dirty_tree)?;
+
+    let rows = [
+        ("explicit bound", explicit),
+        ("clean working tree", clean),
+        ("dirty working tree", dirty),
+    ];
+    for (label, (one, three)) in rows {
+        eprintln!("{label}: git calls for one cited path = {one}, for three = {three}");
+    }
+    for (label, (one, three)) in rows {
+        assert_eq!(one, three, "{label}: git calls grew with cited paths");
+    }
+    Ok(())
+}

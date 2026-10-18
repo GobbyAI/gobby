@@ -56,6 +56,7 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &GraphSelector) -> Re
         GraphQuery::DirectedPath => directed_path(library, selector)?,
         GraphQuery::ScopedView => scoped_view(library, selector, direction)?,
     };
+    library.prefetch_bound_blobs(edges.iter().map(|edge| edge.owner_path.as_str()));
     let relation_override = (selector.query == GraphQuery::Usages).then_some(GraphRelation::Usage);
     let mut items = edges
         .into_iter()

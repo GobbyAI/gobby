@@ -13,6 +13,12 @@ use wait_timeout::ChildExt;
 const MAX_BOUND_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    /// Git subprocesses started on this thread, read by the request-cost regression test.
+    pub(crate) static GIT_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Error for a path whose bytes cannot be read at the binding commit.
 pub(super) fn bound_blob_unavailable(
     binding: &RepositoryBinding,
@@ -418,6 +424,8 @@ fn git_command(repo_root: &Path, args: &[&str]) -> Command {
 }
 
 fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+    #[cfg(test)]
+    GIT_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let mut command = git_command(repo_root, args);
     if input.is_some() || args.last() == Some(&"--stdin") {
         command.stdin(Stdio::piped());
