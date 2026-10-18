@@ -328,6 +328,51 @@ async fn tmux_write_is_socket_and_generation_scoped() {
     assert!(calls.is_empty(), "no call without a socket: {calls:?}");
 }
 
+// Every state-changing sizing call runs on the row's recorded socket.
+fn assert_socket_prefix(calls: &[Vec<String>]) {
+    for argv in writes(calls) {
+        assert_eq!(
+            &argv[..3],
+            &["tmux", "-S", SOCKET],
+            "sizing call on the wrong socket: {argv:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn tmux_missing_socket_resize_is_no_op() {
+    // No recorded socket: nothing addressable, so no tmux call at all.
+    let mut value = locator(4242, 1_700_000_000);
+    value
+        .as_object_mut()
+        .expect("locator object")
+        .remove("socket_path");
+    let row = tmux_row(value);
+    let (result, calls) = run_resize(&["4242\t1700000000"], &row, 40, 120).await;
+    assert_eq!(result, Ok(()));
+    assert!(
+        calls.is_empty(),
+        "resize called tmux without a socket: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn tmux_missing_socket_release_size_is_no_op() {
+    // No recorded socket: nothing addressable, so no tmux call at all.
+    let mut value = locator(4242, 1_700_000_000);
+    value
+        .as_object_mut()
+        .expect("locator object")
+        .remove("socket_path");
+    let row = tmux_row(value);
+    let (result, calls) = run_release(&["4242\t1700000000"], &row).await;
+    assert_eq!(result, Ok(()));
+    assert!(
+        calls.is_empty(),
+        "release called tmux without a socket: {calls:?}"
+    );
+}
+
 #[tokio::test]
 async fn tmux_resize_and_release_size_match_python() {
     let row = tmux_row(locator(4242, 1_700_000_000));
@@ -335,6 +380,7 @@ async fn tmux_resize_and_release_size_match_python() {
     // Matching generation: manual window size, then the target size.
     let (result, calls) = run_resize(&["4242\t1700000000"], &row, 40, 120).await;
     assert_eq!(result, Ok(()));
+    assert_socket_prefix(&calls);
     assert_eq!(
         args(&writes(&calls)),
         vec![
@@ -345,6 +391,7 @@ async fn tmux_resize_and_release_size_match_python() {
 
     let (result, calls) = run_release(&["4242\t1700000000"], &row).await;
     assert_eq!(result, Ok(()));
+    assert_socket_prefix(&calls);
     assert_eq!(
         args(&writes(&calls)),
         vec![vec!["set-option", "-wu", "-t", PANE, "window-size"]]
