@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.sessions.status_events import (
     SessionStatusTransition,
     SessionStatusTransitionCallback,
 )
+from gobby.storage.daemon_resume_keys import PRE_BIND_SESSION_STATUS_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import (
@@ -90,28 +92,44 @@ def rebind_agent_run(
             ),
         )
         return bool(cursor.rowcount)
-    cursor = db.execute(
-        """
-        UPDATE sessions
-        SET agent_run_id = %s,
-            workflow_name = COALESCE(%s, workflow_name),
-            status = CASE WHEN status = 'expired' THEN 'active' ELSE status END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-          AND agent_run_id = %s
-          AND status <> 'deleted'
-          AND EXISTS (
-              SELECT 1 FROM agent_runs AS original
-              WHERE original.id = sessions.agent_run_id
-                AND original.child_session_id = sessions.id
-                AND original.parent_session_id = sessions.parent_session_id
-                AND original.status = 'cancelled'
-                AND original.terminal_reason = 'daemon_stop'
-          )
-        """,
-        (new_run_id, workflow_name, session_id, expected_run_id),
-    )
-    return bool(cursor.rowcount)
+    with db.transaction() as conn:
+        previous = conn.execute(
+            "SELECT status FROM sessions WHERE id = %s FOR UPDATE", (session_id,)
+        ).fetchone()
+        if previous is None:
+            return False
+        cursor = conn.execute(
+            """
+            UPDATE sessions
+            SET agent_run_id = %s,
+                workflow_name = COALESCE(%s, workflow_name),
+                status = CASE WHEN status = 'expired' THEN 'active' ELSE status END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+              AND agent_run_id = %s
+              AND status <> 'deleted'
+              AND EXISTS (
+                  SELECT 1 FROM agent_runs AS original
+                  WHERE original.id = sessions.agent_run_id
+                    AND original.child_session_id = sessions.id
+                    AND original.parent_session_id = sessions.parent_session_id
+                    AND original.status = 'cancelled'
+                    AND original.terminal_reason = 'daemon_stop'
+              )
+            """,
+            (new_run_id, workflow_name, session_id, expected_run_id),
+        )
+        if not cursor.rowcount:
+            return False
+        conn.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json = COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb
+            WHERE id = %s
+            """,
+            (dump_resume_metadata({PRE_BIND_SESSION_STATUS_KEY: previous["status"]}), new_run_id),
+        )
+        return True
 
 
 def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, ...]:

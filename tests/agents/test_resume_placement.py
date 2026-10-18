@@ -316,6 +316,57 @@ async def test_placed_resume_revives_expired_daemon_stop_seat(
     assert finalize.await_count == 1
 
 
+@pytest.mark.parametrize("error_type", [OSError, ValueError, SrtRuntimeError])
+async def test_sandbox_failure_restores_expired_seat_for_retry(
+    placed: _Harness,
+    finalize: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.child_session_id is not None
+    h.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id = %s", (original.child_session_id,)
+    )
+    metadata = _metadata(h, _tab_snapshot(h))
+    monkeypatch.setattr(
+        resume_executor,
+        "prepare_sandbox_launch",
+        AsyncMock(
+            side_effect=[
+                error_type("sandbox preparation refused"),
+                SandboxLaunch(backend="srt", enforced=True),
+            ]
+        ),
+    )
+
+    failed = await _resume(h, original, metadata)
+
+    assert failed.success is False
+    assert failed.error == (
+        f"resume_sandbox_failed_closed:{error_type.__name__}:sandbox preparation refused"
+    )
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "expired"
+    assert child.agent_run_id == original.id
+    assert failed.run_id is not None
+    assert h.runs.get(failed.run_id) is None
+    finalize.assert_not_awaited()
+
+    retried = await _resume(h, original, metadata)
+
+    assert retried.success is True, retried.error
+    assert retried.child_session_id == original.child_session_id
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "active"
+    assert child.agent_run_id == retried.run_id
+    assert _successor_status(h, retried.run_id) == ("running", None)
+    finalize.assert_awaited_once()
+
+
 async def test_automatic_recovery_lists_and_revives_expired_daemon_stop_seat(
     placed: _Harness, finalize: AsyncMock
 ) -> None:
