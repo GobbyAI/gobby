@@ -88,7 +88,7 @@ def test_v4_checkout_read_round_trips() -> None:
 
 def test_invalid_messages_fail() -> None:
     invalid = _corpus_list("invalid")
-    assert len(invalid) == 15
+    assert len(invalid) == 17
     for message in invalid:
         with pytest.raises(ValidationError):
             parse_message(message["kind"], message["json"])

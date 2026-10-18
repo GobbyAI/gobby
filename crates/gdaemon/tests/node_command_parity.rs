@@ -77,7 +77,7 @@ fn v4_checkout_read_round_trips() {
 #[test]
 fn invalid_messages_fail() {
     let invalid = corpus_list("invalid");
-    assert_eq!(invalid.len(), 15);
+    assert_eq!(invalid.len(), 17);
     for message in &invalid {
         let name = field(message, "name");
         let decoded = round_trip_json(field(message, "kind"), field(message, "json"));
