@@ -18,7 +18,10 @@ use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -29,11 +32,16 @@ const MAX_ENVELOPE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Receipts settle before any hub replay decision, including for live envelopes.
 pub async fn drain_once(node: &NodeServices, ledger: &Ledger) -> Result<()> {
+    let inbox = ledger.inbox.clone();
+    let Some(lock) = tokio::task::spawn_blocking(move || prepare_drain(&inbox)).await?? else {
+        return Ok(());
+    };
+    let lock = Arc::new(lock);
     receipts::sweep_receipts(node, ledger).await?;
     let inbox = ledger.inbox.clone();
     let paths = tokio::task::spawn_blocking(move || hook_paths(&inbox)).await??;
     for path in paths {
-        if let Err(error) = drain_file(node, ledger, &path).await {
+        if let Err(error) = drain_file(node, ledger, &path, lock.clone()).await {
             eprintln!("node hook drain retaining {}: {error:#}", path.display());
         }
     }
@@ -117,6 +125,8 @@ fn hook_paths(inbox: &Path) -> io::Result<Vec<PathBuf>> {
 struct SpoolIdentity {
     // Keep the inode alive so an atomic replacement cannot reuse its identity.
     file: Arc<File>,
+    // A cancelled async pass must not let recovery steal a blocking worker's claim.
+    _drain_lock: Option<Arc<File>>,
 }
 
 impl SpoolIdentity {
@@ -164,14 +174,21 @@ fn read_envelope(path: &Path) -> Result<(Value, f64, SpoolIdentity)> {
         age,
         SpoolIdentity {
             file: Arc::new(file),
+            _drain_lock: None,
         },
     ))
 }
 
-async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result<()> {
+async fn drain_file(
+    node: &NodeServices,
+    ledger: &Ledger,
+    path: &Path,
+    lock: Arc<File>,
+) -> Result<()> {
     let owned_path = path.to_owned();
-    let (envelope, age, identity) =
+    let (envelope, age, mut identity) =
         tokio::task::spawn_blocking(move || read_envelope(&owned_path)).await??;
+    identity._drain_lock = Some(lock);
     if envelope["kind"] == "delivery-receipt" {
         return Ok(());
     }
@@ -191,7 +208,7 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
         return Ok(());
     }
     let Some(disposition) = disposition else {
-        release_claim(ledger, id).await?;
+        release_claim(ledger, id, path, &identity).await?;
         return quarantine(path, "replay_auth_rejected", &identity).await;
     };
     if disposition != Disposition::Execute {
@@ -207,7 +224,7 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
         return Ok(());
     }
     if outcome.response.status() == StatusCode::UNAUTHORIZED {
-        release_claim(ledger, id).await?;
+        release_claim(ledger, id, path, &identity).await?;
         return quarantine(path, "replay_auth_rejected", &identity).await;
     }
     if outcome.response.status().is_success() {
@@ -223,7 +240,7 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
         match disposition {
             Some(disposition) => apply(ledger, id, path, disposition, &identity).await?,
             None => {
-                release_claim(ledger, id).await?;
+                release_claim(ledger, id, path, &identity).await?;
                 quarantine(path, "replay_auth_rejected", &identity).await?;
             }
         }
@@ -231,12 +248,19 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
     Ok(())
 }
 
-async fn release_claim(ledger: &Ledger, id: &str) -> Result<()> {
-    if let Some(marker) = ledger.marker(id).await?
-        && let Some(token) = marker["owner_token"].as_str()
-    {
-        ledger.release(id, token).await?;
-    }
+async fn release_claim(
+    ledger: &Ledger,
+    id: &str,
+    path: &Path,
+    identity: &SpoolIdentity,
+) -> Result<()> {
+    let expected = ledger.marker(id).await?;
+    #[cfg(test)]
+    tests::at_boundary(&ledger.inbox.join(format!("{id}.json")), "release");
+    let (path, identity) = (path.to_owned(), identity.clone());
+    ledger
+        .remove_spool_marker(id, expected, true, move || identity.matches(&path))
+        .await?;
     Ok(())
 }
 
@@ -264,15 +288,27 @@ async fn apply(
     match disposition {
         Disposition::Retain | Disposition::Execute => Ok(()),
         Disposition::Requeued => {
+            let expected = ledger.marker(id).await?;
             if unlink(path, identity).await? {
-                ledger.forget(id).await?;
+                #[cfg(test)]
+                tests::at_boundary(path, "forget");
+                let path = path.to_owned();
+                ledger
+                    .remove_spool_marker(id, expected, false, move || {
+                        match fs::symlink_metadata(&path) {
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+                            Ok(_) => Ok(false),
+                            Err(error) => Err(error),
+                        }
+                    })
+                    .await?;
             }
             Ok(())
         }
         Disposition::Unlink => unlink(path, identity).await.map(|_| ()),
         Disposition::Archived => quarantine(path, "superseded_hook", identity).await,
         Disposition::BelowFloor => {
-            release_claim(ledger, id).await?;
+            release_claim(ledger, id, path, identity).await?;
             quarantine(path, "below_floor_response_capability", identity).await
         }
     }
@@ -350,11 +386,20 @@ async fn unlink(path: &Path, identity: &SpoolIdentity) -> Result<bool> {
     let path = path.to_owned();
     let identity = identity.clone();
     Ok(tokio::task::spawn_blocking(move || {
-        if !identity.matches(&path)? {
-            return Ok::<_, io::Error>(false);
-        }
-        remove_if_present(&path)?;
-        Ok(true)
+        let Some(claim) = DrainClaim::take(&path, &identity)? else {
+            return Ok(false);
+        };
+        #[cfg(test)]
+        tests::at_boundary(&path, "unlink");
+        remove_if_present(&claim.path)?;
+        File::open(
+            claim
+                .path
+                .parent()
+                .ok_or_else(|| io::Error::other("claim has no parent"))?,
+        )?
+        .sync_all()?;
+        Ok::<_, io::Error>(true)
     })
     .await??)
 }
@@ -363,9 +408,9 @@ async fn quarantine(path: &Path, reason: &'static str, identity: &SpoolIdentity)
     let path = path.to_owned();
     let identity = identity.clone();
     tokio::task::spawn_blocking(move || {
-        if !identity.matches(&path)? {
+        let Some(claim) = DrainClaim::take(&path, &identity)? else {
             return Ok(());
-        }
+        };
         let directory = path
             .parent()
             .context("spool has no parent")?
@@ -384,15 +429,157 @@ async fn quarantine(path: &Path, reason: &'static str, identity: &SpoolIdentity)
             .open(&meta)?;
         file.write_all(&serde_json::to_vec(&json!({"reason":reason}))?)?;
         file.sync_all()?;
-        if !identity.matches(&path)? {
-            fs::remove_file(meta)?;
-            return Ok(());
-        }
-        fs::rename(&path, directory.join(format!("{stem}.json")))?;
+        #[cfg(test)]
+        tests::at_boundary(&path, "quarantine");
+        fs::rename(&claim.path, directory.join(format!("{stem}.json")))?;
         File::open(&directory)?.sync_all()?;
-        File::open(path.parent().context("spool has no parent")?)?.sync_all()?;
+        File::open(claim.path.parent().context("claim has no parent")?)?.sync_all()?;
         Ok::<_, anyhow::Error>(())
     })
     .await??;
     Ok(())
 }
+
+const DRAIN_CLAIMS: &str = ".drain-claims";
+
+/// A private pathname that producers never replace. Drop retains unsent data.
+struct DrainClaim {
+    original: PathBuf,
+    path: PathBuf,
+}
+
+impl DrainClaim {
+    fn take(original: &Path, identity: &SpoolIdentity) -> io::Result<Option<Self>> {
+        let directory = original
+            .parent()
+            .ok_or_else(|| io::Error::other("spool has no parent"))?
+            .join(DRAIN_CLAIMS);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&directory)?;
+        let name = original
+            .file_name()
+            .ok_or_else(|| io::Error::other("spool has no filename"))?;
+        let path = directory.join(format!(
+            "{}.{}",
+            uuid::Uuid::new_v4(),
+            name.to_string_lossy()
+        ));
+        match fs::rename(original, &path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let claim = Self {
+            original: original.to_owned(),
+            path,
+        };
+        File::open(&directory)?.sync_all()?;
+        File::open(
+            original
+                .parent()
+                .ok_or_else(|| io::Error::other("spool has no parent"))?,
+        )?
+        .sync_all()?;
+        // Open the renamed file, then compare both descriptors with fstat.
+        let claimed = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&claim.path)?;
+        let (captured, expected) = (claimed.metadata()?, identity.file.metadata()?);
+        if !captured.is_file()
+            || captured.dev() != expected.dev()
+            || captured.ino() != expected.ino()
+        {
+            claim.restore()?;
+            return Ok(None);
+        }
+        Ok(Some(claim))
+    }
+
+    fn restore(&self) -> io::Result<()> {
+        // link is an atomic no-replace publication. A newer producer wins.
+        match fs::hard_link(&self.path, &self.original) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let (original, private) = (
+                    fs::symlink_metadata(&self.original)?,
+                    fs::symlink_metadata(&self.path)?,
+                );
+                if original.dev() != private.dev() || original.ino() != private.ino() {
+                    return Ok(());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        File::open(
+            self.original
+                .parent()
+                .ok_or_else(|| io::Error::other("spool has no parent"))?,
+        )?
+        .sync_all()?;
+        fs::remove_file(&self.path)?;
+        File::open(
+            self.path
+                .parent()
+                .ok_or_else(|| io::Error::other("claim has no parent"))?,
+        )?
+        .sync_all()
+    }
+}
+
+impl Drop for DrainClaim {
+    fn drop(&mut self) {
+        if let Err(error) = self.restore() {
+            eprintln!(
+                "node hook drain retaining claim {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
+fn prepare_drain(inbox: &Path) -> io::Result<Option<File>> {
+    fs::create_dir_all(inbox)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(inbox.join(".drain.lock"))?;
+    // SAFETY: the owned descriptor remains open for the entire drain pass.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = io::Error::last_os_error();
+        return if error.kind() == io::ErrorKind::WouldBlock {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    for entry in directory(&inbox.join(DRAIN_CLAIMS))? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some((owner, original)) = name.to_str().and_then(|name| name.split_once('.')) else {
+            continue;
+        };
+        if uuid::Uuid::parse_str(owner).is_err() || !original.ends_with(".json") {
+            continue;
+        }
+        let claim = DrainClaim {
+            original: inbox.join(original),
+            path: entry.path(),
+        };
+        claim.restore()?;
+    }
+    Ok(Some(lock))
+}
+
+#[cfg(test)]
+#[path = "drain/tests.rs"]
+mod tests;

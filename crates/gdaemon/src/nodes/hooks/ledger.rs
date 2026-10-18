@@ -193,6 +193,34 @@ impl Ledger {
         .await
     }
 
+    /// Recheck the spool and the observed marker under the marker's write lock.
+    pub(super) async fn remove_spool_marker(
+        &self,
+        id: &str,
+        expected: Option<Value>,
+        processing_only: bool,
+        guard: impl FnOnce() -> io::Result<bool> + Send + 'static,
+    ) -> io::Result<()> {
+        let id = id.to_owned();
+        self.run(move |directory| {
+            let path = marker_path(&directory, &id);
+            let _lock = marker_lock(&path)?;
+            let current = read_marker(&path, &id)?;
+            if current != expected
+                || current.is_none()
+                || (processing_only
+                    && current
+                        .as_ref()
+                        .is_none_or(|value| value["status"] != "processing"))
+                || !guard()?
+            {
+                return Ok(());
+            }
+            fs::remove_file(path)
+        })
+        .await
+    }
+
     /// Boot invalidates prior process owners even when their leases are fresh.
     pub async fn release_previous_process(&self) -> io::Result<()> {
         self.run(move |directory| {
