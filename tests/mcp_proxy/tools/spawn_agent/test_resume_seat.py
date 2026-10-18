@@ -13,7 +13,7 @@ import pytest
 
 from gobby.agents import spawn_in_doubt_owner
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
-from gobby.mcp_proxy.tools.spawn_agent._resume import ResumeSeatGone, resumed_seat_placement
+from gobby.mcp_proxy.tools.spawn_agent._resume import ResumeSeatGone, resumed_seat_plan
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -134,7 +134,7 @@ def _tab_snapshot(h: _Harness) -> dict[str, Any]:
 
 
 def _placement(h: _Harness, run: AgentRun) -> dict[str, Any] | None:
-    return resumed_seat_placement(_seat_session(h, run), h.runs, h.workspaces)
+    return resumed_seat_plan(_seat_session(h, run), h.runs, h.workspaces)[0]
 
 
 def test_previous_runs_own_pane_comes_first(placed: _Harness) -> None:
@@ -158,7 +158,7 @@ def test_own_pane_without_any_recorded_title_uses_the_session_title(placed: _Har
     titled = h.sessions.get(session.id)
     assert titled is not None
 
-    assert resumed_seat_placement(titled, h.runs, h.workspaces) == {
+    assert resumed_seat_plan(titled, h.runs, h.workspaces)[0] == {
         "split": {"pane": lane.id, "axis": "down", "title": "Lane 1 developer"}
     }
 
@@ -311,6 +311,74 @@ async def test_resumed_seat_replaces_its_empty_recorded_tab(placed: _Harness) ->
     session = _seat_session(
         h, _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id))
     )
+
+    reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
+
+    assert reply["success"] is True, reply
+    run = h.runs.get(reply["run_id"])
+    assert run is not None and run.terminal_id is not None
+    pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
+    assert pane is not None and pane.tab_id != lane.tab_id
+    assert [tab.title for tab in h.workspaces.list_tabs(h.workspace.id)] == [SEAT]
+
+
+async def test_busy_planned_tab_refuses_the_resume_and_keeps_its_pane(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = placed
+    lane = _held_seat(h, SEAT, state="exited")
+    h.db.execute("DELETE FROM workspace_panes WHERE id = %s", (lane.id,))
+    session = _seat_session(
+        h, _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id))
+    )
+    plan = resumed_seat_plan
+    filled: list[str] = []
+
+    def plan_then_fill_tab(*args: Any) -> Any:
+        planned = plan(*args)
+        # A pane lands in the planned tab between plan and launch: move one in from a scratch tab.
+        scratch = h.workspaces.create_tab(
+            h.workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id, title="scratch"
+        )
+        h.db.execute(
+            "UPDATE workspace_panes SET tab_id = %s WHERE id = %s",
+            (lane.tab_id, scratch.panes[0].id),
+        )
+        h.db.execute("DELETE FROM workspace_tabs WHERE id = %s", (scratch.tabs[0].id,))
+        filled.append(scratch.panes[0].id)
+        return planned
+
+    monkeypatch.setattr(impl, "resumed_seat_plan", plan_then_fill_tab)
+
+    reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
+
+    assert reply["success"] is False, reply
+    assert reply["placement_error"] == "busy", reply
+    assert _tabs(h) == {lane.tab_id}
+    assert [
+        pane.id for pane in h.workspaces.list_panes(h.workspace.id) if pane.tab_id == lane.tab_id
+    ] == filled
+
+
+async def test_resume_whose_empty_tab_is_gone_at_launch_still_launches(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = placed
+    lane = _held_seat(h, SEAT, state="exited")
+    h.db.execute("DELETE FROM workspace_panes WHERE id = %s", (lane.id,))
+    session = _seat_session(
+        h, _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id))
+    )
+    plan = resumed_seat_plan
+
+    def plan_then_lose_tab(*args: Any) -> Any:
+        planned = plan(*args)
+        h.db.execute("DELETE FROM workspace_tabs WHERE id = %s", (lane.tab_id,))
+        return planned
+
+    monkeypatch.setattr(impl, "resumed_seat_plan", plan_then_lose_tab)
 
     reply = await _spawn(h, None, resume_session_id=session.id)
     await asyncio.gather(*list(impl._spawn_background_tasks.values()))

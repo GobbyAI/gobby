@@ -185,13 +185,6 @@ def _empty_tab(workspaces: WorkspaceManager, workspace_id: str, tab_id: object) 
     return tab_id
 
 
-def resumed_seat_placement(
-    session: Session, run_storage: Any, workspaces: WorkspaceManager
-) -> dict[str, Any] | None:
-    """The ``placement`` input that returns a resumed seat to its pane's tab."""
-    return resumed_seat_plan(session, run_storage, workspaces)[0]
-
-
 def resumed_seat_plan(
     session: Session, run_storage: Any, workspaces: WorkspaceManager
 ) -> tuple[dict[str, Any] | None, str | None]:

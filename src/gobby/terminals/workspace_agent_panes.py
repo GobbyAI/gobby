@@ -426,9 +426,16 @@ class AgentPaneReserver:
         await self._publish_removal(change)
 
     async def close_empty_tab(self, tab_id: str) -> None:
-        """Close a tab a resumed seat replaces; a tab that has gained a pane refuses as busy."""
-        with _placement_errors():
-            change = await asyncio.to_thread(self._workspaces.close_tab, tab_id, expected_panes={})
+        """Close a tab a resumed seat replaces. A tab already gone counts as replaced."""
+        try:
+            with _placement_errors():
+                change = await asyncio.to_thread(
+                    self._workspaces.close_tab, tab_id, expected_panes={}
+                )
+        except AgentPlacementError as exc:
+            if exc.code == "not_found":
+                return
+            raise
         await self._publish_removal(change)
 
     async def _publish_removal(self, change: LayoutChange) -> None:
