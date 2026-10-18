@@ -55,15 +55,22 @@ def rebind_agent_run(
     new_run_id: str,
     workflow_name: str | None,
     relaunch_parent_session_id: str | None = None,
+    paused_seat_not_live: bool = False,
 ) -> bool:
     """Atomically move a durable session's run back-pointer to a successor.
 
     A ``None`` workflow_name preserves the session's existing workflow binding;
-    only a concrete value overwrites it.
+    only a concrete value overwrites it. A relaunch treats a paused seat as live
+    unless the caller passes ``paused_seat_not_live`` after proving it has no live pane.
     """
     if relaunch_parent_session_id is not None:
         from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 
+        live_statuses = [
+            status
+            for status in LIVE_SESSION_STATUS_ORDER
+            if not (paused_seat_not_live and status == "paused")
+        ]
         cursor = db.execute(
             """
             UPDATE sessions
@@ -79,7 +86,7 @@ def rebind_agent_run(
                 workflow_name,
                 session_id,
                 expected_run_id,
-                list(LIVE_SESSION_STATUS_ORDER),
+                live_statuses,
             ),
         )
         return bool(cursor.rowcount)

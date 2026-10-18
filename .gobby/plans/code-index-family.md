@@ -1222,7 +1222,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 7.2, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.4, #24449)
 `kind: deliverable`
 
 Targets:
@@ -2542,8 +2542,9 @@ Targets:
 - `crates/gcore/src/bootstrap.rs::*` — scope-reason: `HubDatabaseBootstrap` gains a parsed, redacted `embeddings` block, and the inline tests move to `crates/gcore/src/bootstrap/tests.rs`
 - `crates/gcore/src/bootstrap/tests.rs`
 - `crates/gcore/src/ai/effective_config.rs::parse_served_body`
+- `crates/gcore/src/ai/effective_config.rs::EFFECTIVE_CONFIG_SHARE_TTL`
 - `crates/gdaemon/src/nodes/embeddings.rs`
-- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: declares `embeddings`
+- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: declares `pub mod embeddings`
 - `crates/gdaemon/src/nodes/hooks/ingress.rs::has_node_key`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: `FrontDoor::handle`'s node arm sends `POST /api/embeddings` to `nodes::embeddings`
 - `crates/gdaemon/src/state.rs::*` — scope-reason: `NodeServices` gains `embeddings`, which `prepare` builds from the bootstrap block
@@ -2606,7 +2607,7 @@ Node services:
    `project_id` and `provider` are ignored, as Python ignores them. A malformed body
    returns 400 with a `detail` message.
 4. It reads the hub's config at most once every 30 s, gcore's
-   `EFFECTIVE_CONFIG_SHARE_TTL`:
+   `EFFECTIVE_CONFIG_SHARE_TTL`, which becomes `pub`:
    - It sends `GET /api/config/effective` through `node.relay` with the node key
      (`gobby_core::local_token::read_api_key_at`) as bearer. `HubRelay::forward`
      passes the caller's headers through, so gdaemon sets the bearer itself.
@@ -2637,7 +2638,8 @@ Node services:
      `local:lm-studio/` or `local:ollama/`.
 
    gcode's direct path prefixes as `"{prefix} {text}"`, which differs, so it is not
-   reused.
+   reused. Both functions are `pub`, and `nodes/mod.rs` declares `pub mod embeddings`,
+   because 4.1.5's integration test sees only the library's pub API.
 8. It runs `gobby_core::ai::embeddings::embed_batch` under `spawn_blocking`. An
    endpoint error, a non-2xx response or a transport failure returns 503
    `embedding_unavailable`, with the error text in `detail`.
@@ -2951,7 +2953,9 @@ Roots route (`/api/code-index/node/vector/roots`, appended to `ROUTE_PATHS`):
   `VectorRoots { roots: Vec<VectorRoot { project_id, root_path }> }` from the new
   `db::pending_vector_roots(conn, machine_id)`. That query returns the machine's
   `code_indexed_project_states` rows with at least one file that `pending_vector_files`
-  would return, and shares its predicate.
+  would return, and shares its predicate. It skips a project whose registry row is
+  soft-deleted (`projects.deleted_at` set), because 8.2 reconciles that project for
+  every machine.
 - The response names only the calling machine's project ids and roots. #15977 puts the
   route in the Security Reviewer's scope at plan review.
 
@@ -2970,13 +2974,21 @@ Heartbeat job (`crates/gdaemon/src/nodes/vector_sync.rs`):
   2. Skips roots that are not directories on this machine.
   3. Runs `<home>/bin/gcode vector sync-node --project <root> --format json --quiet`
      for each remaining root, one at a time. `<home>` is the bootstrap's directory, and
-     the child gets `GOBBY_HOME=<home>`.
-  4. Kills a run that passes `run_deadline`. Its claimed files cool off, and a later
-     tick continues the project.
+     the child gets `GOBBY_HOME=<home>`. The child is a `tokio::process::Command` with
+     `kill_on_drop(true)`.
+  4. Waits for a run under `tokio::time::timeout(run_deadline, …)`, then kills a run
+     that passes it. Its claimed files cool off, and a later tick continues the
+     project.
   5. Logs a failed run's stderr line and moves to the next root.
   6. Logs once per process when `<home>/bin/gcode` is absent, and skips the tick.
+- Shutdown. `HeartbeatHost::stop` waits `SHUTDOWN_GRACE`, then aborts the tick's
+  task. Dropping the aborted future drops the child, and `kill_on_drop` kills it, so
+  no `gcode` run outlives its daemon through a restart or cutover. A `std::process`
+  child under `spawn_blocking` would survive the abort.
 - Heartbeat jobs run one at a time and never overlap (the host's `supervise`), so
-  two syncs never run at once on a node.
+  two syncs never run at once on a node. A run can hold the node's host for up to
+  `run_deadline` per root. This is the node host's only job: P8's jobs register on the
+  hub's host and hand their work to threads (P8 framing).
 - A node without an embeddings block still runs the job. Its `/api/embeddings` relays
   to the hub (4.1), so the hub's endpoint embeds the node's versions.
 
@@ -2994,6 +3006,9 @@ Research context:
 - `crates/gdaemon/tests/front_door.rs` covers identity header stripping and setting
   (`valid_key_forwards_identity_headers` at `:444` and `forged()` at `:1433`).
 - `crates/gterminals/src/host.rs` resolves its binary as `home.join("bin/gterm")`.
+- A `tokio::process::Child` keeps running after it is dropped unless its `Command` set
+  `kill_on_drop(true)`. `HeartbeatHost::stop` aborts a job that outlives
+  `SHUTDOWN_GRACE`, and the abort only drops the future.
 - Rejected alternatives:
   - a grant for the job, which E5(a) rules out and for which gdaemon has no handshake
     client;
@@ -3011,9 +3026,9 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 4.3.1 - With pending files for the local machine and a foreign machine, the roots route under the foreign machine's key headers returns only the foreign machine's project with pending work, and omits a project whose pending files are all cooling off. A request missing either header returns 403 `claims_mismatch`. test: `crates/gcodeindex/tests/node_vector.rs::roots_serve_only_the_key_machine`.
+- 4.3.1 - With pending files for the local machine and a foreign machine, the roots route under the foreign machine's key headers returns only the foreign machine's project with pending work, and omits a project whose pending files are all cooling off and a soft-deleted project. A request missing either header returns 403 `claims_mismatch`. test: `crates/gcodeindex/tests/node_vector.rs::roots_serve_only_the_key_machine`.
 - 4.3.2 - With a stub hub that returns two roots, one missing on disk, and a stub `gcode` script, one tick runs the script once, with `vector sync-node --project <root> --format json --quiet` and `GOBBY_HOME` set, and skips the missing root. test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_runs_gcode_for_each_present_root`.
-- 4.3.3 - A run past its deadline is killed and the next root still runs, and an absent `gcode` logs once over two ticks. test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_kills_late_runs_and_tolerates_missing_gcode`.
+- 4.3.3 - A run past its deadline is killed and the next root still runs, and an absent `gcode` logs once over two ticks. A stub `gcode` that runs `exec sleep` is running when `HeartbeatHost::stop` runs, and within 5 s after `stop` returns its pid is gone or a zombie. test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_kills_late_runs_and_tolerates_missing_gcode`.
 - 4.3.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## P5: `/api/code-index` family seam
@@ -3238,7 +3253,7 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 5.1.1 - `claims` holds for an API-key `GET /api/code-index/graph/search`. It does not hold without `x-gobby-key-id`, for a `POST` to that path, or for an unlisted path such as `/api/code-index/prune`. test: `crates/gcodeindex/tests/family_search.rs::family_claims_api_key_callers_on_listed_routes`.
+- 5.1.1 - `claims` holds for an API-key `GET /api/code-index/graph/search`. It does not hold without `x-gobby-key-id`, for a `POST` to that path, or for an unlisted path such as `/api/code-index/unlisted`. test: `crates/gcodeindex/tests/family_search.rs::family_claims_api_key_callers_on_listed_routes`.
 - 5.1.2 - With `FAMILIES` and the leaked runtime, node and code-index families composed as `serve::run` composes them, and `code_index` absent from `front_door.routes`, an API-key search request reaches the backend stub. With `native` it gets the family's 500 body on an unreachable pool. An `/api/code-index/node/*` request still reaches the node family. test: `crates/gdaemon/tests/front_door.rs::code_index_defaults_to_proxy_and_honors_native`.
 - 5.1.3 - With symbols indexed for the hub machine and for a foreign machine, search returns only hub-visible symbols in Python's seven-key shape. It falls back to name search when BM25 finds none, and returns `{"results": []}` for a project with no hub-machine row. test: `crates/gcodeindex/tests/family_search.rs::search_returns_hub_visible_symbols_in_python_shape`.
 - 5.1.4 - `enabled` false returns 503 `Code indexer not available`, and `graph_enabled` false still serves. An absent or empty `project_id` returns 400. A missing `q` and a non-integer `limit` return Python's 422 bodies, and a negative `limit` returns 500 `Code graph request failed`. test: `crates/gcodeindex/tests/family_search.rs::search_follows_python_gates_and_errors`.
@@ -3508,7 +3523,7 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 7.1.1 - Clear marks the hub machine's files pending, clears the project's projection and returns the payload `gcode graph clear --format json` prints. test: `crates/gcodeindex/tests/family_lifecycle.rs::clear_returns_the_cli_payload`.
+- 7.1.1 - Clear marks every machine's files of the project graph-pending, a foreign machine's row included, as `reset_graph_sync_for_project` does. It clears the project's projection and returns the payload `gcode graph clear --format json` prints. test: `crates/gcodeindex/tests/family_lifecycle.rs::clear_returns_the_cli_payload`.
 - 7.1.2 - Rebuild returns the CLI payload, and a rebuild with a per-file failure returns 400 with the payload's `error` as `detail`. test: `crates/gcodeindex/tests/family_lifecycle.rs::rebuild_returns_the_cli_payload_and_400_on_failure`.
 - 7.1.3 - Python's order and bodies hold:
   - `enabled` false returns 503 `Code indexer not available`;
@@ -3530,6 +3545,8 @@ Targets:
 - `crates/gcodeindex/src/family.rs`
 - `crates/gcodeindex/src/family/invalidate.rs`
 - `crates/gcodeindex/tests/family_invalidate.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/family_invalidate.rs`
 - `crates/gcode/Cargo.toml`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -3556,8 +3573,14 @@ gcode: `indexer::invalidate(conn, machine_id, project_id) -> anyhow::Result<u64>
    - An empty string returns 400 `project_id is required`.
 3. With no row for the hub machine, the route returns 200
    `{"status":"ok","project_id":"<id>","note":"not indexed"}`.
-4. Otherwise it runs `invalidate` for the hub machine under `spawn_blocking`, on a
-   read-write connection from the hub DSN, and returns 200:
+4. Otherwise `node::hub::family_invalidate::invalidate(database_url, machine_id, project_id)`
+   runs under `spawn_blocking`. It takes the project lock by id with
+   `index_lock::lock_project_by_id(…, IndexLockPolicy::maintenance_try())`, as
+   `gcode invalidate` and prune do, then runs `indexer::invalidate` for the hub machine
+   on a read-write connection from the hub DSN. Without the lock, an index run or
+   community refresh holding it could write communities from its in-memory watermark
+   after the project-state row is gone, which is the id reissue the deletion prevents.
+   A busy lock returns step 5's 500 body. Otherwise the route returns 200:
    `{"status":"ok","project_id":"<id>","stores":{"graph":{"status":"skipped"},"vector":{"status":"skipped"},"hub":{"status":"ok","deleted":{"symbols":0,"files":0,"imports":0,"calls":0,"content_chunks":0,"projects":<n>}}},"failed_stores":[]}`.
    Python's 207 for `partial_failure` never occurs, because its `invalidate` always
    returns `ok`.
@@ -3568,6 +3591,11 @@ gcode: `indexer::invalidate(conn, machine_id, project_id) -> anyhow::Result<u64>
      `{"status":"error","message":"Hub temporarily unavailable"}`;
    - any other failure returns 500
      `{"status":"error","message":"Internal server error","error_logged":true}`.
+
+`crates/gcode/src/node/hub/family_invalidate.rs` is new and declared in
+`crates/gcode/src/node/hub.rs`. It lives inside gcode, so it calls the crate-private
+`index_lock::lock_project_by_id` and `indexer::invalidate` without changing their
+visibility.
 
 Why the native route deletes communities:
 
@@ -3585,6 +3613,12 @@ Research context:
 - `invalidate`'s callers are `crates/gcode/src/commands/status/invalidate.rs`
   (`invalidate_project_locked`, which prune also calls), the
   `crates/gcode/src/freshness.rs` test helper and the communities test.
+- `index_lock::lock_project_by_id(database_url, project_id, policy, diagnostics)`
+  (`crates/gcode/src/index_lock.rs`) opens its own read-write connection and returns
+  `Busy` while another session holds the project lock. `IndexLockPolicy::maintenance_try`
+  waits at most 150 ms. `gcode invalidate`
+  (`crates/gcode/src/commands/status/invalidate.rs`) and prune
+  (`crates/gcode/src/commands/status/prune.rs`) take the lock the same way.
 - #23835 (Pin-aware retention) edits `crates/gcode/src/index/indexer/lifecycle.rs` (Constraints,
   concurrent editors). The executor applies this signature to the tree it starts
   from.
@@ -3602,8 +3636,1205 @@ Consumers unchanged:
 
 - 7.2.1 - Local `gcode invalidate` deletes the context machine's communities, file states and project state, and leaves another machine's rows. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
 - 7.2.2 - For an indexed project, the route deletes only the hub machine's rows and returns Python's body with `projects` equal to 1. For a project with no hub-machine row it returns the `not indexed` body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_returns_python_bodies_for_the_hub_machine`.
-- 7.2.3 - `enabled` false returns 503 `{"error":"Code indexer not available"}`. A missing `project_id` returns Python's 422 body, an empty one returns 400, and an unreachable hub database returns Python's 503 body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_follows_python_gates_and_errors`.
+- 7.2.3 - `enabled` false returns 503 `{"error":"Code indexer not available"}`. A missing `project_id` returns Python's 422 body, an empty one returns 400, and an unreachable hub database returns Python's 503 body. With the project lock held by another connection, the route deletes nothing and returns the 500 body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_follows_python_gates_and_errors`.
 - 7.2.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+## P8: Hub code-index jobs
+`kind: framing`
+
+P8 moves Python's code-index background work into gdaemon on the hub:
+
+- 8.1: the job seam and the sync worker;
+- 8.2: the maintenance pass;
+- 8.3: symbol summaries and community labels;
+- 8.4: the hourly prune and `POST /api/code-index/prune` (D17);
+- 8.5: content GC for projects only nodes index;
+- 8.6: the edit trigger, after #24151 (S2.11 hub half: hook ingress and rule engine in
+  Rust);
+- 8.7: nightly repair, after #21582 (Cron and scheduler route family).
+
+Each leaf deletes the Python job it replaces, so the two never run together (ruling,
+2026-10-17 21:46, writer's choice 3).
+
+Where the jobs live:
+
+- `crates/gcodeindex/src/jobs.rs` holds `HubJobs`, the tick model and `ticks()`, which
+  lists every job as a `(name, tick)` pair. Each job's code is in
+  `crates/gcodeindex/src/jobs/<job>.rs`.
+- gcodeindex reaches gcode only through pub entry points in
+  `crates/gcode/src/node/hub/job_<job>.rs`, declared in `node/hub.rs`, as P5's route
+  groups do.
+- `crates/gdaemon/src/code_index_jobs.rs::register(host, jobs)` registers every tick on
+  the hub's `HeartbeatHost` (`crates/gdaemon/src/heartbeat.rs`). `serve::run` calls it
+  on its non-node branch when the pool exists. Python runs these loops in every
+  non-node daemon that has a code indexer
+  (`src/gobby/runner_startup_code_index.py::_start_code_index_tasks`), so standalone
+  mode gets them too.
+
+Tick model (writer's choice 2, accepted 2026-10-17 21:46):
+
+- Each job registers at `BASE_CADENCE` (5 s).
+- A tick reads the published active config. With `code_index.enabled` false it does
+  nothing.
+- It starts work only when the job's interval, read from live config, has passed since
+  its last start, and no run of that job is in flight. The busy flag is the job's own.
+- It hands the work to a named `std::thread` and returns. `HeartbeatHost::supervise`
+  awaits each due job in turn, so work done inside a tick would stall every other job:
+  a 15-minute reindex would hold back the 5 s sync.
+- A `std::thread`, never `spawn_blocking`. `serve::run` drops its tokio runtime on
+  shutdown, and a dropped runtime waits for every `spawn_blocking` task to return. A
+  plain thread ends with the process.
+- Work cut off at process exit is safe to lose. A file whose projection stopped midway
+  keeps its attempt stamp, stays pending and retries after the cooloff. The
+  compare-and-set never marks a version the run did not finish. An interrupted index
+  run is redone by the next maintenance pass.
+
+How the work runs:
+
+- In process, on the hub's bootstrap DSN with its own connections (D5), as the hub
+  machine or as a row's machine, through `HubScope::context` (1.3) with the services it
+  needs.
+- Python launches each `gcode` child under
+  `src/gobby/code_index/maintenance_launch.py`, which supplies a managed per-project
+  grant so the child's writes pass RLS. gdaemon has no grant issuer before #24449
+  (Native interactive handshake), so the jobs run gcode's library instead.
+- In-process embedding and generation go through gcore's daemon client. It presents
+  the hub's local API key (`gobby_core::local_token::read_api_key`) to the hub's own
+  front door, and `/api/embeddings` and `/api/llm/generate` stay Python. With Python
+  down the call fails as `embedding_http`, and the vector breaker pauses vectors (8.1).
+  The jobs therefore need no wait for Python's startup.
+
+Config. `crates/gcodeindex/src/jobs/config.rs::JobConfig::read(pool, home)` reads the
+published active state as 5.1's gates do
+(`gobby_runtime::config::active_state(pool, &gobby_core::grant::deployment_token(home))`):
+
+- Each `code_index.*` key comes from `document.active_values`. An absent key, or a
+  value of the wrong type, takes the contract default, kept as a constant in
+  `jobs/config.rs`. A test compares every constant with the key's `default` in
+  `crates/gcore/assets/config/runtime_config_contract.json`.
+- The keys are `activation: live` and `machineExport: false`, so the active state holds
+  the value Python serves after a live change.
+- With no published state the tick does nothing. A failed read logs once to gdaemon's
+  stderr and stays quiet until a read succeeds, as Python throttles its pool-outage
+  line.
+
+Operator decision (writer's choice 1; #15977 puts it to Josh with the stamped plan):
+
+- P9 removes `code_index.nightly_repair_timeout_seconds`. Python kills a `gcode repair`
+  child that passes it, and the in-process handler (8.7) cannot be killed. The key's
+  last reader is `src/gobby/code_index/nightly_repair.py`, which #21582 deletes, so the
+  removal waits on #21582.
+
+Keys that stay, which the native jobs read or leave alone:
+
+- `code_index.sync_worker_projection_timeout_seconds` becomes the sync job's per-file
+  stall timeout (8.1).
+- `code_index.maintenance_index_timeout_seconds` stays the BM25 repair timeout, for
+  `src/gobby/runner_startup_code_index.py::_repair_code_index_bm25` and
+  `src/gobby/cli/postgres.py::repair_code_index_cmd`. The native maintenance pass (8.2)
+  does not read it. #15977's 22:29 ruling put this key in the operator decision. The
+  ruling assumed the maintenance loop was its only reader.
+
+Deliberate differences from Python, for every job:
+
+- No gateway breaker. `src/gobby/code_index/context.py`'s `daemon_config_breaker` guards
+  the daemon-config fetch each `gcode` child makes, and in-process work makes none.
+- No disk checks. The hub cannot see a node's root, and projections read facts from
+  the database. 8.2 owns missing roots.
+- Subprocess-only failures (a missing binary, exit codes, kill timeouts) have no
+  counterpart. Library errors take their place.
+- No BM25 gate. Python starts no worker when `_repair_code_index_bm25` finds a damaged
+  BM25 index. A native write to `code_symbols` or `code_content_chunks` through a
+  damaged index fails with its corruption SQLSTATE (`bm25_health.rs`'s `XX000` to
+  `XX002`). The run logs the failure and retries on the next pass. The repair stays
+  Python's, at startup and in `gobby postgres repair-code-index`. Edit-triggered and
+  CLI index runs never had the gate.
+
+Release ownership (Constraints): every P8 leaf bumps `gdaemon`, and a leaf that changes
+gcode also bumps `gcode`.
+
+Ordering. The P8 leaves form one chain after 7.2: 8.1 to 8.7. They share the release
+files, `crates/gcodeindex/src/jobs.rs` and `node/hub.rs`. The two leaves gated on other
+plans come last, so 8.1 to 8.5 wait on nothing outside this plan. The release files
+force one order between them, so 8.7 also waits for 8.6's gate. 1.10 depends on 8.7.
+
+### 8.1 Hub job seam and sync worker [category: code] (depends: 7.2, #23576)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/db/sync_pending.rs`
+- `crates/gcode/src/db/sync_pending/tests.rs`
+- `crates/gcode/src/db/mod.rs::*` — scope-reason: declares and re-exports `sync_pending`
+- `crates/gcode/src/commands/graph/lifecycle.rs::sync_file_graph`
+- `crates/gcode/src/commands/graph.rs`
+- `crates/gcode/src/projection/sync.rs::sync_vector_files`
+- `crates/gcode/src/projection/sync.rs::typed_projection_error`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/job_sync.rs`
+- `crates/gcode/src/node/hub/job_sync/tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/jobs.rs`
+- `crates/gcodeindex/src/jobs/config.rs`
+- `crates/gcodeindex/src/jobs/breaker.rs`
+- `crates/gcodeindex/src/jobs/sync.rs`
+- `crates/gcodeindex/src/jobs/tests.rs`
+- `crates/gcodeindex/tests/job_sync.rs`
+- `crates/gdaemon/src/code_index_jobs.rs`
+- `crates/gdaemon/src/lib.rs::*` — scope-reason: declares `code_index_jobs`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve_with_runtime` takes the `HeartbeatHost` it passes to `serve_doors`, `serve` passes an empty one, and `run`'s non-node branch registers the code-index jobs when the pool exists
+- `crates/gdaemon/tests/code_index_jobs.rs`
+- `src/gobby/code_index/sync_worker.py::*` — operation: delete — scope-reason: the native sync job replaces the Python worker
+- `src/gobby/runner_startup_code_index.py::*` — scope-reason: `_start_code_index_tasks` stops creating the sync task, and `_repair_code_index_bm25`'s failure line names only the maintenance worker
+- `tests/code_index/test_sync_worker.py::*` — operation: delete — scope-reason: tests the deleted worker
+- `tests/code_index/test_sync_worker_breaker.py::*` — scope-reason: keeps only `TestSyncCircuitBreakerUnit` and its helpers, because `SyncCircuitBreaker` outlives the worker
+- `tests/test_runner_code_index_shutdown.py::*` — scope-reason: adds the start check, and the drain test drops the deleted worker
+- `src/gobby/config/code_index.py::*` — scope-reason: rewords `sync_worker_concurrency`'s description, because the native job bounds rows with it
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated by `scripts/generate_runtime_config_contract.py` for the new description
+- `docs/guides/code-index.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+The seam (P8 framing):
+
+- `HubJobs::new(pool, home, database_url)` holds the shared pool, the home and the hub
+  DSN. Each job keeps its busy flag and last start time.
+- `HubJobs::ticks(self: &Arc<Self>) -> Vec<(&'static str, Tick)>`, where `Tick` is a
+  boxed `Fn() -> BoxFuture<'static, anyhow::Result<()>> + Send + Sync`. 8.1 lists
+  `code_index_sync`. Later leaves append their jobs here and do not edit gdaemon.
+- `code_index_jobs::register(host, jobs)` registers each pair at `BASE_CADENCE`.
+  `serve::run` builds `HubJobs` next to the code_index family and calls `register`
+  before passing the host to `serve_with_runtime`. `serve` and the tests pass
+  `HeartbeatHost::new()`.
+- The hub machine id comes from `gobby_core::machine::read_machine_id_from_home(home)`,
+  read per tick.
+
+Sync job (`crates/gcodeindex/src/jobs/sync.rs`), interval
+`code_index.sync_worker_interval_seconds` (5.0):
+
+1. `node::hub::job_sync::sync_rows(database_url)` returns every
+   `code_indexed_project_states` row as
+   `SyncRow { machine_id, project_id, root_path, registry_deleted }`, from
+   `db::sync_rows`. `registry_deleted` comes from a `LEFT JOIN` on `projects` and holds
+   when `deleted_at` is set. A project with no registry row reads `false`, so overlays
+   still sync. Python lists only the hub machine's rows.
+2. `plan_row(hub_machine, row, config, breakers)` decides each row's work:
+   - nothing for an empty root, or for a soft-deleted project, which 8.2 reconciles for
+     every machine;
+   - graph when `code_index.graph_enabled` holds and the graph breaker allows;
+   - vectors only for the hub machine's rows, when `code_index.embedding_enabled`
+     holds and the vector breaker allows. Nodes embed and apply their own vectors
+     (D13, 4.3).
+   - A breaker due for a probe allows one file for its target.
+3. Up to `code_index.sync_worker_concurrency` rows run at once, each on its own thread
+   and connections. A row projects its files one at a time. Python runs up to that many
+   files of one project at once (Deliberate differences below).
+4. Each row runs `job_sync::sync_row(&HubScope, root, SyncRequest { graph, vectors, batch_size, stall })`,
+   with `batch_size` from `code_index.sync_worker_batch_size` and `stall` from
+   `code_index.sync_worker_projection_timeout_seconds`.
+5. Each row's `SyncRowReport` feeds the breakers (below). Errors are logged to stderr
+   with the row's machine and project, and the job moves to the next row.
+
+`job_sync::sync_row` builds the row's context through `HubScope::context` with
+`ServiceConfigSelection::all()` when vectors run, else
+`ServiceConfigSelection::falkordb_only()`. Then, per target:
+
+- Graph:
+  1. `db::pending_graph_files(conn, project_id, machine_id, batch_size)` returns
+     `PendingGraphFile { path, language, symbol_count }`.
+  2. Files with no symbols, or whose lowercased language is not in
+     `db::sync_pending::GRAPH_SYNC_LANGUAGES`, take the shortcut:
+     `mark_graph_sync_attempted`, then `mark_graph_synced` with that attempt, and no
+     Falkor call. The language list is Python's
+     (`src/gobby/code_index/sync_worker.py::_GRAPH_SYNC_LANGUAGES`).
+  3. The rest are projected one file at a time by
+     `commands::graph::sync_file_graph(ctx, path, true)`.
+- Vectors: `db::pending_vector_files(conn, project_id, machine_id, limit)` (4.2), with
+  `limit` 1 for a probe. Each file is projected by
+  `projection::sync::sync_vector_files(ctx, &[path], None)`.
+
+Both targets:
+
+- `job_sync::run_files_bounded(ctx, paths, stall, per_file)` runs the batch on a worker
+  thread. The worker takes
+  `index_lock::lock_project_files(ctx, paths, IndexLockPolicy::brief_index_flush_try())`,
+  as `gcode graph sync-file` and `gcode vector sync-file` do, and holds the lock set
+  until it exits. Busy files are skipped without an attempt stamp and come back on a
+  later tick. Python leaves them for the cooloff.
+- The worker sends one message per file and checks a stop flag before each file. The
+  row waits for each message with `recv_timeout(stall)`, as
+  `projection/sync.rs::run_projection_phase_bounded` does.
+- On a stall the row sets the stop flag, stops waiting and reports the target
+  `stalled`. The worker finishes only the blocked file, then exits and drops its
+  locks. An exclusive project lock (7.1's clear, 7.2's invalidate, 8.2's reconcile
+  and sweep) therefore waits for that file, as it waits for a live one. gcore's
+  `falkor.rs` sets a 30 s read and write timeout on every Falkor connection
+  (`DEFAULT_SOCKET_TIMEOUT`), so a blocked query ends within that. The compare-and-set
+  keeps a late write from marking a version that moved.
+- Each failed file's kind comes from `typed_projection_error`. The file keeps its
+  attempt stamp and waits out the 300 s cooloff.
+- `SyncRowReport` holds, per target: files synced, skipped and failed, the first error
+  kind, and whether it stalled.
+
+gcode visibility changes: `commands/graph/lifecycle.rs::sync_file_graph` becomes
+`pub(crate)`, re-exported from `crates/gcode/src/commands/graph.rs`.
+`projection/sync.rs::sync_vector_files` and `typed_projection_error` become
+`pub(crate)`.
+
+`db::sync_pending` (`crates/gcode/src/db/sync_pending.rs`):
+
+- `pending_graph_files` mirrors 4.2's `pending_vector_files`. It selects the machine's
+  selected versions where `graph_synced` is false and no graph attempt falls within the
+  300 s cooloff, ordered by `indexed_at`, then path.
+- `sync_rows` reads `code_indexed_project_states`.
+
+Breakers (`crates/gcodeindex/src/jobs/breaker.rs`) port
+`src/gobby/code_index/sync_breaker.py::SyncCircuitBreaker`. There is one for each
+target, both on the `code_index.sync_worker_breaker_*` keys, re-read every tick as
+Python's `apply_limits` does:
+
+- The breaker is closed, open or half-open:
+  - closed allows all work;
+  - open allows none until its backoff passes, then allows one probe file and turns
+    half-open;
+  - a probe's success closes the breaker and resets the backoff;
+  - a probe's transport failure doubles the backoff, up to the maximum, and reopens;
+  - a probe that was busy or failed for another reason reopens without doubling.
+- While closed, consecutive transport failures open the breaker at
+  `sync_worker_breaker_failure_threshold`.
+- The vector breaker's transport failures are `embedding_http` and `qdrant_http`, as
+  Python's `_is_transient_vector_error` maps them.
+- A stall opens the target's breaker at once, past the threshold, because every stall
+  may leave a blocked thread. The graph breaker counts only stalls. Python's graph
+  errors never touch a breaker.
+
+Deliberate differences from Python's sync worker:
+
+- Node machines' rows sync their graph (D10).
+- A transient failure leaves the file on the 300 s cooloff. Python retries twice in
+  the call (1 s, then 2 s) and then clears the stamp (`requeue_vector_sync`,
+  `requeue_graph_sync`). The breaker still stops attempts during an outage.
+- A stall stops waiting for the file's worker, which ends after that file. Python
+  kills the `gcode` child at the same timeout.
+- `code_index.sync_worker_concurrency` bounds rows, and each row projects one file at
+  a time, so a hub with one project syncs one file at a time where Python ran four.
+  In process, a file costs no `gcode` child start, which Python's concurrency
+  overlapped. Concurrent files within a row would each need their own stall watch,
+  stop flag and lock set. The key's description
+  becomes "Maximum machine-project rows the sync job projects at once", in
+  `src/gobby/config/code_index.py` and the regenerated contract.
+- Rows of a soft-deleted project do not sync. Python never syncs a node machine's row,
+  and 8.2 removes every machine's row of a soft-deleted project.
+
+Python deletion:
+
+- `src/gobby/code_index/sync_worker.py` goes.
+- `_start_code_index_tasks` stops starting it and still sets `runner._sync_worker_task`
+  to `None`. `_repair_code_index_bm25`'s failure line says the maintenance worker will
+  not start, and no longer names a sync worker.
+- `GobbyRunner`'s sync worker attributes and
+  `src/gobby/runner_lifecycle_shutdown.py::_stop_code_index_workers` stay until 8.3.
+  The drain's sync half is then a no-op: it reads the event with a `getattr` default,
+  and `_cancel_runner_task` skips a `None` task. The shutdown module is 916 lines, so
+  8.3 removes the whole drain under one `delete-lines` proof.
+- `tests/code_index/test_sync_worker.py` goes. `tests/code_index/test_sync_worker_breaker.py`
+  keeps `TestSyncCircuitBreakerUnit`, because `context.py`, `trigger.py` and the
+  maintenance tests still use `SyncCircuitBreaker`. P9 deletes the breaker with its
+  last consumer.
+
+`docs/guides/code-index.md` says gdaemon's sync job projects pending files, for the
+hub's rows and node machines' graph facts. It no longer names a daemon sync worker.
+
+Research context:
+- Python's worker: `src/gobby/code_index/sync_worker.py::sync_worker_loop` (breaker
+  limits re-read per pass) and `_sync_pass`. `_sync_pass` lists the hub's projects,
+  skips roots that are not directories, reads `get_pending_sync_files`
+  (`src/gobby/code_index/_storage/files.py`) and syncs files under a semaphore of
+  `sync_worker_concurrency`. While any breaker is open it runs files one at a time.
+  `_sync_file` checks the file on disk, then runs `gcode vector sync-file` and
+  `gcode graph sync-file` through the gateway.
+- `sync_file_graph` skips project-wide orphan cleanup on purpose: the comment at
+  `crates/gcode/src/commands/graph/lifecycle.rs:248` says it timed out the daemon's
+  per-file sync on large graphs. `projection/sync.rs::sync_graph_files`, the index
+  path, runs `cleanup_orphans` after every batch, so the job does not use it.
+- `commands/vector.rs::sync_file` prints its output and exits the process with code 3
+  when the file lock is busy. The job therefore calls `sync_vector_files`, whose
+  per-file `VectorProjectionState::sync_file` marks the attempt, upserts and runs the
+  compare-and-set.
+- `index_lock::lock_project_files` takes PostgreSQL advisory locks: the project lock
+  shared and each file's lock exclusive. It checks `is_dir` under the root only to drop
+  directories, so a node root absent from the hub's disk keeps its files. The returned
+  `ProjectFileLockSet` owns the `postgres::Client` that holds the locks
+  (`ProjectFileLocks`), and that client is `Send`, so the worker thread can own it.
+- `code_indexed_project_states` has no deletion column
+  (`crates/gcore/assets/schema/baseline.sql`). `projects.deleted_at` marks a
+  soft-deleted project, as 8.2's `registry_state` reads it.
+- `embed_via_daemon` (`crates/gcore/src/ai/daemon/operations.rs`) calls
+  `require_granted`, which passes when the context has no grant, then posts with the
+  local API key.
+- `HeartbeatHost::supervise` awaits each due job's spawned task before the next.
+- #23576 (Sync worker leaves projection completion to gcode) makes gcode own
+  completion. This leaf replaces the worker it edits, so it lands after it.
+- Rejected alternatives:
+  - `projection::sync::sync_after_index_bounded`, which runs `cleanup_orphans` on every
+    graph batch;
+  - running work inside the tick, which stalls the other jobs;
+  - `spawn_blocking`, which would hold gdaemon's shutdown behind a long run;
+  - one heartbeat job per project, because registration freezes at start.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(sync_pending) | test(job_sync)'`;
+  - `cargo nextest run -p gobby-codeindex -p gobby-daemon`;
+  - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_sync_worker_breaker.py tests/test_runner_code_index_shutdown.py tests/test_runner_lifecycle.py tests/config/test_runtime_config_contract.py -v`.
+
+**Granularity:** thirteen acceptance items. The seam, the sync job and the worker's
+deletion are one outcome: the leaf that starts the native job must stop the Python
+one (writer's choice 3), and the seam has no job to run without it.
+
+Consumers unchanged:
+- `tests/runner_helpers.py` — no-edit-reason: sets the `sync_worker_*` config defaults, and those keys stay.
+- `web/src/api/runtimeConfigCodecVectors.gen.ts` — no-edit-reason: the generator writes only codec vectors there, and a description is not one.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.1.1 - With version A selected by the local machine and version B by a foreign machine at one path, `pending_graph_files` under the foreign machine returns B with its language and symbol count, honors `limit`, orders by `indexed_at`, and skips B within 300 s of a graph attempt. `sync_rows` returns both machines' rows. test: `crates/gcode/src/db/sync_pending/tests.rs::pending_graph_files_select_the_machine_versions`.
+- 8.1.2 - With no Falkor configured, `sync_row` marks a zero-symbol file and a file in a language outside `GRAPH_SYNC_LANGUAGES` `graph_synced` through the compare-and-set, and leaves a Rust file with symbols pending with `missing_falkordb_config` as its error kind. test: `crates/gcode/src/node/hub/job_sync/tests.rs::shortcut_marks_files_without_graph_facts`.
+- 8.1.3 - While another connection holds the project's index lock exclusively, `sync_row` skips every file and stamps no attempt. test: `crates/gcode/src/node/hub/job_sync/tests.rs::busy_files_stay_pending_without_an_attempt`.
+- 8.1.4 - `run_files_bounded` with a per-file function that blocks on its second file returns the first file's outcome and `stalled` within the stall timeout plus one second, and never runs the third file. Until the blocked function is released, another connection's exclusive project lock stays busy. After its release that lock succeeds. test: `crates/gcode/src/node/hub/job_sync/tests.rs::a_stall_abandons_the_worker`.
+- 8.1.5 - `plan_row` gives the hub machine's row graph and vectors, a foreign machine's row graph only, nothing for an empty root or a soft-deleted project's row of either machine, and one probe file to a target whose breaker is due. `embedding_enabled` false and `graph_enabled` false drop their targets. test: `crates/gcodeindex/src/jobs/tests.rs::rows_plan_targets_per_machine_and_breaker`.
+- 8.1.6 - Under a fake clock, the breaker opens after the threshold's consecutive transport failures, and a stall opens it at once. A failed probe doubles the backoff up to the maximum, a busy probe reopens without doubling, and a successful probe closes it and resets the backoff. test: `crates/gcodeindex/src/jobs/tests.rs::breaker_follows_the_python_state_machine`.
+- 8.1.7 - A tick with `enabled` false starts nothing. A tick before the interval passes starts nothing. A tick while a run is in flight starts nothing, and returns at once. The tick after the run ends and the interval passes starts the next run. test: `crates/gcodeindex/src/jobs/tests.rs::ticks_start_one_run_per_interval`.
+- 8.1.8 - Every `JobConfig` default equals the `default` of its key in `crates/gcore/assets/config/runtime_config_contract.json`, and an absent key or a mistyped value reads as that default. test: `crates/gcodeindex/src/jobs/tests.rs::config_defaults_match_the_runtime_contract`.
+- 8.1.9 - With pending shortcut files for the hub machine and a foreign machine, and pending vector files for both, one sync run marks both machines' shortcut files `graph_synced` and stamps no vector attempt on the foreign machine's files. test: `crates/gcodeindex/tests/job_sync.rs::sync_job_covers_every_machine_row`.
+- 8.1.10 - `code_index_jobs::register` adds every `HubJobs::ticks()` name, so a second registration of the same jobs on that host fails as a duplicate. The started host stops within `SHUTDOWN_GRACE`. test: `crates/gdaemon/tests/code_index_jobs.rs::registers_each_hub_job_once`.
+- 8.1.11 - With a code indexer, `_start_code_index_tasks` creates only the `code-index-maintenance` task and leaves `_sync_worker_task` `None`. test: `tests/test_runner_code_index_shutdown.py::test_start_code_index_tasks_starts_only_the_maintenance_loop`.
+- 8.1.12 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.1.13 - `code_index.sync_worker_concurrency`'s description reads "Maximum machine-project rows the sync job projects at once", and the checked-in contract equals fresh generator output. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+### 8.2 Maintenance pass: reconcile and reindex [category: code] (depends: 8.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/db/hub_maintenance.rs`
+- `crates/gcode/src/db/hub_maintenance/tests.rs`
+- `crates/gcode/src/db/mod.rs::*` — scope-reason: declares `hub_maintenance`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/job_maintenance.rs`
+- `crates/gcode/src/node/hub/job_maintenance/tests.rs`
+- `crates/gcodeindex/src/jobs.rs`
+- `crates/gcodeindex/src/jobs/config.rs`
+- `crates/gcodeindex/src/jobs/maintenance.rs`
+- `crates/gcodeindex/src/jobs/tests.rs`
+- `crates/gcodeindex/tests/job_maintenance.rs`
+- `src/gobby/code_index/maintenance.py::*` — scope-reason: `_run_maintenance` stops reconciling, sweeping and reindexing, and the pending-cleanup retry functions go; `_reconcile_stale_selector`, `_sweep_orphaned_index_projects` and `_registry_state` stay for `prune.py`'s operator prune until P9
+- `src/gobby/code_index/cleanup.py::*` — operation: delete — scope-reason: its last consumer was the reindex path this leaf removes
+- `tests/code_index/test_code_index_maintenance.py::*` — scope-reason: drops the tests of the removed steps and checks that the pass only summarizes and labels
+- `docs/guides/code-index.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+The maintenance job (`crates/gcodeindex/src/jobs/maintenance.rs`) is
+`code_index_maintenance` in `HubJobs::ticks()`. Its interval is
+`code_index.maintenance_interval_seconds`, which `JobConfig` gains. Each run, on its
+own thread:
+
+1. When `code_index.graph_enabled` and `code_index.embedding_enabled` both hold, it
+   sweeps orphans with `node::hub::job_maintenance::sweep_orphans(database_url, hub_machine)`.
+   Python skips the sweep when either store is disabled, because the projections could
+   not be cleared.
+2. For each soft-deleted project that `db::hub_maintenance::deleted_selected_projects`
+   returns, it runs
+   `job_maintenance::reconcile_deleted(database_url, hub_machine, project_id, machines)`
+   and logs the outcome with the project to stderr.
+3. It takes the hub machine's rows from `job_sync::sync_rows` (8.1), leaving out rows
+   whose `registry_deleted` holds, which step 2 owns. Python lists only the hub
+   machine's rows here, and their roots are on the hub's disk.
+4. For each row it runs `job_maintenance::maintain_project(&HubScope, root)` and logs
+   the outcome with the project to stderr. A failure moves on to the next row.
+
+`node::hub::job_maintenance` (new, declared in `node/hub.rs`):
+
+- `eligibility(registry, root, project_id)` ports
+  `src/gobby/code_index/eligibility.py::resolve_indexed_project`:
+  - with no registry row, or a deleted one: `overlay` when the row is not deleted,
+    the root is a directory and `gobby_core::project::code_index_id_for_root(root)`
+    equals the id, else `unregistered`;
+  - an empty root, or one that is not a directory: `missing_root`;
+  - a `.gobby/project.json` whose `id` differs from the project id:
+    `identity_mismatch`;
+  - otherwise `active`.
+- `maintain_project` reads the registry state with `db::hub_maintenance::registry_state`
+  and acts on the eligibility:
+  - `overlay`: nothing. The edit trigger owns an overlay's freshness (#20889).
+  - `unregistered`, `missing_root` or `identity_mismatch`: it reconciles. Under `index_lock::lock_project_by_id(…, IndexLockPolicy::maintenance_try(), LockDiagnostics::Silent)`
+    it clears the projections, then runs `indexer::invalidate(conn, hub_machine, project_id)`
+    (7.2), which deletes the hub machine's communities, file states and project
+    state. The projections are cleared only for a project with a registry row, as
+    Python does:
+    - the graph through `commands::graph::clear_project_graph` (7.1);
+    - vectors through `db::reset_vectors_sync_for_project` and
+      `commands::vector::lifecycle_from_context(ctx)?.clear_project_vectors()`, the
+      steps `gcode vector clear` takes.
+
+    The context comes from `HubScope::context` with
+    `ServiceConfigSelection::projection_cleanup()`. A failed clear keeps the selector,
+    and the next pass reconciles it again. A busy lock skips the project for this
+    pass. After an `unregistered` reconcile it sweeps orphans, as Python does, so a
+    path-derived project's shared content goes in the same pass.
+  - `active`: it reindexes. Under
+    `index_lock::with_project_lock(ctx, IndexLockPolicy::brief_index_flush_try(), …)`
+    it runs `commands::index::run_index_locked(ctx, IndexRequest { full: false, sync_projections: false, explicit_files: vec![], path_filter: None, .. })`,
+    which is what `gcode index --project <root> --skip-if-locked` runs. The sync job
+    (8.1) projects the files the run marks pending. A busy lock skips the project. The
+    context uses `ServiceConfigSelection::database_only()`.
+  - It returns `ProjectOutcome`: `Overlay`, `Reconciled`, `ReconcileBusy`,
+    `ReconcileFailed`, `Indexed`, `IndexBusy` or `IndexFailed`, with the error where
+    there is one. 8.3 runs summaries and labels after `Indexed`, `IndexBusy` and
+    `IndexFailed`. Python summarizes and labels every active project, whatever its
+    index run did.
+- `sweep_orphans` lists `db::hub_maintenance::orphaned_index_projects` (indexed
+  projects that no machine selects and no registry row owns). Each orphan, under its
+  project lock, has its graph cleared and its vector collection dropped
+  (`drop_project_collection`, as `gcode vector clear --drop-collection` does). Then
+  `db::hub_maintenance::purge_index_project` deletes its `code_indexed_projects` row,
+  whose foreign keys cascade to its files, symbols, calls, chunks and imports. A
+  failed clear keeps the row for the next pass. An orphan has no state row and so no
+  root. Its context takes an empty root, which neither clear reads.
+- `reconcile_deleted` reconciles a soft-deleted project for every machine that selects
+  it. Under `lock_project_by_id(…, IndexLockPolicy::maintenance_try(), LockDiagnostics::Silent)`
+  it clears the graph and vectors as a reconcile does, then runs
+  `indexer::invalidate(conn, machine, project_id)` for each machine in `machines`. Its
+  context takes an empty root, as the sweep's does.
+  - The clears reset every machine's files (`reset_graph_sync_for_project`,
+    `reset_vectors_sync_for_project`). Removing only the hub machine's selector would
+    leave the node machines' rows pending, and 8.1 and 4.3 would project them again.
+  - It returns `DeletedOutcome`: `Reconciled`, `Busy`, or `Failed` with the error. A
+    failed clear keeps every selector for the next pass.
+  - It returns no `ProjectOutcome`, so 8.3 never summarizes or labels a soft-deleted
+    project.
+  - The registry row is purged after its soft-delete window
+    (`src/gobby/projects/purge.py`). A node row written after that has no registry row,
+    and the hub cannot tell it from a node's overlay. 8.5 (content GC for projects only
+    nodes index) owns those rows.
+
+`db::hub_maintenance` (`crates/gcode/src/db/hub_maintenance.rs`) holds
+`registry_state` (`SELECT deleted_at FROM projects WHERE id = $1`),
+`orphaned_index_projects` and `purge_index_project`, with the SQL of
+`src/gobby/code_index/_storage/projects.py` (`get_registry_project`,
+`list_orphaned_index_projects`, `purge_index_project`). It also holds
+`deleted_selected_projects`: each project whose registry row has `deleted_at` set and
+that some `code_indexed_project_states` row selects, with its selecting machines.
+
+Locks: both reconciles and the sweep take the project lock exclusively, so a sync batch,
+which holds it shared, or an index run cannot write the project while its selector or
+row goes. That is 7.2's reason for the lock.
+
+Deliberate differences from Python's pass:
+
+- No `code_index_projection_cleanup_pending` retries. Python's reconcile records a
+  failure there, with the store always `graph`, and retries only the graph clear.
+  The selector stays after a failed reconcile, so the next pass retries the whole
+  reconcile anyway. Python's operator prune still writes the table through
+  `_reconcile_stale_selector` until P9, which deletes `prune.py` and drops the table.
+- No purge on `GcodeProjectNotFoundError`. That error comes from a `gcode index`
+  child resolving its project. In process, eligibility has already required the
+  registry row and a matching `.gobby/project.json`, so a project that vanishes
+  mid-pass is `unregistered` on the next one.
+- Python's `missing_root_observations` map is never incremented, so it has no
+  counterpart.
+- In-process indexing cannot be killed, so the native pass does not read
+  `code_index.maintenance_index_timeout_seconds`. The key stays the BM25 repair timeout
+  (P8 framing).
+- A soft-deleted project is reconciled for every machine that selects it. Python
+  removes only the hub machine's selector, and it never syncs a node machine's row.
+
+Python changes:
+
+- `_run_maintenance` lists the hub machine's projects, keeps only the `active` ones,
+  and summarizes and labels them. It no longer retries pending cleanups, sweeps
+  orphans, reconciles or reindexes. The pending-cleanup retry functions go.
+- `_reconcile_stale_selector`, `_sweep_orphaned_index_projects` and `_registry_state`
+  stay, because `src/gobby/code_index/prune.py::CodeIndexPruner.prune_project` calls
+  the first, which calls the other two. Until 8.4, Python's hourly prune and the native
+  pass can both reconcile one stale selector, and until P9 Python's operator prune
+  can. After 8.4 the native prune reconciles through this leaf's code too. Every
+  reconcile is idempotent.
+- `src/gobby/code_index/cleanup.py` goes.
+
+`docs/guides/code-index.md` says gdaemon's maintenance job reconciles stale
+selectors, purges orphaned projects and reindexes the hub's projects.
+
+Research context:
+- Python's pass: `src/gobby/code_index/maintenance.py::_run_maintenance`,
+  `_reconcile_stale_selector`, `_sweep_orphaned_index_projects` and
+  `_retry_pending_projection_cleanups`. The gateway's `maintenance_index` runs
+  `gcode index --project <root> --skip-if-locked`. That run omits
+  `--sync-projections`, so it writes PostgreSQL only.
+- `commands/index.rs::run_index_locked(ctx, IndexRequest)` is `pub(crate)`, and
+  `commands/repair.rs` already builds an `IndexRequest` in the crate.
+  `commands/vector.rs::lifecycle_from_context` is `pub(crate)`. 7.1 makes
+  `clear_project_graph` `pub(crate)`. None of the three needs an edit here.
+- `code_indexed_projects` has only `id`, `created_at` and `updated_at`
+  (`crates/gcore/assets/schema/baseline.sql`).
+- `src/gobby/code_index/cleanup.py::purge_missing_project` had two callers:
+  `sync_worker.py` (deleted in 8.1) and `_run_maintenance`'s purge branch.
+- `code_index_projection_cleanup_pending` is read and written only by
+  `src/gobby/code_index/maintenance.py` through
+  `src/gobby/code_index/_storage/projection_cleanup.py`.
+- `src/gobby/projects/purge.py::ProjectPurgeService._invalidate_code` runs
+  `gcode invalidate` by id, which removes only the hub machine's rows.
+- CI has no FalkorDB lane (#21045), so the tests reach a reconcile's clears only
+  through their failure. P8's E1 gate checks the success path of both reconciles.
+- Rejected alternatives:
+  - a `gcode index` child, which needs the managed grant gdaemon cannot issue (P8
+    framing);
+  - porting the pending-cleanup retries, which repeat the next reconcile;
+  - one leaf for the whole Python loop, because summaries and labels are an
+    independent outcome with their own AI path (8.3).
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(hub_maintenance) | test(job_maintenance)'`;
+  - `cargo nextest run -p gobby-codeindex`;
+  - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_code_index_maintenance.py -v`.
+
+**Granularity:** nine acceptance items. Reconcile, the orphan sweep and reindexing
+are one outcome: Python's pass decides between them per project, and the leaf that
+stops Python's half must start the native one (writer's choice 3).
+
+Consumers unchanged:
+- `src/gobby/code_index/_storage/projection_cleanup.py` — no-edit-reason: `_reconcile_stale_selector` still records failures through it until P9.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.2.1 - `orphaned_index_projects` returns an indexed project with no machine's selector and no registry row, and omits one with a registry row and one that a foreign machine selects. `purge_index_project` deletes the row and its files and symbols. `registry_state` reports a missing, a live and a deleted project. `deleted_selected_projects` returns a soft-deleted project with both machines that select it, and omits a live project and one with no registry row. test: `crates/gcode/src/db/hub_maintenance/tests.rs::orphans_have_no_selector_and_no_registry_row`.
+- 8.2.2 - `eligibility` returns `overlay` for an unregistered directory whose derived id matches, `unregistered` when it does not match, `missing_root` for an empty or absent root, `identity_mismatch` for a differing `.gobby/project.json` id, and `active` otherwise. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::eligibility_follows_resolve_indexed_project`.
+- 8.2.3 - For an unregistered project, `maintain_project` deletes the hub machine's communities, file states and project state and leaves a foreign machine's. With the project lock held by another connection it deletes nothing and returns `ReconcileBusy`. For a `missing_root` project with no Falkor configured it returns `ReconcileFailed` and keeps the selector. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::stale_selectors_reconcile_under_the_project_lock`.
+- 8.2.4 - For an active project with a new file, `maintain_project` returns `Indexed` and leaves the file `graph_synced` and `vectors_synced` false. With the project lock held it returns `IndexBusy`. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::active_projects_reindex_without_projections`.
+- 8.2.5 - The maintenance plan sweeps orphans only when `graph_enabled` and `embedding_enabled` both hold, keeps only the hub machine's rows, and runs at `maintenance_interval_seconds`, whose default equals the contract's. test: `crates/gcodeindex/src/jobs/tests.rs::maintenance_plans_the_sweep_and_hub_rows`.
+- 8.2.6 - One maintenance run over an unregistered hub row, an active hub row and a foreign machine's row reconciles the first, indexes the second, and leaves the foreign row. test: `crates/gcodeindex/tests/job_maintenance.rs::maintenance_run_reconciles_and_reindexes_hub_rows`.
+- 8.2.7 - `_run_maintenance` summarizes and labels active projects and calls no reconcile, sweep, pending-cleanup retry or gcode index. test: `tests/code_index/test_code_index_maintenance.py::test_run_maintenance_only_summarizes_and_labels`.
+- 8.2.8 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.2.9 - For a soft-deleted project that the hub machine and a foreign machine select, `reconcile_deleted` returns `Busy` and deletes nothing while another connection holds the project lock. With no Falkor configured it returns `Failed` and keeps both selectors. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::deleted_projects_reconcile_for_every_machine`.
+
+### 8.3 Symbol summaries and community labels [category: code] (depends: 8.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/db/hub_summaries.rs`
+- `crates/gcode/src/db/hub_summaries/tests.rs`
+- `crates/gcode/src/db/hub_labels.rs`
+- `crates/gcode/src/db/hub_labels/tests.rs`
+- `crates/gcode/src/db/mod.rs::*` — scope-reason: declares `hub_summaries` and `hub_labels`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/job_summaries.rs`
+- `crates/gcode/src/node/hub/job_summaries/tests.rs`
+- `crates/gcode/src/node/hub/job_labels.rs`
+- `crates/gcode/src/node/hub/job_labels/tests.rs`
+- `crates/gcodeindex/src/jobs/config.rs`
+- `crates/gcodeindex/src/jobs/maintenance.rs`
+- `crates/gcodeindex/src/jobs/tests.rs`
+- `crates/gcodeindex/tests/job_maintenance.rs`
+- `src/gobby/code_index/summarizer.py::*` — operation: delete — scope-reason: the native summary job replaces it
+- `src/gobby/code_index/community_labeler.py::*` — operation: delete — scope-reason: the native label job replaces it
+- `src/gobby/code_index/summary_safety.py::*` — operation: delete — scope-reason: ported to `job_summaries`, and its last importers go
+- `src/gobby/code_index/community_label_safety.py::*` — operation: delete — scope-reason: ported to `job_labels`, and its last importer goes
+- `src/gobby/code_index/_storage/summaries.py::*` — operation: delete — scope-reason: ported to `db::hub_summaries`
+- `src/gobby/code_index/_storage/communities.py::*` — operation: delete — scope-reason: ported to `db::hub_labels`
+- `src/gobby/code_index/storage.py::*` — scope-reason: `CodeIndexStorage` drops the summary and community mixins
+- `src/gobby/code_index/models.py::*` — scope-reason: deletes `StoredCommunity`, whose last readers go
+- `src/gobby/code_index/maintenance.py::*` — scope-reason: deletes the loop, `_run_maintenance` and the summary and label helpers; `_registry_state`, `_reconcile_stale_selector` and `_sweep_orphaned_index_projects` stay for `prune.py`'s operator prune until P9
+- `src/gobby/runner_startup_code_index.py::*` — scope-reason: deletes `_start_code_index_tasks`, and `_repair_code_index_bm25`'s docstring and failure line name no worker
+- `src/gobby/runner.py::*` — scope-reason: drops `GobbyRunner`'s four code-index task and event annotations
+- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: `init_subsystems` stops starting the code-index tasks, and `_check_embedding_service` and `_initialize_vector_store` move out
+- `src/gobby/runner_startup_vectors.py`
+- `src/gobby/runner_lifecycle_shutdown.py::*` — operation: delete-lines — base-blob: 0909c6a910d75e89971a4591ead22e00713c371d — lines: 242-259, 261, 817-819 — scope-reason: removes the code-index drain and its two calls, because no code-index task is left to drain
+- `tests/code_index/test_summarizer.py::*` — operation: delete — scope-reason: tests the deleted summarizer
+- `tests/code_index/test_community_labeler.py::*` — operation: delete — scope-reason: tests the deleted labeler
+- `tests/test_runner_code_index_shutdown.py::*` — operation: delete — scope-reason: tests the deleted start and drain
+- `tests/code_index/test_maintenance_config_capture.py::*` — scope-reason: drops the maintenance-loop test and its imports, and the schema-sweep test stays
+- `tests/code_index/test_code_index_maintenance.py::*` — scope-reason: drops the tests of the deleted loop, `_run_maintenance` and summary helpers
+- `tests/code_index/test_code_index_storage.py::*` — scope-reason: drops the summary and community storage tests, and the remaining tests set summaries and attempts with SQL
+- `tests/code_index/test_gcode_storage_conformance.py::*` — scope-reason: sets the fixture's summary with SQL
+- `tests/test_bm25_startup.py::*` — scope-reason: deletes the worker-gate test, because the gate goes
+- `tests/test_runner_lifecycle.py::*` — scope-reason: two init tests stop patching `_start_code_index_tasks`
+- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: the phase recorder and the every-phase test drop `_start_code_index_tasks`
+- `tests/terminals/test_host_manager.py::*` — scope-reason: a shutdown test stops patching `_stop_code_index_workers`
+- `docs/guides/code-index.md`
+- `docs/guides/llm-features.md`
+- `docs/contracts/truncation.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Where it runs. The maintenance job (8.2) gains two steps for each hub row whose
+`maintain_project` returns `Indexed`, `IndexBusy` or `IndexFailed`, in Python's order:
+
+1. when `code_index.symbol_summary.enabled` holds,
+   `node::hub::job_summaries::summarize_project(&HubScope, root, SummaryRequest { batch_size, max_concurrency }, generate)`;
+2. when `code_index.community_label.enabled` holds,
+   `node::hub::job_labels::label_project(&HubScope, LabelRequest { batch_size, max_concurrency, profile }, generate)`.
+
+Each logs its report or error with the project to stderr, and the run moves on. A
+soft-deleted project gets neither, because `reconcile_deleted` returns no
+`ProjectOutcome` (8.2).
+
+`JobConfig` gains `code_index.symbol_summary.*` and `code_index.community_label.*`:
+`enabled`, `batch_size`, `max_concurrency`, `max_tokens`, `profile` and `candidates`.
+These keys are `activation: restart_required`, unlike the live keys of the P8 framing.
+`active_values` keeps a restart-required key at the value Python started with
+(`src/gobby/config/runtime_activation.py`), so the native job sees a change after
+Python restarts, as Python's loop does today.
+
+Generation. Both jobs take
+`generate: &(dyn Fn(&str) -> anyhow::Result<String> + Sync)`, so tests inject a fake.
+The production closure is `job_summaries::daemon_generator(project_id, candidates, profile, max_tokens)`,
+compiled under gcode's `ai` feature, which gcodeindex's default `gobby-code` dependency
+enables. For each prompt it:
+
+- resolves a fresh `AiContext::resolve(Some(project_id), &mut LocalAiConfigSource::empty())`,
+  as `crates/gcode/src/vector/code_symbols/embedding.rs` does. One shared context would
+  run every call one at a time, because its `AiLimiter` holds `ai.max_concurrency`,
+  which an empty source leaves at 1;
+- with a non-empty `candidates` list, calls
+  `generate_via_daemon_with_candidates(&ctx, prompt, None, Some(max_tokens), &candidates, GenerationBudget::Interactive)`,
+  each candidate as `FeatureCandidate { candidate, reasoning_effort: None }`;
+- with an empty list, calls
+  `generate_via_daemon_with_max_tokens(&ctx, prompt, None, Some(max_tokens), Some(profile), GenerationBudget::Interactive)`,
+  because Python falls back to the profile's candidates then;
+- returns the result's `text`.
+
+Each job runs up to its `max_concurrency` generations at once on `std::thread::scope`
+threads. Python bounds its calls with a semaphore of that size.
+
+Summaries (`node::hub::job_summaries`):
+
+1. `db::hub_summaries::unsummarized_symbols(conn, machine_id, project_id, batch_size)`
+   returns the hub machine's queue.
+2. Each symbol's source is lines `line_start..=line_end` (1-indexed) of the file at the
+   hub root, read with `String::from_utf8_lossy` and split at `\n`. A missing or
+   unreadable file, or an empty source, skips the symbol without a stamp, as Python's
+   `summarize_batch` does.
+3. The prompt is Python's `_SUMMARY_PROMPT`, verbatim, with kind, name, signature (empty
+   when absent) and source. The source is cut to `_MAX_SOURCE_CHARS` (2000). A longer
+   source adds Python's truncation marker:
+   `\n[truncated: rendered <n> chars from first 2000 of <len>; full source: <file>:<start>-<end>]`.
+4. A success writes the sanitized summary through
+   `db::hub_summaries::update_symbol_summary`, which matches the content hash. A
+   generation error, or an output that sanitizes to nothing, is stamped through
+   `mark_summaries_attempted`.
+5. `SummaryReport` counts written, skipped and failed symbols.
+
+The sanitizers port `src/gobby/code_index/summary_safety.py` into `job_summaries`:
+
+- `sanitize_source_for_summary_prompt(source, max_chars)` keeps the first `max_chars`
+  characters, turns each backtick into `'` and drops NUL.
+- `sanitize_symbol_summary(text)` keeps the text before the first ```` ``` ````, turns
+  backticks into `'`, drops NUL, collapses whitespace runs to one space, cuts to 500
+  characters and trims the end. An empty result is `None`.
+
+Counts and cuts are in `char`s, as Python's `str` counts code points.
+
+Labels (`node::hub::job_labels`):
+
+1. `db::hub_labels::unlabeled_communities(conn, machine_id, project_id, batch_size)`
+   returns the hub machine's queue.
+2. The prompt is Python's `_LABEL_PROMPT`, verbatim, which asks for JSON. Its data block
+   follows `_label_prompt`: `member_count`, `deterministic_label`, `label_candidates`,
+   `representatives`, then `members:` with the representatives, then the other members
+   sorted, cut to 40. The block passes through `sanitize_source_for_summary_prompt` at
+   8000 characters.
+3. `parse_label(text)` strips one surrounding code fence and parses a JSON object. It
+   needs a string `name` of 3 to 40 characters and a string `rationale` of at most 120,
+   the bounds of Python's `_LABEL_SCHEMA`. Anything else is `SchemaRejected`. A
+   generation error is `GenerationFailed`.
+4. A name equal to the community's deterministic label or one of its candidates is
+   written with source `deterministic`. Any other name passes
+   `sanitize_community_label(name, members)`, a port of
+   `src/gobby/code_index/community_label_safety.py`:
+   - strip a fence with `\A```[^\n]*\n` and `\n?```\s*\Z`, then surrounding quotes;
+   - 2 to 5 words and at most 40 characters;
+   - only `[A-Za-z0-9 /&+.-]`;
+   - no source extension (`\.(py|pyi|ts|tsx|js|mjs|cjs|css|rs|sh)\b`, ignoring case);
+   - not a member path.
+
+   A name that passes is written with source `model`, and one that fails is
+   `SanitationRejected`.
+5. Writes go through `db::hub_labels::update_community_label` with `label_model` set to
+   the profile and `label_confidence` NULL, as Python writes them. The write matches the
+   member signature. A write that loses to a newer partition is skipped without a
+   stamp, because the new row is queued afresh.
+6. Every outcome other than a write is stamped through `mark_labels_attempted`.
+   `LabelReport` counts each outcome, and the job logs it as Python's
+   `code_index.community_label.batch` line does.
+
+`db::hub_summaries` and `db::hub_labels` hold the SQL of
+`src/gobby/code_index/_storage/summaries.py` and `_storage/communities.py` with an
+explicit machine:
+
+- `unsummarized_symbols`: `function`, `class` and `method` symbols of the machine's
+  selected file versions with no summary and no attempt within the 300 s cooloff,
+  newest `updated_at` first;
+- `update_symbol_summary` and `mark_summaries_attempted`, both matching the content
+  hash;
+- `unlabeled_communities`: the machine's communities whose `labeled_signature` differs
+  from `member_signature`, outside the cooloff, largest first;
+- `update_community_label` and `mark_labels_attempted`, both matching the member
+  signature.
+
+Deliberate differences from Python:
+
+- No provider JSON schema. `/api/llm/generate` takes none, so the job parses the text
+  and applies the schema's bounds itself. Python's provider-structured call rejects the
+  same shapes.
+- Python's text service records the callers `code_index.symbol_summary` and
+  `code_index.community_label`. The route records `llm-generate-route` for both.
+- The calls use the `Interactive` budget: 30 s per candidate and 60 s per CLI candidate,
+  with the route capping the total.
+- With Python down, a call fails at the transport, and the symbol or community is
+  stamped and retried after the cooloff. Python's in-process failure is stamped the same
+  way.
+- Source lines split at `\n`, as the indexer counts them. Python's `splitlines` also
+  splits at `\r`, form feeds and Unicode separators.
+
+Python deletion:
+
+- `summarizer.py`, `community_labeler.py`, `summary_safety.py`,
+  `community_label_safety.py`, `_storage/summaries.py` and `_storage/communities.py`
+  go. `CodeIndexStorage` drops both mixins, and `models.py` drops `StoredCommunity`.
+- `maintenance.py` loses `code_index_maintenance_loop`, `_run_maintenance`,
+  `_label_unlabeled_communities`, `_summarize_unsummarized`, `_read_symbol_sources`,
+  `_update_symbol_summaries`, `_read_symbol_source` and `_SUMMARY_DB_WRITE_CONCURRENCY`.
+  `_registry_state`, `_reconcile_stale_selector` and `_sweep_orphaned_index_projects`
+  stay for `prune.py`'s operator prune until P9.
+- `runner_startup_code_index.py` loses `_start_code_index_tasks`, Python's last
+  code-index task. `_repair_code_index_bm25` keeps its `bool` return, which
+  `tests/config/test_runtime_loop_consumers.py` and `tests/test_bm25_startup.py`
+  assert. Its failure line reads "Code-index BM25 recovery failed: %s. Run `gobby
+  postgres repair-code-index`, then restart Gobby." and its docstring names no worker.
+- `init_subsystems` awaits the BM25 phase without keeping its result, and the
+  `_start_code_index_tasks` call and its import go.
+- `GobbyRunner` drops the `_code_index_task`, `_code_index_shutdown`,
+  `_sync_worker_task` and `_sync_worker_shutdown` annotations. Nothing else sets or
+  reads them once the start and the drain go.
+- `runner_lifecycle_shutdown.py` loses `_stop_code_index_workers` (lines 242-259 with
+  its trailing blank lines), its call in `_cancel_periodic_tasks` (261), and its call
+  and comment in `shutdown_daemon_services` (817-819). The file is 916 lines, and this
+  is a pure deletion, so it carries the `delete-lines` proof in Targets.
+
+Split. `src/gobby/runner_lifecycle_subsystems.py` is 883 lines. This leaf moves
+`_check_embedding_service` and `_initialize_vector_store` (lines 99-137 and 168-218),
+with the imports only they use, to the new `src/gobby/runner_startup_vectors.py`. The
+new module's logger is `logging.getLogger("gobby.runner_lifecycle")`, so log capture
+in tests still matches. `runner_lifecycle_subsystems.py` imports both names, so
+`init_subsystems` calls them through its module globals, and every
+`patch.object(runner_lifecycle_subsystems, …)` site keeps working.
+
+Tests:
+
+- `test_summarizer.py`, `test_community_labeler.py` and
+  `tests/test_runner_code_index_shutdown.py` go.
+- `test_maintenance_config_capture.py` keeps
+  `test_schema_sweep_applies_captured_database_url_on_the_next_pass`.
+- `test_code_index_storage.py` drops the community tests and the
+  `get_unsummarized_symbols`, `update_symbol_summary` and
+  `mark_symbol_summaries_attempted` tests, with the `StoredCommunity` and
+  `SUMMARY_MAX_CHARS` imports. `test_upsert_nulls_summary_on_hash_change`,
+  `test_upsert_preserves_summary_on_same_hash` and
+  `test_upsert_symbols_resets_summary_attempt_on_content_change` set the summary or
+  the attempt with SQL. `test_stale_content_hash_rejects_sync_marks_and_summary` drops
+  its summary assertion, which `db::hub_summaries` now covers.
+- `test_gcode_storage_conformance.py` sets its fixture's summary with SQL.
+- `test_code_index_maintenance.py` keeps only the reconcile and sweep tests, until P9.
+- `test_bm25_startup.py` deletes
+  `test_init_subsystems_skips_code_index_workers_after_failed_repair`.
+- `test_runner_lifecycle.py`, `test_runner_lifecycle_subsystems.py` and
+  `tests/terminals/test_host_manager.py` drop their `_start_code_index_tasks` and
+  `_stop_code_index_workers` patches. `test_runner_lifecycle.py`'s ordered events drop
+  `"code-index"`.
+
+Docs:
+
+- `docs/guides/code-index.md` says gdaemon's maintenance job writes symbol summaries
+  and community labels through the hub's `/api/llm/generate`.
+- `docs/guides/llm-features.md`'s `code_index.symbol_summary` row and the paragraph
+  under the table name the native job. A `code_index.community_label` row is added.
+- `docs/contracts/truncation.md` names `job_summaries::sanitize_symbol_summary` for the
+  500-character summary bound.
+
+Research context:
+- Python's summaries: `src/gobby/code_index/maintenance.py::_summarize_unsummarized`
+  reads sources with `_read_symbol_source` (1-indexed lines, `None` for a missing file)
+  and stamps only symbols that had a source.
+  `src/gobby/code_index/summarizer.py::SymbolSummarizer.summarize_one` sends the
+  profile and candidates with caller `code_index.symbol_summary`, and returns `None` on
+  any error.
+- Python's labels: `src/gobby/code_index/community_labeler.py::CommunityLabeler`.
+  `_generate_one` calls `generate_json` with `_LABEL_SCHEMA`. `_write_label` returns
+  `None` when the signature-guarded write loses, and `label_batch` stamps every outcome
+  that wrote nothing.
+- `src/gobby/ai/_text_generation_service.py::_candidate_requests` uses the request's
+  candidates when the list is non-empty, else the profile's. With candidates, the
+  profile only fills a missing reasoning effort (`src/gobby/config/feature_base.py::candidate_runtime_entries`),
+  and `_DEFAULT_PROFILE_REASONING` is `auto` for every profile. The adapters treat a
+  missing effort as `auto`, so dropping the profile changes nothing.
+- `crates/gcore/src/ai/daemon/operations.rs::generate_via_daemon_with_candidates`
+  sends no profile, and `generate_via_daemon_with_max_tokens` sends one. Both return a
+  `TextResult` whose `text` is the output.
+- `crates/gcore/src/ai_context.rs`: `AiContext::resolve` builds its `AiLimiter` from
+  `ai.max_concurrency`, which defaults to 1 (`config/resolve.rs::AI_DEFAULT_MAX_CONCURRENCY`).
+- The contract's default `candidates` lists are non-empty
+  (`crates/gcore/assets/config/runtime_config_contract.json`).
+- `src/gobby/servers/routes/llm.py` records caller `llm-generate-route` and accepts no
+  JSON schema.
+- The jobs run on the maintenance job's own thread (P8 framing), so the blocking HTTP
+  client never runs on a tokio worker.
+- Rejected alternatives:
+  - adding a schema field to `/api/llm/generate`, a Python route outside this plan,
+    when local parsing gives the same bounds;
+  - one shared `AiContext`, whose limiter serializes the calls;
+  - one leaf per feature: both run in one Python loop through one generator seam, and
+    the loop, the start function and the drain go once.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(hub_summaries) | test(hub_labels) | test(job_summaries) | test(job_labels)'`;
+  - `cargo nextest run -p gobby-codeindex`;
+  - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_code_index_storage.py tests/code_index/test_gcode_storage_conformance.py tests/code_index/test_code_index_maintenance.py tests/code_index/test_maintenance_config_capture.py tests/test_bm25_startup.py tests/test_runner_lifecycle.py tests/test_runner_lifecycle_subsystems.py tests/test_runner_backlog.py tests/terminals/test_host_manager.py tests/config/test_runtime_loop_consumers.py -v`.
+
+**Granularity:** eleven acceptance items. Summaries and labels are one outcome: one
+Python loop runs both through one generator seam, and the leaf that stops it must
+start both native halves (writer's choice 3). Deleting the loop removes Python's last
+code-index task, so the start function, the runner attributes and the drain go in the
+same leaf.
+
+Consumers unchanged:
+- `tests/test_runner_backlog.py` — no-edit-reason: patches `_check_embedding_service` and `_initialize_vector_store` on `runner_lifecycle_subsystems`, which still imports both.
+- `tests/config/test_runtime_loop_consumers.py` — no-edit-reason: asserts `_repair_code_index_bm25`'s `bool` return, which stays.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.3.1 - `unsummarized_symbols` returns the machine's selected versions' function, class and method symbols with no summary, skips a symbol within 300 s of an attempt and one of a foreign machine's version, orders by newest `updated_at` and honors `limit`. `update_symbol_summary` and `mark_summaries_attempted` change nothing under a stale content hash. test: `crates/gcode/src/db/hub_summaries/tests.rs::summary_queue_follows_the_python_storage`.
+- 8.3.2 - `unlabeled_communities` returns the machine's communities whose labeled signature differs from the member signature, outside the cooloff, largest first. `update_community_label` and `mark_labels_attempted` change nothing under a stale member signature. test: `crates/gcode/src/db/hub_labels/tests.rs::label_queue_and_writes_are_signature_guarded`.
+- 8.3.3 - On fixtures with backticks, NUL, a fence, whitespace runs, a 600-character summary and a multi-byte character at the cut, `sanitize_source_for_summary_prompt` and `sanitize_symbol_summary` return Python's `summary_safety` results, and an all-whitespace summary is `None`. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::sanitizers_match_summary_safety`.
+- 8.3.4 - With a fake generator, `summarize_project` sends nothing for a symbol whose file is missing and leaves it unstamped, stamps a symbol whose call fails and one whose output sanitizes to nothing, writes the sanitized summary on success, adds the truncation marker to a source over 2000 characters, and never runs more than `max_concurrency` calls at once. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::summaries_stamp_failures_and_skip_missing_files`.
+- 8.3.5 - `parse_label` accepts a fenced JSON object, and rejects non-JSON text, a name of 2 or 41 characters, a 121-character rationale and a non-string field. `sanitize_community_label` returns Python's `community_label_safety` results on fixtures for quotes, word count, charset, a source extension and a member path. test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_parsing_and_safety_match_python`.
+- 8.3.6 - With a fake generator, `label_project` writes a candidate name with source `deterministic`, writes a new safe name with source `model`, the profile as `label_model` and NULL confidence, stamps an unsafe name, a rejected shape and a failed call, and neither writes nor stamps a community whose member signature changed before the write. test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_outcomes_follow_the_python_labeler`.
+- 8.3.7 - The maintenance plan summarizes and then labels after `Indexed`, `IndexBusy` and `IndexFailed`, does neither after `Overlay` or any reconcile outcome, and drops each step when its `enabled` key is false. test: `crates/gcodeindex/src/jobs/tests.rs::maintenance_summarizes_then_labels_indexed_rows`.
+- 8.3.8 - Every `symbol_summary` and `community_label` default in `JobConfig` equals the contract's, and the default `candidates` lists are non-empty. test: `crates/gcodeindex/src/jobs/tests.rs::config_defaults_match_the_runtime_contract`.
+- 8.3.9 - One maintenance run over an active hub row with a queued symbol and no daemon to reach stamps that symbol attempted and leaves its summary NULL. test: `crates/gcodeindex/tests/job_maintenance.rs::maintenance_run_stamps_summaries_when_generation_fails`.
+- 8.3.10 - In standalone and hub mode, `init_subsystems` runs every phase and starts no code-index task. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
+- 8.3.11 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 8.4 Hourly prune and `POST /api/code-index/prune` [category: code] (depends: 8.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/status/content_gc.rs::prune_content_versions`
+- `crates/gcode/src/commands/status/prune.rs::*` — scope-reason: `prune_project_scoped`'s steps after authorization move into `apply_project_prune`, and the new `prune_project_unattended` runs them for the hub
+- `crates/gcode/src/commands/status.rs`
+- `crates/gcode/src/daemon.rs::*` — scope-reason: `GlobalPruneOutcome` derives `Serialize`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/job_maintenance.rs`
+- `crates/gcode/src/node/hub/job_prune.rs`
+- `crates/gcode/src/node/hub/job_prune/tests.rs`
+- `crates/gcodeindex/src/jobs.rs`
+- `crates/gcodeindex/src/jobs/config.rs`
+- `crates/gcodeindex/src/jobs/prune.rs`
+- `crates/gcodeindex/src/jobs/tests.rs`
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/prune.rs`
+- `crates/gcodeindex/tests/family_prune.rs`
+- `src/gobby/code_index/prune.py::*` — scope-reason: deletes the hourly half (`prune_all_projects`, `_clear_dirty_projects`, `create_code_index_prune_handler`, `register_code_index_prune_cron`, `CronRegistrationProtocol`, `CodeIndexPruneResult` and the job's name, handler, interval and description constants), and the operator half stays for Python's route until P9
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: `init_orchestration` still builds `CodeIndexPruner` for the route and registers no prune cron handler
+- `src/gobby/storage/cron.py::*` — scope-reason: the job-name constants and `is_removed_automation_job` move to `cron_job_names.py`
+- `src/gobby/storage/cron_job_names.py`
+- `src/gobby/scheduler/scheduler.py::*` — scope-reason: imports `is_removed_automation_job` from `gobby.storage.cron_job_names`
+- `src/gobby/servers/routes/cron.py::*` — scope-reason: imports `is_removed_automation_job` from `gobby.storage.cron_job_names`
+- `tests/code_index/test_prune.py::*` — scope-reason: drops the `prune_all_projects` and cron registration tests and the imports only they use
+- `tests/storage/test_cron.py::*` — scope-reason: adds the removed-row test for `gobby:code-index-prune`
+- `docs/guides/code-index.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Scope. Python's pruner has two halves. The hourly half is the cron row
+`gobby:code-index-prune`, whose handler runs `CodeIndexPruner.prune_all_projects`. The
+operator half is `run_operator_global_prune`, which Python's `POST /api/code-index/prune`
+calls. The `code_index` family proxies until P9 (P5 framing), so Python's route keeps
+answering by default through P8. This leaf therefore deletes only the hourly half. It
+adds the native hourly job and the native route, which serves under
+`front_door.routes.code_index: native` or `compare`. P9 deletes the operator half with
+the rest of `src/gobby/code_index/` (D15).
+
+`node::hub::job_prune` (new, declared in `node/hub.rs`):
+
+- A process-wide `static GLOBAL_PRUNE: Mutex<()>` serializes the hourly job and the
+  route, as Python's `_global_lock` does. The guard holds no data, so a poisoned lock is
+  taken over.
+- `prune_all(database_url, hub_machine, retention_days, entry) -> anyhow::Result<Option<GlobalPruneOutcome>>`.
+  With `PruneEntry::Skip` it returns `None` at once while another prune holds the
+  lock, as `prune_all_projects` does. With `PruneEntry::Wait` it waits, as
+  `run_operator_global_prune` does. A failure to list the rows is the `Err`.
+- `GlobalPruneOutcome` is `crate::daemon::GlobalPruneOutcome`, re-exported here. It
+  gains `Serialize`, so the route's body and `gcode prune`'s parser share one type:
+  `completed` lists project ids, and `failed` and `skipped` list
+  `{"project_id": …, "reason": …}` objects.
+
+`prune_all` takes the hub machine's rows from `job_sync::sync_rows` (8.1) and calls
+`db::hub_maintenance::deleted_selected_projects` (8.2) once for the soft-deleted
+projects' machines. Then, row by row, in Python's order:
+
+1. An empty root is skipped with reason `missing_root`.
+2. A file pending for the hub machine, from `db::pending_graph_files` (8.1) or
+   `db::pending_vector_files` (4.2) with `limit` 1, puts the project in `completed`
+   with nothing pruned. Python returns `deferred_pending_sync` here and counts it
+   completed.
+3. `db::hub_maintenance::registry_state` and `job_maintenance::eligibility` (8.2)
+   classify the project:
+   - `overlay`: skipped with reason `skipped_overlay`;
+   - a soft-deleted registry row: `job_maintenance::reconcile_deleted` for every
+     machine that selects it (8.2). `Reconciled` is completed, `Busy` is skipped with
+     reason `skipped_locked`, and `Failed` is failed;
+   - `unregistered`, `missing_root` or `identity_mismatch`:
+     `job_maintenance::reconcile_stale` (below). `Reconciled` is completed,
+     `ReconcileBusy` is skipped with reason `skipped_locked`, and `ReconcileFailed`
+     is failed;
+   - `active`: the prune. Its context comes from `HubScope::context` at the row's
+     root with `ServiceConfigSelection::projection_cleanup()`, and it runs
+     `commands::status::prune_project_unattended(&ctx, retention_days, Some(now + 90 s))`.
+     The 90 s deadline is Python's `CODE_INDEX_PRUNE_TIME_BUDGET_SECONDS`. `Ok` is
+     completed, and an error is failed.
+4. A failed project's entry is `{"project_id": id, "reason": "<id>:failed"}`, the
+   string Python's `prune_project` returns. Its error goes to stderr with the project.
+   A query error on one row fails that row, and the next row runs.
+
+`job_maintenance` gains `pub(crate) fn reconcile_stale(scope, root, eligibility, registry) -> ProjectOutcome`.
+It is `maintain_project`'s reconcile branch, moved unchanged, and `maintain_project`
+now calls it with the registry state it already read. It returns `Reconciled`,
+`ReconcileBusy` or `ReconcileFailed`. Python's prune also reconciles through
+`_reconcile_stale_selector`, the function its maintenance pass uses.
+
+gcode's prune:
+
+- `prune_content_versions(services, candidates, deadline, resolve_project_services)`
+  takes the per-candidate context resolver that it now builds itself. That resolver
+  is `Context::resolve_for_project_id_with_services`, which acquires a grant, and
+  gdaemon has no grant issuer (P8 framing). `prune_content_versions_with` already
+  takes a resolver, so only the wrapper changes.
+- `prune_project_scoped`'s steps after authorization move into
+  `apply_project_prune(&discovery, deadline, resolve, print)`. It reconciles the
+  project's stale records, runs content GC, prints the two totals lines only when
+  `print` holds, and bails with the CLI's message when either step failed. The CLI
+  passes `print` true and the grant resolver, so its output does not change.
+- `pub(crate) fn prune_project_unattended(ctx, retention_days, deadline)` runs
+  `discover_project_scoped_records(ctx, retention_days)`, then
+  `apply_project_prune` with `print` false and `|_| Ok(ctx.clone())` as the resolver.
+  Discovery keeps only the context's project, so every candidate shares its context.
+  `crates/gcode/src/commands/status.rs` re-exports it.
+
+The hourly job (`crates/gcodeindex/src/jobs/prune.rs`) is `code_index_prune` in
+`HubJobs::ticks()`:
+
+- Its interval is the constant `PRUNE_INTERVAL` (3600 s), Python's
+  `CODE_INDEX_PRUNE_INTERVAL_SECONDS`. The cron row's interval had no config key.
+- Each run, on its own thread, calls
+  `prune_all(database_url, hub_machine, config.content_retention_days, PruneEntry::Skip)`.
+  It logs `code_index_prune: completed=<n> failed=<n> skipped=<n>` to stderr, or
+  `code_index_prune: skipped: global_locked`, or the error.
+- `JobConfig` gains `code_index.content_retention_days` (live, default 1). Python's
+  hourly run also takes it from config and passes `force=True`.
+
+`POST /api/code-index/prune` (`crates/gcodeindex/src/family/prune.rs`), a new
+`NATIVE_ROUTES` row with `callers: &[Caller::Operator]`, in Python's order:
+
+1. The `enabled` gate: 503 `{"detail":"Code index pruner not available"}`. Python's
+   pruner is `None` exactly when the daemon has no code indexer.
+2. The body, optional, as Python's `GlobalPruneRequest | None`:
+   - an absent body or `null` takes the defaults;
+   - `force` is a boolean and `retention_days` an integer of at least 1 or `null`;
+   - invalid JSON, a value of the wrong type and a `retention_days` below 1 return
+     Python's 422 bodies, recorded once from the Python route under `TestClient`, as
+     7.2's body checks are.
+3. `retention_days` defaults to `code_index.content_retention_days`, read through
+   `jobs::config::JobConfig::read`, as the job reads it.
+4. The work runs on a named `std::thread` with `PruneEntry::Wait`, and the handler
+   awaits a `tokio::sync::oneshot`. A global prune can run for minutes, and
+   `serve::run`'s runtime waits for every `spawn_blocking` task when it drops (P8
+   framing). This route alone departs from P5's `spawn_blocking` rule.
+5. An outcome returns 200 with its compact JSON, which is Python's `JSONResponse`
+   body. An `Err` returns 500 `{"detail":"Code index prune failed"}` and is logged to
+   gdaemon's stderr.
+
+Python changes:
+
+- `prune.py` loses the hourly half and the imports only it uses. `CodeIndexPruner`,
+  `run_operator_global_prune`, `prune_project` and their helpers stay for Python's
+  route until P9.
+- `init_orchestration` still builds `runner.code_index_pruner`, and it no longer
+  registers the cron handler. Its log and degraded-service lines name the pruner.
+- `REMOVED_AUTOMATION_JOB_NAMES` gains `gobby:code-index-prune`, and
+  `CRON_JOB_NAME_PRIORITIES` drops it. The scheduler deletes a removed system row and
+  its runs when it starts (`delete_removed_automation_jobs`), skips it when due,
+  rejects a manual run and refuses to enable it, and the cron listings hide it.
+  `RETIRED_SYSTEM_CRON_JOBS` would only disable the row, which would still list a
+  control whose run has no handler.
+
+Split. `src/gobby/storage/cron.py` is 867 lines. This leaf moves its job-name
+constants (`REMOVED_AUTOMATION_JOB_NAMES`, `CODEWIKI_NIGHTLY_JOB_PREFIX`,
+`RETIRED_AUTOMATION_JOB_NAME_PREFIXES`, `CRON_JOB_NAME_PRIORITIES`,
+`DEFAULT_CRON_JOB_PRIORITY`) and `is_removed_automation_job` to the new
+`src/gobby/storage/cron_job_names.py`. `cron.py` imports what it uses.
+`src/gobby/scheduler/scheduler.py` and `src/gobby/servers/routes/cron.py` import
+`is_removed_automation_job` from the new module. No test imports the moved names.
+
+Tests:
+
+- `test_prune.py` drops `test_global_prune_runs_in_process_and_clears_dirty_projects`,
+  `test_global_prune_failure_leaves_project_dirty`,
+  `test_global_prune_force_and_retention_reach_prune_project`,
+  `test_global_prune_held_lock_returns_successful_skip` and the three
+  `test_register_code_index_prune_cron_*` tests. The forced half of the third
+  repeats `test_operator_prune_skips_locked_unless_forced` and
+  `test_operator_prune_forwards_retention_days`, which stay.
+- `tests/storage/test_cron.py` adds the removed-row test.
+
+`docs/guides/code-index.md` says gdaemon's hourly job runs the global prune on the
+hub. Its route section still describes Python's route, which serves until P9.
+
+Deliberate differences from Python:
+
+- `force` is accepted and ignored. Python's `force` waits 5 s on an in-process
+  per-project lock that only another Python prune holds. Native prunes serialize under
+  `GLOBAL_PRUNE`, and a busy PostgreSQL project lock skips the project, as `gcode
+  prune` does.
+- No 504 and no 400. Both come from the `gcode` child: its timeout and its input
+  validation. The 120 s kill has no counterpart, and content GC stops at the 90 s
+  deadline between versions.
+- No hub delete for a pruned project whose root has gone. Python deletes the project
+  state when the root vanished during the run. Natively, eligibility has just required
+  the root, and the next maintenance pass reconciles a vanished root as
+  `missing_root` (8.2).
+- No prune-dirty bookkeeping. Python records a failed project in
+  `code_index_prune_dirty_projects` and clears the table after a clean hourly run.
+  `prune_dirty_projects`, its only reader, has no caller. P9 drops the table with
+  `prune.py`.
+- Python's model coerces string booleans and numeric strings. The native route returns
+  422 for them. `gcode prune` sends a JSON boolean and integer.
+- Disabling the cron row no longer stops the hourly prune, and `code_index.enabled`
+  does.
+- The job logs to gdaemon's stderr. Python wrote `global_prune` events to
+  `~/.gobby/logs/code-index-maintenance.log`.
+- A soft-deleted project is reconciled for every machine that selects it (8.2).
+- Rows run in `sync_rows` order. Python lists them by `last_indexed_at` descending, so
+  only the order inside the response's lists can differ. `gcode prune` counts them.
+- Until P9, Python's operator prune and the native hourly job can run at once, under
+  separate global locks. Each takes the project's PostgreSQL lock for its writes, so
+  one of them skips a project the other holds.
+
+Research context:
+- Python's hourly half: `src/gobby/code_index/prune.py::CodeIndexPruner.prune_all_projects`
+  returns a `skipped` result while `_global_lock` is held, else runs the operator
+  prune with `force=True` and the configured retention, logs a `global_prune` event
+  and clears the prune-dirty rows after a clean run.
+  `register_code_index_prune_cron` registers the system row `gobby:code-index-prune`
+  (handler `code-index:prune`, interval 3600 s).
+- Python's operator half: `_run_operator_global_prune_locked` snapshots
+  `list_indexed_projects` (the hub machine's rows, `last_indexed_at` descending) and
+  maps each `prune_project` suffix: `pruned`, `deferred_pending_sync` and
+  `reconciled` are completed; `skipped_locked`, `skipped_missing_root` and
+  `skipped_overlay` are skipped; anything else is failed with the whole outcome as
+  its reason, and the project is marked prune-dirty.
+- `prune_project` takes the per-project lock, defers on `get_pending_sync_files`
+  (limit 1, both targets, 300 s cooloff), resolves eligibility, reconciles a stale
+  project through `_reconcile_stale_selector`, and runs
+  `gcode --project <root> prune --force` through the gateway with 90 s of work and a
+  120 s timeout.
+- `src/gobby/servers/routes/code_index.py::create_code_index_router`'s `global_prune`
+  takes `GlobalPruneRequest { force: bool = False, retention_days: int | None (ge=1) }`
+  and returns 503 when `code_index_pruner` is `None` or `gcode` is unusable, 504 on a
+  gcode timeout, 400 on gcode input validation and 500 otherwise.
+- `crates/gcode/src/commands/status/prune.rs::prune_project_scoped` resolves its
+  context, discovers the project's stale records and content GC candidates,
+  authorizes, reconciles, runs content GC, prints both totals and bails on failures.
+  `content_gc.rs::prune_content_versions` is its only caller of content GC, and
+  `content_gc/tests.rs` calls `prune_content_versions_with` with injected closures.
+- `status/shared.rs::collect_projects_from` and `content_gc.rs::discover_content_gc`
+  read `read_local_machine_id`, which in gdaemon is the hub's own machine. The tests
+  use the local machine as the hub machine.
+- Content GC keeps a version whose synced projection's store is not configured
+  (`content_gc.rs`'s "retaining content version" branch). CI has no Falkor or Qdrant
+  (#21045), so the tests' pruned versions have `graph_synced` and `vectors_synced`
+  false.
+- `crates/gcode/src/daemon.rs::post_code_index_prune` posts `force` and
+  `retention_days` to this route, and `prune_global_with` counts the three lists and
+  fails on any `failed` entry.
+- `src/gobby/storage/cron.py::delete_removed_automation_jobs` runs from
+  `src/gobby/scheduler/scheduler.py` at start. `RETIRED_SYSTEM_CRON_JOBS`
+  (`src/gobby/runner_init/orchestration.py`) only disables a row.
+- Rejected alternatives:
+  - a `gcode --project <root> prune` child per project, which needs the managed grant
+    gdaemon cannot issue (P8 framing);
+  - deleting the operator half now, while Python still serves the route by default;
+  - disabling the row through `RETIRED_SYSTEM_CRON_JOBS`, which leaves a listed row
+    whose manual run fails;
+  - a new hub query ordered by `last_indexed_at`, which would change only the order
+    inside the response's lists;
+  - one context per content GC candidate, when discovery keeps only the row's
+    project.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(job_prune) | test(prune) | test(content_gc)'`;
+  - `cargo nextest run -p gobby-codeindex`;
+  - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_prune.py tests/storage/test_cron.py tests/scheduler/test_cron_scheduler.py tests/servers/test_http_cron.py tests/servers/routes/test_code_index_prune_route.py tests/reports/test_publishing_retirement.py -v`;
+  - on an isolated hub with `front_door.routes.code_index: native`, `gcode prune`
+    prints `Global prune: completed=<n>, failed=0, skipped=<n>`.
+
+**Granularity:** nine acceptance items and more than six production files. The hourly
+job and the route are one outcome: both enter `prune_all` under one global lock, one
+skipping and one waiting. The leaf that starts the native hourly prune deletes
+Python's (writer's choice 3), and the cron split goes with the row's removal.
+
+Consumers unchanged:
+- `src/gobby/servers/routes/code_index.py` — no-edit-reason: `global_prune` still calls `CodeIndexPruner.run_operator_global_prune`, which stays until P9.
+- `tests/servers/routes/test_code_index_prune_route.py` — no-edit-reason: drives Python's route over a stub pruner, which does not change.
+- `src/gobby/runner_init/servers.py` — no-edit-reason: still passes `code_index_pruner` to the HTTP server's services.
+- `src/gobby/app_context.py` — no-edit-reason: still holds `code_index_pruner` for the route.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.4.1 - Over the hub machine's rows, `prune_all` skips an empty root with reason `missing_root`, completes a project with a graph-pending file outside the cooloff and leaves its content, skips a live overlay with reason `skipped_overlay`, and neither lists nor touches a foreign machine's row. test: `crates/gcode/src/node/hub/job_prune/tests.rs::prune_all_defers_skips_and_ignores_foreign_rows`.
+- 8.4.2 - `prune_all` completes an unregistered project and removes its hub selector. With no Falkor configured it fails a registered `missing_root` project with reason `<id>:failed` and keeps its selector. With the project lock held by another connection it skips a stale project and a soft-deleted project with reason `skipped_locked`. test: `crates/gcode/src/node/hub/job_prune/tests.rs::stale_and_deleted_rows_reconcile_or_skip`.
+- 8.4.3 - For an active project, `prune_all` deletes an unsynced content version unreferenced for longer than `retention_days`, keeps a referenced one and one inside the retention, and lists the project as completed. test: `crates/gcode/src/node/hub/job_prune/tests.rs::active_projects_prune_content_past_retention`.
+- 8.4.4 - While `GLOBAL_PRUNE` is held, `prune_all` with `Skip` returns `None` at once, and with `Wait` returns its outcome after the release. test: `crates/gcode/src/node/hub/job_prune/tests.rs::the_global_lock_skips_or_waits`.
+- 8.4.5 - The prune job runs at 3600 s with `PruneEntry::Skip` and the published `content_retention_days`, and does nothing with `enabled` false. test: `crates/gcodeindex/src/jobs/tests.rs::prune_runs_hourly_with_live_retention`.
+- 8.4.6 - An API-key `POST /api/code-index/prune` is claimed. Over an active, an overlay and a failing project it returns 200 with Python's compact body for the three lists. With `retention_days` 5 a version unreferenced for 3 days stays, an absent body deletes it under the published retention of 1, and `force` changes nothing. test: `crates/gcodeindex/tests/family_prune.rs::prune_route_returns_the_python_outcome`.
+- 8.4.7 - `enabled` false and no published state return 503 `{"detail":"Code index pruner not available"}`. Invalid JSON, a string `force`, a string `retention_days` and `retention_days` 0 return Python's 422 bodies. An unreachable hub database returns 500 `{"detail":"Code index prune failed"}`. test: `crates/gcodeindex/tests/family_prune.rs::prune_route_follows_python_gates_and_errors`.
+- 8.4.8 - `delete_removed_automation_jobs` deletes a system `gobby:code-index-prune` row and its runs, and `list_jobs(exclude_removed_automation=True)` omits the row before the deletion. test: `tests/storage/test_cron.py::test_removed_automation_drops_the_code_index_prune_row`.
+- 8.4.9 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## E1 End-to-end verification
 `kind: verification`
