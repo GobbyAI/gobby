@@ -5682,6 +5682,13 @@ Research context:
   (`server.services.code_index_pruner`).
 - `gcode_gateway.py::GcodeGateway.prune_project_for_maintenance` loses its only
   caller and stays until 9.8.
+- gcode posts `POST /api/code-index/prune` itself (`post_code_index_prune`, from
+  `gcode prune --global`), with the bearer from `gcore`'s `read_api_key_for`. An API
+  key reaches 8.4's native route after 9.1. An agent's run token
+  (`GOBBY_AGENT_API_TOKEN`) is never claimed by the family, so it reaches Python. The
+  prune route has no grant route, so Python refuses that token before routing
+  (`src/gobby/servers/auth_service.py`, the `grant_route is None` branch) both before
+  and after this leaf. Nothing here changes for gcode.
 - Planned checks:
   - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/ tests/servers/ tests/test_runner_lifecycle.py tests/skills/ tests/test_parity_ledger.py -v`;
   - `uv run mypy src/`.
@@ -5697,8 +5704,8 @@ and its wiring are one outcome: deleting any one leaves the others dead or broke
 
 - 9.3.1 - `CodeIndexStorage` has no prune-dirty or projection-cleanup method, and its remaining storage tests pass. test: `tests/code_index/test_code_index_storage.py::test_code_index_storage_has_no_prune_or_cleanup_methods`.
 - 9.3.2 - `init_orchestration` with a code indexer builds no pruner and registers no code-index prune cron job. test: `tests/test_runner_lifecycle.py::test_orchestration_builds_no_code_index_pruner`.
-- 9.3.3 - The ledger names no `HTTP POST /api/code-index/prune` key, and the regenerated ledger matches its status files. test: `tests/test_parity_ledger.py::test_ledger_matches_status_files`.
-- 9.3.4 - The audit's prune entry points at `crates/gcodeindex/src/family/prune.rs`, and the documentation check passes. test: `tests/skills/test_reference_library.py::test_documentation_audits_are_valid`.
+- 9.3.3 - The ledger names no `HTTP POST /api/code-index/prune` key, and the regenerated ledger matches its status files. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+- 9.3.4 - The audit's prune entry points at `crates/gcodeindex/src/family/prune.rs`, and the documentation check passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.
 
 ### 9.4 Delete Python's graph path, clear, rebuild and invalidate routes [category: code] (depends: 9.3)
 `kind: deliverable`
@@ -5757,6 +5764,7 @@ Research context:
 
 Consumers unchanged:
 - `web/src/hooks/useCodeGraph.ts` — no-edit-reason: calls only the five routes Python keeps.
+- `crates/gcode/src/graph/code_graph/lifecycle.rs` — no-edit-reason: its HTTP lifecycle client targets `/graph/clear` and `/graph/rebuild`, which gdaemon's native family keeps serving after 9.4, and only tests call it (P7).
 
 **Granularity:** more than six target files, mostly tests and docs. The routes, the
 context methods behind them and their auth rows are one outcome.
@@ -5766,8 +5774,8 @@ context methods behind them and their auth rows are one outcome.
 - 9.4.1 - The OpenAPI paths list the five web UI routes and none of `/graph/path`, `/graph/clear`, `/graph/rebuild` or `/invalidate`. test: `tests/servers/routes/test_code_index_routes.py::test_router_serves_only_the_web_ui_reads`.
 - 9.4.2 - `match_grant_route` returns `None` for the three deleted POST paths, and an agent bearer is not authorized for them. test: `tests/servers/test_auth_service.py::test_code_index_projection_routes_are_not_agent_routes`.
 - 9.4.3 - `CodeIndexContext` keeps its overview and read methods, and their tests pass. test: `tests/code_index/test_code_index_context.py::test_context_graph_overview_resolves_project_root_and_delegates`.
-- 9.4.4 - The ledger names none of the four keys, the five web UI rows stay `proxied`, and the regenerated ledger matches. test: `tests/test_parity_ledger.py::test_ledger_matches_status_files`.
-- 9.4.5 - The audit's four entries point at the native handler files, and the documentation check passes. test: `tests/skills/test_reference_library.py::test_documentation_audits_are_valid`.
+- 9.4.4 - The ledger names none of the four keys, the five web UI rows stay `proxied`, and the regenerated ledger matches. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+- 9.4.5 - The audit's four entries point at the native handler files, and the documentation check passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.
 
 ### 9.5 Drop the pruner's tables [category: code] (depends: 9.4)
 `kind: deliverable`
@@ -5870,8 +5878,8 @@ which must land together.
 
 - 9.5.1 - The migration drops both tables, and a migrated schema has neither. file: `crates/gcore/assets/schema/migrations/470_drop_code_index_prune_tables.sql`.
 - 9.5.2 - The embedded schema identity names the new migration and the checked-in catalog is fresh. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
-- 9.5.3 - Every golden grant verifies under the new identity. test: `tests/runtime_grants/test_golden_vectors.py::test_golden_vectors_verify`.
-- 9.5.4 - The gcode privilege manifest names neither table and matches the migrated grants. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_matches_migrated_privileges`.
+- 9.5.3 - Every golden grant's pinned payload checksum matches under the new identity. test: `tests/runtime_grants/test_golden_vectors.py::test_payload_checksum_pinned`.
+- 9.5.4 - The gcode privilege manifest names neither table and matches the migrated grants. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
 - 9.5.5 - `gcode`, `gdaemon` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 9.6 Grants stop listing the projection operations [category: code] (depends: 9.5, #24449)
@@ -5881,6 +5889,7 @@ Targets:
 - `src/gobby/runtime_grants/service.py::*` — scope-reason: `FALKOR_OPERATIONS` and `QDRANT_OPERATIONS` go, `_falkor_capability` and `_qdrant_capability` issue `BrokeredCapability(operations=())`, and `capabilities_from_snapshot` stops extending `broker_operations` with them
 - `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: its Falkor and Qdrant operations go, so the payload checksum and signature are recomputed
 - `tests/runtime_grants/golden/remote_interactive_brokered.json`
+- `tests/runtime_grants/test_remote_principal_grants.py`
 - `crates/gruntime/src/capabilities.rs`
 - `crates/gruntime/tests/fixtures/capability_vectors.json`
 - `tests/runtime_grants/test_capability_vectors.py`
@@ -5896,6 +5905,11 @@ and `broker_operations` lists only the remaining ones (`embed` and 1.6's
 `node_code_index`). #24449 ports `capabilities_from_snapshot` with the Falkor and
 Qdrant operations, so `capabilities.rs` drops them too, and `capability_vectors.json`
 is regenerated from Python. The two goldens are re-signed as 9.5 describes.
+
+Add `test_brokered_projection_stores_carry_no_operations` to 1.6's
+`test_remote_principal_grants.py`. It issues a grant for a remote interactive
+principal and asserts that the Falkor and Qdrant capabilities are Brokered with
+`operations == ()`, and that `broker_operations` names no Falkor or Qdrant operation.
 
 Research context:
 - `gcore`'s `Brokered { operations: Vec<BrokerOperation> }`
@@ -5915,7 +5929,7 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 9.6.1 - With Falkor and Qdrant brokered, an issued grant's Falkor and Qdrant capabilities carry no operations and `broker_operations` names no projection operation. test: `tests/runtime_grants/test_golden_vectors.py::test_golden_vectors_verify`.
+- 9.6.1 - With Falkor and Qdrant brokered, an issued grant's Falkor and Qdrant capabilities carry no operations and `broker_operations` names no projection operation. test: `tests/runtime_grants/test_remote_principal_grants.py::test_brokered_projection_stores_carry_no_operations`.
 - 9.6.2 - The Rust capability port matches the regenerated Python vectors. test: `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.
 - 9.6.3 - `gdaemon` is one patch version above the executor's starting tip in its `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -5997,9 +6011,9 @@ together, so one leaf deletes them together.
 **Acceptance:**
 
 - 9.7.1 - `CodeIndexContext` takes no breaker, and its tests pass. test: `tests/code_index/test_code_index_context.py::test_context_graph_overview_resolves_project_root_and_delegates`.
-- 9.7.2 - The worktree test derives the overlay id from the namespace and passes. test: `tests/worktrees/test_creation.py::test_create_worktree_records_overlay_id`.
+- 9.7.2 - The worktree test derives the overlay id from the namespace and passes. test: `tests/worktrees/test_creation.py::test_creation_registers_canonical_root_for_overlay_grants`.
 - 9.7.3 - `CodeIndexConfig` has neither key, and the checked-in contract equals fresh generator output. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
-- 9.7.4 - The settings section renders without the two fields. test: `web/src/components/settings/sections/__tests__/RuntimeInfrastructureSection.test.tsx::renders code index settings`.
+- 9.7.4 - The settings section renders without the two fields. test: `web/src/components/settings/sections/__tests__/RuntimeInfrastructureSection.test.tsx::renders kept code-index summary fields and omits retired controls`.
 - 9.7.5 - Every corpus case replays equal with the re-recorded config cases. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 9.7.6 - `gcode`, `gdaemon` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
