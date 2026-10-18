@@ -1867,3 +1867,667 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   gobby#16993. Round 2 closed F1 to F7, N1 to N5, H1 and H2 at 76fd814, 7724de5 and
   a09dde3, and left one gate: #15977's ruling on the two new Python files. D24
   records that ruling at a223af6. The stale M1 is withdrawn for a fresh derivation.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Every binary release publishes signed checksums
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `sign_release.sh sums` writes a `SHA256SUMS` listing
+    each named file''s hash and a `SHA256SUMS.sig` that the matching Ed25519 public
+    key verifies. test: `crates/gdaemon/tests/release_scripts.rs::sums_signature_verifies`.
+
+    1.1.2: `sign_release.sh file` writes a detached signature the public key verifies,
+    and either mode refuses an empty key with nothing written. test: `crates/gdaemon/tests/release_scripts.rs::file_mode_and_missing_key`.
+
+    1.1.3: Each of the five binary release workflows signs its checksums in the `release`
+    environment before `gh release create` and uploads `SHA256SUMS` and `SHA256SUMS.sig`.
+    test: `crates/gcode/tests/release_workflows.rs::release_workflows_sign_checksums`.'
+  labels:
+  - covers:node-install-enrollment:1.1:1.1.1
+  - covers:node-install-enrollment:1.1:1.1.2
+  - covers:node-install-enrollment:1.1:1.1.3
+  tdd: true
+  source_section: '1.1'
+  assigned_agent: developer
+- title: gmcp release workflow
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `release-gmcp.yml` runs on `gmcp-v*` tags, refuses
+    a tag that differs from the crate version, builds the six gdaemon targets, and
+    uploads the `gmcp-<target>` archives with their `.sha256` sidecars. test: `crates/gcode/tests/release_workflows.rs::release_gmcp_builds_and_uploads_six_targets`.
+
+    1.2.2: `release-gmcp.yml` signs its checksums like the other binary workflows.
+    test: `crates/gcode/tests/release_workflows.rs::release_workflows_sign_checksums`.'
+  labels:
+  - covers:node-install-enrollment:1.2:1.2.1
+  - covers:node-install-enrollment:1.2:1.2.2
+  tdd: true
+  source_section: '1.2'
+  assigned_agent: developer
+- title: gdaemon releases carry node bundles
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '2.1'
+  validation_criteria: '1.3.1: From verified member archives, the script writes a
+    signed `node-release.json` with the contract, each member''s version and per-target
+    hash, and four bundles that each extract to `gobby-node/` with six executable
+    members and the signed manifest. test: `crates/gdaemon/tests/release_scripts.rs::bundles_carry_signed_manifest`.
+
+    1.3.2: A member release that is missing, carries a bad signature or a hash mismatch,
+    a gdaemon version that differs from the tag, or disagreeing identities fail the
+    script with nothing written. test: `crates/gdaemon/tests/release_scripts.rs::bundle_refuses_unverified_or_incoherent_members`.
+
+    1.3.3: `release-gdaemon.yml` assembles the bundles after checksum generation and
+    before signing, and uploads the bundles and the signed manifest. test: `crates/gdaemon/tests/release_workflow.rs::release_workflow_publishes_node_bundles`.'
+  labels:
+  - covers:node-install-enrollment:1.3:1.3.1
+  - covers:node-install-enrollment:1.3:1.3.2
+  - covers:node-install-enrollment:1.3:1.3.3
+  tdd: true
+  source_section: '1.3'
+  assigned_agent: developer
+- title: '`gdaemon node` and the no-toolchain harness'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: `gdaemon node release-info --json` prints the crate
+    version and `node_commands::CONTRACT_VERSION` in the sandbox, with no tripwire
+    fired. test: `crates/gdaemon/tests/node_setup.rs::release_info_reports_version_and_contract_without_python`.
+
+    2.1.2: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:2.1:2.1.1
+  - covers:node-install-enrollment:2.1:2.1.2
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: '`gobby node install` and `gobby node enroll` run the sibling gdaemon'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: With no daemon URL or token available, `gclient node
+    install` and `gclient node enroll` exec the sibling `gdaemon node <verb>` with
+    every argument unchanged and return its exit status. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_exec_sibling_gdaemon`.
+
+    2.2.2: A missing sibling `gdaemon` exits 2 naming the expected path. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_name_missing_gdaemon`.
+
+    2.2.3: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:2.2:2.2.1
+  - covers:node-install-enrollment:2.2:2.2.2
+  - covers:node-install-enrollment:2.2:2.2.3
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: fullstack
+- title: '`gobby node enroll`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: On an empty home, against a self-signed TLS stub hub,
+    enroll with the matching fingerprint and a piped password writes a 0600 remote
+    bootstrap that gcore parses to that hub with `api_key`, `api_key_id` and `hub_cert`,
+    writes `tls/hub.pem` at 0600 and creates `machine_id`, with no tripwire fired.
+    test: `crates/gdaemon/tests/node_setup.rs::enroll_creates_node_bootstrap_without_python`.
+
+    2.3.2: Enrolling again with the same hub replaces the key and keeps every other
+    bootstrap key, and another hub, a local or hub bootstrap, or a `--hub` naming
+    the node''s own origin is refused before any request with nothing written. test:
+    `crates/gdaemon/tests/node_setup.rs::enroll_refuses_rehome_and_local_bootstrap`.
+
+    2.3.3: Each malformed or mismatched hub reply (bad key, non-UUID ids, foreign
+    machine, wrong hint, reused key id) refuses with nothing saved and names the unverified
+    key id. test: `crates/gdaemon/tests/node_setup.rs::enroll_refuses_unverified_reply`.
+
+    2.3.4: `--fingerprint` with http, and http to a non-loopback host without `--insecure`,
+    are refused before any request. test: `crates/gdaemon/tests/node_setup.rs::enroll_refuses_insecure_transport`.
+
+    2.3.5: A 401, an unreachable hub, a stalled hub past 10 s, a fingerprint mismatch
+    and a certificate that does not cover the host each leave the prior enrollment
+    byte for byte, or no bootstrap on an empty home, and the SAN case says the password
+    was not sent. test: `crates/gdaemon/tests/node_setup.rs::enroll_failure_keeps_prior_enrollment`.
+
+    2.3.6: An unusable bootstrap lock or an unwritable home rolls back the pin and
+    revokes the minted key through login and DELETE, and a failed revoke names the
+    key id. test: `crates/gdaemon/tests/node_setup.rs::enroll_rolls_back_and_revokes`.
+
+    2.3.7: Settle reports committed when the bootstrap names the key, and unresolved
+    when the prior pin cannot be restored. test: `crates/gdaemon/src/node_setup/enroll/tests.rs::settle_decides_by_bootstrap`.
+
+    2.3.8: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:2.3:2.3.1
+  - covers:node-install-enrollment:2.3:2.3.2
+  - covers:node-install-enrollment:2.3:2.3.3
+  - covers:node-install-enrollment:2.3:2.3.4
+  - covers:node-install-enrollment:2.3:2.3.5
+  - covers:node-install-enrollment:2.3:2.3.6
+  - covers:node-install-enrollment:2.3:2.3.7
+  - covers:node-install-enrollment:2.3:2.3.8
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Rust remediation names `gobby node enroll`
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `gdaemon serve` on an unenrolled node home refuses
+    naming `gobby node enroll`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::serve_without_key_names_enroll_without_python`.
+
+    2.4.2: No file under `crates/*/src` contains `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_crate_names_python_login`.
+
+    2.4.3: The node startup and claim tests assert the new remediation. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
+
+    2.4.4: `gcode`, `gdaemon`, `ghook` and `gclient` are one patch version above the
+    executor''s starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    2.4.5: `gmcp` is one patch version above the executor''s starting tip in `crates/gmcp/Cargo.toml`
+    and `Cargo.lock`. file: `crates/gmcp/Cargo.toml`.
+
+    2.4.6: The gcode prune floor equals the bumped `gcode` pin. test: `tests/code_index/test_gcode_gateway.py::test_managed_gcode_pin_matches_prune_budget_floor`.'
+  labels:
+  - covers:node-install-enrollment:2.4:2.4.1
+  - covers:node-install-enrollment:2.4:2.4.2
+  - covers:node-install-enrollment:2.4:2.4.3
+  - covers:node-install-enrollment:2.4:2.4.4
+  - covers:node-install-enrollment:2.4:2.4.5
+  - covers:node-install-enrollment:2.4:2.4.6
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: fullstack
+- title: Python login retires and pair_node enrolls with the Rust verb
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.5.1: `pair_node` enrolls with `gdaemon node enroll` under
+    a tripwire-only `PATH`, the tripwire stays silent, and the enrolled node relays
+    and handshakes. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
+
+    2.5.2: `gdaemon node enroll` pins a self-signed live hub. test: `tests/e2e/test_auth_login_e2e.py::test_enroll_pins_self_signed_hub`.
+
+    2.5.3: `gobby auth login` is no longer a registered command, and `gobby auth key`
+    still is. test: `tests/cli/test_auth_login.py::test_login_command_is_gone`.
+
+    2.5.4: The audit lists `gobby node enroll` and no `gobby auth login` operation.
+    test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.
+
+    2.5.5: The middleware guidance names the new verb. test: `tests/servers/test_auth_middleware.py::test_protected_routes_require_auth_when_enabled`.
+
+    2.5.6: The committed parity ledger matches the inventory with `CLI gobby auth
+    login` dropped by decision #24657. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.'
+  labels:
+  - covers:node-install-enrollment:2.5:2.5.1
+  - covers:node-install-enrollment:2.5:2.5.2
+  - covers:node-install-enrollment:2.5:2.5.3
+  - covers:node-install-enrollment:2.5:2.5.4
+  - covers:node-install-enrollment:2.5:2.5.5
+  - covers:node-install-enrollment:2.5:2.5.6
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Release verification library
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '3.1.1: A signature by the test key over `SHA256SUMS` verifies,
+    and a changed byte, another key or a malformed public key refuses. test: `crates/gdaemon/src/release/tests.rs::signature_verifies_only_the_signed_bytes`.
+
+    3.1.2: The embedded `release-signing.pub` parses as an Ed25519 key. test: `crates/gdaemon/src/release/tests.rs::embedded_release_key_parses`.
+
+    3.1.3: `download_bundle` from a fake release yields a verified bundle directory,
+    and a bad `SHA256SUMS` signature, a bundle hash mismatch or a member hash mismatch
+    refuses with no staging directory left. test: `crates/gdaemon/src/release/tests.rs::download_bundle_verifies_before_and_after_extraction`.
+
+    3.1.4: `published_releases` keeps only published `gdaemon-v` tags, newest first.
+    test: `crates/gdaemon/src/release/tests.rs::published_releases_keep_gdaemon_tags`.
+
+    3.1.5: `bundle_target` names the four bundle targets and nothing for other platforms.
+    test: `crates/gdaemon/src/release/tests.rs::bundle_target_matches_uname_names`.
+
+    3.1.6: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.1:3.1.1
+  - covers:node-install-enrollment:3.1:3.1.2
+  - covers:node-install-enrollment:3.1:3.1.3
+  - covers:node-install-enrollment:3.1:3.1.4
+  - covers:node-install-enrollment:3.1:3.1.5
+  - covers:node-install-enrollment:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: '`gobby node install` enrolls and promotes the bundle'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Install from a signed bundle directory on an empty
+    home enrolls against the TLS stub hub, promotes all six members to new inodes
+    at 0755, writes the identity stamp and `.node-release.json`, and prints the `export
+    PATH` line, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_enrolls_and_promotes_bundle_without_python`.
+
+    3.2.2: An unsigned or tampered bundle, a missing member or disagreeing identities
+    refuse before any member is promoted. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_unverified_or_incoherent_bundle`.
+
+    3.2.3: Install run from `<gobby_home>/bin` on an enrolled home skips enrollment
+    and promotion and needs no `--email`, while an unenrolled home without `--email`
+    is refused with nothing written. test: `crates/gdaemon/tests/node_setup.rs::install_skips_done_steps`.
+
+    3.2.4: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.2:3.2.1
+  - covers:node-install-enrollment:3.2:3.2.2
+  - covers:node-install-enrollment:3.2:3.2.3
+  - covers:node-install-enrollment:3.2:3.2.4
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: '`gobby node install` stages the pinned SRT'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: `install_from_tarball` stages the composed minimal
+    tarball with stub `node` and `npm`, and #24374''s verifier accepts the result.
+    test: `crates/gdaemon/tests/node_setup.rs::srt_installs_from_minimal_tarball`.
+
+    3.3.2: The verb reuses a seeded verified install without running `npm`, with no
+    tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_reuses_verified_srt_without_python`.
+
+    3.3.3: The verb refuses a tarball off its pin (the composed one), Node older than
+    22.12.0, or no `npm`, leaving no staging directory and no install, with no tripwire
+    fired. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
+
+    3.3.4: The Rust pins, receipt fields and patch table equal the Python ones (read
+    with `include_str!`), the lockfile and runner copies equal their Python originals
+    byte for byte, and the embedded lockfile and runner match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
+
+    3.3.5: Patches apply once, skip a patched file, and refuse unknown bytes; a failed
+    promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`.
+
+    3.3.6: Run as the opt-in check, with network and Node.js 22.12.0 or later on `PATH`
+    after the tripwires, the verb fetches the registry tarball with `npm pack`, matches
+    its pin, and #24374''s verifier accepts the install, with no tripwire fired. test:
+    `crates/gdaemon/tests/node_setup.rs::install_fetches_registry_srt`.
+
+    3.3.7: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.3:3.3.1
+  - covers:node-install-enrollment:3.3:3.3.2
+  - covers:node-install-enrollment:3.3:3.3.3
+  - covers:node-install-enrollment:3.3:3.3.4
+  - covers:node-install-enrollment:3.3:3.3.5
+  - covers:node-install-enrollment:3.3:3.3.6
+  - covers:node-install-enrollment:3.3:3.3.7
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: '`gobby node install` installs claude hooks and the MCP entry'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: Install over the golden''s input writes the golden''s
+    claude hooks and `gmcp` entry, keeps the user''s handlers and other keys, and
+    backs up `settings.json`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_claude_hooks_match_python_golden`.
+
+    3.4.2: Python''s installer produces the claude golden. test: `tests/install/test_node_setup_golden.py::test_claude_golden_matches_python`.
+
+    3.4.3: A CLI absent from `PATH` is skipped with its config untouched, and a path
+    with a space is single-quoted as Python quotes it. test: `crates/gdaemon/tests/node_setup.rs::install_skips_absent_cli_and_quotes_like_python`.
+
+    3.4.4: The crate-local claude template copy equals `src/gobby/install/claude/hooks-template.json`
+    byte for byte. test: `crates/gdaemon/tests/node_setup.rs::claude_template_copy_matches_python`.
+
+    3.4.5: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.4:3.4.1
+  - covers:node-install-enrollment:3.4:3.4.2
+  - covers:node-install-enrollment:3.4:3.4.3
+  - covers:node-install-enrollment:3.4:3.4.4
+  - covers:node-install-enrollment:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: '`gobby node install` installs codex hooks, trust and the MCP entry'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: Install over the golden''s input writes the golden''s
+    codex hooks, trust-entry keys and `gmcp` block, each `trusted_hash` is the Rust
+    hash of the hook it names, and a user comment in `config.toml` survives, with
+    no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_codex_hooks_match_python_golden`.
+
+    3.5.2: Python''s installer produces the codex golden. test: `tests/install/test_node_setup_golden.py::test_codex_golden_matches_python`.
+
+    3.5.3: The Rust trust hash equals each vector''s Python hash. test: `crates/gdaemon/src/node_setup/codex/tests.rs::trust_hash_matches_python_vectors`.
+
+    3.5.4: Python''s hash produces the trust vectors. test: `tests/install/test_node_setup_golden.py::test_codex_trust_vectors_match_python`.
+
+    3.5.5: The crate-local codex template copy equals `src/gobby/install/codex/hooks-template.json`
+    byte for byte. test: `crates/gdaemon/tests/node_setup.rs::codex_template_copy_matches_python`.
+
+    3.5.6: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.5:3.5.1
+  - covers:node-install-enrollment:3.5:3.5.2
+  - covers:node-install-enrollment:3.5:3.5.3
+  - covers:node-install-enrollment:3.5:3.5.4
+  - covers:node-install-enrollment:3.5:3.5.5
+  - covers:node-install-enrollment:3.5:3.5.6
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: '`gobby node install` installs droid hooks and the MCP entry'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '3.6.1: Install over the golden''s input writes the golden''s
+    droid hooks and `gmcp` entry, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_droid_hooks_match_python_golden`.
+
+    3.6.2: Python''s installer produces the droid golden. test: `tests/install/test_node_setup_golden.py::test_droid_golden_matches_python`.
+
+    3.6.3: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.6:3.6.1
+  - covers:node-install-enrollment:3.6:3.6.2
+  - covers:node-install-enrollment:3.6:3.6.3
+  tdd: true
+  source_section: '3.6'
+  implementation_domain: backend
+- title: '`gobby node install` installs grok hooks and the MCP entry'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.6'
+  validation_criteria: '3.7.1: Install over the golden''s input writes the golden''s
+    grok hooks, `compat.claude.hooks = false` and `gmcp` server, keeps the user comment
+    and the other server, and backs up both files, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_grok_hooks_match_python_golden`.
+
+    3.7.2: Python''s installer and MCP writer produce the grok golden. test: `tests/install/test_node_setup_golden.py::test_grok_golden_matches_python`.
+
+    3.7.3: The crate-local grok template copy equals `src/gobby/install/grok/hooks-template.json`
+    byte for byte. test: `crates/gdaemon/tests/node_setup.rs::grok_template_copy_matches_python`.
+
+    3.7.4: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.7:3.7.1
+  - covers:node-install-enrollment:3.7:3.7.2
+  - covers:node-install-enrollment:3.7:3.7.3
+  - covers:node-install-enrollment:3.7:3.7.4
+  tdd: true
+  source_section: '3.7'
+  implementation_domain: backend
+- title: '`gobby node install` installs agy hooks and the MCP entry'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.7'
+  validation_criteria: '3.8.1: Install over the golden''s input writes the golden''s
+    agy hooks and `gmcp` entry, keeps the other named hook and server, and writes
+    through a symlinked `mcp_config.json`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_agy_hooks_match_python_golden`.
+
+    3.8.2: Python''s installer produces the agy golden. test: `tests/install/test_node_setup_golden.py::test_agy_golden_matches_python`.
+
+    3.8.3: A stub `agy` whose `/hooks` lists the gobby hook is reported verified,
+    and one that fails is reported without failing install. test: `crates/gdaemon/tests/node_setup.rs::install_agy_reports_hook_verification`.
+
+    3.8.4: The crate-local agy template copy equals `src/gobby/install/agy/hooks-template.json`
+    byte for byte. test: `crates/gdaemon/tests/node_setup.rs::agy_template_copy_matches_python`.
+
+    3.8.5: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.8:3.8.1
+  - covers:node-install-enrollment:3.8:3.8.2
+  - covers:node-install-enrollment:3.8:3.8.3
+  - covers:node-install-enrollment:3.8:3.8.4
+  - covers:node-install-enrollment:3.8:3.8.5
+  tdd: true
+  source_section: '3.8'
+  implementation_domain: backend
+- title: '`gobby node install` starts the node service and waits for the hub'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.8'
+  validation_criteria: '3.9.1: On macOS, install writes the plist fixture''s content
+    for the sandbox, boots it out and in through `launchctl`, and returns once the
+    stub hub lists the machine connected, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_loads_launch_agent_and_waits_without_python`.
+
+    3.9.2: On Linux, install writes the unit fixture''s content, reloads, enables
+    and restarts it through `systemctl --user`, prints the linger command when lingering
+    is off, and returns once the stub hub lists the machine connected, with no tripwire
+    fired. test: `crates/gdaemon/tests/node_setup.rs::install_starts_systemd_unit_and_waits_without_python`.
+
+    3.9.3: While the stub hub''s row shows a refusal with a target, install prints
+    that the node is moving to it and keeps waiting past the first bound, and it returns
+    once the row shows the machine connected. test: `crates/gdaemon/tests/node_setup.rs::install_waits_while_node_moves_to_target`.
+
+    3.9.4: When the hub never lists the node connected, or refuses it with no target,
+    install exits 1 after the bound and prints the refusal the hub reports and the
+    log path. test: `crates/gdaemon/tests/node_setup.rs::install_reports_unconnected_node`.
+
+    3.9.5: The Overview''s install command runs whole in one sandbox, from bundle
+    and enrollment through SRT, the five CLIs and the service, and leaves a node home
+    that `NodeServices::prepare` accepts, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
+
+    3.9.6: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:3.9:3.9.1
+  - covers:node-install-enrollment:3.9:3.9.2
+  - covers:node-install-enrollment:3.9:3.9.3
+  - covers:node-install-enrollment:3.9:3.9.4
+  - covers:node-install-enrollment:3.9:3.9.5
+  - covers:node-install-enrollment:3.9:3.9.6
+  tdd: true
+  source_section: '3.9'
+  implementation_domain: backend
+- title: The handshake carries the contract and the hub refuses skew both ways
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.9'
+  validation_criteria: '4.1.1: A hello whose contract is below the hub''s is refused
+    with `node_too_old`, close code 4426, both contracts and a message naming both
+    gdaemon versions, and the machine is neither registered nor heartbeated. test:
+    `crates/gdaemon/tests/node_release.rs::hub_refuses_node_too_old`.
+
+    4.1.2: A hello whose contract is above the hub''s is refused with `hub_too_old`
+    and a message telling the operator to upgrade the hub first. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_hub_too_old`.
+
+    4.1.3: A hello without a contract is refused as `node_too_old` with the re-install
+    instruction. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_node_without_contract`.
+
+    4.1.4: `admit` admits exactly when the contracts are equal, names `node_too_old`
+    below and `hub_too_old` above, and with no target gives the no-published-release
+    message. test: `crates/gdaemon/src/nodes/release_frames/tests.rs::admit_follows_contract_rule`.
+
+    4.1.5: `GET /api/machines` shows a refused machine''s refusal, and a later admission
+    clears it. test: `crates/gdaemon/tests/node_release.rs::machines_api_reports_refusal`.
+
+    4.1.6: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:4.1:4.1.1
+  - covers:node-install-enrollment:4.1:4.1.2
+  - covers:node-install-enrollment:4.1:4.1.3
+  - covers:node-install-enrollment:4.1:4.1.4
+  - covers:node-install-enrollment:4.1:4.1.5
+  - covers:node-install-enrollment:4.1:4.1.6
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: The hub resolves the release target
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: With releases above, equal to and below the hub''s
+    version, the target is the highest one not above the hub whose contract equals
+    the hub''s, a release without a valid signed manifest is skipped, and with no
+    such release the target is null. test: `crates/gdaemon/src/nodes/release_target/tests.rs::target_is_newest_admitted_release_not_above_hub`.
+
+    4.2.2: A failed refresh keeps the last good target, and the cache refreshes after
+    10 minutes. test: `crates/gdaemon/src/nodes/release_target/tests.rs::failed_refresh_keeps_last_target`.
+
+    4.2.3: The ack and the refuse frame carry the target, and `GET /api/machines`
+    rows show it. test: `crates/gdaemon/tests/node_release.rs::ack_and_refusal_carry_target`.
+
+    4.2.4: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:4.2:4.2.1
+  - covers:node-install-enrollment:4.2:4.2.2
+  - covers:node-install-enrollment:4.2:4.2.3
+  - covers:node-install-enrollment:4.2:4.2.4
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: The node stages the target and activates it when idle
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: An ack naming a newer target makes the node download,
+    verify and stage it from a fake release and report it staged, while heartbeats
+    continue. test: `crates/gdaemon/tests/node_release.rs::node_stages_target_from_ack`.
+
+    4.3.2: With no run in its agent state, the node promotes the staged target to
+    new inodes with the stamp and `.node-release.json` once staging completes, and
+    `gdaemon serve` exits with status 75. test: `crates/gdaemon/tests/node_release.rs::node_activates_staged_release_and_exits_75`.
+
+    4.3.3: A target older than the running release is staged and activated the same
+    way. test: `crates/gdaemon/tests/node_release.rs::node_downgrades_to_older_target`.
+
+    4.3.4: A failed download or verification reports the error, leaves no staging
+    directory and keeps the current set running. test: `crates/gdaemon/tests/node_release.rs::node_reports_failed_staging`.
+
+    4.3.5: A refused node stages the refusal''s target and activates without a channel,
+    while the hub''s `agent_runs` still lists a run on the machine as running. test:
+    `crates/gdaemon/tests/node_release.rs::refused_node_converges_to_target`.
+
+    4.3.6: Activation waits while the agent state holds an accepted, preparing or
+    launched run, and proceeds at the first check after the state empties; a failed
+    promotion keeps `.staged-<target>`, and the next check promotes it. test: `crates/gdaemon/src/node_setup/update/tests.rs::activation_waits_for_idle_state_and_retries_failed_promotion`.
+
+    4.3.7: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:4.3:4.3.1
+  - covers:node-install-enrollment:4.3:4.3.2
+  - covers:node-install-enrollment:4.3:4.3.3
+  - covers:node-install-enrollment:4.3:4.3.4
+  - covers:node-install-enrollment:4.3:4.3.5
+  - covers:node-install-enrollment:4.3:4.3.6
+  - covers:node-install-enrollment:4.3:4.3.7
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: The hub drives staging
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: A target change sends `release` to each live node whose
+    version differs and to no other. test: `crates/gdaemon/tests/node_release.rs::target_change_sends_release_frames`.
+
+    4.4.2: `POST /api/nodes/update` for one machine or all reports `sent`, `current`,
+    `offline` or `no_target` per owned machine, and a machine the caller does not
+    own is refused with nothing sent. test: `crates/gdaemon/tests/node_release.rs::update_api_drives_owned_machines_only`.
+
+    4.4.3: `GET /api/machines` rows show the staged release and any staging error.
+    test: `crates/gdaemon/tests/node_release.rs::machines_api_reports_staged_release`.
+
+    4.4.4: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:4.4:4.4.1
+  - covers:node-install-enrollment:4.4:4.4.2
+  - covers:node-install-enrollment:4.4:4.4.3
+  - covers:node-install-enrollment:4.4:4.4.4
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: '`gobby node list` and `gobby node update`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: '4.5.1: `gclient node list` renders each machine''s release,
+    target, staged release and state from a fake daemon''s `/api/machines`, and `--json`
+    prints the response. test: `crates/gclient/tests/node_verbs.rs::node_list_renders_machines`.
+
+    4.5.2: `gclient node update --machine <ref>` and `--all` post the matching body
+    and print each outcome, and neither or both flags is a usage error. test: `crates/gclient/tests/node_verbs.rs::node_update_posts_selection`.
+
+    4.5.3: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-install-enrollment:4.5:4.5.1
+  - covers:node-install-enrollment:4.5:4.5.2
+  - covers:node-install-enrollment:4.5:4.5.3
+  tdd: true
+  source_section: '4.5'
+  implementation_domain: fullstack
+- title: Node setup, release and CLI docs
+  category: docs
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '4.5'
+  validation_criteria: '5.1.1: The node guide documents the requirements, the three
+    commands, the service, updates, both skew directions and the two operator verbs,
+    with no Python step. file: `docs/guides/node-setup.md`.
+
+    5.1.2: The release guide documents signing, the gmcp workflow and the member-first,
+    gdaemon-last tag order. file: `docs/guides/release-guide.md`.
+
+    5.1.3: The CLI reference documents the four `gobby node` verbs and has no `gobby
+    auth login` entry. file: `docs/guides/cli-commands.md`.
+
+    5.1.4: The documented install command is the one the sandbox runs without Python.
+    test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
+
+    5.1.5: No Markdown page under `docs/` outside `docs/audits/`, `docs/research/`
+    and the generated parity ledger names `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_doc_names_python_login`.
+
+    5.1.6: The release guide orders a contract change as publish first, then hub cutover,
+    and the node guide states the same rule with the no-published-release refusal.
+    file: `docs/guides/release-guide.md`.'
+  labels:
+  - covers:node-install-enrollment:5.1:5.1.1
+  - covers:node-install-enrollment:5.1:5.1.2
+  - covers:node-install-enrollment:5.1:5.1.3
+  - covers:node-install-enrollment:5.1:5.1.4
+  - covers:node-install-enrollment:5.1:5.1.5
+  - covers:node-install-enrollment:5.1:5.1.6
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: tech-writer
+```
