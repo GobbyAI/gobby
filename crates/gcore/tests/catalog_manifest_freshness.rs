@@ -479,6 +479,85 @@ fn migration_adds_api_keys_and_machine_liveness_columns() -> anyhow::Result<()> 
 }
 
 #[test]
+fn validation_run_records_enforce_outcomes_reuse_and_runtime_grants() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+
+    let insert = "INSERT INTO public.validation_run_records \
+        (id, project_id, session_id, agent_run_id, argv, cwd, repo_root, \
+         started_at, completed_at, outcome, exit_code, reusable, not_reusable_reason) \
+        VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'run', \
+                '[\"uv\",\"run\",\"pytest\"]', '/repo', '/repo', now(), now(), $1, $2, $3, $4)";
+    for (outcome, exit_code) in [
+        ("passed", Some(0_i32)),
+        ("failed", Some(1_i32)),
+        ("timed_out", None),
+        ("interrupted", None),
+    ] {
+        assert_eq!(
+            client.execute(insert, &[&outcome, &exit_code, &true, &None::<String>])?,
+            1
+        );
+    }
+    assert_eq!(
+        client.execute(insert, &[&"passed", &Some(0_i32), &false, &Some("dirty tree")])?,
+        1
+    );
+    for (outcome, exit_code, reusable, reason) in [
+        ("unknown", Some(0_i32), true, None),
+        ("passed", Some(0_i32), false, None),
+        ("passed", Some(0_i32), true, Some("dirty tree")),
+        ("timed_out", Some(0_i32), false, Some("timeout")),
+        ("interrupted", Some(1_i32), false, Some("interrupt")),
+    ] {
+        let error = client
+            .execute(insert, &[&outcome, &exit_code, &reusable, &reason])
+            .expect_err("invalid run record must fail a CHECK constraint");
+        assert_eq!(error.code(), Some(&postgres::error::SqlState::CHECK_VIOLATION));
+    }
+
+    for privilege in ["SELECT", "INSERT", "DELETE"] {
+        let allowed: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_daemon_runtime', \
+                 'public.validation_run_records', $1)",
+                &[&privilege],
+            )?
+            .get(0);
+        assert!(allowed, "runtime needs {privilege}");
+    }
+    let runtime_update: bool = client
+        .query_one(
+            "SELECT has_table_privilege('gobby_daemon_runtime', \
+             'public.validation_run_records', 'UPDATE')",
+            &[],
+        )?
+        .get(0);
+    assert!(!runtime_update, "completed run records must not be updated");
+    let public_grants: i64 = client
+        .query_one(
+            "SELECT count(*) FROM pg_class c, LATERAL aclexplode(c.relacl) a \
+             WHERE c.oid = 'public.validation_run_records'::regclass AND a.grantee = 0",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(public_grants, 0);
+    let index: String = client
+        .query_one(
+            "SELECT pg_get_indexdef('public.validation_run_records_project_completed'::regclass)",
+            &[],
+        )?
+        .get(0);
+    assert!(index.ends_with("USING btree (project_id, completed_at DESC)"));
+    Ok(())
+}
+
+#[test]
 fn baseline_enforces_workspace_session_machine_ownership() -> anyhow::Result<()> {
     let manifest: serde_json::Value = serde_json::from_str(CATALOG_MANIFEST_JSON)?;
     let entries = |kind: &str| {
