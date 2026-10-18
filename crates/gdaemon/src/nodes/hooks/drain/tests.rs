@@ -160,7 +160,7 @@ fn drain_claim_recovery_finishes_interrupted_restore() -> Result<()> {
     let private = claim.path.clone();
     // A crash after publication but before removing the private link.
     fs::hard_link(&private, &path)?;
-    drop(claim);
+    std::mem::forget(claim);
     let _lock = prepare_drain(directory.path())?.expect("recovery owns lock");
     assert_eq!(fs::read(&path)?, br#"{"hook_type":"PreToolUse"}"#);
     assert!(
