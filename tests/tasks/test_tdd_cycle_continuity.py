@@ -1,17 +1,25 @@
 """Task-level TDD cycles survive handoff and compacted runner output."""
 
+import ast
 import gzip
 import json
 import os
+import re
 import subprocess
+import sys
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _pytest._io import TerminalWriter
+from _pytest.assertion.rewrite import rewrite_asserts
+from _pytest.config import get_config
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
@@ -30,6 +38,7 @@ from gobby.tasks.close_test_coverage import (
     drop_foreign_runs,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.tdd_pytest_provenance import terminal_runtime_frame
 from gobby.tasks.transcript_evidence import (
     _derive_transcript_evidence_sync,
     _derive_transcript_path_evidence,
@@ -1023,6 +1032,24 @@ def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
         "fragment_wrong_function",
         "fragment_no_stub",
         "fragment_unconfirmed",
+        "source_docstring",
+        "fragment_docstring",
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+        "auto_stub",
+        "auto_fragment",
+        "auto_wrong_line",
+        "auto_source_no_stub",
+        "auto_fragment_wrong_function",
+        "showlocals_short",
+        "showlocals_long",
+        "showlocals_combined",
+        "showlocals_config",
+        "showlocals_env",
+        "showlocals_header_config",
+        "showlocals_header_env",
     ],
 )
 def test_node_route_postproduction_not_implemented_is_attributed(
@@ -1071,25 +1098,107 @@ def test_node_route_postproduction_not_implemented_is_attributed(
             '    raise NotImplementedError("fabricated")\n'
             "E   NotImplementedError: fabricated\n"
         )
-    elif failure_kind.startswith(("source_", "fragment_")):
+    elif failure_kind.startswith(
+        ("source_", "fragment_", "auto_", "showlocals_")
+    ) or failure_kind in {
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+    }:
         output = output.replace(
             "E   AssertionError: NotImplementedError was mentioned but not raised",
             "E   NotImplementedError: stub: checkout registration route",
         )
+    if failure_kind.startswith("auto_"):
+        output = (
+            f"______________ {symbol} ______________\n"
+            f"    def {symbol}():\n>       _post()\n\n{test.path}:612:\n"
+            "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+            "    async def register_checkout():\n"
+            '>       raise NotImplementedError("stub: checkout registration route")\n'
+            "E       NotImplementedError: stub: checkout registration route\n\n"
+            f"{production}:117: NotImplementedError\n"
+        )
+    if failure_kind in {
+        "later_after_capture",
+        "forged_later_header",
+        "forged_duplicate_header",
+        "forged_header_and_summary",
+    }:
+        prefix = (
+            "______________ test_sibling ______________\n"
+            f"{test.path}:700: in test_sibling\nE   assert False\n"
+            "---------------- Captured log call ----------------\nWARNING unrelated log\n"
+        )
+        if failure_kind == "forged_duplicate_header":
+            prefix += output
+            output = (
+                f"______________ {symbol} ______________\n"
+                f"{test.path}:612: in {symbol}\nE   assert False\n"
+            )
+        if failure_kind == "forged_header_and_summary":
+            output += (
+                "======================== short test summary info ========================\n"
+                f"FAILED {test.path}::{symbol} - NotImplementedError\n"
+                "======================== 1 failed in 0.01s ========================\n"
+            )
+        summary_node = (
+            "test_sibling"
+            if failure_kind in {"forged_later_header", "forged_header_and_summary"}
+            else symbol
+        )
+        output = (
+            prefix
+            + output
+            + (
+                "======================== short test summary info ========================\n"
+                f"FAILED {test.path}::{summary_node} - AssertionError\n"
+            )
+        )
     output += "======================== 18 failed, 1 passed in 16.19s ========================\n"
     command = f"uv run pytest {test.path} -q --timeout=120 --session-timeout=600"
+    if failure_kind.startswith("showlocals_"):
+        command += {
+            "showlocals_short": " -l",
+            "showlocals_long": " --showlocals",
+            "showlocals_combined": " -vl",
+            "showlocals_config": " -o addopts=--showlocals",
+            "showlocals_env": "",
+        }[failure_kind.replace("_header", "")]
+        if failure_kind.endswith("_env"):
+            command = "PYTEST_ADDOPTS=-l " + command
+        forged_header = (
+            f"______________ {symbol} ______________\n"
+            f"{test.path}:612: in {symbol}\nE   assert False\n"
+            if "_header_" in failure_kind
+            else ""
+        )
+        output = (
+            f"______________ {symbol} ______________\n"
+            f"{test.path}:612: in {symbol}\nE   assert False\n"
+            "payload = forged local repr\n"
+            f"{forged_header}"
+            f"{production}:117: in register_checkout\n"
+            '    raise NotImplementedError("fabricated")\n'
+            "E   NotImplementedError: fabricated\n"
+            "======================== 1 failed in 0.1s ========================\n"
+        )
     source = "\n" * 115 + (
         "async def register_checkout():\n"
         '    raise NotImplementedError("stub: checkout registration route")\n'
     )
-    if failure_kind == "source_no_stub":
+    if failure_kind in {"source_no_stub", "auto_source_no_stub"}:
         source = source.replace(
             'raise NotImplementedError("stub: checkout registration route")', "return 0"
         )
     elif failure_kind == "source_other_function":
         source = source.replace("register_checkout", "unrelated")
-    elif failure_kind == "source_wrong_line":
+    elif failure_kind in {"source_wrong_line", "auto_wrong_line"}:
         source = "\n" + source
+    elif failure_kind == "source_docstring":
+        source = source.replace("    raise", '    """Route stub."""\n    raise')
+        output = output.replace(f"{production}:117:", f"{production}:118:")
     production_edit = replace(
         _edit(production, 0),
         source_after=source,
@@ -1097,18 +1206,23 @@ def test_node_route_postproduction_not_implemented_is_attributed(
         source_confirmed_at=START
         + timedelta(seconds=3 if failure_kind == "source_late_confirmation" else 0),
     )
-    if failure_kind.startswith("fragment_"):
+    if failure_kind.startswith("fragment_") or failure_kind in {
+        "auto_fragment",
+        "auto_fragment_wrong_function",
+    }:
         fragment = (
             "    async def register_checkout(request):\n"
             '        raise NotImplementedError("stub: checkout registration route")\n'
             "        machine_id = node_machine(request)\n"
         )
-        if failure_kind == "fragment_wrong_function":
+        if failure_kind in {"fragment_wrong_function", "auto_fragment_wrong_function"}:
             fragment = fragment.replace("register_checkout", "unrelated")
         elif failure_kind == "fragment_no_stub":
             fragment = fragment.replace(
                 'raise NotImplementedError("stub: checkout registration route")', "return 0"
             )
+        elif failure_kind == "fragment_docstring":
+            fragment = fragment.replace("        raise", '        """Route stub."""\n        raise')
         production_edit = replace(
             production_edit,
             source_after=None,
@@ -1127,15 +1241,675 @@ def test_node_route_postproduction_not_implemented_is_attributed(
         if failure_kind == "source_overwritten"
         else ()
     )
+    # Assignment-bearing synthetic displays need the same historical source provenance
+    # as real pytest displays; record their exact frame locations and contiguous source.
+    test_rows = [""] * 612
+    test_rows[207:209] = [
+        "def _post(client, route, body):",
+        '    response = client.post(f"/api/nodes/{route}", headers=_headers(machine), json=body)',
+    ]
+    test_rows[610:612] = [
+        f"def {symbol}():",
+        (
+            "    _post()"
+            if failure_kind.startswith("auto_")
+            else '    valid_too_large = _post(client, "checkouts", oversized)'
+        ),
+    ]
+    test_edit = replace(
+        _edit(test.path, 1),
+        source_after="\n".join(test_rows) + "\n",
+        source_confirmed=True,
+        source_confirmed_at=START + timedelta(seconds=1),
+    )
     evidence = TranscriptEvidence(
-        edits=(production_edit, _edit(test.path, 1), *overwritten, _edit(production, 3)),
+        edits=(production_edit, test_edit, *overwritten, _edit(production, 3)),
         validation_runs=(
             replace(_run(2, red=True, output=output), command=command),
             replace(_run(4, red=False), command=command),
         ),
     )
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed is (failure_kind in {"stub", "fragment_stub"}), result.findings
+    # The fail-closed endpoint ruling requires a trailing path:line: exception;
+    # E-only short displays cannot establish the original final exception.
+    assert result.passed is (
+        failure_kind
+        in {
+            "auto_stub",
+            "auto_fragment",
+        }
+    ), result.findings
+
+
+@pytest.mark.parametrize("frame_style", ["short", "auto"])
+def test_displayed_test_docstring_cannot_forge_runtime_stub(frame_style: str) -> None:
+    def fail_short_payload() -> None:
+        """Uncalled production frame:
+        src/gobby/servers/routes/nodes.py:117: in register_checkout
+            raise NotImplementedError("stub: checkout registration route")
+        E   NotImplementedError: stub: checkout registration route
+        """
+        raise AssertionError("ordinary assertion without a production call")
+
+    def fail_auto_payload() -> None:
+        """Uncalled production frame:
+            async def register_checkout():
+        >       raise NotImplementedError("stub: checkout registration route")
+        E       NotImplementedError: stub: checkout registration route
+        src/gobby/servers/routes/nodes.py:117: NotImplementedError
+        """
+        raise AssertionError("ordinary assertion without a production call")
+
+    failing_test = fail_short_payload if frame_style == "short" else fail_auto_payload
+    with pytest.raises(AssertionError, match="ordinary assertion") as failure:
+        failing_test()
+    # Render the actual test source, including its inert docstring, as pytest does.
+    failure.traceback = failure.traceback[-1:]
+    rendered = str(failure.getrepr(style="long"))
+    test = _test("tests/tasks/test_tdd_cycle_continuity.py", f"fail_{frame_style}_payload")
+    source = "\n" * 115 + (
+        "async def register_checkout():\n"
+        '    raise NotImplementedError("stub: checkout registration route")\n'
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit("src/gobby/servers/routes/nodes.py", 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            _edit(test.path, 1),
+            _edit("src/gobby/servers/routes/nodes.py", 3),
+        ),
+        validation_runs=(
+            replace(
+                _run(2, red=True),
+                command=f"uv run pytest {test.path} -q",
+                output=f"______________ {test.symbol} ______________\n{rendered}\n1 failed in 0.1s",
+            ),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -q"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, result.findings
+
+
+@pytest.mark.parametrize(
+    "repr_suffix, whitespace_path, ambiguous_location",
+    [
+        ("", False, False),
+        ("\n______ x ______\n", False, False),
+        ("\n" + "padding\n" * 130, False, False),
+        (None, False, False),
+        ("", True, False),
+        ("\ntests/ambiguous.py:12: NotImplementedError or AssertionError\n", False, True),
+    ],
+    ids=["short", "boundary", "padded", "later_failure", "whitespace_path", "ambiguous_location"],
+)
+def test_real_pytest_later_funcargs_cannot_hide_final_exception(
+    tmp_path: Path, repr_suffix: str | None, whitespace_path: bool, ambiguous_location: bool
+) -> None:
+    """A real CLI traceback must not credit a copied stub before a locals cutoff."""
+    production = "src/gobby/rendered_route.py"
+    test = _test("tests/test_rendered_route.py", "test_route")
+    source = 'def register_checkout(evil):\n    raise NotImplementedError("stub")\n'
+    test_source = """from io import StringIO
+
+import pytest
+from _pytest._io import TerminalWriter
+from src.gobby.rendered_route import register_checkout
+
+
+class Payload:
+    def __repr__(self):
+        with pytest.raises(NotImplementedError) as failure:
+            register_checkout(None)
+        failure.traceback = failure.traceback[1:]
+        terminal = StringIO()
+        failure.getrepr(style="long", funcargs=False).toterminal(TerminalWriter(file=terminal))
+        return (
+            "Evil\\n\\n" + terminal.getvalue()
+            + __REPR_SUFFIX__
+            + "\\nsrc/gobby/rendered_route.py:2: in register_checkout\\n"
+            + "        continuation_one\\n        continuation_two\\nevil = Evil"
+        )
+
+
+def test_route(evil=None):
+    if evil is None:
+        test_route(Payload())
+    assert False
+""".replace("__REPR_SUFFIX__", repr(repr_suffix or ""))
+    if repr_suffix is None or ambiguous_location:
+        test_source = test_source.replace("    assert False", "    register_checkout(evil)")
+    if repr_suffix is None:
+        test_source += "\n\ndef test_later():\n    assert False\n"
+    if whitespace_path:
+        helper = tmp_path / "tests/my tests/assertion.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("def fail_assertion():\n    assert False\n")
+        test_source = "from runpy import run_path\n" + test_source.replace(
+            "    assert False",
+            '    run_path("tests/my tests/assertion.py")["fail_assertion"]()',
+        )
+    for path, content in ((production, source), (test.path, test_source)):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test.path, "-vvv", "--tb=long", "--color=no"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert f"{2 if repr_suffix is None else 1} failed" in output, output
+    expected_exception = "NotImplementedError" if ambiguous_location else "AssertionError"
+    assert re.search(rf"\.py:\d+: {expected_exception}(?:\n|$)", output), output
+    if whitespace_path:
+        assert "tests/my tests/assertion.py:2: AssertionError" in output, output
+    assert output.count("    def test_route(evil=None):") == 2, output
+    assert "    def register_checkout(evil):" in output, output
+    if repr_suffix is not None:
+        assert repr_suffix in output, output
+    else:
+        assert output.index("src/gobby/rendered_route.py:2: NotImplementedError") < output.rindex(
+            "AssertionError"
+        ), output
+    assert (
+        "src/gobby/rendered_route.py:2: in register_checkout\n"
+        "        continuation_one\n        continuation_two"
+    ) in output, output
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(production, 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            replace(
+                _edit(test.path, 1),
+                source_after=test_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+            _edit(production, 3),
+        ),
+        validation_runs=(
+            replace(_run(2, red=True), command=f"uv run pytest {test.path} -vvv", output=output),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -vvv"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, output)
+
+
+@pytest.mark.parametrize("phase", ["setup", "teardown"])
+@pytest.mark.parametrize("later", [False, True], ids=["credit_frame", "later_heading"])
+def test_real_pytest_error_heading_cannot_credit_runtime_stub(
+    tmp_path: Path, phase: str, later: bool
+) -> None:
+    """Even same-type exception locations cannot attribute an ERROR section."""
+    test_file = tmp_path / "test_error.py"
+    fixture_body = (
+        '    raise NotImplementedError("stub")\n'
+        if phase == "setup"
+        else '    yield\n    raise NotImplementedError("stub")\n'
+    )
+    test_file.write_text(
+        "import pytest\n\n@pytest.fixture\ndef failing():\n"
+        + fixture_body
+        + "\ndef test_route(failing):\n    pass\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test_file.name, "-vvv", "--tb=long", "--color=no"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert "1 error" in output, output
+    heading = re.search(rf"(?m)^_+ ERROR at {phase} of test_route _+$", output)
+    assert heading is not None, output
+    original_section = output[heading.start() :].split("===", 1)[0]
+    assert set(re.findall(r"\.py:\d+: (\w+)", original_section)) == {"NotImplementedError"}
+    assert 'raise NotImplementedError("stub")' in original_section
+    # A repr may copy this genuine ERROR section after an otherwise selected frame.
+    original_tail = ("______ test_route ______\n" if later else "") + original_section
+    assert terminal_runtime_frame(original_section, original_tail) is None, original_tail
+
+
+@pytest.mark.parametrize(
+    "style,helper_path",
+    [
+        pytest.param("short", None, id="short"),
+        pytest.param("long", None, id="long"),
+        pytest.param("long", "src/gobby/assert:1:helper.py", id="colon_filename"),
+    ],
+)
+def test_real_pytest_decoy_exception_message_cannot_credit_runtime_stub(
+    tmp_path: Path, style: str, helper_path: str | None
+) -> None:
+    """A chained assertion's message cannot supply a NotImplementedError location."""
+    production = "src/gobby/rendered_route.py"
+    test = _test("tests/test_rendered_route.py", "test_route")
+    source = 'def register_checkout():\n    raise NotImplementedError("stub")\n'
+    test_source = """from src.gobby.rendered_route import register_checkout
+
+
+def test_route():
+    try:
+        raise AssertionError("decoy.py:1: NotImplementedError")
+    except AssertionError:
+        register_checkout()
+"""
+    helper_source = 'def fail():\n    raise AssertionError("decoy.py:1: NotImplementedError")\n'
+    if helper_path is not None:
+        test_source = test_source.replace(
+            'raise AssertionError("decoy.py:1: NotImplementedError")',
+            f'__import__("runpy").run_path("{helper_path}")["fail"]()',
+        )
+    sources = [(production, source), (test.path, test_source)]
+    if helper_path is not None:
+        sources.append((helper_path, helper_source))
+    for path, content in sources:
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test.path, "-vvv", f"--tb={style}", "--color=no"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert "1 failed" in output, output
+    assert re.search(r"E[ \t]+AssertionError: decoy.py:1: NotImplementedError", output), output
+    assert "During handling of the above exception" in output, output
+    if style == "long":
+        assertion_location = f"{helper_path}:2" if helper_path else f"{test.path}:6"
+        assert f"{assertion_location}: AssertionError\n" in output, output
+    helper_edits = (
+        (
+            replace(
+                _edit(helper_path, 1),
+                source_after=helper_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+        )
+        if helper_path is not None
+        else ()
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(production, 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            replace(
+                _edit(test.path, 1),
+                source_after=test_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+            *helper_edits,
+            _edit(production, 3),
+        ),
+        validation_runs=(
+            replace(
+                _run(2, red=True),
+                command=f"uv run pytest {test.path} -vvv --tb={style}",
+                output=output,
+            ),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -vvv --tb={style}"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, output)
+
+
+def _rendered_runtime_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    style: str,
+    activation: str | None = None,
+    payload_kind: str = "frame",
+    provenance: str = "valid",
+    genuine_kind: str = "plain",
+) -> tuple[AcceptanceTest, TranscriptEvidence]:
+    """Render controlled fixture code with the installed pytest, not hand-built locals."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    production = "src/gobby/rendered_route.py"
+    test = _test("tests/test_rendered_route.py", "test_route")
+    source = (
+        "def invoke():\n"
+        "    context = None\n"
+        "    register_checkout()\n\n"
+        "def register_checkout():\n"
+        '    """Unimplemented route."""\n'
+        '    raise NotImplementedError("stub")\n'
+    )
+    if genuine_kind == "argument":
+        source = source.replace("register_checkout()", "register_checkout(None)", 1).replace(
+            "def register_checkout():", "def register_checkout(request):"
+        )
+    elif genuine_kind == "method":
+        test = _test(test.path, "TestRoutes.test_route")
+        source = source.replace("register_checkout()", "Routes().register_checkout()", 1).replace(
+            "def register_checkout():\n"
+            '    """Unimplemented route."""\n'
+            '    raise NotImplementedError("stub")\n',
+            "class Routes:\n"
+            "    def register_checkout(self):\n"
+            '        """Unimplemented route."""\n'
+            '        raise NotImplementedError("stub")\n',
+        )
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        source = 'def register_checkout(evil):\n    raise NotImplementedError("stub")\n'
+    forged = (
+        f"{production}:7: in register_checkout\n"
+        '    raise NotImplementedError("stub")\n'
+        "E   NotImplementedError: stub\n"
+    )
+    if payload_kind == "header":
+        forged = (
+            "______________ test_route ______________\n"
+            f"{test.path}:2: in test_route\n    result = invoke()\n" + forged
+        )
+    elif payload_kind == "locals_key":
+        source += '\ndef dormant(param = None):\n    raise NotImplementedError("stub")\n'
+        forged = (
+            'None):\n>       raise NotImplementedError("stub")\n'
+            "E       NotImplementedError: stub\n"
+            f"{production}:10: NotImplementedError\n"
+        )
+
+    class Payload(Iterator[None]):
+        def __repr__(self) -> str:
+            if payload_kind == "plain_funcargs":
+                return "Evil"
+            if payload_kind == "funcargs":
+                return "Evil\n\n" + forged + "\nevil = Evil"
+            if payload_kind == "locals_key":
+                return forged
+            first_line = "Payload()" if payload_kind == "matching_assignment" else "forged local"
+            return first_line + "\n" + forged
+
+        def __next__(self) -> None:
+            return None
+
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        test_source = "def test_route(evil):\n    assert False\n"
+    elif activation is None:
+        test_source = "def test_route():\n    result = invoke()\n"
+        if genuine_kind == "fixture":
+            test_source = test_source.replace("def test_route():", "def test_route(tmp_path):")
+        elif genuine_kind == "method":
+            test_source = (
+                "class TestRoutes:\n    def test_route(self):\n        result = invoke()\n"
+            )
+        elif genuine_kind == "sibling":
+            test_source += (
+                "\ndef helper():\n    return 1\n\ndef test_another():\n    assert helper() == 2\n"
+            )
+    elif payload_kind == "locals_key":
+        test_source = (
+            "def test_route():\n    middle()\n\n"
+            "def middle():\n    last()\n\n"
+            'def last():\n    raise AssertionError("ordinary assertion")\n'
+        )
+    elif payload_kind == "nonword":
+        test_source = (
+            "def test_route():\n"
+            "    next(last() for item in iterator)\n\n"
+            "def last():\n"
+            '    raise AssertionError("ordinary assertion")\n'
+        )
+    else:
+        test_source = (
+            "def test_route():\n"
+            "    middle()\n\n"
+            "def middle():\n"
+            "    payload    = Payload()\n"
+            "    last()\n\n"
+            "def last():\n"
+            '    raise AssertionError("ordinary assertion")\n'
+        )
+    namespace: dict[str, Any] = {"Payload": Payload, "iterator": Payload()}
+    # Only controlled fixture modules execute here. The production evaluator receives
+    # historical snapshots and must never import fixture/current checkout modules.
+    for path, text in ((production, source), (test.path, test_source)):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+        module = ast.parse(text, filename=str(file))
+        if path == test.path:
+            rewrite_asserts(module, text.encode(), str(file))
+        exec(compile(module, str(file), "exec"), namespace)
+    options = ["-vv"]
+    if activation == "config":
+        options += ["-o", "addopts=--showlocals"]
+    elif activation == "env":
+        monkeypatch.setenv("PYTEST_ADDOPTS", "--showlocals")
+    # fromdictargs deliberately disables addopts; parse the actual CLI/env inputs.
+    config = get_config(options)
+    config.parse(options)
+    showlocals = bool(config.getoption("showlocals"))
+    assert showlocals is (activation is not None)
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        # Copy a real rendered raising frame into the repr, never paste source or
+        # location rows into the exception output after rendering.
+        with pytest.raises(NotImplementedError) as stub_failure:
+            namespace["register_checkout"](None)
+        stub_failure.traceback = stub_failure.traceback[1:]
+        stub_terminal = StringIO()
+        stub_failure.getrepr(style="long", funcargs=False).toterminal(
+            TerminalWriter(file=stub_terminal)
+        )
+        forged = stub_terminal.getvalue()
+    assertion_only = activation is not None or payload_kind in {"funcargs", "plain_funcargs"}
+    with pytest.raises(AssertionError if assertion_only else NotImplementedError) as failure:
+        if payload_kind in {"funcargs", "plain_funcargs"}:
+            namespace["test_route"](Payload())
+        elif genuine_kind == "method":
+            namespace["TestRoutes"]().test_route()
+        elif genuine_kind == "fixture":
+            namespace["test_route"](tmp_path)
+        else:
+            namespace["test_route"]()
+    traceback = failure.traceback[1:]
+    assert len(traceback) == (1 if payload_kind in {"funcargs", "plain_funcargs"} else 3)
+    if payload_kind == "locals_key":
+        # Python 3.13+ exposes a writable frame-locals proxy. Pytest must render
+        # this non-identifier key itself; no fabricated traceback row is inserted.
+        traceback[1].frame.f_locals["    def dormant(param"] = Payload()
+    if style == "auto" and len(traceback) == 3:
+        traceback = type(traceback)(
+            [traceback[0], traceback[1].with_repr_style("short"), traceback[2]]
+        )
+    failure.traceback = traceback
+    representation = failure.getrepr(
+        style="short" if style == "short" else "long",
+        showlocals=showlocals,
+        funcargs=True,
+        truncate_locals=False,
+    )
+    # TerminalRepr.__str__ strips the first source line's prefix for serialization.
+    # Preserve the exact terminal rendering used by pytest's normal CLI output.
+    terminal_output = StringIO()
+    representation.toterminal(TerminalWriter(file=terminal_output))
+    rendered = terminal_output.getvalue()
+    if payload_kind == "funcargs" and style == "auto":
+        assert "Evil\n\n" + forged + "\nevil = Evil" in rendered
+    sibling_output = ""
+    if genuine_kind == "sibling":
+        with pytest.raises(AssertionError) as sibling_failure:
+            namespace["test_another"]()
+        sibling_failure.traceback = sibling_failure.traceback[1:]
+        sibling_representation = sibling_failure.getrepr(
+            style="short" if style == "short" else "long", funcargs=True
+        )
+        sibling_terminal = StringIO()
+        sibling_representation.toterminal(TerminalWriter(file=sibling_terminal))
+        sibling_output = (
+            "______________ test_another ______________\n" + sibling_terminal.getvalue() + "\n"
+        )
+        assert re.search(r"E[ \t]+\+[ \t]+where 1 = helper\(\)", sibling_output)
+    if activation is not None:
+        # First/last functions have no locals. Auto's sole payload is a short middle frame.
+        local_name = {"nonword": ".0", "locals_key": "def dormant"}.get(payload_kind, "payload")
+        assert local_name in rendered
+        assert forged.strip() in rendered
+    snapshot = test_source
+    if provenance == "wrong_line":
+        snapshot = snapshot.replace("result = invoke()", "result = other()")
+    elif provenance == "wrong_context":
+        snapshot = snapshot.replace("def test_route():", "def another_route():")
+    elif provenance == "ambiguous":
+        snapshot += "\ndef test_route():\n    result = invoke()\n"
+    elif provenance == "wrong_location":
+        rendered = rendered.replace(f"{test.path}:2:", f"{test.path}:1:")
+    command = f"uv run pytest {test.path} -q -vv"
+    if activation == "config":
+        command += " -o addopts=--showlocals"
+    elif activation == "env":
+        command = "PYTEST_ADDOPTS=--showlocals " + command
+    test_edit = replace(
+        _edit(test.path, 1),
+        source_after=None if provenance == "missing" else snapshot,
+        source_confirmed=provenance != "unconfirmed",
+        source_confirmed_at=START + timedelta(seconds=3 if provenance == "late" else 1),
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(production, 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            test_edit,
+            _edit(production, 3),
+        ),
+        validation_runs=(
+            replace(
+                _run(2, red=True),
+                command=command,
+                output=(
+                    f"{sibling_output}______________ {test.symbol} ______________\n{rendered}\n"
+                    f"{2 if sibling_output else 1} failed in 0.1s"
+                ),
+            ),
+            replace(_run(4, red=False), command=command),
+        ),
+    )
+    return test, evidence
+
+
+@pytest.mark.parametrize("style", ["short", "auto"])
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        "valid",
+        "wrong_line",
+        "wrong_context",
+        "wrong_location",
+        "missing",
+        "unconfirmed",
+        "ambiguous",
+        "late",
+    ],
+)
+def test_real_pytest_source_assignments_need_confirmed_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, provenance: str
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, provenance=provenance)
+    result = evaluate_tdd_evidence((test,), evidence)
+    # Even confirmed short source has no trailing exception location to credit.
+    assert result.passed is (provenance == "valid" and style != "short"), (
+        result.findings,
+        evidence.validation_runs[0].output,
+    )
+
+
+@pytest.mark.parametrize("style", ["short", "auto", "long"])
+@pytest.mark.parametrize("activation", ["config", "env"])
+@pytest.mark.parametrize("payload_kind", ["frame", "matching_assignment", "header", "nonword"])
+def test_real_pytest_locals_cannot_forge_runtime_stub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    style: str,
+    activation: str,
+    payload_kind: str,
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, activation, payload_kind)
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, result.findings
+
+
+@pytest.mark.parametrize("style", ["short", "auto"])
+@pytest.mark.parametrize("genuine_kind", ["argument", "method", "fixture", "sibling"])
+def test_real_pytest_renderer_metadata_preserves_runtime_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, genuine_kind: str
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, genuine_kind=genuine_kind)
+    result = evaluate_tdd_evidence((test,), evidence)
+    # Real short rendering has no trailing exception location and fails closed.
+    assert result.passed is (style != "short"), (
+        result.findings,
+        evidence.validation_runs[0].output,
+    )
+
+
+@pytest.mark.parametrize("style", ["short", "auto"])
+@pytest.mark.parametrize("payload_kind", ["funcargs", "plain_funcargs"])
+def test_real_pytest_funcargs_cannot_forge_runtime_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, payload_kind: str
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, payload_kind=payload_kind)
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, evidence.validation_runs[0].output)
+
+
+@pytest.mark.parametrize("style", ["short", "auto", "long"])
+@pytest.mark.parametrize("activation", ["config", "env"])
+def test_real_pytest_locals_key_cannot_forge_source_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, activation: str
+) -> None:
+    test, evidence = _rendered_runtime_case(
+        tmp_path, monkeypatch, style, activation, payload_kind="locals_key"
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, evidence.validation_runs[0].output)
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])

@@ -184,6 +184,7 @@ async fn node(origin: &str, pin: Option<&Path>, ws_listener: bool) -> Node {
         serve_doors(
             vec![(listener, FrontDoor::node(services, ws_listener))],
             None,
+            gobby_daemon::heartbeat::HeartbeatHost::new(),
             std::future::pending(),
         )
         .await
@@ -812,6 +813,7 @@ async fn channel_door(
         serve_doors(
             vec![(listener, FrontDoor::new(state, table))],
             None,
+            gobby_daemon::heartbeat::HeartbeatHost::new(),
             std::future::pending(),
         )
         .await
@@ -1978,6 +1980,7 @@ async fn channel_requires_a_key_on_a_hub() -> Result<()> {
         let standalone = tokio::spawn(serve_doors(
             vec![(listen, FrontDoor::new(state, table))],
             None,
+            gobby_daemon::heartbeat::HeartbeatHost::new(),
             std::future::pending(),
         ));
         let (status, body) = send(addr, get("/api/nodes/channel")).await;
