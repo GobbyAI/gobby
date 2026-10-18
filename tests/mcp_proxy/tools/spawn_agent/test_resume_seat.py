@@ -88,8 +88,8 @@ def _ended_run(
     return ended
 
 
-def _seat_session(h: _Harness, run: AgentRun) -> Session:
-    """The expired seat session whose last run is ``run``, ready to resume."""
+def _seat_session(h: _Harness, run: AgentRun, status: str = "expired") -> Session:
+    """The seat session whose last run is ``run``, held in ``status``, ready to resume."""
     child = h.sessions.register(
         external_id=f"resume-seat-{uuid.uuid4()}",
         machine_id=LOCAL_MACHINE_ID,
@@ -99,7 +99,7 @@ def _seat_session(h: _Harness, run: AgentRun) -> Session:
     )
     h.db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, child.id))
     h.db.execute("UPDATE agent_runs SET child_session_id = %s WHERE id = %s", (child.id, run.id))
-    h.sessions.update(child.id, status="expired")
+    h.sessions.update(child.id, status=status)
     session = h.sessions.get(child.id)
     assert session is not None
     return session
@@ -218,9 +218,27 @@ def test_never_placed_seat_stays_unplaced(placed: _Harness) -> None:
     assert _placement(h, run) is None
 
 
-def test_seat_whose_pane_and_tab_are_gone_is_refused(placed: _Harness) -> None:
+def test_seat_whose_pane_and_tab_are_gone_reopens_a_fresh_tab(placed: _Harness) -> None:
     h = placed
     run = _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=str(uuid.uuid4())))
+
+    assert _placement(h, run) == {"tab": {"workspace": h.workspace.id, "title": SEAT}}
+
+
+def test_seat_with_no_recorded_workspace_is_refused(placed: _Harness) -> None:
+    h = placed
+    run = _ended_run(
+        h,
+        {
+            "placement": {
+                "kind": "split",
+                "title": SEAT,
+                "beside_pane_id": str(uuid.uuid4()),
+                "tab_id": str(uuid.uuid4()),
+                "axis": "vertical",
+            }
+        },
+    )
 
     with pytest.raises(ResumeSeatGone, match="pass placement"):
         _placement(h, run)
@@ -246,7 +264,28 @@ async def test_resumed_seat_launches_in_its_lane_tab(placed: _Harness) -> None:
     assert _tabs(h) == {lane.tab_id}
 
 
-async def test_resumed_seat_with_nowhere_to_return_is_refused(placed: _Harness) -> None:
+async def test_resumed_paused_seat_without_a_live_pane_rebinds_and_launches(
+    placed: _Harness,
+) -> None:
+    h = placed
+    lane = _held_seat(h, "Lane 1", state="exited")
+    session = _seat_session(
+        h,
+        _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id)),
+        status="paused",
+    )
+
+    reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
+
+    assert reply["success"] is True, reply
+    run = h.runs.get(reply["run_id"])
+    assert run is not None and run.terminal_id is not None
+    pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
+    assert pane is not None and pane.tab_id == lane.tab_id
+
+
+async def test_resumed_seat_whose_pane_and_tab_are_gone_reopens_its_tab(placed: _Harness) -> None:
     h = placed
     session = _seat_session(
         h,
@@ -254,7 +293,12 @@ async def test_resumed_seat_with_nowhere_to_return_is_refused(placed: _Harness) 
     )
 
     reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
 
-    assert reply["success"] is False
-    assert reply["placement_error"] == "not_found"
-    assert h.launches == []
+    assert reply["success"] is True, reply
+    run = h.runs.get(reply["run_id"])
+    assert run is not None and run.terminal_id is not None
+    pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
+    assert pane is not None
+    tab = next(tab for tab in h.workspaces.list_tabs(h.workspace.id) if tab.id == pane.tab_id)
+    assert tab.title == SEAT
