@@ -2293,8 +2293,14 @@ fn evidence_git_calls_do_not_grow_with_cited_paths() -> anyhow::Result<()> {
     // Rewrite two cited files in the working tree and index the rewritten bytes.
     let dirty_files = [
         CITED_FILES[0],
-        ("src/two.rs", "pub fn shared_two() {}\npub fn unstaged() {}\n"),
-        ("src/three.rs", "pub fn shared_three() {}\npub fn unstaged() {}\n"),
+        (
+            "src/two.rs",
+            "pub fn shared_two() {}\npub fn unstaged() {}\n",
+        ),
+        (
+            "src/three.rs",
+            "pub fn shared_three() {}\npub fn unstaged() {}\n",
+        ),
     ];
     for (path, body) in &dirty_files[1..] {
         std::fs::write(root.join(path), body)?;
