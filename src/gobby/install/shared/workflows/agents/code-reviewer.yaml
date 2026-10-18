@@ -152,6 +152,8 @@ step_workflow:
         Its stored incoming task/SHA starts review. For idle, send
         EVENT=SEAT_READY NOTE=idle to your coordinator, then end the turn.
         Read stored incoming resume/withdraw messages to update parked units.
+        For your own parked unit, send an exact CANDIDATE_RESUMED or
+        CANDIDATE_WITHDRAWN event to your coordinator.
       allowed_tools:
         - Bash
         - Read
@@ -166,6 +168,9 @@ step_workflow:
         - "gobby-sessions:get_session"
         - "gobby-sessions:set_title"
       on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
