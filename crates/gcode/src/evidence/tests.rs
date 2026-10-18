@@ -2279,6 +2279,47 @@ fn cited_path_git_calls(
 }
 
 #[test]
+fn bound_blob_reads_resolve_every_path_past_the_argv_budget() -> anyhow::Result<()> {
+    // 60000 cited paths are about 2.4 MB of argv in one ls-tree call, past both the macOS
+    // and Linux argv limits. Each group of paths must resolve on its own call.
+    const MISSING: usize = 60_000;
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::write(repo.join("present.txt"), "present bytes")?;
+    git(repo, &["add", "present.txt"])?;
+    let commit_oid = commit(repo, "one file")?;
+    let binding = RepositoryBinding {
+        project_id: "project-1".to_string(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+    };
+    let missing = (0..MISSING)
+        .map(|index| format!("absent/cited-path-{index:06}.rs"))
+        .collect::<Vec<_>>();
+    let mut paths = missing.iter().map(String::as_str).collect::<Vec<_>>();
+    paths.push("present.txt");
+    let blobs = super::provenance::read_bound_blobs(repo, &binding, &paths);
+    assert_eq!(blobs.len(), paths.len());
+    let (present, absent) = blobs.split_last().expect("paths are not empty");
+    let read = present
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(ToString::to_string);
+    assert_eq!(read, Ok(&b"present bytes"[..]));
+    for (path, blob) in missing.iter().zip(absent) {
+        let detail = blob.as_ref().err().map(ToString::to_string);
+        assert!(
+            detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("path is absent from the bound commit")),
+            "{path}: {detail:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn evidence_git_calls_do_not_grow_with_cited_paths() -> anyhow::Result<()> {
     let (temporary, binding) = cited_paths_repo()?;
     let root = temporary.path();
