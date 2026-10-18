@@ -5,8 +5,8 @@
 //! rejection carries that struct's own reason instead of an untagged-enum
 //! summary.
 
-use serde::de::{self, Deserializer};
 use serde::Deserialize;
+use serde::de::{self, Deserializer};
 use serde_json::Value;
 
 use super::checkout_read::CheckoutReadCommand;
