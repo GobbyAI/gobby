@@ -53,12 +53,9 @@ async fn agent_state_round_trips() -> Result<()> {
     let path = home.path().join("node/agents.json");
     assert!(path.is_file(), "opening absent state must persist it");
     assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            agents.changed.notified()
-        )
-        .await
-        .is_ok(),
+        tokio::time::timeout(std::time::Duration::from_secs(1), agents.changed.notified())
+            .await
+            .is_ok(),
         "initial commit must notify consumers"
     );
     assert_eq!(
