@@ -562,6 +562,11 @@ Relations that set no edge:
   test daemon. A launcher is new UI, which Josh's Q0 a (Decision 1) leaves
   outside this epic's hub-side routing. 2.5 gives both spawn callers
   `machine`, so a launcher needs no hub change.
+- #24657 (Rust-only node install and enrollment) 3.7 and 3.8. A real node's
+  grok and agy runs settle only when their hooks reach the hub (2.6), which
+  needs the global grok and agy hooks those leaves install. No leaf here
+  edits their Targets, and 5.1's fake pipes its envelopes into `ghook`
+  itself, so neither waits on the other.
 
 ## Architecture
 `kind: framing`
@@ -1502,6 +1507,8 @@ Consumers unchanged:
 - `tests/servers/test_auth_middleware.py` — no-edit-reason: allowed and refused decisions answer as before; the binding only adds request context; re-run as verification.
 - `tests/servers/test_http_middleware.py` — no-edit-reason: its responses are unchanged; re-run as verification.
 - `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it calls `_handle_connection` directly, so its connections run unbound and reach no guarded action.
+- `src/gobby/servers/websocket/native_bridge.py` — no-edit-reason: #24620's browser bridge already authenticates through `authenticate`, reads `AuthDecision.allowed`, and calls `handle_connection(adapter, decision, database=...)` with this leaf's signature.
+- `tests/servers/test_native_ws_bridge.py` — no-edit-reason: it drives that bridge through the same `authenticate` answer and `handle_connection` signature; re-run as verification.
 - `tests/servers/test_terminal_ws_resize.py` — no-edit-reason: a resize is not a guarded action; re-run as verification.
 - `tests/servers/websocket/test_server.py` — no-edit-reason: `handle_connection` now binds its fake socket's `user_id`, and its messages (ping, terminal attach, input and release, workspace ops) reach no guarded action; re-run as verification.
 - `tests/servers/test_ws_envelope_golden.py` — no-edit-reason: it calls `handle_connection(socket)` with no decision, so each connection binds its fake socket's `user-<name>` id, and subscribe, unsubscribe and broadcast reach no guarded action; re-run as verification.
@@ -2028,6 +2035,7 @@ Consumers unchanged:
 - `src/gobby/dispatch/spawn_actions.py` — no-edit-reason: dispatch spawns are local (Decision 11); the call is unchanged.
 - `src/gobby/mcp_proxy/tools/agent_cancellation.py` — no-edit-reason: it injects `kill_agent` as the process killer; a remote run takes the node path inside it and returns the same dict shape.
 - `src/gobby/mcp_proxy/tools/agents.py` — no-edit-reason: it imports `kill_agent` as `_kill_agent_process` and passes it through unchanged.
+- `tests/agents/test_resume_placement.py` — no-edit-reason: it replaces `_kill_agent_process` with a fake for local parked seats, so `kill_agent`'s node path never runs.
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py` — no-edit-reason: it calls `kill_agent(run, db, signal_name="KILL")` per pipeline run; a remote run takes the node path inside it.
 - `src/gobby/servers/routes/agents.py` — no-edit-reason: it returns the result dict as `result`, whose shape is unchanged.
 - `tests/agents/test_kill.py` — no-edit-reason: its runs default to the local machine and take the unchanged path; re-run as verification.
@@ -2374,6 +2382,9 @@ Consumers unchanged:
 - `src/gobby/agents/resume_executor.py` — no-edit-reason: its daemon-stop resume calls `prepare_terminal_resume` without `routed_machine_id`, so its runs keep this machine.
 - `tests/agents/test_spawn_prepare_resume.py` — no-edit-reason: it calls `prepare_terminal_resume` without `routed_machine_id`, so its runs keep this machine; re-run as verification.
 - `tests/agents/test_spawn_resume.py` — no-edit-reason: it patches `_prepare_run_for_session` and calls `prepare_terminal_resume` without `routed_machine_id`, which then passes `None`, so its runs keep this machine.
+- `tests/agents/test_resume_placement.py` — no-edit-reason: it builds a default `DaemonConfig()`, which the `max_active_agents` bound leaves valid.
+- `tests/config/test_config_active_state.py` — no-edit-reason: it compares default `DaemonConfig()` instances, which the bound leaves valid.
+- `tests/servers/routes/test_dirty_path_approval_routes.py` — no-edit-reason: it passes a default `DaemonConfig()` to its server, which the bound leaves valid.
 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` — no-edit-reason: its local flow passes no `routed_machine_id` to `prepare_terminal_spawn` or `prepare_terminal_resume`, so its sessions keep the local guard and its runs keep this machine.
 - `src/gobby/agents/__init__.py` — no-edit-reason: it re-exports `ChildSessionConfig` by name.
 - `src/gobby/agents/spawn_executor_support.py` — no-edit-reason: it checks only that `create_child_session` is callable by name.
@@ -3269,7 +3280,7 @@ lands (Constraints).
 
 Targets:
 - `crates/gdaemon/src/nodes/agents/commands.rs`
-- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/mod.rs::*` — scope-reason: declares the new `finish` module, and `NodeAgents` and its constructor gain the `finishing` set
 - `crates/gdaemon/src/nodes/agents/workspace.rs`
 - `crates/gdaemon/src/nodes/agents/finish.rs`
 - `crates/gdaemon/tests/node_workspace_finish.rs`
@@ -3631,7 +3642,7 @@ Verification planned:
 
 Targets:
 - `crates/gdaemon/src/nodes/agents/commands.rs`
-- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/mod.rs::*` — scope-reason: declares the new `checkout_status` module
 - `crates/gdaemon/src/nodes/agents/checkout_status.rs`
 - `crates/gdaemon/tests/fixtures/node_commands/upstream_track.json`
 - `crates/gdaemon/tests/node_checkout_status.rs`
@@ -3877,7 +3888,12 @@ the runs the earlier steps create.
   detection manifests, whose positive approval case per provider is in
   `crates/gdaemon/tests/fixtures/pane_detection/corpus.json` (node-halves
   2.12, 2.13), and node-halves 3.3 applies the report's `pane` block on the
-  hub. Claude, codex, droid and grok runs complete through the forwarded
+  hub. Decision 7's hook attention for grok (`pending_interaction`) and agy
+  (`PreToolUse` with `ask_question`) is the hub's existing local handling,
+  reached through #24150's forwarding. 5.1 proves forwarded attention hooks
+  through claude's, codex's and droid's, and grok's and agy's attention
+  through the pane, so their hook path stays unproven on a node here.
+  Claude, codex, droid and grok runs complete through the forwarded
   session end, which counts the turns their forwarded prompt submits began,
   and an agy run completes through `dead_reason` from the turn its forwarded
   `Stop` completed (2.6.8, 2.6.9). The
@@ -3904,11 +3920,16 @@ the runs the earlier steps create.
   `PATH` as `claude`, `codex`, `grok`, `droid`, and `agy`. It answers
   `--version` (agy with 1.1.18). Otherwise it runs in its pane:
   - codex prints the composer marker from the pane-detection corpus and
-    reads its prompt; each provider pipes a session-start
-    envelope into `ghook --cli=<provider> --type=session-start` with the
-    run's `GOBBY_SESSION_ID`, then its provider's prompt-submit envelope,
-    which the hub handles as `BEFORE_AGENT` and which begins the session's
-    turn (2.6);
+    reads its prompt; claude, codex, droid and grok each pipe a
+    session-start envelope into `ghook --cli=<provider> --type=session-start`
+    with the run's `GOBBY_SESSION_ID`, then their provider's prompt-submit
+    envelope, which the hub handles as `BEFORE_AGENT` and which begins the
+    session's turn (2.6). agy has no session-start hook (`AGY_HOOK_NAMES` in
+    `src/gobby/adapters/agy_contract.py`), so its fake begins with its
+    `PreInvocation` envelope under the same `GOBBY_SESSION_ID`. The hub's
+    agy adapter (`src/gobby/adapters/agy.py::AgyAdapter.handle_native`)
+    dispatches it as a synthetic session start and then `BEFORE_AGENT`,
+    which begins the turn;
   - it reads one line from its pane and writes it to a file in its
     workspace;
   - it asks for attention through its provider's path: claude and codex
@@ -4218,6 +4239,23 @@ Verification planned:
   Constraints, the 5.1 cross-plan row, 3.3, and 5.1's research, fake provider
   and 5.1.2 follow. The stale M1 stays until consensus, and Plan Adversary
   gobby#16993 derives it again.
+- 2026-10-18: Revision for Plan Adversary gobby#16993's review of fc37936 and
+  Orchestrator gobby#15977's 15:11 CDT ruling. 5.1's agy fake begins with its
+  `PreInvocation` envelope, because agy has no session-start hook. 1.5 moves
+  the WebSocket caller binding out of `server.py` (853 lines) into
+  `caller_binding.py`. A relation that sets no edge names #24657 3.7 and 3.8,
+  and 5.1's research says grok's and agy's hook attention stays unproven on a
+  node. node-halves has since created `crates/gdaemon/src/nodes/agents/mod.rs`,
+  so 4.2 and 4.6 scope it with `::*`. The stale M1 stays until consensus.
+- 2026-10-18: 1.5 reverts to the text of #24595 (Callers act only on machines
+  they own), which landed at 61b7a9e478 and cannot carry new work (Orchestrator
+  gobby#15977's ruling after DAEMON BACK). Plan Writer gobby#16767 withdraws the
+  `caller_binding.py` move. Its only
+  purpose was the size-growth rule on `server.py`, and route A exempts 1.5 once
+  #24595 closes completed (#15977, 16:19 CDT), as #24272 did for 2.2. That leaves
+  the move as nothing but a new Python module, which #15977's 16:16 ruling on
+  #24657 rules out. 1.5 keeps the Consumers unchanged entries for #24620's
+  `native_bridge.py` and its test. The stale M1 stays until consensus.
 
 ## V2: Verification
 `kind: verification`
