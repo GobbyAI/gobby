@@ -164,6 +164,13 @@ def evaluate_tdd_evidence(
     linked_paths = frozenset(implementation_paths or ())
     infrastructure_paths = linked_paths if task_category == "test" else frozenset()
 
+    def is_implementation_path(path: str) -> bool:
+        return is_implementation_edit_path(
+            path,
+            named_test_paths=named_test_paths,
+            test_infrastructure_paths=infrastructure_paths,
+        )
+
     parse_cache: PythonModuleCache = {}
     binding_cache: PythonBindingCache = {}
     red_cache: dict[_RedCacheKey, tuple[bool, str | None]] = {}
@@ -176,11 +183,7 @@ def evaluate_tdd_evidence(
         path
         for path in changed_paths
         if (path in named_test_paths or is_test_convention_path(path))
-        and not is_implementation_edit_path(
-            path,
-            named_test_paths=named_test_paths,
-            test_infrastructure_paths=infrastructure_paths,
-        )
+        and not is_implementation_path(path)
     }
     unchanged = tuple(
         test
@@ -191,15 +194,7 @@ def evaluate_tdd_evidence(
         )
     )
     first_production = min(
-        (
-            edit
-            for edit in task_edits
-            if is_implementation_edit_path(
-                edit.path,
-                named_test_paths=named_test_paths,
-                test_infrastructure_paths=infrastructure_paths,
-            )
-        ),
+        (edit for edit in task_edits if is_implementation_path(edit.path)),
         key=lambda edit: edit.order,
         default=None,
     )
@@ -246,12 +241,7 @@ def evaluate_tdd_evidence(
                 (
                     edit
                     for edit in task_edits
-                    if edit.order > test_edit.order
-                    and is_implementation_edit_path(
-                        edit.path,
-                        named_test_paths=named_test_paths,
-                        test_infrastructure_paths=infrastructure_paths,
-                    )
+                    if edit.order > test_edit.order and is_implementation_path(edit.path)
                 ),
                 key=lambda edit: edit.order,
             )
@@ -265,14 +255,18 @@ def evaluate_tdd_evidence(
                 test_edit.order,
                 production_edit,
                 require_not_implemented=not test.path.endswith(".rs")
-                and any(
-                    edit.order < test_edit.order
-                    and is_implementation_edit_path(
-                        edit.path,
-                        named_test_paths=named_test_paths,
-                        test_infrastructure_paths=infrastructure_paths,
+                and (
+                    any(
+                        edit.order < test_edits[0].order and is_implementation_path(edit.path)
+                        for edit in evidence.edits
                     )
-                    for edit in evidence.edits
+                    or any(
+                        run.outcome == "success"
+                        and run.order < test_edit.order
+                        and _is_test_execution_run(run)
+                        and _green_run_covers_test(run, red_test)
+                        for run in evidence.validation_runs
+                    )
                 ),
                 parse_cache=parse_cache,
                 binding_cache=binding_cache,
@@ -548,7 +542,7 @@ def _test_tightening_proof(
             and candidate.completed_at is not None
             and candidate.completed_at < red.started_at
             and _is_test_execution_run(candidate)
-            and _green_run_covers_test(candidate, test)
+            and _green_run_covers_test(candidate, test, require_named_selection=True)
         ),
         key=lambda candidate: candidate.order,
         default=None,
@@ -935,7 +929,7 @@ def _find_green_run(
             or run.order <= max(red.order if red is not None else -1, after_order)
         ):
             continue
-        if _green_run_covers_test(run, test) and (
+        if _green_run_covers_test(run, test, require_named_selection=retain_source) and (
             not retain_source
             or (red is not None and _retains_python_red_source(test, evidence, red, run))
         ):
@@ -943,7 +937,9 @@ def _find_green_run(
     return None
 
 
-def _green_run_covers_test(run: TranscriptValidationRun, test: AcceptanceTest) -> bool:
+def _green_run_covers_test(
+    run: TranscriptValidationRun, test: AcceptanceTest, *, require_named_selection: bool = False
+) -> bool:
     if not validation_run_covers_test(run.core_command, run.output, test):
         return False
     if not test.path.endswith(".py"):
@@ -962,20 +958,23 @@ def _green_run_covers_test(run: TranscriptValidationRun, test: AcceptanceTest) -
     )
     if pytest_index is not None:
         tokens = tokens[pytest_index + 1 :]
-    for index, token in enumerate(tokens):
-        if token.startswith("-m"):
-            return validation_run_names_test("", run.output, test)
-        if not token.startswith("-k"):
-            continue
-        expression = (
-            tokens[index + 1]
-            if token == "-k" and index + 1 < len(tokens)
-            else token[2:].removeprefix("=")
-        )
-        # A simple pytest keyword matches the node's path/class/function names.
-        # Complex expressions need an explicit node receipt in the output.
-        if not re.fullmatch(r"\w+", expression) or expression.lower() not in test.reference.lower():
-            return validation_run_names_test("", run.output, test)
+    if require_named_selection:
+        for index, token in enumerate(tokens):
+            if token.startswith("-m"):
+                return validation_run_names_test("", run.output, test)
+            if not token.startswith("-k"):
+                continue
+            expression = (
+                tokens[index + 1]
+                if token == "-k" and index + 1 < len(tokens)
+                else token[2:].removeprefix("=")
+            )
+            # Tightening needs proof that filters selected the baseline/red node.
+            if (
+                not re.fullmatch(r"\w+", expression)
+                or expression.lower() not in test.reference.lower()
+            ):
+                return validation_run_names_test("", run.output, test)
     artifact_nodes, same_file_nodes = _selected_pytest_nodes(run.core_command or "", test)
     if not same_file_nodes or artifact_nodes:
         return True
