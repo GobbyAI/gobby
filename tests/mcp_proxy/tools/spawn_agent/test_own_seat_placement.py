@@ -20,11 +20,12 @@ from tests.terminals.test_workspace_agent_panes import (
     LOCAL_MACHINE_ID,
     _Harness,
     _workspace,
-    harness,
 )
+from tests.terminals.test_workspace_agent_panes import harness as workspace_fixture
 from tests.workflows.test_spawn_scope_rules import _define_agent, _register, _seat_in_lane
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
+harness = workspace_fixture
 
 
 @pytest.fixture(autouse=True)

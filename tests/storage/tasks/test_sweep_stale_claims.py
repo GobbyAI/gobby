@@ -930,6 +930,32 @@ def test_a_native_pane_exit_releases_its_claim_only_when_the_host_stayed_up(
 
 
 @pytest.mark.usefixtures("_local_machine_identity")
+def test_a_same_status_rewrite_keeps_the_drain_marker_and_the_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A status write that leaves a drained seat expired settles nothing.
+
+    Every status write used to clear the contested marker, so a same-status
+    rewrite after the drain expiry dropped the shield and the claim fell to the
+    ordinary schedule. Only a write that changes the status can settle the guess.
+    """
+    sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch="host-epoch-after-drain"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    sessions.update_status(session_id, "expired")
+
+    marker = (read_session_variables(temp_db, session_id) or {}).get(
+        CONTESTED_TERMINAL_EXPIRY_VARIABLE
+    )
+    assert marker is not None and marker["cause"] == "terminal_drain"
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
 def test_a_drained_seat_keeps_its_developer_handoff_binding(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
