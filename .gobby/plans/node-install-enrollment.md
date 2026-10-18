@@ -43,8 +43,8 @@ curl -fsSL "https://github.com/GobbyAI/gobby/releases/download/gdaemon-v$v/gobby
   grok and agy found on `PATH`. It then starts a launchd agent (macOS) or a systemd
   user unit (Linux) and waits until the hub lists the node as connected.
 - From then on the hub drives updates. Every connect's acknowledgement names the
-  release the hub wants. The node stages it, and the hub tells it to switch once it
-  runs no agents. When the hub upgrades, every node follows.
+  release the hub wants. The node stages it and switches once it runs no agents.
+  When the hub upgrades, every node follows.
 - In any gclient window on any enrolled machine, hub or node, `gobby node list`
   shows every machine the operator owns with its release, target and connection.
   `gobby node update --machine <ref>` or `--all` makes the hub drive an update now.
@@ -91,7 +91,11 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
     no managed pin.
   - 2.4 changes `crates/gcore`, so it bumps `gcode`, `gdaemon`, `ghook` and `gmcp`,
     and its `crates/gclient` edit bumps `gclient`. `gterm` does not depend on
-    `gobby-core`.
+    `gobby-core`, and no leaf changes it, so bundles carry `gterm` 0.1.12. That
+    version has never been tagged or published (#15977, 15:13 CDT), so its first
+    push, at E1's gate 3, publishes it signed. `gclient` has no published release
+    either (`UNPUBLISHED_MANAGED_BINS` in `version_pins.py`); its first is the
+    version its last bumping leaf leaves.
   - Python-only leaves, `.github/` and `scripts/` changes, and paths with a `tests`
     component bump nothing
     (`src/gobby/install/bin_release_identity.py::workspace_source_identity`).
@@ -135,21 +139,28 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
   `ureq = { version = "2", features = ["json"] }` (as gcore declares it; 2.12.1 is
   locked) and `ring = "0.17"` (0.17.14 is locked through rustls). `display` pulls
   `toml_writer`, also locked. Bundle extraction runs the system `tar`. The release
-  scripts run on CI runners and never on a node; `node_bundle.py` uses only the
-  standard library, and the script tests use the locked `cryptography` package.
+  scripts are bash and run on CI runners, never on a node. They use `jq`, `openssl`
+  3 and `sha256sum`, which the Ubuntu runner provides, and
+  `crates/gdaemon/tests/release_scripts.rs` tests them with the same tools.
+- **No new Python.** Josh's fleet rule (14:41 CDT) and #15977's ruling (15:11 CDT)
+  allow no new Python file. The release scripts and their tests are bash and Rust
+  (1.1, 1.3), and the docs guard is a Rust test (5.1). Two new Python files stay
+  under the rule's exception for current code. `tests/install/test_node_setup_golden.py`
+  runs the existing Python installers to prove the goldens the Rust installer
+  matches (3.4 to 3.8). `src/gobby/code_index/gcode_versions.py` is code-index-family
+  1.1's move of existing literals, which 2.4 makes only when 1.1 has not landed.
 - **Heavy work.** Every cargo run sets `CARGO_BUILD_JOBS=3` and scopes with `-p`.
 - **Monolith ceiling.** Every targeted production file stays under 1,000 lines,
   counting inline `#[cfg(test)]` modules. Unit tests go in `<module>/tests.rs`.
-  `crates/gdaemon/src/node_commands.rs` is 930 lines, so the contract range lives in
-  a new file.
 
 ## Decision Record
 `kind: framing`
 
 Orchestrator #15977 ordered this rework at 13:03 CDT on 2026-10-18 (Josh: "The whole
 plan needs to be reworked.") and added Josh's requirements at 13:04, 13:05 and 13:11.
-It ruled on #24717, #24604, #21571 and the hub-mode edits at 13:31. The Plan Writer
-records D1 to D23 for review; the pushbacks Josh asked for are marked.
+It ruled on #24717, #24604, #21571 and the hub-mode edits at 13:31, and at 15:11
+affirmed D4, D8, D15 and D22 and ruled out new Python files. The Plan Writer records
+D1 to D23; the pushbacks Josh asked for are marked.
 
 - **D1, release identity.** A node release is a gdaemon release. Its version is the
   gdaemon crate version and its tag is `gdaemon-v<version>`. The gdaemon release
@@ -171,7 +182,8 @@ records D1 to D23 for review; the pushbacks Josh asked for are marked.
   The command names a version because GitHub's "latest" release is the Python `v*`
   release (`.github/workflows/release.yml`), and every binary workflow publishes
   with `--latest=false`. Any published release works, because install moves the
-  node to the hub's target. Rejected: an install script piped to `sh`, which is a
+  node to the hub's target, and install's wait covers that move (3.9). Rejected: an
+  install script piped to `sh`, which is a
   second artifact to publish and audit; and marking gdaemon releases latest, which
   takes "latest" from the Python product.
 - **D4, command routing and authority.** `gobby`, the bundle's gclient, handles
@@ -186,49 +198,59 @@ records D1 to D23 for review; the pushbacks Josh asked for are marked.
   they write that machine's credentials and service. The hub upgrades through
   `gobby cutover` on the hub, because it is the machine that builds from source.
   Agent and terminal operations on other machines route through hub-mode's node
-  commands and are outside this plan.
+  commands and are outside this plan. #15977 affirmed this at 15:11 CDT.
 - **D5, update target.** Nodes never ask GitHub what to run. The hub resolves the
   target: the highest published `gdaemon-v` release no newer than the hub's own
-  gdaemon whose `node-release.json` contract range the hub admits (D6). It caches the
+  gdaemon whose `node-release.json` contract equals the hub's (D6). It caches the
   answer for 10 minutes and keeps the last good answer when GitHub is unreachable.
   The target reaches a node in the acknowledgement of every connect, which is the
   start-time check Josh asked for; in refusals; and in `release` frames when the
   target changes or the operator runs `gobby node update`. Because the target never
   exceeds the hub, a start-time check never moves a node past what its hub speaks. A
   node newer than the target moves down to it.
-- **D6, version skew.** Each side accepts node-command contract versions
-  `CONTRACT_MIN_VERSION..=CONTRACT_VERSION` (both 4 today) and sends at
-  `CONTRACT_VERSION`. The hello carries the node's range. The hub admits the node when
-  each side's `CONTRACT_VERSION` lies inside the other side's range. Otherwise it
-  sends a `refuse` frame and closes with code 4426:
-  - `node_too_old` when the node's `CONTRACT_VERSION` is below the hub's, or when the
-    hello carries no range (a node from before this plan);
-  - `hub_too_old` when the node's `CONTRACT_VERSION` is above the hub's.
+- **D6, version skew.** Hub and node allow no contract skew. The hello carries the
+  node's `contract`, its `node_commands::CONTRACT_VERSION`, and the hub admits the
+  node only when it equals the hub's. Otherwise the hub sends a `refuse` frame and
+  closes with code 4426:
+  - `node_too_old` when the node's contract is below the hub's, or when the hello
+    carries none (a node from before this plan);
+  - `hub_too_old` when the node's contract is above the hub's.
 
-  The frame carries both ranges, the target, an `activate` flag (D7) and a message
-  naming both gdaemon versions and what happens next. The node moves to the target,
-  and `gobby node list` shows the refusal. Only the hub checks. A hub from before this
-  plan speaks contract 4, which every node from this plan accepts, and raising
-  `CONTRACT_MIN_VERSION` needs a hub on this plan's code, because hubs upgrade first.
-  A node from before this plan cannot update itself, so its refusal message tells
-  the operator to re-run the install command on it. Release frames belong to the
-  channel layer, like hello and ack, and sit outside the command contract's `v`, so
-  the Python models in `src/gobby/hub/node_commands.py` do not change.
+  The frame carries both contracts, the target and a message naming both gdaemon
+  versions and what happens next. Refuse-and-converge is the policy both ways: the
+  node moves to the target (D7), and `gobby node list` shows the refusal. Only the
+  hub checks, and hubs upgrade first. A node from before this plan cannot update
+  itself, so its refusal message tells the operator to re-run the install command on
+  it. Release frames belong to the channel layer, like hello and ack, and sit outside
+  the command contract's `v`, so the Python models in `src/gobby/hub/node_commands.py`
+  do not change.
+
+  Because a target is always a published release (D5), every `CONTRACT_VERSION`
+  change is a release event. The gdaemon release carrying the new contract is
+  published before the hub cuts over to it, and the release guide and node guide
+  order the steps that way (5.1). A hub that cuts over first resolves no target, and
+  each refusal says no published gdaemon release speaks its contract yet; nodes
+  converge once one is published.
 - **D7, activation and restart.** The node stages the target beside its binaries and
-  reports it. The hub sends `activate` when the machine has no `pending` or
-  `running` agent run, checking when the report arrives and at every heartbeat. The
-  node promotes the staged set to new inodes with the identity stamp, writes
+  reports it. It activates the staged target once its own agent state holds no run
+  (`AgentState::live_and_accepted() == 0`), checking when staging completes, at each
+  channel ping, and at each refusal. It promotes the staged set to new inodes with the identity stamp, writes
   `.node-release.json`, and `gdaemon serve` exits with status 75. launchd
   (`KeepAlive` with `SuccessfulExit` false) or systemd (`Restart=on-failure`) then
-  starts the new binaries. Interactive provider sessions are not agent runs and do
-  not gate activation. A refused node has no channel, so the refusal's `activate`
-  flag carries the same check.
+  starts the new binaries. A refused node, which has no channel, activates the same
+  way from the refusal's target. The target is the only word the node needs from the
+  hub, so no `activate` frame exists. The hub's `agent_runs` rows do not gate
+  activation: after a hub cutover they can list runs that ended with the old hub
+  until the node reports again (hub-mode Story 3), and only the node knows what it
+  runs. Interactive provider sessions are not agent runs and do not gate activation.
+  A failed promotion keeps the staged set, and the next check retries it.
 - **D8, no automatic rollback.** **Pushback:** the staged set is verified and its
   identity probed before the swap, which catches a corrupt or incoherent set. A
   release that verifies but misbehaves is fixed by withdrawing it on GitHub, after
   which the hub targets the previous release and nodes move down to it, or by
   re-running the install command. Keeping and health-checking a previous set would
-  add a second lifecycle for a case the release process already handles.
+  add a second lifecycle for a case the release process already handles. #15977
+  affirmed this at 15:11 CDT.
 - **D9, service.** `gobby node install` owns the node's service:
   `~/Library/LaunchAgents/com.gobby.node.plist` on macOS and the systemd user unit
   `gobby-node.service` on Linux. Both run `<gobby_home>/bin/gdaemon serve` with the
@@ -271,7 +293,8 @@ records D1 to D23 for review; the pushbacks Josh asked for are marked.
   lockfile and runner are embedded from their D20 copies with `include_bytes!` and
   checked against their pins. **Pushback:** Node.js 22.12.0 or later and npm stay
   node requirements, because SRT is an npm package; bundling Node.js would mean
-  publishing and updating a JavaScript runtime for every target.
+  publishing and updating a JavaScript runtime for every target. #15977 affirmed
+  this at 15:11 CDT.
 - **D16, password and trust prompts.** On a TTY, enroll prompts `Password: ` with
   echo off. Otherwise it reads one line from stdin, which the e2e fixture pipes.
   Without `--fingerprint`, enroll shows the fingerprint and asks `Trust this
@@ -310,12 +333,17 @@ records D1 to D23 for review; the pushbacks Josh asked for are marked.
   the copy bumps gdaemon.
 - **D21, debug-only test overrides.** `release.rs` and the node verbs read
   `GOBBY_RELEASE_BASE_URL`, `GOBBY_RELEASE_API_URL`, `GOBBY_RELEASE_TEST_KEY` and
-  `GOBBY_NODE_CONNECT_TIMEOUT_SECS` only under `cfg(debug_assertions)`. Tests run
+  `GOBBY_NODE_CONNECT_TIMEOUT_SECS` and `GOBBY_NODE_CONVERGE_TIMEOUT_SECS` only
+  under `cfg(debug_assertions)`. Tests run
   debug builds against a local fake release server and a test key. Release builds
   ignore the variables, so a published binary trusts only the embedded key.
 - **D22, publication is a gate.** Publishing pushes tags, and only Josh authorizes a
   push, so publication is E1's gate 3 rather than a leaf. It follows the last
-  bumping leaf and #24717.
+  bumping leaf and #24717. Every member's release at its manifest version is a
+  first publication: 2.4 bumps `gcode`, `ghook`, `gdaemon` and `gmcp`, the gclient
+  leaves bump `gclient`, and `gterm-v0.1.12` has never been tagged (Release
+  ownership). Each therefore carries signed checksums. #15977 affirmed this at
+  15:11 CDT.
 - **D23, hub-mode edits.** A separate commit edits `.gobby/plans/hub-mode.md` under
   #15977's 13:31 authorization so grok and agy settle through hooks, while pane
   attention stays for all five: Decision 7 lists their attention hooks, and the
@@ -349,9 +377,10 @@ Targets:
 - `.github/workflows/release-gclient.yml`
 - `.github/workflows/release-gterminal.yml`
 - `crates/gcode/tests/release_workflows.rs::*` — scope-reason: a new test asserts the signing step in every binary release workflow
-- `tests/scripts/test_sign_release.py`
+- `crates/gdaemon/tests/release_scripts.rs`
 
-Python surface replaced: none. This is release tooling (D2).
+Python surface replaced: none. This is release tooling (D2), and its tests are Rust
+(No new Python).
 
 - `sign_release.sh` (bash, `set -euo pipefail`) writes `GOBBY_RELEASE_SIGNING_KEY`
   (a PEM Ed25519 private key) to a 0600 temporary file that a trap removes. It
@@ -371,6 +400,12 @@ Python surface replaced: none. This is release tooling (D2).
 - `release_workflows_sign_checksums` checks all five workflows: the step sits between
   checksum generation and `gh release create`, runs the script's `sums` mode, maps
   the secret, the job names `environment: release`, and the assets list both files.
+- `release_scripts.rs` runs `scripts/release/sign_release.sh` by its path from
+  `CARGO_MANIFEST_DIR` in a temporary directory, with a key from
+  `openssl genpkey -algorithm ed25519`, and verifies each signature with
+  `openssl pkeyutl -verify -pubin -rawin`. Each test returns early with a message
+  when `openssl` 3 or `sha256sum` is missing; CI's Ubuntu runner has both. A path
+  with a `tests` component bumps nothing (Release ownership).
 
 Research context:
 - Release jobs end with
@@ -381,13 +416,12 @@ Research context:
 - `crates/gcode/tests/release_workflows.rs::release_workflows_generate_and_upload_archive_checksums`
   already checks the checksum step of `release-gcode.yml` and `release-ghook.yml`.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-code -E 'binary(release_workflows)'`;
-  `GOBBY_TEST_PROTECT=1 uv run pytest tests/scripts/test_sign_release.py -v` (skips
-  without OpenSSL 3 or `sha256sum`; CI's Ubuntu runner has both).
+  `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(release_scripts)'`.
 
 **Acceptance:**
 
-- 1.1.1 - `sign_release.sh sums` writes a `SHA256SUMS` listing each named file's hash and a `SHA256SUMS.sig` that the matching Ed25519 public key verifies. test: `tests/scripts/test_sign_release.py::test_sums_signature_verifies`.
-- 1.1.2 - `sign_release.sh file` writes a detached signature the public key verifies, and either mode refuses an empty key with nothing written. test: `tests/scripts/test_sign_release.py::test_file_mode_and_missing_key`.
+- 1.1.1 - `sign_release.sh sums` writes a `SHA256SUMS` listing each named file's hash and a `SHA256SUMS.sig` that the matching Ed25519 public key verifies. test: `crates/gdaemon/tests/release_scripts.rs::sums_signature_verifies`.
+- 1.1.2 - `sign_release.sh file` writes a detached signature the public key verifies, and either mode refuses an empty key with nothing written. test: `crates/gdaemon/tests/release_scripts.rs::file_mode_and_missing_key`.
 - 1.1.3 - Each of the five binary release workflows signs its checksums in the `release` environment before `gh release create` and uploads `SHA256SUMS` and `SHA256SUMS.sig`. test: `crates/gcode/tests/release_workflows.rs::release_workflows_sign_checksums`.
 
 ### 1.2 gmcp release workflow [category: config] (depends: 1.1)
@@ -426,20 +460,21 @@ Research context:
 `kind: deliverable`
 
 Targets:
-- `scripts/release/node_bundle.py`
+- `scripts/release/node_bundle.sh`
 - `.github/workflows/release-gdaemon.yml`
 - `crates/gdaemon/tests/release_workflow.rs::*` — scope-reason: a new test asserts the bundle step's place and inputs
-- `tests/scripts/test_node_bundle.py`
+- `crates/gdaemon/tests/release_scripts.rs`
 
-Python surface replaced: none (D1).
+Python surface replaced: none (D1). The script is bash and its tests are Rust (No
+new Python).
 
-- The gdaemon `release` job runs `python3 scripts/release/node_bundle.py --tag "$tag"`
-  with `GH_TOKEN` after checksum generation and before signing. The script works in
-  a fresh directory and refuses on the first failure, so a bundle step that fails
-  publishes nothing:
-  1. Versions come from `cargo metadata --no-deps --format-version 1` for
-     `gobby-client`, `gobby-daemon`, `gobby-code`, `gobby-hooks`, `gobby-mcp` and
-     `gobby-terminal`. gdaemon's must equal the tag.
+- The gdaemon `release` job runs `scripts/release/node_bundle.sh --tag "$tag"`
+  (`shell: bash`) with `GH_TOKEN` after checksum generation and before signing. The
+  script (`set -euo pipefail`) works in a fresh directory and refuses on the first
+  failure, so a bundle step that fails publishes nothing:
+  1. Versions come from `cargo metadata --no-deps --format-version 1`, read with
+     `jq`, for `gobby-client`, `gobby-daemon`, `gobby-code`, `gobby-hooks`,
+     `gobby-mcp` and `gobby-terminal`. gdaemon's must equal the tag.
   2. For each other member, `gh release download <bin>-v<version>` fetches its four
      Unix archives with `SHA256SUMS` and `SHA256SUMS.sig`. The script verifies the
      signature with
@@ -451,34 +486,34 @@ Python surface replaced: none (D1).
      `gdaemon schema version --json`, then `gcode schema-identity --json` and
      `ghook schema-identity --json`, which must agree on the six identity fields
      `src/gobby/storage/schema_identity_pin.py::validate_identity` requires.
-     `gdaemon node release-info --json` (2.1) gives the contract range.
-  4. `node-release.json` holds `release`, `contract` (`min`, `max`), `versions`
-     (member name to version) and `members` (bundle target to member name to
-     SHA-256). Member names are `gobby`, `gdaemon`, `gcode`, `ghook`, `gmcp` and
-     `gterm`; gclient's binary ships as `gobby` (D11). `sign_release.sh file`
-     signs it.
+     `gdaemon node release-info --json` (2.1) gives the contract.
+  4. `jq -n` writes `node-release.json`: `release`, `contract` (the integer
+     release-info prints), `versions` (member name to version) and `members` (bundle
+     target to member name to SHA-256). Member names are `gobby`, `gdaemon`, `gcode`,
+     `ghook`, `gmcp` and `gterm`; gclient's binary ships as `gobby` (D11).
+     `sign_release.sh file` signs it.
   5. For each of `Darwin-arm64` (`aarch64-apple-darwin`), `Darwin-x86_64`,
      `Linux-x86_64` and `Linux-aarch64`, `gobby-node-<target>.tar.gz` holds the
      directory `gobby-node/` with the six members (0755), `node-release.json` and
      `node-release.json.sig`.
 - The `assets` array gains the four bundles, `node-release.json` and
   `node-release.json.sig`, and the `Sign checksums` step (1.1) covers them.
-- `tests/scripts/test_node_bundle.py` runs the script against a fake `gh` and
-  `cargo` on `PATH` serving signed member archives whose binaries are shell scripts
-  printing an identity, with a test key in place of the repository key.
+- `release_scripts.rs` gains the script's tests. Each runs it against fake `gh` and
+  `cargo` scripts on `PATH` serving signed member archives whose binaries are shell
+  scripts printing an identity and a release-info. The working directory is a
+  temporary tree whose `crates/gdaemon/assets/release-signing.pub` is a test key.
 
 Research context:
 - `crates/gdaemon/tests/release_workflow.rs::release_workflow_builds_publishes_and_packages_gdaemon`
   asserts required strings in `release-gdaemon.yml`.
 - `gdaemon schema version --json` and `<bin> schema-identity --json` are the probes
   `src/gobby/install/bin_set_coherence.py::probe_set_member_identity` runs.
-- Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(release_workflow)'`;
-  `GOBBY_TEST_PROTECT=1 uv run pytest tests/scripts/test_node_bundle.py -v`.
+- Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(release_workflow) | binary(release_scripts)'`.
 
 **Acceptance:**
 
-- 1.3.1 - From verified member archives, the script writes a signed `node-release.json` with each member's version and per-target hash and four bundles that each extract to `gobby-node/` with six executable members and the signed manifest. test: `tests/scripts/test_node_bundle.py::test_bundles_carry_signed_manifest`.
-- 1.3.2 - A member release that is missing, carries a bad signature or a hash mismatch, a gdaemon version that differs from the tag, or disagreeing identities fail the script with nothing written. test: `tests/scripts/test_node_bundle.py::test_refuses_unverified_or_incoherent_members`.
+- 1.3.1 - From verified member archives, the script writes a signed `node-release.json` with the contract, each member's version and per-target hash, and four bundles that each extract to `gobby-node/` with six executable members and the signed manifest. test: `crates/gdaemon/tests/release_scripts.rs::bundles_carry_signed_manifest`.
+- 1.3.2 - A member release that is missing, carries a bad signature or a hash mismatch, a gdaemon version that differs from the tag, or disagreeing identities fail the script with nothing written. test: `crates/gdaemon/tests/release_scripts.rs::bundle_refuses_unverified_or_incoherent_members`.
 - 1.3.3 - `release-gdaemon.yml` assembles the bundles after checksum generation and before signing, and uploads the bundles and the signed manifest. test: `crates/gdaemon/tests/release_workflow.rs::release_workflow_publishes_node_bundles`.
 
 ## P2: `gobby node` and enrollment
@@ -495,8 +530,6 @@ Targets:
 - `crates/gdaemon/src/main.rs::main`
 - `crates/gdaemon/src/lib.rs`
 - `crates/gdaemon/src/node_setup/mod.rs`
-- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: declares the new `contract_range` module
-- `crates/gdaemon/src/nodes/contract_range.rs`
 - `crates/gdaemon/tests/node_setup.rs`
 - `crates/gdaemon/tests/node_setup_support/mod.rs`
 - `crates/gdaemon/Cargo.toml`
@@ -510,24 +543,22 @@ harness.
   dispatched to `gobby_daemon::node_setup::run`. `lib.rs` declares
   `#[cfg(unix)] pub mod node_setup;`. This leaf's only verb is
   `NodeCommand::ReleaseInfo { json: bool }`.
-- `contract_range.rs` defines `pub const CONTRACT_MIN_VERSION: u64 = 4;`,
-  `ContractRange { min: u64, max: u64 }` (serde), and
-  `ContractRange::OWN = ContractRange { min: CONTRACT_MIN_VERSION, max: node_commands::CONTRACT_VERSION }`,
-  with a compile-time assertion that `min <= max`.
 - `gdaemon node release-info --json` prints
-  `{"release": "<CARGO_PKG_VERSION>", "contract": {"min": 4, "max": 4}}`; without
-  `--json` it prints `gdaemon <version>, node contract 4..4`. 1.3 reads it.
+  `{"release": "<CARGO_PKG_VERSION>", "contract": <node_commands::CONTRACT_VERSION>}`;
+  without `--json` it prints `gdaemon <version>, node contract <contract>`. 1.3
+  reads it.
 - `node_setup_support/mod.rs` is the no-toolchain harness (Constraints).
 
 Research context:
-- `crates/gdaemon/src/node_commands.rs::CONTRACT_VERSION` is a `u64` equal to 4, and
-  `node_commands/checkout_read.rs` rejects any other `v`. The file is 930 lines.
+- `crates/gdaemon/src/node_commands.rs::CONTRACT_VERSION` is a `u64`, and
+  `node_commands/checkout_read.rs` rejects any other `v`. #24660 (Node-commands
+  contract) may change its value, so no text here names one.
 - `crates/gdaemon/src/main.rs` is 316 lines and `lib.rs` 16.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_setup)'`.
 
 **Acceptance:**
 
-- 2.1.1 - `gdaemon node release-info --json` prints the crate version and the contract range 4..4 in the sandbox, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::release_info_reports_version_and_contract_without_python`.
+- 2.1.1 - `gdaemon node release-info --json` prints the crate version and `node_commands::CONTRACT_VERSION` in the sandbox, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::release_info_reports_version_and_contract_without_python`.
 - 2.1.2 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 2.2 `gobby node install` and `gobby node enroll` run the sibling gdaemon [category: code] (depends: 2.1)
@@ -859,7 +890,7 @@ downloads, for node binaries (D2).
 - `parse_sums(text)` reads `sha256sum` lines into a map; a malformed line or a
   duplicate name refuses.
 - `NodeRelease` (serde, unknown fields ignored so an older node can read a newer
-  manifest): `release`, `contract: ContractRange`, `versions` and `members` as 1.3
+  manifest): `release`, `contract: u64`, `versions` and `members` as 1.3
   writes them. The member set is exactly `gobby`, `gdaemon`, `gcode`, `ghook`,
   `gmcp` and `gterm`.
 - `bundle_target()` maps `std::env::consts::{OS, ARCH}`: `macos`/`aarch64` to
@@ -1355,11 +1386,14 @@ Python surface replaced: none on a node. The old node setup had the operator run
 - Both files are written through `replace_file`, so a re-run rewrites them and
   restarts the service with the current `PATH`.
 - Wait: install polls `GET <hub>/api/machines` with the node's key through enroll's
-  pinned client every 2 s for up to 120 s (D21's debug override shortens it) until
-  this `machine_id`'s row shows `connected: true`, then prints
-  "Node <hostname> is connected to <hub> at gdaemon <version>." On timeout it prints
-  the row's `refusal` when the hub reports one (4.1), the log path and the command
-  that shows the service's state, and exits 1.
+  pinned client every 2 s until this `machine_id`'s row shows `connected: true`,
+  then prints "Node <hostname> is connected to <hub> at gdaemon <version>." It
+  waits up to 120 s for the row to show either a connection or a refusal. While the
+  row shows a refusal and a non-null `target_release`, the node is moving to that
+  target (D7), so install prints "Moving to gdaemon <target>" once and keeps
+  waiting, up to 600 s from the start. D21's debug overrides shorten both bounds.
+  Past a bound, or on a refusal with no target, it prints the row's `refusal`, the
+  log path and the command that shows the service's state, and exits 1.
 - The harness gains stub `launchctl`, `systemctl` and `loginctl` scripts that record
   their arguments, and the stub hub answers `/api/machines`. Each OS's test is
   `#[cfg(target_os = ...)]`. The fixtures write the home and `PATH` as `$HOME`,
@@ -1370,16 +1404,22 @@ Research context:
   with `SuccessfulExit` false and `ThrottleInterval` 10;
   `gobby-daemon.service.j2` uses `Restart=on-failure` and `ProtectSystem=strict`.
 - `crates/gdaemon/src/nodes/machines_api.rs::list` returns the caller's machines with
-  `connected` from the registry.
+  `connected` from the registry. Rows gain `refusal` in 4.1 and `target_release` in
+  4.2; until then a production row has neither and the wait ends on `connected`
+  alone. The stub hub serves both fields, so this leaf's tests cover the moving case.
+- A bundle download is at most 256 MiB (3.1), and launchd's `ThrottleInterval` and
+  systemd's `RestartSec` are 10 s, so 600 s covers a download, a promotion and a
+  restart on a slow link.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_setup)'`.
 
 **Acceptance:**
 
 - 3.9.1 - On macOS, install writes the plist fixture's content for the sandbox, boots it out and in through `launchctl`, and returns once the stub hub lists the machine connected, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_loads_launch_agent_and_waits_without_python`.
 - 3.9.2 - On Linux, install writes the unit fixture's content, reloads, enables and restarts it through `systemctl --user`, prints the linger command when lingering is off, and returns once the stub hub lists the machine connected, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_starts_systemd_unit_and_waits_without_python`.
-- 3.9.3 - When the hub never lists the node connected, install exits 1 after the wait and prints the refusal the hub reports and the log path. test: `crates/gdaemon/tests/node_setup.rs::install_reports_unconnected_node`.
-- 3.9.4 - The Overview's install command runs whole in one sandbox, from bundle and enrollment through SRT, the five CLIs and the service, and leaves a node home that `NodeServices::prepare` accepts, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
-- 3.9.5 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.9.3 - While the stub hub's row shows a refusal with a target, install prints that the node is moving to it and keeps waiting past the first bound, and it returns once the row shows the machine connected. test: `crates/gdaemon/tests/node_setup.rs::install_waits_while_node_moves_to_target`.
+- 3.9.4 - When the hub never lists the node connected, or refuses it with no target, install exits 1 after the bound and prints the refusal the hub reports and the log path. test: `crates/gdaemon/tests/node_setup.rs::install_reports_unconnected_node`.
+- 3.9.5 - The Overview's install command runs whole in one sandbox, from bundle and enrollment through SRT, the five CLIs and the service, and leaves a node home that `NodeServices::prepare` accepts, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
+- 3.9.6 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## P4: Hub-driven updates and version skew
 `kind: framing`
@@ -1389,7 +1429,7 @@ and activates it (D7), and the operator can drive it from any window (D4). Chann
 frames are JSON text frames: node frames carry `kind`, hub frames carry `type`, as
 hello and ack do today.
 
-### 4.1 The handshake carries the contract range and the hub refuses skew both ways [category: code] (depends: 3.9)
+### 4.1 The handshake carries the contract and the hub refuses skew both ways [category: code] (depends: 3.9)
 `kind: deliverable`
 
 Targets:
@@ -1409,23 +1449,25 @@ Targets:
 
 Python surface replaced: none; the channel is Rust on both ends.
 
-- The node's hello gains `contract_min` and `contract_max` from `ContractRange::OWN`.
-  `Hello` reads them as optional fields, and `hello_version` becomes a parser that
-  returns the whole hello.
-- `release_frames.rs::admit(hub, node)` applies D6's rule and returns a `Refusal`
-  with `reason`, both ranges and `message`. The message names both gdaemon versions
-  and both ranges, says which side is older, and gives the next step:
+- The node's hello gains `contract`, its `node_commands::CONTRACT_VERSION`. `Hello`
+  reads it as an optional field, and `hello_version` becomes a parser that returns
+  the whole hello.
+- `release_frames.rs::admit(hub, node)` admits when the two contracts are equal and
+  otherwise returns a `Refusal` with `reason` (D6), both contracts and `message`. The
+  message names both gdaemon versions and both contracts, says which side is older,
+  and gives the next step:
   - `node_too_old` with a target: "The node moves to gdaemon <target>
-    automatically." With no target: "No published release fits this hub yet;
-    publish one (docs/guides/release-guide.md)." For a hello with no range: "Re-run
-    the node install command (docs/guides/node-setup.md) on <hostname>."
-  - `hub_too_old`: "Upgrade the hub first to keep this node on gdaemon <version>;
-    until then the node moves down to gdaemon <target>."
+    automatically." For a hello with no contract: "Re-run the node install command
+    (docs/guides/node-setup.md) on <hostname>."
+  - `hub_too_old` with a target: "Upgrade the hub first to keep this node on gdaemon
+    <version>; until then the node moves down to gdaemon <target>."
+  - Either reason with no target: "No published gdaemon release speaks contract
+    <hub contract> yet; publish one (docs/guides/release-guide.md)."
 
   4.2 fills the target; until then a refusal carries `target_release: null`.
 - `hub_channel` runs `admit` after reading the hello and before registering. On a
   refusal it sends `{"type": "refuse", "reason", "hub_contract", "node_contract",
-  "target_release", "activate": false, "message"}`, closes with 4426, records
+  "target_release", "message"}`, closes with 4426, records
   `{reason, message, node_version, at}` in the registry's refusal map under the
   machine, and writes nothing to `machines`. Admission clears the machine's entry.
 - `connect_client` logs a `refuse` frame's message at warn level, and `run_client`
@@ -1445,10 +1487,10 @@ Research context:
 
 **Acceptance:**
 
-- 4.1.1 - A hello whose contract version is below the hub's is refused with `node_too_old`, close code 4426, both ranges and a message naming both gdaemon versions, and the machine is neither registered nor heartbeated. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_node_too_old`.
-- 4.1.2 - A hello whose contract version is above the hub's is refused with `hub_too_old` and a message telling the operator to upgrade the hub first. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_hub_too_old`.
-- 4.1.3 - A hello without a range is refused as `node_too_old` with the re-install instruction. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_node_without_contract_range`.
-- 4.1.4 - `admit` admits exactly when each side's version lies in the other's range, across equal, overlapping and disjoint ranges. test: `crates/gdaemon/src/nodes/release_frames/tests.rs::admit_follows_contract_rule`.
+- 4.1.1 - A hello whose contract is below the hub's is refused with `node_too_old`, close code 4426, both contracts and a message naming both gdaemon versions, and the machine is neither registered nor heartbeated. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_node_too_old`.
+- 4.1.2 - A hello whose contract is above the hub's is refused with `hub_too_old` and a message telling the operator to upgrade the hub first. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_hub_too_old`.
+- 4.1.3 - A hello without a contract is refused as `node_too_old` with the re-install instruction. test: `crates/gdaemon/tests/node_release.rs::hub_refuses_node_without_contract`.
+- 4.1.4 - `admit` admits exactly when the contracts are equal, names `node_too_old` below and `hub_too_old` above, and with no target gives the no-published-release message. test: `crates/gdaemon/src/nodes/release_frames/tests.rs::admit_follows_contract_rule`.
 - 4.1.5 - `GET /api/machines` shows a refused machine's refusal, and a later admission clears it. test: `crates/gdaemon/tests/node_release.rs::machines_api_reports_refusal`.
 - 4.1.6 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -1476,8 +1518,9 @@ Python surface replaced: none (D5).
   refreshes it in a blocking task when it is older than 10 minutes; `refresh()`
   refreshes now. Resolution walks `release::published_releases()` newest first,
   skips versions above the hub's `CARGO_PKG_VERSION`, and takes the first whose
-  `release::fetch_node_release` verifies and whose contract `admit` accepts against
-  the hub's own range. A release without a valid signed manifest is skipped. A
+  `release::fetch_node_release` verifies and whose `contract` equals the hub's
+  `node_commands::CONTRACT_VERSION`. A release without a valid signed manifest is
+  skipped. A
   failed refresh keeps the last good target and logs a warning; with none, the
   target is `null`.
 - The ack becomes `{"type": "ack", "machine_id", "target_release"}`, the refuse
@@ -1494,12 +1537,12 @@ Research context:
 
 **Acceptance:**
 
-- 4.2.1 - With releases above, equal to and below the hub's version, the target is the highest one not above the hub whose contract the hub admits, and a release without a valid signed manifest is skipped. test: `crates/gdaemon/src/nodes/release_target/tests.rs::target_is_newest_admitted_release_not_above_hub`.
+- 4.2.1 - With releases above, equal to and below the hub's version, the target is the highest one not above the hub whose contract equals the hub's, a release without a valid signed manifest is skipped, and with no such release the target is null. test: `crates/gdaemon/src/nodes/release_target/tests.rs::target_is_newest_admitted_release_not_above_hub`.
 - 4.2.2 - A failed refresh keeps the last good target, and the cache refreshes after 10 minutes. test: `crates/gdaemon/src/nodes/release_target/tests.rs::failed_refresh_keeps_last_target`.
 - 4.2.3 - The ack and the refuse frame carry the target, and `GET /api/machines` rows show it. test: `crates/gdaemon/tests/node_release.rs::ack_and_refusal_carry_target`.
 - 4.2.4 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.3 The node stages the target and activates on the hub's word [category: code] (depends: 4.2)
+### 4.3 The node stages the target and activates it when idle [category: code] (depends: 4.2)
 `kind: deliverable`
 
 Targets:
@@ -1530,34 +1573,50 @@ Python surface replaced: the Python cutover that promoted a node's binaries
   `{"kind": "release_status", "staged": "<target>", "error": null}`; failure sends
   `"staged": null` with the error, leaves no staging directory, and the next trigger
   retries.
-- `{"type": "activate", "release"}` naming the staged release, or a refusal with
-  `activate: true` once staging succeeds, runs `binaries::promote_set` from the
-  staged directory, which writes the stamp and `.node-release.json`, removes the
-  staged directory, logs "activating gdaemon <target>; exiting for the service to
-  restart", and calls `serve::request_restart`. `serve`'s graceful shutdown then
-  completes and `main` exits with status 75. A promotion failure sends
-  `release_status` with the error and keeps the current set running.
-- A refusal with `activate: false` leaves the staged set in place, and the node keeps
-  reconnecting with its backoff.
+- Activation (D7): with a verified `.staged-<target>/` for the current target, the
+  node takes the `NodeServices.agents` state lock and checks
+  `AgentState::live_and_accepted() == 0`. It checks when staging completes, at each
+  `run_client` ping and at each refusal. It holds the lock through promotion and the
+  restart request, so no run is accepted in between.
+  - Idle: `binaries::promote_set` runs from the staged directory and writes the
+    stamp and `.node-release.json`. The node then removes the staged directory, logs
+    "activating gdaemon <target>; exiting for the service to restart", and calls
+    `serve::request_restart`. `serve`'s graceful shutdown completes and `main` exits
+    with status 75.
+  - A live run: the node keeps the staged set and its release. A refused node keeps
+    reconnecting with its backoff.
+  - A promotion failure sends `release_status` with the error when a channel is up,
+    keeps `.staged-<target>` and the running process, and the next check retries.
+    The retry promotes every member again, which repairs a set the failure left
+    mixed.
+
+**Granularity:** one leaf with seven acceptance items. Staging and activation are
+one node-side lifecycle (stage, verify, gate, promote, restart), and each item tests
+one of its transitions or failures.
 
 Research context:
 - `crates/gdaemon/src/serve.rs::shutdown_signal` waits for ctrl-c or SIGTERM; a
   clean `serve` returns `Ok(())`, and launchd and systemd restart only a non-zero
   exit under D9's units.
 - `crates/gdaemon/src/nodes/channel.rs::run_client` takes `Arc<NodeServices>`, which
-  knows the bootstrap path and so the home.
+  knows the bootstrap path and so the home, and pings every
+  `ChannelTiming::ping_interval` (30 s).
+- `crates/gdaemon/src/state.rs::NodeServices` holds `agents: Arc<NodeAgents>`.
+  `crates/gdaemon/src/nodes/agents/state.rs::AgentState::live_and_accepted` counts
+  every run record, accepted, preparing or launched.
 - Planned checks: as 4.1, plus `-E 'test(node_setup::update::)'`.
 
 **Acceptance:**
 
 - 4.3.1 - An ack naming a newer target makes the node download, verify and stage it from a fake release and report it staged, while heartbeats continue. test: `crates/gdaemon/tests/node_release.rs::node_stages_target_from_ack`.
-- 4.3.2 - An `activate` for the staged release promotes it to new inodes with the stamp and `.node-release.json`, and `gdaemon serve` exits with status 75. test: `crates/gdaemon/tests/node_release.rs::node_activates_staged_release_and_exits_75`.
+- 4.3.2 - With no run in its agent state, the node promotes the staged target to new inodes with the stamp and `.node-release.json` once staging completes, and `gdaemon serve` exits with status 75. test: `crates/gdaemon/tests/node_release.rs::node_activates_staged_release_and_exits_75`.
 - 4.3.3 - A target older than the running release is staged and activated the same way. test: `crates/gdaemon/tests/node_release.rs::node_downgrades_to_older_target`.
 - 4.3.4 - A failed download or verification reports the error, leaves no staging directory and keeps the current set running. test: `crates/gdaemon/tests/node_release.rs::node_reports_failed_staging`.
-- 4.3.5 - A refusal with `activate: true` stages and activates without a channel, and one with `activate: false` stages and keeps reconnecting. test: `crates/gdaemon/tests/node_release.rs::refused_node_converges_to_target`.
-- 4.3.6 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 4.3.5 - A refused node stages the refusal's target and activates without a channel, while the hub's `agent_runs` still lists a run on the machine as running. test: `crates/gdaemon/tests/node_release.rs::refused_node_converges_to_target`.
+- 4.3.6 - Activation waits while the agent state holds an accepted, preparing or launched run, and proceeds at the first check after the state empties; a failed promotion keeps `.staged-<target>`, and the next check promotes it. test: `crates/gdaemon/src/node_setup/update/tests.rs::activation_waits_for_idle_state_and_retries_failed_promotion`.
+- 4.3.7 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.4 The hub drives staging and activation [category: code] (depends: 4.3)
+### 4.4 The hub drives staging [category: code] (depends: 4.3)
 `kind: deliverable`
 
 Targets:
@@ -1581,12 +1640,8 @@ Python surface replaced: none (D5, D7).
 - Hub frames to a live node go through the per-connection outbound sender
   (Constraints).
 - A `release_status` frame records the staged release or error in the registry, and
-  `machine()` adds `staged_release` and `release_error` to each row.
-- Activation gate: when a machine's staged release equals the target and
-  `SELECT EXISTS (SELECT 1 FROM agent_runs WHERE machine_id = $1 AND status IN ('pending', 'running'))`
-  is false, the hub sends `{"type": "activate", "release": "<target>"}`, once per
-  connection. It checks when a `release_status` arrives and at each heartbeat
-  persist. A refusal's `activate` flag is the same check.
+  `machine()` adds `staged_release` and `release_error` to each row. The hub sends
+  no activation word; the node activates on its own agent state (D7).
 - A task started beside `HubNodes` refreshes the target every 10 minutes. When the
   target changes, each live node whose `node_version` differs gets
   `{"type": "release", "target_release": "<target>"}`.
@@ -1600,8 +1655,6 @@ Python surface replaced: none (D5, D7).
 Research context:
 - `crates/gdaemon/src/nodes/machines_api.rs::list` scopes rows to the caller's
   `owner_user_id`; `machine()` builds each row.
-- `agent_runs` carries `machine_id` and `status`; `pending` and `running` are the live
-  statuses.
 - Planned checks: as 4.1.
 
 Consumers unchanged:
@@ -1609,12 +1662,10 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 4.4.1 - When a connected node reports the target staged and its machine has no pending or running agent run, the hub sends `activate`; with a running run it waits and sends it at the first heartbeat after the run ends. test: `crates/gdaemon/tests/node_release.rs::hub_activates_only_idle_machines`.
-- 4.4.2 - A target change sends `release` to each live node whose version differs and to no other. test: `crates/gdaemon/tests/node_release.rs::target_change_sends_release_frames`.
-- 4.4.3 - `POST /api/nodes/update` for one machine or all reports `sent`, `current`, `offline` or `no_target` per owned machine, and a machine the caller does not own is refused with nothing sent. test: `crates/gdaemon/tests/node_release.rs::update_api_drives_owned_machines_only`.
-- 4.4.4 - A refusal's `activate` flag follows the idle check. test: `crates/gdaemon/tests/node_release.rs::refusal_activate_follows_idle_check`.
-- 4.4.5 - `GET /api/machines` rows show the staged release and any staging error. test: `crates/gdaemon/tests/node_release.rs::machines_api_reports_staged_release`.
-- 4.4.6 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 4.4.1 - A target change sends `release` to each live node whose version differs and to no other. test: `crates/gdaemon/tests/node_release.rs::target_change_sends_release_frames`.
+- 4.4.2 - `POST /api/nodes/update` for one machine or all reports `sent`, `current`, `offline` or `no_target` per owned machine, and a machine the caller does not own is refused with nothing sent. test: `crates/gdaemon/tests/node_release.rs::update_api_drives_owned_machines_only`.
+- 4.4.3 - `GET /api/machines` rows show the staged release and any staging error. test: `crates/gdaemon/tests/node_release.rs::machines_api_reports_staged_release`.
+- 4.4.4 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 4.5 `gobby node list` and `gobby node update` [category: code] (depends: 4.4)
 `kind: deliverable`
@@ -1678,7 +1729,7 @@ Targets:
 - `docs/guides/http-endpoints.md`
 - `docs/guides/gterminal-development-guide.md`
 - `docs/contracts/secrets.md`
-- `tests/docs/test_node_setup_docs.py`
+- `crates/gdaemon/tests/node_setup.rs`
 
 Python surface replaced: the Python node setup in `shared-stack.md` (Client setup),
 which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
@@ -1689,19 +1740,26 @@ which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
   Zig or Docker); the Overview's three commands with the prompts they show; what
   install changes for each CLI; the service and its log; the `PATH` line; updates,
   refusals and both skew directions with their messages; `gobby node list` and
-  `gobby node update`; recovery by re-running the install command; and the channel
-  frames (hello range, ack, refuse, release, release_status, activate).
+  `gobby node update`; recovery by re-running the install command; the channel
+  frames (hello `contract`, ack, refuse, release, release_status); and the rule
+  that a contract change is published before the hub cuts over (D6).
 - `shared-stack.md`'s Client setup points at `node-setup.md`.
 - `release-guide.md` adds signing (#24717's key, the `release` environment), the gmcp
   workflow, and the tag order: every changed member first, gdaemon last, because the
-  gdaemon job bundles the members' published releases.
+  gdaemon job bundles the members' published releases. The first publication pushes
+  `gterm-v0.1.12`, which has never been tagged. An ordered step for a change to
+  `node_commands::CONTRACT_VERSION` publishes the gdaemon release carrying it before
+  `gobby cutover` moves the hub to it, because the hub targets only published
+  releases at its own contract (D6).
 - `cli-commands.md` and `gclient-user-guide.md` document the four `gobby node` verbs
   and D11's `gclient` note, and drop the login entry. Every other page names
   `gobby node enroll` where it named `gobby auth login`; `http-endpoints.md` shows
   the new guidance text and `POST /api/nodes/update`.
-- `tests/docs/test_node_setup_docs.py` walks `docs/**/*.md`, skipping `docs/audits/`,
+- `crates/gdaemon/tests/node_setup.rs::no_doc_names_python_login` walks
+  `docs/**/*.md` from `CARGO_MANIFEST_DIR` with `std::fs`, skipping `docs/audits/`,
   `docs/research/` and the generated `docs/contracts/parity-ledger.md`, whose dropped
-  row keeps the surface key (2.5), and fails on `gobby auth login`.
+  row keeps the surface key (2.5), and fails on `gobby auth login`. It is Rust (No new
+  Python), beside the test that runs this guide's install command.
 
 Research context:
 - Sites: `shared-stack.md` 102 to 105, `system-requirements.md` 235 to 246,
@@ -1709,7 +1767,7 @@ Research context:
   `admin-operations.md` 60, `hub-install-contract.md` 86, `http-endpoints.md` 50 and
   88, `gterminal-development-guide.md` 354, and `secrets.md` 27. `docs/audits/` and
   `docs/research/` are historical and stay.
-- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/docs/test_node_setup_docs.py -v`.
+- Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_setup)'`.
 
 **Acceptance:**
 
@@ -1717,7 +1775,8 @@ Research context:
 - 5.1.2 - The release guide documents signing, the gmcp workflow and the member-first, gdaemon-last tag order. file: `docs/guides/release-guide.md`.
 - 5.1.3 - The CLI reference documents the four `gobby node` verbs and has no `gobby auth login` entry. file: `docs/guides/cli-commands.md`.
 - 5.1.4 - The documented install command is the one the sandbox runs without Python. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
-- 5.1.5 - No Markdown page under `docs/` outside `docs/audits/`, `docs/research/` and the generated parity ledger names `gobby auth login`. test: `tests/docs/test_node_setup_docs.py::test_no_page_names_python_login`.
+- 5.1.5 - No Markdown page under `docs/` outside `docs/audits/`, `docs/research/` and the generated parity ledger names `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_doc_names_python_login`.
+- 5.1.6 - The release guide orders a contract change as publish first, then hub cutover, and the node guide states the same rule with the no-published-release refusal. file: `docs/guides/release-guide.md`.
 
 ## E1 End-to-end verification
 `kind: verification`
@@ -1728,10 +1787,12 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
 
 1. `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -p gobby-core -p gobby-code -p gobby-hooks -p gobby-client -p gobby-mcp`
    must pass, skew in both directions included (4.1, 4.3).
-2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/scripts/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py tests/docs/test_node_setup_docs.py`
-   must pass.
+2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py`
+   must pass. Gate 1 runs the release-script and docs tests (1.1, 1.3, 5.1).
 3. Publication (D22): after the last bumping leaf lands and #24717 closes, Josh
-   pushes the tags in the release guide's order. Each member release must carry
+   pushes the tags in the release guide's order: `gcode`, `ghook`, `gmcp`, `gclient`
+   and `gterm` (`gterm-v0.1.12`, never tagged before), then `gdaemon` last. Each
+   member release must carry
    `SHA256SUMS` and `SHA256SUMS.sig`, and the gdaemon release must carry the four
    bundles and the signed `node-release.json`. Gates 4 and 5 wait for this one.
 4. On one of Josh's Macs with no Python, Rust or Zig on `PATH`, the Overview's three
@@ -1772,6 +1833,15 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   service and all five CLIs (P3), and hub-driven updates with skew handled both ways
   (P4). Sections are renumbered and decisions recorded as D1 to D23. The stale M1
   stays until consensus.
+- 2026-10-18: Revision by Plan Writer gobby#16767 for Plan Adversary gobby#16993's
+  review of 0f9fa1b and Orchestrator #15977's rulings (15:11 and 15:13 CDT). D6
+  admits on one equal contract integer, and a contract change is published before
+  the hub cuts over. D7 gates activation on the node's own agent state, so the
+  `activate` frame and the hub's `agent_runs` check go. 3.9 waits while a new node
+  moves to the hub's target. The release scripts are bash with Rust tests, and the
+  docs guard is Rust. D22 records that every member release at gate 3, `gterm-v0.1.12`
+  included, is a first publication. D4, D8, D15 and D22 carry #15977's affirmation.
+  The stale M1 stays until consensus.
 
 ## M1 Task Manifest
 `kind: manifest`
