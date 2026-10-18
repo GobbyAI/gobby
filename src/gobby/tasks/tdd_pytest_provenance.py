@@ -301,13 +301,23 @@ def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
     """Reject missing, conflicting or ambiguous original exception locations."""
     exception = r"[A-Za-z_][\w.]*"
     detail_pattern = re.compile(rf"E[ \t]+(?P<exception>{exception})(?::|[ \t]*$)")
-    location_pattern = re.compile(rf".+:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
+    location_pattern = re.compile(r":\d+:")
+    location_detail_pattern = re.compile(rf"[ \t]+(?P<exception>{exception})(?::.*)?$")
     error_header_pattern = re.compile(r"^_+[ \t]+ERROR\b.*[ \t]+_+[ \t]*$")
+
+    def exception_location(row: str) -> str | None:
+        if row.startswith(("E ", "E\t")):
+            return None
+        # Split first, so a message cannot make matching retry a later delimiter.
+        location = location_pattern.search(row)
+        if location is None or not row[: location.start()].strip():
+            return None
+        detail = location_detail_pattern.fullmatch(row[location.end() :])
+        return detail["exception"] if detail is not None else None
+
     original_rows = original_tail.splitlines()
     original_exceptions = {
-        location["exception"]
-        for row in original_rows
-        if (location := location_pattern.fullmatch(row)) is not None
+        location for row in original_rows if (location := exception_location(row)) is not None
     }
     # Headers are never endpoints: a repr can forge them. Any later header makes
     # attribution ambiguous, even when the later failure has the same exception.
@@ -332,9 +342,9 @@ def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
         if detail is not None:
             terminal_start = frame_start
             terminal_exception = detail["exception"]
-        location = location_pattern.fullmatch(row)
+        location = exception_location(row)
         if location is not None:
-            location_exception = location["exception"]
+            location_exception = location
     if (
         terminal_start is None
         or terminal_exception != "NotImplementedError"

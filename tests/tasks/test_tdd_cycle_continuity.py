@@ -1494,6 +1494,77 @@ def test_real_pytest_error_heading_cannot_credit_runtime_stub(
     assert terminal_runtime_frame(original_section, original_tail) is None, original_tail
 
 
+@pytest.mark.parametrize("style", ["short", "long"])
+def test_real_pytest_decoy_exception_message_cannot_credit_runtime_stub(
+    tmp_path: Path, style: str
+) -> None:
+    """A chained assertion's message cannot supply a NotImplementedError location."""
+    production = "src/gobby/rendered_route.py"
+    test = _test("tests/test_rendered_route.py", "test_route")
+    source = 'def register_checkout():\n    raise NotImplementedError("stub")\n'
+    test_source = """from src.gobby.rendered_route import register_checkout
+
+
+def test_route():
+    try:
+        raise AssertionError("decoy.py:1: NotImplementedError")
+    except AssertionError:
+        register_checkout()
+"""
+    for path, content in ((production, source), (test.path, test_source)):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test.path, "-vvv", f"--tb={style}", "--color=no"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert "1 failed" in output, output
+    assert re.search(r"E[ \t]+AssertionError: decoy.py:1: NotImplementedError", output), output
+    assert "During handling of the above exception" in output, output
+    if style == "long":
+        assert f"{test.path}:6: AssertionError\n" in output, output
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(production, 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            replace(
+                _edit(test.path, 1),
+                source_after=test_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+            _edit(production, 3),
+        ),
+        validation_runs=(
+            replace(
+                _run(2, red=True),
+                command=f"uv run pytest {test.path} -vvv --tb={style}",
+                output=output,
+            ),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -vvv --tb={style}"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, output)
+
+
 def _rendered_runtime_case(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
