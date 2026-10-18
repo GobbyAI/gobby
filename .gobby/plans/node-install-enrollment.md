@@ -798,3 +798,10 @@ none has run yet. Each must hold on `0.5.0`:
 
 - 2026-10-18: First draft by Plan Writer gobby#16767 under #15977's rulings E1 to E4
   (10:22 CDT), with D5 to D9 recorded for review.
+- 2026-10-18: Consensus between Plan Writer gobby#16767 and Plan Adversary gobby#16993
+  at 7b35fc9. The review's four blocking findings are closed: the parity ledger row
+  drops in 1.5, D10 commits the real SRT tarball, the goldens share one home layout
+  and trust vectors pin the codex hash, and D11 embeds crate-local copies. Both nits
+  are closed. The 1.4 floor move stays because production-size-growth requires it.
+  The bare targets on `gcode_versions.py`, `runtime.rs` and `repair.rs` are
+  re-scoped before any re-derive once their files carry symbols.
