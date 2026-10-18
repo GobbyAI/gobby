@@ -40,18 +40,24 @@ When P1 closes:
 - Every other database-backed `gcode` command exits with the typed error
   `brokered_unsupported`.
 
-This revision carries P1. Under Orchestrator #15977's 2026-10-17 16:47 ruling, Plan
-Adversary 16993 reviews P1 while the writer drafts the remaining phases in this file,
-in the order #15977 accepted on 2026-10-17:
+When P2 closes, `gcode` on a node runs every database-backed read command through
+the hub: search, grep, symbol and graph navigation, `gcode graph` and evidence. Until
+P4 a node's query embedding goes through `/api/embeddings`, which the node front
+door relays to the hub.
+
+This revision carries P1 and P2. Under Orchestrator #15977's 2026-10-17 16:47 ruling,
+Plan Adversary 16993 reviews each phase while the writer drafts the remaining phases
+in this file, in the order #15977 accepted on 2026-10-17 (D14):
 
 - P2: node read parity for the remaining database-backed commands (D7);
-- P3: content-hash-keyed graph and vector projections (D6);
-- P4: node-local embedding;
+- P3: content-hash-keyed graph and vector projections (D6, D11);
+- P4: node-local embedding (D12, D13);
 - P5 to P7: the `/api/code-index` family seam, graph read routes and mutation routes;
-- P8: heartbeat work (sync worker, trigger, maintenance, summarizer);
+- P8: heartbeat work (sync worker, trigger, maintenance, summarizer) (D10);
 - P9: the native default and the deletion of `src/gobby/code_index/`.
 
-Josh approves the complete plan before expansion.
+The critical path for node completeness is P1, then P3 (after #23834, Vector and
+graph pin scope), then P4. Josh approves the complete plan before expansion.
 
 ## Constraints
 `kind: framing`
@@ -59,7 +65,7 @@ Josh approves the complete plan before expansion.
 - **Stage gate.** #21586 has no #21568 gate. P1's chain to #24380 is: #24446
   (gobby-runtime crate), then #24447 (Grant signing and presentation in gcore), then
   1.9. #24448 (Secret-store port) and #24449 (Native interactive handshake) are not on
-  it. Only 1.10 waits on #24449.
+  it. Only 1.10 waits on #24449, and it sits after 2.8 so no P2 leaf waits on it.
 - **No backward compatibility.** 0.5.0 has not shipped.
 - **No Python counterpart for the node routes.** Python has no
   `/api/code-index/node/*`. The `code_index_node` family defaults to `native`.
@@ -109,6 +115,10 @@ Josh approves the complete plan before expansion.
     bump nothing (`src/gobby/install/bin_release_identity.py::workspace_source_identity`).
   - `src/gobby/code_index/gcode_gateway.py` derives `MIN_GCODE_GRAPH_VERSION` from the
     `gcode` pin, so the gcode maintenance floor follows each bump with no edit.
+  - Every bumping leaf edits `Cargo.lock` and `version_pins.py`, so the bumping
+    leaves form one dependency chain (docs/contracts/plan-coverage.md, shared-target
+    ordering). 1.10 sits after the last bumping leaf drafted so far, 2.8, because it
+    alone waits on #24449.
 - **Running daemon.** A crate change goes live only after `uv run gobby cutover`,
   which gets a `global` announcement and a quiet window first. A node runs the new
   `gcode` only after its own binaries are reinstalled.
@@ -206,6 +216,28 @@ own answers.
 
   The request carries only roots. A request with a parent root but no overlay claim,
   or the reverse, returns 403 `claims_mismatch`.
+
+#15977 ruled D10 to D14 later on 2026-10-17. They settle D6 and where embedding runs.
+
+- **D10, node graph projection.** The native sync worker projects node machines'
+  graph facts. It runs on gdaemon's `HeartbeatHost` (`crates/gdaemon/src/heartbeat.rs`)
+  and reads as each machine through `Context::for_machine`. It lands in P8, after
+  #23834 (Vector and graph pin scope) and #23576 (Sync worker leaves projection
+  completion to gcode). Rejected: projecting node machines from the Python sync
+  worker first, which P9 deletes.
+- **D11, projection keys.** Graph and vector projections are keyed by content hash
+  (P3). A sync removes only versions that no machine's selector or pin names, and
+  reads filter with #23834's machine predicate.
+- **D12, node embedding endpoint.** A node's gdaemon serves `/api/embeddings`
+  natively (P4). It takes the hub's effective embeddings config and calls the node's
+  own endpoint. When the model or dimension the endpoint reports differs from the
+  hub's, it returns the typed 503 `embedding_identity_mismatch`. Josh's goal: nodes
+  run local embedding among the first multi-machine fixes, and P6 does not gate it.
+- **D13, node vector sync.** A node pulls its own vector work: a node heartbeat job
+  runs `gcode vector sync-node`, which reads the node's pending versions from the hub
+  and applies the vectors it embeds (P4).
+- **D14, phase order.** P1 to P9 run in the order the Overview lists. P4 depends only
+  on P1 and P3.
 
 ## P1: Node code-index routes (#23276)
 `kind: framing`
@@ -361,8 +393,7 @@ The test-only Targets carry only the new field.
 
 Consumers unchanged:
 - `crates/gcode/src/index/api/file_state.rs` — no-edit-reason: its writers already take `machine_id`.
-- `crates/gcode/src/commands/symbols.rs` — no-edit-reason: passes its `ctx` to `indexed_file_exists`, which now reads that context's machine.
-- `crates/gcode/src/commands/grep.rs` — no-edit-reason: passes its `ctx` to `current_indexed_path_is_valid`, whose `indexed_file_exists` call now reads that context's machine.- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `src/gobby/install/bin_freshness_models.py` — no-edit-reason: iterates every pin, so the bumped value flows through.
 - `src/gobby/install/distribution.py` — no-edit-reason: looks a pin up by binary name.
@@ -467,7 +498,9 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
 `gobby_code::node` (`crates/gcode/src/node/mod.rs`) is the wire contract both halves compile against:
 
 - Constants for the operation name `node_code_index`, the family prefix
-  `/api/code-index/node` and the four route paths (P1 framing).
+  `/api/code-index/node` and the four route paths (P1 framing), and
+  `ROUTE_PATHS: &[&str]`, which lists every route path. 1.9's `claims` reads it, and
+  each P2 route leaf appends its paths.
 - `NodeScope { root: String, parent_root: Option<String> }`. `parent_root` is present
   exactly when the node's project is an overlay.
 - `StatusRequest { scope: NodeScope }` and `StatusReport`. The status JSON object and
@@ -828,8 +861,9 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
 
 - `postgres_dsn_from_grant` maps `PostgresCapability::Brokered` to the new
   `CliError::brokered_unsupported()`. Its code is `brokered_unsupported` and its
-  recovery reads "this command needs direct database access; on a node only status,
-  search-content and index run". Every `Context` resolution under a Brokered grant
+  recovery reads "this command needs direct database access; run it on the hub". It
+  names no command list, so P2's added commands leave it unchanged. Every `Context`
+  resolution under a Brokered grant
   therefore fails with that typed error before any DSN use, which satisfies D7 at one
   point.
 - `config::resolve_access(project_override, quiet, services) -> Result<Access>`
@@ -952,8 +986,8 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
     3. When the final response lists `reparse`, parses those paths and sends one more
        final batch. A second non-empty `reparse` exits with `node_index_conflict`.
     4. Prints the returned `IndexOutcome` as local `index` does.
-- `--allow-stale` and `--quiet` keep their meaning. A node has no local freshness
-  check to skip.
+- `--quiet` keeps its meaning. A node runs no freshness check until 2.2, so
+  `--allow-stale` has nothing to skip until then.
 
 Research context:
 - `daemon.rs` already wraps `ureq` with typed transport and status errors
@@ -980,9 +1014,7 @@ Research context:
   points and answers the interactive handshake, so a re-handshake is observable.
 
 Consumers unchanged:
-- `crates/gcode/src/commands/symbol_at.rs` — no-edit-reason: passes `&Context` to `resolve_path_input`, which accepts any `ProjectView`.
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: passes `&Context` to `resolve_path_input`, which accepts any `ProjectView`.
-- `crates/gcode/src/commands/symbols.rs` — no-edit-reason: passes `&Context` to `path_exists_in_current_project`, which accepts any `ProjectView`.
 - `src/gobby/agents/code_index.py` — no-edit-reason: the preflight's argv and exit-code handling are unchanged.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
@@ -1043,8 +1075,9 @@ Create the crate the way gdaemon-runtime-family 3.1 created gruntime:
 - `default_backend()` returns `Native`;
 - `router<S>()` registers the four `POST` routes with
   `DefaultBodyLimit::max(16 * 1024 * 1024)`;
-- `claims(parts)` holds for those four method and path pairs when the request carries
-  `x-gobby-key-id` (an API-key caller), mirroring gruntime's `Caller::Operator`.
+- `claims(parts)` holds for a `POST` to a path in `gobby_code::node::ROUTE_PATHS` when
+  the request carries `x-gobby-key-id` (an API-key caller), mirroring gruntime's
+  `Caller::Operator`.
 
 `serve::run` builds it on the shared pool next to the runtime family, leaks it once,
 and composes it after `FAMILIES` for `unimplemented_families` and every listener's
@@ -1126,7 +1159,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 1.9, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 2.8, #24449)
 `kind: deliverable`
 
 Targets:
@@ -1195,20 +1228,1053 @@ Research context:
 
 - 1.11.1 - On an enrolled node with no managed credential, the preflight's status reports unindexed, index indexes the parent then the overlay, and search-content exits 0. The hub's `code_indexed_file_states` rows carry the node's machine id. test: `tests/e2e/test_hub_node_pair.py::test_node_code_index_preflight_through_hub`.
 
+## P2: Node read parity
+`kind: framing`
+
+P2 gives a node every database-backed read command that P1 refuses (D7). Each one
+works the way P1's `search-content` does. The hub runs gcode's library as the
+principal's machine and returns typed results that depend on no file on the hub's
+disk. The node checks its own files, pages and renders with the local code, so it
+prints what a local run against the same index prints.
+
+- 2.1 makes the remaining read paths take the machine from the context.
+- 2.2 gives node reads the freshness check that local reads run.
+- 2.3 to 2.8 add the routes, one leaf per command group.
+- 2.9 proves the commands end to end.
+
+`projects` needs no route. It reads `GET /api/projects` through the daemon, which the
+node front door relays (`commands/status/projects.rs::projects`). The write and
+maintenance commands (`init`, `repair`, `invalidate`, `retire-files`, `prune`, the
+`graph` and `vector` mutations and `embeddings doctor`) keep 1.7's refusal, whose
+recovery sends them to the hub.
+
+Wire names. P2 changes no grant: the one `node_code_index` operation authorizes every
+path under `/api/code-index/node` (D3). Each leaf appends its paths to
+`gobby_code::node::ROUTE_PATHS`, which 1.9's `claims` reads. Every route is `POST`
+with a JSON body:
+
+- freshness: `/api/code-index/node/freshness` (2.2);
+- symbol search: `/api/code-index/node/search`, `/api/code-index/node/search-symbol`
+  and `/api/code-index/node/search-text` (2.3);
+- grep: `/api/code-index/node/grep` (2.4);
+- symbol navigation: `/api/code-index/node/symbols/file`,
+  `/api/code-index/node/symbols/ids`, `/api/code-index/node/symbols/kinds` and
+  `/api/code-index/node/symbols/tree` (2.5);
+- graph navigation: `/api/code-index/node/nav/callers`, `/nav/callees`,
+  `/nav/usages`, `/nav/imports`, `/nav/path` and `/nav/blast-radius` under the same
+  prefix (2.6);
+- `gcode graph`: `/api/code-index/node/graph/report`, `/graph/overview`,
+  `/graph/file`, `/graph/neighbors`, `/graph/blast-radius` and `/graph/view` under the
+  same prefix (2.7);
+- evidence: `/api/code-index/node/evidence/facts` (2.8).
+
+File layout. Each route leaf adds one group `<group>` in new files:
+
+- `crates/gcode/src/node/<group>.rs` holds the wire types and path constants. It is
+  declared in `node/mod.rs`.
+- `crates/gcode/src/node/hub/<group>.rs` holds the hub entry points, declared in
+  `node/hub.rs`.
+- `crates/gcode/src/node/client/<group>.rs` holds the node commands, declared in
+  `node/client.rs`.
+- `crates/gcodeindex/src/node/<group>.rs` holds the handlers. It is declared in
+  `crates/gcodeindex/src/node.rs`, and its routes are registered in `lib.rs`'s
+  `router`.
+- The tests go in `crates/gcode/src/node/<group>_tests.rs` and
+  `crates/gcodeindex/tests/node_<group>.rs`.
+
+Rules every route leaf follows:
+
+- `dispatch.rs::run` sends the group's commands through `resolve_access`. `Direct`
+  runs today's code. `Node` calls `node::client::<group>` with the clap fields
+  `dispatch_navigation.rs` reads.
+- Before posting, the node client runs the freshness scope that local dispatch runs
+  for the command (2.2), unless `--allow-stale` is set. It validates arguments with
+  the same local functions, such as glob compilation and path resolution through
+  `ProjectView`, so input errors print as they do today.
+- Each handler runs 1.9's verification (steps 1 to 5), runs its library call under
+  `spawn_blocking`, and maps errors with 1.9's step 7. An outcome that is a result,
+  such as an unresolved symbol or an unavailable graph, travels as data in the
+  response, so the node prints the local message.
+- The hub builds its `Context` through `HubScope::context`, with the services the
+  command needs (2.3).
+- Until P3, P4 and P8 project node versions (D6), the hub's Falkor and Qdrant data
+  hold only versions projected from the hub's machine. A node's graph and semantic
+  results pass through the node machine's visibility filter, so they contain only
+  versions that machine sees. The BM25 and exact lanes are complete.
+
+Release ownership (Constraints): from 1.9 on, a gcode library change bumps `gcode` and
+`gdaemon`, and every route leaf changes both crates.
+
+Ordering. The P2 leaves form one chain, 2.1 to 2.9. They share `dispatch.rs::run`,
+the `node` module files, gcodeindex's `lib.rs` and `node.rs`, and the release files.
+
+### 2.1 Machine-explicit read paths [category: refactor] (depends: 1.9)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/visibility.rs::local_machine_uuid`
+- `crates/gcode/src/visibility.rs::local_machine_uuid_or_invisible`
+- `crates/gcode/src/visibility.rs::local_active_content_hash`
+- `crates/gcode/src/visibility.rs::indexed_file_exists`
+- `crates/gcode/src/visibility.rs::content_chunks_exist`
+- `crates/gcode/src/visibility.rs::symbol_is_visible`
+- `crates/gcode/src/visibility.rs::project_path_is_visible`
+- `crates/gcode/src/visibility.rs::project_file_is_visible`
+- `crates/gcode/src/visibility.rs::overlay_has_row`
+- `crates/gcode/src/visibility.rs::indexed_file_states`
+- `crates/gcode/src/visibility.rs::query_symbols_for_files`
+- `crates/gcode/src/visibility.rs::query_overlay_symbols_for_files`
+- `crates/gcode/src/visibility.rs::filter_visible_symbols`
+- `crates/gcode/src/visibility.rs::visible_symbols_for_files`
+- `crates/gcode/src/visibility/catalog.rs::visible_kinds`
+- `crates/gcode/src/visibility/catalog.rs::visible_tree`
+- `crates/gcode/src/visibility/catalog.rs::tombstone_count`
+- `crates/gcode/src/visibility/graph.rs::visible_graph_paths`
+- `crates/gcode/src/search/fts/common.rs::push_visible_project_file_filter`
+- `crates/gcode/src/search/fts/common.rs::query_symbols_by_conditions`
+- `crates/gcode/src/search/fts/symbols.rs::search_symbols_fts`
+- `crates/gcode/src/search/fts/symbols.rs::search_symbols_by_name`
+- `crates/gcode/src/search/fts/symbols.rs::query_visible_symbols_by_conditions`
+- `crates/gcode/src/search/fts/content.rs::visible_files_sql`
+- `crates/gcode/src/search/fts/graph.rs::*` — scope-reason: `exact_symbol_matches_result`, `resolve_graph_symbol` and `resolve_graph_symbol_by_id` take the machine
+- `crates/gcode/src/commands/grep.rs::load_indexed_chunks`
+- `crates/gcode/src/commands/grep.rs::indexed_files_cover_filters`
+- `crates/gcode/src/commands/scope.rs::other_project_for_path`
+- `crates/gcode/src/commands/graph/reads.rs::*` — scope-reason: `resolve_symbol_with_connection` takes the `Context`, and the inline tests move to `crates/gcode/src/commands/graph/reads/tests.rs`
+- `crates/gcode/src/commands/graph/reads/tests.rs`
+- `crates/gcode/src/commands/graph/view/mod.rs::local_machine_id`
+- `crates/gcode/src/commands/graph/view/mod.rs::visible_map_for_candidates`
+- `crates/gcode/src/commands/graph/view/mod.rs::resolve_view_seed`
+- `crates/gcode/src/commands/graph/view/fcg.rs::fetch_fcg_hop`
+- `crates/gcode/src/commands/graph/view/mcg/fetch.rs::fetch_mcg_hop`
+- `crates/gcode/src/commands/graph/view/class_hierarchy/fetch.rs::falkor_page`
+- `crates/gcode/src/communities.rs::read_for_context`
+- `crates/gcode/src/communities.rs::partition_refreshed`
+- `crates/gcode/src/graph/code_graph/read/relationships.rs::get_imports`
+- `crates/gcode/src/visibility/tests.rs::*` — scope-reason: adds the foreign-machine symbol, kind and tree read tests
+- `crates/gcode/src/search/fts/tests.rs::*` — scope-reason: the `local_active_content_hash` callers pass a context, and the `search_symbols_fts`, `resolve_graph_symbol` and `resolve_graph_symbol_by_id` callers pass the fixture machine
+- `crates/gcode/src/commands/grep/db_tests.rs::*` — scope-reason: adds the foreign-machine grep test
+- `crates/gcode/src/communities/refresh_tests.rs::*` — scope-reason: adds the foreign-machine community and graph-visibility read test
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): gdaemon links `gobby-code` from 1.9 on, so this leaf
+bumps `gcode` and `gdaemon` by 0.0.1.
+
+1.1 moved the machine onto `Context` for the three P1 paths. Every other read still
+takes it from the process, so on the hub it would read the hub's own selectors. This
+leaf moves the machine to the context on every read path P2's routes call. Local
+behavior does not change.
+
+- `visibility.rs`'s `local_machine_uuid` and `local_machine_uuid_or_invisible` take
+  `&Context`, parse `ctx.machine_id`, and become `machine_uuid` and
+  `machine_uuid_or_invisible`. A context whose machine does not parse sees nothing,
+  as an unreadable local machine does today.
+- These call the renamed helpers with their context:
+  - in `visibility.rs`: `local_active_content_hash` (which now takes `&Context`),
+    `content_chunks_exist`, `symbol_is_visible`, and 1.1's `indexed_file_exists`;
+  - in `visibility/catalog.rs`: `visible_kinds`, `visible_tree`, and 1.1's
+    `tombstone_count`;
+  - `visibility/graph.rs::visible_graph_paths`;
+  - `search/fts/common.rs::push_visible_project_file_filter` and 1.1's
+    `search/fts/content.rs::visible_files_sql`;
+  - in `commands/grep.rs`: `load_indexed_chunks` and `indexed_files_cover_filters`;
+  - `communities.rs`'s `read_for_context` and `partition_refreshed`;
+  - `graph/code_graph/read/relationships.rs::get_imports`, through
+    `local_active_content_hash`.
+- `project_file_is_visible` and `overlay_has_row` take the machine as a parameter.
+  `project_path_is_visible` passes its context's machine.
+- In `visibility.rs`, `indexed_file_states`, `query_symbols_for_files` and
+  `query_overlay_symbols_for_files` have no context, so they take the machine
+  (`Uuid`) as a parameter. `filter_visible_symbols` passes
+  `machine_uuid_or_invisible(ctx)` and returns no symbols when it is `None`.
+  `visible_symbols_for_files` passes `machine_uuid(ctx)?`. Both keep today's result
+  for an unreadable machine.
+- The graph symbol resolver has no context below its command entry points. These take
+  the machine (`Uuid`) as a parameter: `search/fts/common.rs::query_symbols_by_conditions`,
+  `search/fts/symbols.rs`'s `search_symbols_fts` and `search_symbols_by_name`, and
+  `search/fts/graph.rs`'s `exact_symbol_matches_result`, `resolve_graph_symbol` and
+  `resolve_graph_symbol_by_id`.
+  - `search/fts/symbols.rs::query_visible_symbols_by_conditions` reads
+    `machine_uuid_or_invisible(ctx)` and returns no symbols when it is `None`.
+  - `commands/graph/reads.rs::resolve_symbol_with_connection` takes the `Context` in
+    place of its project id. It resolves in `ctx.project_id` and returns no symbol and
+    no suggestions when `machine_uuid_or_invisible(ctx)` is `None`.
+    `resolve_symbol` and `view/mod.rs::resolve_view_seed` pass their context.
+  - That keeps today's result for an unreadable machine: `query_symbols_by_conditions`
+    and `exact_symbol_matches_result` return no rows for it now.
+- `commands/graph/reads.rs` (967 lines, 282 of them its inline test module) moves that
+  module to `crates/gcode/src/commands/graph/reads/tests.rs`, declared with
+  `#[cfg(test)] #[path = "reads/tests.rs"] mod tests;`. Its three resolver tests build
+  a `Context` for their fixture project, so the file stays under the ceiling.
+- `commands/scope.rs::other_project_for_path` reads `ctx.machine_id`.
+- In the graph views, `view/mod.rs::local_machine_id()` becomes `machine_id(&Context)`.
+  `visible_map_for_candidates` and `class_hierarchy/fetch.rs::falkor_page` pass their
+  context. `fcg.rs::fetch_fcg_hop` and `mcg/fetch.rs::fetch_mcg_hop` pass
+  `facts.context()`.
+
+Write and maintenance paths keep their local reads, because no node route calls them:
+`status/content_gc.rs`, `status/retire_files.rs`, `status/invalidate.rs`,
+`commands/repair.rs`, `vector/code_symbols/repository.rs`, `status/shared.rs` (used
+by prune), and `db/queries.rs`'s projection readers and `mark_*` writers (P3 and P8).
+
+Research context:
+- The read sites were listed with
+  `gcode grep -n -E "local_machine_uuid(_or_invisible)?\(|read_local_machine_id\(|local_machine_id\(\)" crates/gcode/src`
+  and traced from the P2 commands' entry points in `dispatch_navigation.rs` and
+  `dispatch.rs`.
+- `project_file_is_visible` and `overlay_has_row` take a project id instead of a
+  context, because `project_path_is_visible` calls them for an overlay and its parent.
+  Nothing outside `visibility.rs` calls them.
+- `fetch_fcg_hop` and `fetch_mcg_hop` receive a `CodewikiFacts`, whose `context()` is
+  the command's `Context`.
+- `local_active_content_hash` has two test callers in `search/fts/tests.rs`.
+- These read the process machine and have no context today:
+  `query_symbols_by_conditions` (`search/fts/common.rs:351`), which only
+  `search/fts/symbols.rs` calls; `exact_symbol_matches_result`
+  (`search/fts/graph.rs:17`); and `indexed_file_states`, `query_symbols_for_files` and
+  `query_overlay_symbols_for_files` (`visibility.rs:505`, `:625`, `:639`).
+  `resolve_graph_symbol` and `resolve_graph_symbol_by_id` are reached only through
+  `commands/graph/reads.rs::resolve_symbol_with_connection`, whose production callers
+  `resolve_symbol` and `view/mod.rs::resolve_view_seed` hold a `Context`.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(visibility) | test(grep) | test(communities) | test(fts) | test(graph)'`;
+  - `cargo clippy -p gobby-code`.
+
+**Granularity:** one outcome across the read paths. The machine source moves from
+the process to the context, and the helpers every path shares change signature in
+the same commit. Splitting by command would leave the renamed helpers half-adopted
+between leaves.
+
+Consumers unchanged:
+- `crates/gcode/src/search/fts/counts.rs` — no-edit-reason: passes its `ctx` to `push_visible_project_file_filter`, which keeps its signature.
+- `crates/gcode/src/search/fts.rs` — no-edit-reason: re-exports `resolve_graph_symbol` and `resolve_graph_symbol_by_id` and imports `search_symbols_fts` by name.
+- `crates/gcode/src/graph/report/loading.rs` — no-edit-reason: passes its `ctx` to `communities::read_for_context`, which keeps its signature.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.1.1 - Symbol-by-file, symbol-by-id, kinds and tree reads under a `Context` whose `machine_id` is a fresh UUID return the rows visible to that machine's selectors and none visible only to the local machine. test: `crates/gcode/src/visibility/tests.rs::read_paths_use_the_context_machine`.
+- 2.1.2 - Grep's chunk load and coverage check under a foreign-machine context see only that machine's files. test: `crates/gcode/src/commands/grep/db_tests.rs::grep_reads_the_context_machine`.
+- 2.1.3 - `communities::read_for_context` and `visible_graph_paths` under a foreign-machine context read that machine's partition and paths. test: `crates/gcode/src/communities/refresh_tests.rs::community_and_graph_reads_use_the_context_machine`.
+- 2.1.4 - `resolve_symbol_with_connection` under a foreign-machine context resolves a name and an id to the symbol that machine sees, and resolves nothing visible only to the local machine. test: `crates/gcode/src/commands/graph/reads/tests.rs::graph_symbol_resolution_uses_the_context_machine`.
+- 2.1.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.2 Node freshness [category: code] (depends: 2.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/freshness.rs::project_needs_refresh`
+- `crates/gcode/src/freshness.rs::INFLIGHT_ENV`
+- `crates/gcode/src/freshness/facts.rs`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/dispatch.rs::warn_if_busy`
+- `crates/gcode/src/dispatch.rs::warn_if_freshness_skipped`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/freshness.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/freshness.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/freshness.rs`
+- `crates/gcode/src/node/freshness_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/freshness.rs`
+- `crates/gcodeindex/tests/node_freshness.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+A local read checks freshness first (`dispatch.rs::ensure_project_fresh` and
+`ensure_file_fresh`). When files changed since the last index, it indexes the changes
+under the project lock, or skips with a warning when the lock is busy. A node gets the
+same behavior: it reads its tree on the node and writes the index through P1's routes.
+
+- `freshness::project_needs_refresh` splits at its disk read. The halves go in the new
+  `crates/gcode/src/freshness/facts.rs`:
+  - `freshness_facts(conn, ctx) -> FreshnessFacts` reads only the database. It
+    returns `Refresh` when the context's machine has no `last_indexed_at` for the
+    project, or when an overlay's parent was indexed after the overlay. Otherwise it
+    returns `Compare { last_indexed_at, indexed_paths }`, with the paths
+    `project_needs_refresh` builds today: `list_indexed_file_paths` for a single
+    project, `visible_tree` for an overlay.
+  - `facts_need_refresh(root, &facts, &indexing) -> bool` is true for `Refresh`.
+    Otherwise it calls `api::project_changed_since` with the root, `last_indexed_at`,
+    `indexed_paths`, `extra_excludes` and `respect_gitignore`.
+  - `project_needs_refresh` runs both halves, so local reads behave as before.
+  - `FreshnessFacts` derives `Serialize, Deserialize`. `last_indexed_at` travels as
+    Unix-epoch microseconds, the precision of PostgreSQL `timestamptz`, so the mtime
+    comparison does not change.
+- Route `/api/code-index/node/freshness`: `FreshnessRequest { scope: NodeScope }`
+  returns `FreshnessFacts`. `node::hub::freshness` opens a read-only connection and
+  calls `freshness_facts` for the principal's machine.
+- `IndexApplyRequest` (1.4) gains `freshness: bool`. When it is set,
+  `node::hub::apply_index` takes the project lock with
+  `IndexLockPolicy::brief_freshness_try()`, the policy local freshness uses, instead of
+  1.4's 60-second wait. A busy lock still returns `index_busy`. The hub takes the
+  project lock for a files-scope apply too.
+- `node::client::freshness` mirrors `freshness::ensure_fresh` for a `NodeAccess`:
+  - With `GCODE_FRESHNESS_INFLIGHT` set (`freshness::INFLIGHT_ENV`, made `pub(crate)`),
+    it returns `Checked`.
+  - Project scope posts `/freshness`. When `facts_need_refresh` is true, it runs 1.8's
+    index sequence with `freshness` set and no path filter.
+  - Files scope runs the index sequence with `path_filter` set to the files, without
+    the facts call, as local `ensure_fresh` skips its pre-gate for files.
+  - `index_busy` from any request maps to `FreshnessStatus::SkippedBusy(None)`. Any
+    other failure maps to `FreshnessStatus::Degraded` with the error text. Otherwise the
+    result is `Checked`.
+  - It never calls `Context::can_refresh_index`, which restricts only managed
+    principals. A node's grant is interactive (D3).
+- `dispatch.rs`'s `warn_if_busy` and `warn_if_freshness_skipped` take
+  `&impl ProjectView` and become `pub(crate)`, so the node prints the local warnings.
+- `dispatch.rs::run` runs project freshness before a node `search-content`, unless
+  `--allow-stale` is set, as `dispatch_navigation.rs` does locally. Node `status` and
+  `index` run none, as locally.
+- Symbol freshness needs the symbol route and lands in 2.5.
+
+Research context:
+- `ensure_fresh` (`freshness.rs:48`) returns `Checked` under `GCODE_FRESHNESS_INFLIGHT`,
+  and when `can_refresh_index` refuses a managed principal's scope. Project scope
+  pre-gates with `project_needs_refresh`, then refreshes under
+  `with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), …)` (150 ms). Files
+  scope locks the files with `lock_project_files` and refreshes the ones it acquired.
+- `project_needs_refresh` (`:135`) returns true when the machine has no
+  `last_indexed_at`, or when an overlay's parent was indexed later. Otherwise it
+  compares disk mtimes and deletions with `api::project_changed_since`
+  (`index/indexer/freshness_probe.rs`), which takes `last_indexed_at` as a
+  `SystemTime`.
+- `dispatch_navigation.rs` runs project freshness for `search-content`, `search`,
+  `search-symbol`, `search-text`, `grep`, `symbols`, `kinds`, `tree`, the six graph
+  navigation commands and `repo-outline`. It runs file freshness for `outline` and
+  `symbol-at`, and symbol freshness for `symbol`.
+- `freshness.rs` has 972 lines, 718 of them inline tests. Putting the halves in
+  `freshness/facts.rs` shrinks it.
+- Rejected alternative: using 1.4's plan call as the probe. The plan omits adoptable
+  paths, so a never-indexed machine whose files were all adoptable would read as
+  fresh. It also hashes the whole tree on every read, where the mtime pre-gate reads
+  only metadata.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(freshness)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** seven acceptance items and nine new files. The facts split, the route
+and the node check are one freshness behavior. The route and its client cannot be
+tested apart.
+
+Consumers unchanged:
+- `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `ensure_project_fresh` and `ensure_file_fresh`, whose behavior is unchanged.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.2.1 - The local overlay pre-gate behaves as before the split: it counts inherited paths and trips on a parent reindex or an edit. test: `crates/gcode/src/freshness.rs::overlay_pre_gate_counts_inherited_paths_and_trips_on_parent_reindex_or_edits`.
+- 2.2.2 - `node::hub::freshness` for a foreign machine returns `Refresh` when that machine never indexed the project, even when the local machine has, and otherwise `Compare` with that machine's paths. test: `crates/gcode/src/node/freshness_tests.rs::hub_freshness_facts_are_per_machine`.
+- 2.2.3 - A node project read after an edit indexes the edited file through plan and apply with `freshness` set, and a read of an unchanged tree posts only the facts call. test: `crates/gcode/src/node/freshness_tests.rs::node_project_freshness_indexes_changes_only`.
+- 2.2.4 - With the project lock held, a freshness apply returns `index_busy` after the brief try, and the node prints the local busy warning and reads the existing index. test: `crates/gcode/src/node/freshness_tests.rs::busy_lock_skips_node_freshness_with_the_local_warning`.
+- 2.2.5 - A node `search-content` runs project freshness first, and `--allow-stale` skips it with the local notice. test: `crates/gcode/src/node/freshness_tests.rs::node_search_content_runs_freshness_unless_allow_stale`.
+- 2.2.6 - The freshness route serves the principal's machine. test: `crates/gcodeindex/tests/node_freshness.rs::freshness_route_serves_the_principal_machine`.
+- 2.2.7 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.3 Node search, search-symbol and search-text [category: code] (depends: 2.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/search.rs::search`
+- `crates/gcode/src/commands/search.rs::search_symbol`
+- `crates/gcode/src/commands/search.rs::search_symbol_with_graph`
+- `crates/gcode/src/commands/search.rs::search_text`
+- `crates/gcode/src/commands/search.rs::semantic_lane`
+- `crates/gcode/src/commands/search.rs::resolve_hybrid_symbols`
+- `crates/gcode/src/commands/search.rs::symbol_matches_filters`
+- `crates/gcode/src/commands/search.rs::symbol_matches_local_filters`
+- `crates/gcode/src/commands/search.rs::search_result_matches_filters`
+- `crates/gcode/src/commands/search/symbol_page.rs`
+- `crates/gcode/src/commands/search/output.rs::print_search_hint`
+- `crates/gcode/src/vector/code_symbols/search.rs::*` — scope-reason: `semantic_search` splits into its query embedding and `semantic_search_with_vector`
+- `crates/gcode/src/vector/code_symbols/embedding.rs::*` — scope-reason: adds `daemon_query_embedding`
+- `crates/gcode/src/models.rs::SearchWarning`
+- `crates/gcode/src/models.rs::SearchWarningCause`
+- `crates/gcode/src/config/context.rs::*` — scope-reason: `Context::for_machine` takes a `ServiceConfigSelection`, and `NodeAccess` gains the grant's AI state
+- `crates/gcode/src/config/layers.rs::*` — scope-reason: adds `ConfigLayers::hub()`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/search.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/search.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/search.rs`
+- `crates/gcode/src/node/search_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/search.rs`
+- `crates/gcodeindex/tests/node_search.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+The three commands split at their disk check, as 1.3 split `search_content`:
+
+- The hub halves read no file on disk:
+  - `hybrid_candidates(conn, ctx, query, options, semantic) -> SymbolCandidates` (for
+    `search`) runs the exact, BM25, semantic and graph lanes and the RRF merge. It
+    applies the kind, language and path-pattern filters and
+    `visibility::indexed_file_exists`, then sorts as `search` does today.
+  - `exact_candidates(conn, ctx, query, options) -> SymbolCandidates` (for
+    `search-symbol`, with or without `--with-graph`) does the same for the exact lane
+    and its graph variant.
+  - `text_candidates(conn, ctx, query, options) -> TextCandidates` (for `search-text`)
+    runs the FTS fetch, the language and path filters and `indexed_file_exists`. It
+    reports `db_total` from `count_text_visible` when no path filter is set, and
+    `fetch_capped` when a filtered fetch reached `FILTERED_FETCH_CAP`.
+- `SymbolCandidates { ranked: Vec<RankedSymbol>, warnings: Vec<SearchWarning> }` and
+  `RankedSymbol { symbol: Symbol, rrf_score: Option<f64>, sources: Option<Vec<String>> }`.
+  The RRF fields are absent for exact-only `search-symbol`.
+  `TextCandidates { results: Vec<SearchResult>, db_total: Option<usize>, fetch_capped: bool }`.
+- The page halves are `page_symbols(candidates, query, options, exists)` and
+  `page_text(candidates, options, exists)`. Each drops the results whose file `exists`
+  rejects and takes the total (`db_total`, or else the filtered count). Each then
+  pages, scores (`final_rank_score` for ranked results, `exact_tier_score` for exact
+  ones) and computes the hints, which read only the request: `search_lane_hint`, the
+  path post-filter hint and `search-text`'s fetch-cap hint.
+- `search`, `search_symbol` and `search_text` run their candidates then their page with
+  `scope::path_exists_in_current_project` as `exists`, then print. Filtering after the
+  sort keeps the order of the remaining results, so output is unchanged.
+- These bodies move out of `crates/gcode/src/commands/search.rs` into the new
+  `crates/gcode/src/commands/search/symbol_page.rs`: the three command bodies,
+  `search_symbol_with_graph`, `resolve_hybrid_symbols` and the three filter helpers.
+  `commands/search.rs` (892 lines before its tests) shrinks instead of growing.
+- `output.rs::print_search_hint` takes `&impl ProjectView`, like 1.3's two printers.
+
+Semantic lane:
+
+- `vector/code_symbols/search.rs::semantic_search` splits into its query embedding and
+  `semantic_search_with_vector(ctx, &[f32], limit)`, which runs the Qdrant search and
+  the visibility post-filter.
+- `hybrid_candidates` takes `SemanticSource`:
+  - `Embed` is the local path: today's `semantic_lane`, with its grant-outage check
+    and `semantic_search`.
+  - `Vector(QueryVector)` is the hub path when the request carries a vector.
+  - `Skipped` is the hub path without one. It yields no hits and no warning.
+- `QueryVector { values: Vec<f32>, model: String, dimension: usize }`. The hub compares
+  `model` with its context's `embedding.model`, and `dimension` with
+  `code_vectors.vector_dim` when that is set. On a mismatch it skips the lane and adds
+  `SearchWarning { lane: Semantic, cause: EmbeddingIdentityMismatch, message }`.
+  `SearchWarningCause` gains that variant (`embedding_identity_mismatch`). It is a
+  degradation, like `DaemonUnreachable`, so the contract's error codes do not change.
+- The node embeds the query before posting with the new
+  `embedding.rs::daemon_query_embedding(project_id, grant, query) -> Result<QueryVector>`.
+  It posts `/api/embeddings` through the daemon with no model override, as
+  `audited_query_embedding`'s daemon branch does, and returns the embedding with the
+  response's `model` and `dim`. Until P4 the node front door relays that request to
+  the hub, so query embedding runs on the hub (Overview).
+- When the grant reports the daemon unreachable, the node adds
+  `semantic_lane_from_grant_outage()`'s warning and sends no vector, as local
+  `semantic_lane` does. Any other embedding failure is logged and sends no vector, as
+  local `semantic_search` does.
+- `SearchWarning` gains `Deserialize`. `SearchWarningLane` and `SearchWarningCause`
+  already derive it.
+
+Hub services:
+
+- `Context::for_machine` gains a `ServiceConfigSelection`. It resolves the selected
+  services with `resolve_services` over the new `ConfigLayers::hub()`, which is Hub
+  mode with no daemon snapshot. That reads the hub's PostgreSQL configuration snapshot
+  (`ServiceSource::hub(capture_hub_snapshot(conn))`).
+- `HubScope::context` takes the selection. P1's routes pass
+  `ServiceConfigSelection::database_only()`. The search routes select Falkor, Qdrant,
+  embedding and code vectors.
+- `NodeAccess` gains the grant's AI state, built from the acquired grant the way
+  `resolve_from_root` builds `Context::grant_ai`. `daemon_query_embedding` and the
+  outage check read it.
+
+Wire (`crates/gcode/src/node/search.rs`):
+
+- `/search` and `/search-symbol` take
+  `SymbolSearchRequest { scope, query, kind, language, paths, with_graph, fetch_limit, query_vector: Option<QueryVector> }`
+  and return `SymbolCandidates`. `search-symbol` sends no vector.
+- `/search-text` takes `TextSearchRequest { scope, query, language, paths, fetch_limit }`
+  and returns `TextCandidates`.
+- The node computes `fetch_limit` as the commands do today, and resolves `paths` to
+  project-root-relative filters (1.8).
+
+Research context:
+- `search` (`commands/search.rs:100`), `search_symbol` (`:259`),
+  `search_symbol_with_graph` (`:358`) and `search_text` (`:463`) fetch, merge, filter,
+  page and print. Their filters end in a disk check: `symbol_matches_local_filters`
+  calls `scope::path_exists_in_current_project`, and `search_result_matches_filters`
+  calls `scope::current_indexed_path_is_valid`.
+- `semantic_lane` (`:89`) returns the grant-outage warning when the grant is unexpired
+  and the daemon unreachable. Otherwise `code_symbols::semantic_search` embeds through
+  `embedding_source_from_context` and `embed_query_with_source`.
+- `audited_query_embedding` (`vector/code_symbols/embedding.rs:162`) resolves an
+  `AiContext`, attaches the grant and calls `gobby_core`'s `embed_via_daemon`, whose
+  response carries `model` and `dim`.
+- `resolve_services` (`config/context.rs:236`) builds the Falkor, Qdrant, embedding and
+  code-vector settings from a `ServiceSource`. In Hub mode, `ServiceSource::new` reads
+  `capture_hub_snapshot(conn)` (`config/layers.rs:108`).
+- Rejected alternative: the hub embedding the query with its own configuration. That
+  works until P4. But P4 points a node's embeddings at the node's own endpoint, and a
+  node's query would then meet hub vectors from another model unless the identity
+  travels with the vector. With the vector and its identity in the request, P4
+  changes no search code.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(search)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** seven acceptance items. The three commands share the candidates and
+page split, the wire module and the hub services, and splitting them would put three
+leaves on `commands/search.rs` and `symbol_page.rs`.
+
+Consumers unchanged:
+- `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `search`, `search_symbol` and `search_text` with the same arguments, and they still print.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.3.1 - Local `search`, `search-symbol` (with and without `--with-graph`) and `search-text` output is byte-identical before and after the split, including a result whose file was deleted on disk after indexing. test: `crates/gcode/src/node/search_tests.rs::symbol_search_split_matches_the_cli_output`.
+- 2.3.2 - Under the remote golden grant, `gcode search` with a relative path filter sends the project-root-relative path and a query vector with its model and dimension, and prints the page of the returned candidates whose files exist on the node. test: `crates/gcode/src/node/search_tests.rs::node_search_renders_hub_candidates`.
+- 2.3.3 - A query vector whose model or dimension differs from the hub's yields the BM25 and graph results with one `embedding_identity_mismatch` semantic warning. test: `crates/gcode/src/node/search_tests.rs::identity_mismatch_degrades_the_semantic_lane`.
+- 2.3.4 - With the daemon unreachable, a node `search` sends no vector and prints the local grant-outage warning. test: `crates/gcode/src/node/search_tests.rs::grant_outage_sends_no_vector`.
+- 2.3.5 - `Context::for_machine` resolves the selected services from the hub's PostgreSQL configuration snapshot, and P1's routes still resolve none. test: `crates/gcode/src/node/search_tests.rs::hub_context_resolves_selected_services_from_the_hub_snapshot`.
+- 2.3.6 - The three routes serve the principal's machine. test: `crates/gcodeindex/tests/node_search.rs::search_routes_serve_the_principal_machine`.
+- 2.3.7 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.4 Node grep [category: code] (depends: 2.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/grep.rs::run`
+- `crates/gcode/src/commands/grep.rs::grep_repo`
+- `crates/gcode/src/commands/grep.rs::load_indexed_chunks`
+- `crates/gcode/src/commands/grep.rs::attach_coverage_gap`
+- `crates/gcode/src/commands/grep.rs::indexed_files_cover_filters`
+- `crates/gcode/src/commands/grep.rs::GrepMatch`
+- `crates/gcode/src/commands/grep.rs::GrepSpan`
+- `crates/gcode/src/commands/grep.rs::GrepContextLine`
+- `crates/gcode/src/commands/grep/candidates.rs`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/grep.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/grep.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/grep.rs`
+- `crates/gcode/src/node/grep_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/grep.rs`
+- `crates/gcodeindex/tests/node_grep.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Grep scans indexed chunks on the hub and pages on the node.
+
+- `grep_candidates(conn, ctx, options, exists) -> GrepCandidates` is the hub half. It
+  loads the indexed chunks, scans every match with no `max_count` or offset, and
+  attaches the coverage gap.
+  - `load_indexed_chunks` takes `exists` in place of its
+    `scope::current_indexed_path_is_valid` call. It keeps
+    `visibility::indexed_file_exists` and calls `exists` for the disk half. The hub
+    passes a predicate that accepts every path.
+  - `GrepCandidates { result: GrepResult, chunks_by_file: BTreeMap<String, usize> }`
+    counts the scanned chunks of each file.
+- The node half drops each match whose file `path_exists_in_current_project` rejects.
+  It subtracts those files' chunks from `scanned_chunks`, recounts `matched_lines` from
+  the remaining matches, then pages and prints with `print_file_page` or
+  `print_match_page`, as `run` does today.
+- `run` calls `grep_candidates` with `scope::path_exists_in_current_project`, then
+  pages, so local output is unchanged. `grep_repo` keeps its signature and calls the
+  new `grep_repo_with(ctx, conn, options, exists)`, which holds its body, with the
+  same disk check. 2.8's hub facts call `grep_repo_with` with the accept-all
+  predicate.
+- The hub half moves into the new `crates/gcode/src/commands/grep/candidates.rs`:
+  `load_indexed_chunks`, `attach_coverage_gap`, `indexed_files_cover_filters` and the
+  SQL prefilter helpers they call. `commands/grep.rs` (953 lines) shrinks instead of
+  growing.
+- `GrepMatch`, `GrepSpan` and `GrepContextLine` gain `Deserialize`.
+- Route `/api/code-index/node/grep`: `GrepRequest { scope, pattern, fixed_strings, ignore_case, word, context, before_context, after_context, paths, globs }`
+  returns `GrepCandidates`. The node compiles the globs and resolves the paths before
+  posting (1.8).
+
+Research context:
+- `run` (`commands/grep.rs:116`) loads chunks, scans with `max_count: None` and offset
+  0, attaches the coverage gap, then pages. `grep_repo` (`:254`) does the same for
+  `codewiki_facts/text.rs::grep_with`.
+- `load_indexed_chunks` (`:267`) filters each row with
+  `scope::current_indexed_path_is_valid` (`:380`), which is `indexed_file_exists` plus
+  the disk check. It stops at `GREP_SQL_SAFETY_LIMIT` (100,000) loaded chunks.
+- A scan with no `max_count` keeps every match, so `matched_lines` equals the number of
+  matches (`grep_chunks_with_filters`).
+- `GrepResponse` prints `scanned_chunks` and `matched_lines` in JSON, so the node
+  corrects both.
+- The safety limit counts the chunks the hub loads. When indexed files are missing on
+  the node's disk, the hub can reach the limit with chunks the node then drops. That
+  happens only on an index that freshness did not refresh (`--allow-stale` or a busy
+  lock), and the response reports `truncated`.
+- Rejected alternative: returning the chunks for the node to scan, which would send
+  up to 100,000 chunk bodies per request, past the 16 MiB route limit.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(grep)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** one command, with its library split, route and client. The
+hand-maintained Target files exceed six because each route adds one file per layer.
+
+Consumers unchanged:
+- `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `grep::run` with the same arguments.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.4.1 - Local `grep` output (matches, `-l`, context lines and JSON counts) is byte-identical before and after the split, including a match in a file deleted on disk after indexing. test: `crates/gcode/src/node/grep_tests.rs::grep_split_matches_the_cli_output`.
+- 2.4.2 - Under the remote golden grant, `gcode grep` prints the page of the returned matches whose files exist on the node, with `scanned_chunks` and `matched_lines` excluding files missing there. test: `crates/gcode/src/node/grep_tests.rs::node_grep_pages_and_corrects_counts`.
+- 2.4.3 - The grep route serves the principal's machine. test: `crates/gcodeindex/tests/node_grep.rs::grep_route_serves_the_principal_machine`.
+- 2.4.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.5 Node symbol navigation and symbol-at [category: code] (depends: 2.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/symbols.rs::*` — scope-reason: `outline`, `symbol`, `kinds` and `tree` split into a fetch and a render, `outline_missing_diagnostic` splits at its disk check, and the inline tests move to `crates/gcode/src/commands/symbols/tests.rs`
+- `crates/gcode/src/commands/symbols/tests.rs`
+- `crates/gcode/src/commands/symbols/batch.rs::symbols`
+- `crates/gcode/src/commands/symbol_at.rs::run`
+- `crates/gcode/src/commands/status/repo_outline.rs::repo_outline`
+- `crates/gcode/src/commands/scope.rs::ProjectMatch`
+- `crates/gcode/src/visibility.rs::VisibleFile`
+- `crates/gcode/src/freshness.rs::symbol_slice_is_current`
+- `crates/gcode/src/config/context.rs::*` — scope-reason: `ProjectView` gains `grant_bundle()`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/symbols.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/symbols.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/symbols.rs`
+- `crates/gcode/src/node/symbols_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/symbols.rs`
+- `crates/gcodeindex/tests/node_symbols.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+`outline`, `symbol`, `symbols`, `kinds`, `tree`, `repo-outline` and `symbol-at` read
+symbol rows on the hub. Source bytes and file checks stay on the node.
+
+- Each command splits into a database fetch and a render that takes
+  `&impl ProjectView` and the fetched rows. The local command runs both.
+- Routes:
+  - `/symbols/file`: `FileSymbolsRequest { scope, file }` returns
+    `FileSymbols { symbols: Vec<Symbol>, indexed: bool, chunks_exist: bool, owner: Option<ProjectMatch> }`.
+    That is `visible_symbols_for_file` plus, when the list is empty, the database half
+    of `outline_missing_diagnostic`: `indexed_file_exists`, `content_chunks_exist` and
+    `other_project_for_path`. `outline` and `symbol-at` use it.
+  - `/symbols/ids`: `SymbolIdsRequest { scope, ids }` returns the visible symbols
+    (`visible_symbols_by_ids`). `symbol` sends one id, and `symbols` sends its list.
+  - `/symbols/kinds` returns `visible_kinds`.
+  - `/symbols/tree` returns `visible_tree`'s `Vec<VisibleFile>`. `tree` filters it with
+    `filter_tree_files` on the node, and `repo-outline` summarizes it there.
+- `outline_missing_diagnostic` becomes a function of `FileSymbols`, the file's disk
+  existence and the path. Locally the existence comes from
+  `path_exists_in_current_project`, as today. On a node it is computed on the node.
+- The node reads source bytes from its own root: `read_symbol_source` for `symbol` and
+  `symbols`, and `symbol_at::run`'s file read for `symbol-at`. Savings reports go
+  through `savings::report_savings` with `ProjectView::grant_bundle()`, which `Context`
+  answers from `grant_ai` and `NodeAccess` from its acquired grant.
+- Node symbol freshness mirrors `freshness::ensure_symbol_fresh`. It fetches the
+  symbol and checks `symbol_slice_is_current` (made `pub(crate)`) against the node's
+  file. When the slice is stale, it runs files freshness (2.2) for that file and
+  fetches the symbol again. `outline` and `symbol-at` run files freshness for their
+  file, as locally.
+- `VisibleFile` and `ProjectMatch` gain `Serialize, Deserialize`.
+- `commands/symbols.rs` (930 lines, 395 of them its inline test module) moves that
+  module to `crates/gcode/src/commands/symbols/tests.rs`, declared with
+  `#[cfg(test)] #[path = "symbols/tests.rs"] mod tests;` (`crates/AGENTS.md`).
+
+Research context:
+- `outline` (`commands/symbols.rs:24`) reads `visible_symbols_for_file`, prints
+  `outline_missing_diagnostic` for an empty result, and reports savings from the file's
+  size on disk. `outline_missing_diagnostic` (`:216`) checks
+  `path_exists_in_current_project`, `indexed_file_exists`, `other_project_for_path`
+  and `content_chunks_exist`.
+- `symbol` (`:291`) reads `visible_symbol_by_id` and the source through
+  `read_symbol_source` (`:341`, a `std::fs::read` under the project root).
+  `symbols/batch.rs::symbols` reads `visible_symbols_by_ids`. `kinds` and `tree` read
+  `visible_kinds` and `visible_tree`. `status/repo_outline.rs::repo_outline` reads
+  `visible_tree`.
+- `symbol_at::run` (`:71`) reads `visible_symbols_for_file`, then the file's bytes
+  (`:88`) to map the line to a byte offset.
+- `savings::report_savings(base_url, original, actual, grant)` posts to the daemon,
+  and the callers pass `ctx.grant_ai`'s bundle.
+- `freshness::ensure_symbol_fresh` (`:198`) refreshes the symbol's file when the stored
+  slice hash differs from the bytes on disk.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(symbols) | test(symbol_at)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** seven commands over four routes. They share the symbol row fetches
+and the `ProjectView` render split, and splitting them would put several leaves on
+`commands/symbols.rs` and the same route module.
+
+Consumers unchanged:
+- `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls the symbol commands with the same arguments.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.5.1 - Local `outline`, `symbol`, `symbols`, `kinds`, `tree`, `repo-outline` and `symbol-at` output is byte-identical before and after the split, including the missing-outline diagnostic for an unindexed file. test: `crates/gcode/src/node/symbols_tests.rs::symbol_navigation_split_matches_the_cli_output`.
+- 2.5.2 - Under the remote golden grant, `gcode symbol` and `gcode symbol-at` print source read from the node's file, and `gcode outline` of a file missing on the node prints the local diagnostic. test: `crates/gcode/src/node/symbols_tests.rs::node_symbol_reads_use_node_source`.
+- 2.5.3 - A node `symbol` whose stored slice no longer matches the node's file refreshes that file before printing. test: `crates/gcode/src/node/symbols_tests.rs::node_symbol_freshness_refreshes_a_stale_slice`.
+- 2.5.4 - The four routes serve the principal's machine. test: `crates/gcodeindex/tests/node_symbols.rs::symbol_routes_serve_the_principal_machine`.
+- 2.5.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.6 Node graph navigation [category: code] (depends: 2.5)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/graph/reads.rs::*` — scope-reason: `callers`, `callees`, `usages`, `imports`, `path` and `blast_radius` split into a read and a render
+- `crates/gcode/src/search/fts/common.rs::ResolvedGraphSymbol`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/graph_nav.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/graph_nav.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/graph_nav.rs`
+- `crates/gcode/src/node/graph_nav_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/graph_nav.rs`
+- `crates/gcodeindex/tests/node_graph_nav.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+`callers`, `callees`, `usages`, `imports`, `path` and `blast-radius` read Falkor and
+PostgreSQL only, so the hub also pages them.
+
+- Each command splits into a read that returns `GraphRead<T>` and a render with the
+  existing format functions. The local command runs both.
+- `GraphRead<T>` has three cases:
+  - `Unavailable { hint }`: the graph backend is off or unreachable
+    (`graph_read_unavailable`, `hint_for`);
+  - `Unresolved { suggestions }`: the symbol did not resolve;
+  - `Found { symbol: ResolvedGraphSymbol, total, results: Vec<T>, hint }`: one page.
+
+  `T` is `GraphResult` for the four list reads and blast radius. `path` returns its
+  `GraphPathResponse`, which gains `Deserialize`.
+- Routes `/nav/callers`, `/nav/callees`, `/nav/usages`, `/nav/imports`, `/nav/path` and
+  `/nav/blast-radius` take the command's arguments with `offset` and `limit`, and
+  return `GraphRead<T>`. Their hub context selects Falkor.
+- `ResolvedGraphSymbol` gains `Serialize, Deserialize`.
+- 2.1 already moved the inline tests out of `commands/graph/reads.rs`, which leaves
+  about 685 production lines for this split.
+- P6 serves the same reads to `/api/code-index` clients through these hub entry points.
+
+Research context:
+- `commands/graph/reads.rs` resolves the symbol with `resolve_symbol_with_connection`
+  (`search/fts/graph.rs::resolve_graph_symbol`). It counts and pages with
+  `code_graph::{count_*, find_*}` through `read_paged_symbol_graph_results`, and maps an
+  unavailable backend to an empty page with a hint (`graph_read_or_empty`). None of it
+  reads a file on disk.
+- `GraphResult` already derives `Serialize, Deserialize`.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(graph)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** six commands over one result model, `GraphRead<T>`, in one module.
+Splitting them would put six leaves on `commands/graph/reads.rs`.
+
+Consumers unchanged:
+- `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls the graph navigation commands with the same arguments.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.6.1 - Local output of the six commands is byte-identical before and after the split, including the unresolved-symbol suggestions and the unavailable-graph hint. test: `crates/gcode/src/node/graph_nav_tests.rs::graph_navigation_split_matches_the_cli_output`.
+- 2.6.2 - Under the remote golden grant, each command prints the page the stubbed hub returns, and an `Unavailable` read prints the local hint. test: `crates/gcode/src/node/graph_nav_tests.rs::node_graph_navigation_renders_hub_reads`.
+- 2.6.3 - The six routes serve the principal's machine. test: `crates/gcodeindex/tests/node_graph_nav.rs::graph_navigation_routes_serve_the_principal_machine`.
+- 2.6.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.7 Node `gcode graph` reports and views [category: code] (depends: 2.6)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/graph/payload.rs::report`
+- `crates/gcode/src/commands/graph/payload.rs::overview`
+- `crates/gcode/src/commands/graph/payload.rs::file`
+- `crates/gcode/src/commands/graph/payload.rs::neighbors`
+- `crates/gcode/src/commands/graph/payload.rs::graph_blast_radius`
+- `crates/gcode/src/commands/graph/view/mod.rs::run`
+- `crates/gcode/src/commands/graph/view/render.rs::*` — scope-reason: `ViewPayload`, `ViewSeed`, `ViewNode`, `ViewEdge` and `ViewCommunity` gain `Deserialize` and become `pub(crate)`
+- `crates/gcode/src/commands/graph/view/fcg.rs::run`
+- `crates/gcode/src/commands/graph/view/mcg/fetch.rs::run`
+- `crates/gcode/src/commands/graph/view/class_hierarchy/fetch.rs::run`
+- `crates/gcode/src/commands/graph/view/communities.rs::run_list`
+- `crates/gcode/src/commands/graph/view/communities.rs::run_detail`
+- `crates/gcode/src/cli/graph_view.rs::*` — scope-reason: `GraphViewArgs`, `GraphViewSeed` and `GraphViewKind` gain `Serialize, Deserialize`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/graph_views.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/graph_views.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/graph_views.rs`
+- `crates/gcode/src/node/graph_views_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/graph_views.rs`
+- `crates/gcodeindex/tests/node_graph_views.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+`gcode graph report`, `overview`, `file`, `neighbors`, `blast-radius` and `view` build
+a serializable payload and print it. The hub builds the payload and the node prints.
+
+- `report`, `overview`, `file`, `neighbors` and `graph_blast_radius` each split into the
+  library call and the print. The routes `/graph/report`, `/graph/overview`,
+  `/graph/file`, `/graph/neighbors` and `/graph/blast-radius` return the call's
+  `ProjectGraphReport` or `GraphPayload`, and the node prints with
+  `format_report_text` or `print_graph_payload`.
+- `view`'s sub-runs end in `render::print_view` today:
+  - `mcg::run` (`mcg/fetch.rs`), `fcg::run`, `class_hierarchy::run`
+    (`class_hierarchy/fetch.rs`), and `communities::run_list` and `run_detail` return
+    their `ViewPayload` instead.
+  - `view::run` splits into `view::payload(ctx, args) -> ViewPayload` and the print.
+  - `/graph/view` takes `GraphViewRequest { scope, args: GraphViewArgs }` and returns
+    the payload. The node resolves a file seed against its project root before posting,
+    as `dispatch.rs` does today.
+- The view types become `pub(crate)` and gain `Deserialize`. `GraphViewArgs`,
+  `GraphViewSeed` and `GraphViewKind` gain `Serialize, Deserialize`.
+- Each route's hub context selects Falkor, as the local commands do.
+
+Research context:
+- `commands/graph/payload.rs` calls `graph::report::generate_report_with_options`,
+  `code_graph::project_overview_graph`, `file_graph`, `symbol_neighbors` and
+  `blast_radius_graph`. `ProjectGraphReport` and `GraphPayload` already derive
+  `Serialize, Deserialize`.
+- `view::run` (`commands/graph/view/mod.rs:411`) routes to the five sub-runs, and every
+  one builds a `ViewPayload` with `build_view_payload` and prints it with
+  `print_view` (`render.rs:307`).
+- None of these reads a file on disk. 2.1 made their visibility reads take the
+  machine from the context.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(graph)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** six subcommands over two payload types. They share the
+payload-then-print split and the route module.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.7.1 - Local output of the six subcommands, including every view and seed combination, is byte-identical before and after the payload split. test: `crates/gcode/src/node/graph_views_tests.rs::graph_payload_split_matches_the_cli_output`.
+- 2.7.2 - Under the remote golden grant, each subcommand prints the payload the stubbed hub returns, in JSON and text. test: `crates/gcode/src/node/graph_views_tests.rs::node_graph_subcommands_render_hub_payloads`.
+- 2.7.3 - The six routes serve the principal's machine. test: `crates/gcodeindex/tests/node_graph_views.rs::graph_routes_serve_the_principal_machine`.
+- 2.7.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.8 Node evidence [category: code] (depends: 2.7)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/evidence.rs::*` — scope-reason: `run` takes the facts and hybrid search from the caller, and the node supplies `NodeEvidenceFacts` and `NodeHybridSearch`
+- `crates/gcode/src/evidence/mod.rs::FactPage`
+- `crates/gcode/src/vector/code_symbols/search.rs::*` — scope-reason: `audited_semantic_search` splits into its query embedding and a vector search
+- `crates/gcode/src/codewiki_facts/mod.rs::*` — scope-reason: adds `CodewikiFacts::for_hub`
+- `crates/gcode/src/codewiki_facts/scope.rs::*` — scope-reason: `ScopeSelector`, `FileFact` and the types they contain gain `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/search.rs::*` — scope-reason: `ContentFact` and `SearchQuery` gain `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/symbols.rs::*` — scope-reason: `SymbolFact` gains `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/text.rs::*` — scope-reason: `GrepQuery`, `GrepOutcome` and the hit types gain `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/graph.rs::*` — scope-reason: `ScopedGraph` and the types it contains gain `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/graph_query.rs::*` — scope-reason: `GraphEdgeKind`, `GraphBounds` and `GraphScopeMode` gain `Serialize, Deserialize`
+- `crates/gcode/src/codewiki_facts/communities.rs::*` — scope-reason: `ProjectCommunities` and the types it contains gain `Serialize, Deserialize`
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/evidence.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/evidence.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/evidence.rs`
+- `crates/gcode/src/node/evidence_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/evidence.rs`
+- `crates/gcodeindex/tests/node_evidence.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+`gcode evidence` builds an `EvidenceLibrary` over two seams: `EvidenceFacts`, which
+reads index facts, and `HybridSearch`, which runs the audited semantic search. Git and
+the working tree stay on the node. The node supplies implementations of both seams
+that forward to one route.
+
+- `commands/evidence.rs::run` splits. `run_with(&impl ProjectView, prepared, facts, hybrid, output_debug_files)`
+  builds the library over `Arc<dyn EvidenceFacts>`, adds the hybrid search only for a
+  hybrid request, queries and prints. Local `run` runs `ensure_fresh` and calls it with
+  `CodewikiFacts::from_context` and `NativeHybridSearch`, as today. The node client
+  runs project freshness (2.2) and calls it with `NodeEvidenceFacts` and
+  `NodeHybridSearch`.
+- Route `/api/code-index/node/evidence/facts`: `FactsRequest { scope, call: FactsCall }`.
+  `FactsCall` has one case per seam method:
+  - `EvidenceFacts`: `Files`, `SearchSymbols(SearchQuery)`, `SearchContent(SearchQuery)`,
+    `Grep(GrepQuery)`, `SymbolsForFile(path)`, `SymbolById(id)`,
+    `GraphEdges { seed, kind, bounds, mode }` and `ProjectCommunities`;
+  - `HybridSearch`: `EffectiveIdentity` and
+    `SearchSymbolIds { selector, query_vector: QueryVector }`.
+
+  `project_id` needs no call, because the node has it.
+- The hub runs `CodewikiFacts::from_context` and `NativeHybridSearch` over its context
+  for the call, with the services `evidence::service_config_selection` selects for the
+  request. It returns `FactsReply`, with one success case per call and
+  `Failed { message }`. The node turns `Failed` back into the seam's error type with
+  the same text, so `EvidenceLibrary` reports the error it reports locally. No new
+  error code enters the contract.
+- Hybrid search:
+  - `NodeHybridSearch::effective_identity` returns the hub's `HybridIdentity`.
+  - `search_symbol_ids` embeds the selector's query with 2.3's
+    `daemon_query_embedding`. It requires the returned model and dimension to equal the
+    identity's, else it returns the identity-mismatch error text
+    `audited_query_embedding` uses. It then posts `SearchSymbolIds`.
+  - The hub runs the new `audited_semantic_search_with_vector`, the vector half of
+    `audited_semantic_search`.
+  - The node cannot compare the endpoint, because until P4 the query embedding is
+    relayed to the hub.
+- `CodewikiFacts` gains `for_hub(ctx)`, whose `grep_with` calls 2.4's
+  `grep_repo_with` with the accept-all predicate. `from_context` keeps the disk check.
+  The hub builds its facts with `for_hub`. The node ran project freshness first, which
+  removes deleted files from the index the node's machine sees.
+- `FactPage` and the codewiki fact types in Targets gain `Serialize, Deserialize`.
+  `SearchSelector` and `HybridIdentity` already derive both.
+
+Research context:
+- `commands/evidence.rs::run` (`:136`) runs `ensure_fresh` for the project, builds
+  `EvidenceLibrary::new(&ctx.project_root, binding, Arc<CodewikiFacts>)`, adds the
+  working tree unless the request is commit-bound, and adds `NativeHybridSearch` for a
+  hybrid search.
+- `EvidenceFacts` (`evidence/mod.rs:189`) has nine methods: `project_id`, `files`,
+  `search_symbols`, `search_content`, `grep`, `symbols_for_file`, `symbol_by_id`,
+  `graph_edges` and `project_communities`. `HybridSearch` (`:265`) has
+  `effective_identity` and `search_symbol_ids`.
+- `NativeHybridSearch::resolve_identity` (`commands/evidence.rs:185`) reads the
+  embedding, vector dimension and Qdrant collection schema. `search_symbol_ids` calls
+  `audited_semantic_search` with that identity.
+- The only codewiki fact that reads disk is `grep_with`, through `grep_repo`
+  (`codewiki_facts/text.rs:142`).
+- `preflight` (`:26`) reads the git binding on the node and rejects `--allow-stale`.
+- Rejected alternative: one route per seam method. Every method takes and returns
+  types this leaf serializes anyway, and one enum keeps the hub dispatch in one
+  place.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(evidence) | test(codewiki)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** one command and one route over two seams. The fact types' serde,
+the forwarding seam implementations and the hub dispatch are one wire contract.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 2.8.1 - Local `gcode evidence` output is byte-identical before and after `run` takes its seams from the caller, for a lookup, a content search, a grep, a graph walk and a hybrid search. test: `crates/gcode/src/node/evidence_tests.rs::evidence_seam_injection_matches_the_cli_output`.
+- 2.8.2 - Under the remote golden grant, `gcode evidence` answers each request through `/evidence/facts` with the node's git binding and working tree, and prints what a local run against the same index prints. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_forwards_facts_to_the_hub`.
+- 2.8.3 - A node hybrid search whose query embedding's model or dimension differs from the hub's identity fails with the local identity-mismatch error, and a `Failed` reply surfaces as the local fact error. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_keeps_local_errors`.
+- 2.8.4 - Every `FactsCall` case round-trips through serde_json, and the route serves the principal's machine. test: `crates/gcodeindex/tests/node_evidence.rs::evidence_route_serves_every_facts_call`.
+- 2.8.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 2.9 E2E: node read commands through the hub routes [category: test] (depends: 2.8, 1.11)
+`kind: deliverable`
+
+Targets:
+- `tests/e2e/test_hub_node_pair.py::*` — scope-reason: adds the node read-parity test beside 1.11's preflight test
+
+Release ownership (Constraints): test files only, so no binary bumps.
+
+On 1.11's indexed node overlay, run every P2 read command with the node's `gcode`
+against the node front door, then edit a file on the node and check that freshness
+reindexes it.
+
+Research context:
+- 1.11 leaves an enrolled node with an indexed overlay and parent.
+- Planned check: `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -v -m e2e`.
+
+**Acceptance:**
+
+- 2.9.1 - On an enrolled node, `search`, `search-symbol`, `search-text`, `grep`, `outline`, `symbol`, `symbols`, `kinds`, `tree`, `repo-outline`, `symbol-at`, `callers`, `graph report` and `evidence` exit 0 with results, and a file edited on the node shows up in `search-text` without a manual `index`. test: `tests/e2e/test_hub_node_pair.py::test_node_read_commands_through_hub`.
+
 ## E1 End-to-end verification
 `kind: verification`
 
-These are completion gates for P1. Except for plan validation
+These are completion gates for P1 and P2. Except for plan validation
 (`uv run gobby plans validate .gobby/plans/code-index-family.md -p /Users/josh/Projects/gobby`),
-none has run yet. Each must hold on `0.5.0` with freshly built and installed binaries
-before #23276 closes:
+none has run yet. Each must hold on `0.5.0` with freshly built and installed binaries.
+Gates 1 to 3 must hold before #23276 closes, and gates 1, 2 and 4 must hold again
+before P2's phase epic closes:
 
 1. `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code`, then
-   `cargo nextest run -p gobby-codeindex -p gobby-runtime -p gobby-daemon`.
-2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/runtime_grants/ tests/install/test_version_pins.py tests/e2e/test_hub_node_pair.py`.
-3. A live hub and node pair on the operator's machines: #24380's preflight on the
-   node warns about nothing, and `gcode status` on the hub's own checkout is
+   `cargo nextest run -p gobby-codeindex -p gobby-runtime -p gobby-daemon`, must pass.
+2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/runtime_grants/ tests/install/test_version_pins.py tests/e2e/test_hub_node_pair.py`
+   must pass. After P2 that file also holds `test_node_read_commands_through_hub`.
+3. On a live hub and node pair on the operator's machines, #24380's preflight on the
+   node must warn about nothing, and `gcode status` on the hub's own checkout must be
    unchanged.
+4. On the same live pair, every command 2.9.1 lists must exit 0 with results on the
+   node. The same commands on the hub's own checkout must print what they printed
+   before P2.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -1216,3 +2282,8 @@ before #23276 closes:
 - 2026-10-17: First draft of P1 by Plan Writer gobby#16767. Decisions D1 to D9 were
   ruled by Orchestrator #15977 and Josh on 2026-10-17. The remaining phases follow in
   this file under #15977's 16:47 ruling.
+- 2026-10-17: Draft of P2 (2.1 to 2.9) by Plan Writer gobby#16767, with D10 to D14
+  from #15977's later rulings. P1 edits that P2 needs: 1.3 adds `ROUTE_PATHS`; 1.9's
+  `claims` reads it; 1.7's recovery text names no command list; 1.8's freshness
+  sentence points at 2.2; 1.10 depends on 2.8; and 1.1 and 1.8 drop consumer lines
+  for files P2 targets.
