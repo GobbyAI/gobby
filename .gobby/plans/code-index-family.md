@@ -63,7 +63,8 @@ nightly repair entry points are in place for #24151 and #21582 to call (D18).
 
 When P9 closes, the `code_index` family defaults to `native`, so gdaemon serves every
 `/api/code-index` route for API-key callers. Python keeps only the five routes the web
-UI reads, for cookie callers, until a browser cookie verifier exists (9.8). Python's
+UI reads, for cookie callers, until #24659 (gdaemon verifies the web UI session
+cookie; retire Python's code-index web UI reads) deletes them (D15). Python's
 pruner, its maintenance remnants, their two tables and the projection operations in
 issued grants are gone.
 
@@ -308,9 +309,11 @@ settle who the native `/api/code-index` routes serve.
   - Modules with consumers outside the family stay (#15977, 2026-10-18):
     `CodeIndexStorage`, `CodeIndexContext`, `GcodeGateway`, `bm25_health`,
     `models.CODE_INDEX_UUID_NAMESPACE` and `maintenance_launch`.
-  - Deleting the Python read routes the web UI uses waits on a browser cookie-verifier
-    task that #15977 files under hub-node planning. The deferred section 9.8 carries it
-    under a placeholder task ref until the task exists.
+  - #24659 (gdaemon verifies the web UI session cookie; retire Python's code-index web
+    UI reads) owns deleting the five Python read routes the web UI uses, once gdaemon
+    verifies that cookie, with the `GcodeGateway` methods left without a caller and
+    the five ledger rows. #15977 filed it under hub-node planning, and its description
+    carries the obligations, as D18 does for #24151 and #21582.
 - **D16, Brokered projection operations (ruling E7(a)).** No grant-verified native path
   exists for `clear_projection`, `rebuild_projection` or `invalidate_projection`,
   because no client presents them. 9.4 removes the route side with the Python routes:
@@ -3103,7 +3106,7 @@ response. P5 to P7 tests set `native`. These wait for 9.1's flip:
   `crates/gdaemon/tests/http_contracts.rs`'s parity precheck;
 - 9.3 and 9.4 drop the parity ledger rows of the routes they delete from Python. The
   rows of the five web UI reads stay `proxied`, because cookie callers still reach
-  Python, until 9.8 retires those routes.
+  Python, until #24659 retires those routes (D15).
 
 Request order. Every route checks in Python's order, so each failure returns Python's
 status and body:
@@ -5484,8 +5487,8 @@ stay (D15).
   waits on #24449 (Native interactive handshake), and 1.10 follows it.
 - 9.7 deletes what only `trigger.py` and `nightly_repair.py` still use, after #24151
   and #21582 delete those files (D18).
-- 9.8 is deferred. Deleting the Python routes the web UI reads waits on a browser
-  cookie verifier that no task owns yet.
+- #24659 deletes the Python routes the web UI reads, once gdaemon verifies the
+  browser cookie (D15).
 
 Callers after P9. API-key callers reach gdaemon for every `/api/code-index` route.
 Cookie, agent-bearer, break-glass and unauthenticated requests still reach Python
@@ -5495,7 +5498,7 @@ UI calls only the five routes Python keeps (`web/src/hooks/useCodeGraph.ts`: ove
 file, neighbors, blast radius and search).
 
 `src/gobby/code_index/gcode_gateway.py` (969 lines) is no P9 Target. Its methods that
-only the deleted code called, and its prune floor, go with 9.8, which retires the
+only the deleted code called, and its prune floor, go with #24659, which retires the
 gateway's route-only parts. A Target on the file would need a split or a
 `delete-lines` proof, and 1.1 also targets it.
 
@@ -5582,7 +5585,7 @@ The e2e bootstrap sets `code_index.enabled: false` (`tests/e2e/conftest.py`). Py
 then answers 503 `{"detail":"Code indexer not available"}` for search and 503
 `{"detail":"Code graph not available"}` for the overview. The native family returns
 the same bodies from its `enabled` gate, with or without published state (P5
-framing). Both routes stay in Python until 9.8, so the cases keep a Python origin.
+framing). Both routes stay in Python until #24659, so the cases keep a Python origin.
 
 Record both cases from Python:
 `GOBBY_RECORD_HTTP_CONTRACTS=1 … pytest tests/contracts/test_http_corpus.py -k record`.
@@ -5681,7 +5684,7 @@ Research context:
 - `code_index_pruner` is read only by the prune route
   (`server.services.code_index_pruner`).
 - `gcode_gateway.py::GcodeGateway.prune_project_for_maintenance` loses its only
-  caller and stays until 9.8.
+  caller and stays until #24659.
 - gcode posts `POST /api/code-index/prune` itself (`post_code_index_prune`, from
   `gcode prune --global`), with the bearer from `gcore`'s `read_api_key_for`. An API
   key reaches 8.4's native route after 9.1. An agent's run token
@@ -5739,7 +5742,7 @@ Docs and ledger:
 - `code-index.md` and `http-endpoints.md` keep the four rows and say gdaemon serves
   them to API-key callers. `impact.md` says the same of `/graph/path`.
 - The ledger drops the four keys. The five web UI rows stay `proxied`, and their notes
-  say API-key callers reach gdaemon while cookie callers reach Python until 9.8. The
+  say API-key callers reach gdaemon while cookie callers reach Python until #24659. The
   ledger is regenerated with `uv run python scripts/generate_parity_ledger.py`.
 - The audit's four entries point `implementation.path` at
   `crates/gcodeindex/src/family/path.rs`, `lifecycle.rs` (clear and rebuild) and
@@ -5756,7 +5759,7 @@ Research context:
   `test_invalidate_keeps_shared_projections`, and the four clear and rebuild error
   tests.
 - `GcodeGateway`'s `symbol_path`, `graph_clear`, `graph_rebuild` and `vector_clear`
-  lose their callers and stay until 9.8. `invalidate_project_by_id` stays for
+  lose their callers and stay until #24659. `invalidate_project_by_id` stays for
   `src/gobby/projects/purge.py`.
 - Planned checks:
   - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/code_index/test_code_index_context.py tests/test_wiki_retirement_contract.py tests/skills/ tests/test_parity_ledger.py -v`;
@@ -6016,31 +6019,6 @@ together, so one leaf deletes them together.
 - 9.7.4 - The settings section renders without the two fields. test: `web/src/components/settings/sections/__tests__/RuntimeInfrastructureSection.test.tsx::renders kept code-index summary fields and omits retired controls`.
 - 9.7.5 - Every corpus case replays equal with the re-recorded config cases. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 9.7.6 - `gcode`, `gdaemon` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-### 9.8 Retire Python's web UI code-index reads (depends: 9.4)
-`kind: deferred`
-
-```yaml
-deferral:
-  task_ref: "cookie-verifier-code-index-reads"
-  reason: "Deleting Python's five web UI read routes needs a browser cookie verifier in gdaemon, which no task owns yet; #15977 files it under hub-node planning."
-  owner: "Orchestrator #15977"
-  original_acceptance_items:
-    - 9.8.1
-    - 9.8.2
-    - 9.8.3
-```
-
-Python keeps `graph_overview`, `graph_file`, `graph_symbol_neighbors`,
-`graph_blast_radius` and `graph_search` because only Python verifies the web UI's
-session cookie (D15). Once gdaemon verifies it and the family claims cookie callers,
-this work deletes them and what only they and the deleted code used.
-
-The deferral task's obligations:
-
-- 9.8.1: `src/gobby/servers/routes/code_index.py` and the `CodeIndexContext` methods behind the five routes are deleted, and the web UI's code-graph view loads through gdaemon.
-- 9.8.2: `GcodeGateway`'s methods with no remaining caller go (`graph_sync_file`, `vector_sync_file`, `maintenance_index`, `vector_rebuild`, `prune`, `checked_version`, `graph_clear`, `graph_rebuild`, `symbol_path`, `vector_clear`, `prune_project_for_maintenance` and the read methods), with `MIN_GCODE_PRUNE_BUDGET_VERSION`, `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION` and the AGENTS.md floor wording.
-- 9.8.3: The five ledger rows leave `proxied`, and the audit's five entries point at the native handlers.
 
 ## E1 End-to-end verification
 `kind: verification`
