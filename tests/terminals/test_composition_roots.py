@@ -172,8 +172,6 @@ def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPa
     ):
         monkeypatch.setattr(target, MagicMock())
     monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-1")
-    # gdaemon exports its latched route to its children; this fixture has no bootstrap to match.
-    monkeypatch.delenv("GOBBY_TERMINAL_ROUTE", raising=False)
     native = FakeRuntime(backend="native")
     monkeypatch.setattr(
         "gobby.terminals.native_runtime.NativeTerminalRuntime",

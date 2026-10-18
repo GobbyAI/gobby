@@ -158,6 +158,17 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_terminal_route_latch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without gdaemon's latched terminal route.
+
+    gdaemon exports its latched route to every agent shell, sending wiring tests
+    into the latch check against a bootstrap they never configured. Route-latch
+    tests set it explicitly.
+    """
+    monkeypatch.delenv("GOBBY_TERMINAL_ROUTE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_sandbox_cargo_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear the invoking reviewer's Gobby sandbox routing while preserving its Cargo target.
 
