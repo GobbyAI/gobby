@@ -13,23 +13,22 @@ import shutil
 import zlib
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
 from gobby.sessions.gzip_seek_index import write_blocked_gzip_archive
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_ARCHIVE_DIR = "~/.gobby/session_transcripts"
 
 
 def get_archive_dir(override: str | None = None) -> Path:
     """Resolve and create the transcript archive directory.
 
     Args:
-        override: Custom directory path. If None, uses ~/.gobby/session_transcripts.
+        override: Custom directory path. If None, uses <GOBBY_HOME>/session_transcripts.
 
     Returns:
         Resolved Path to the archive directory.
     """
-    dir_path = Path(override).expanduser() if override else Path(_DEFAULT_ARCHIVE_DIR).expanduser()
+    dir_path = Path(override).expanduser() if override else get_gobby_home() / "session_transcripts"
     dir_path.mkdir(parents=True, exist_ok=True)
     return dir_path
 
