@@ -439,11 +439,17 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.hide_tab_bar_when_single_tab = !prefs.hide_tab_bar_when_single_tab;
         }
         SettingsRow::SidebarWidth => {
+            // Steps from the drawn width. A step into the cap or the floor
+            // moves nothing, so the saved preference stays for a wider window.
             let (min, max) = chrome.sidebar.width_bounds();
-            let width = usize::from(prefs.sidebar_width)
+            let drawn = chrome.sidebar.width.clamp(min, max);
+            let width = usize::from(drawn)
                 .saturating_add_signed(delta)
                 .clamp(usize::from(min), usize::from(max));
             let width = u16::try_from(width).unwrap_or(max);
+            if width == drawn {
+                return;
+            }
             prefs.sidebar_width = width;
             chrome.sidebar.width = width;
         }
