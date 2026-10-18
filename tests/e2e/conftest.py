@@ -36,7 +36,7 @@ import psutil
 import pytest
 import pytest_asyncio
 import yaml
-from websockets.exceptions import InvalidStatus, WebSocketException
+from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
@@ -762,17 +762,8 @@ def wait_for_daemon_health(
     )
 
 
-DAEMON_WS_REFUSAL_BODY = b"Forbidden: Invalid token\n"
-
-
 def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
-    """Probe that the direct WebSocket listener is up.
-
-    The listener admits only verified front-door identity, so a bare bootstrap
-    key is refused by contract. The daemon's own 403 refusal proves the listener
-    answered. A closed port, a foreign listener or any other failure keeps waiting
-    until the deadline.
-    """
+    """Probe readiness with a complete authenticated handshake and clean close."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -785,13 +776,6 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
                 proxy=None,
             ):
                 return True
-        except InvalidStatus as exc:
-            if (
-                exc.response.status_code == 403
-                and bytes(exc.response.body) == DAEMON_WS_REFUSAL_BODY
-            ):
-                return True
-            time.sleep(0.1)
         except (OSError, RuntimeError, TimeoutError, WebSocketException):
             time.sleep(0.1)
     return False
