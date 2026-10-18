@@ -371,6 +371,91 @@ finally:
     assert "restart preserved monitor, stream and subscription; stop cleaned up" in result.stdout
 
 
+def test_restart_reap_on_the_production_path_keeps_a_broker_started_by_a_worker_thread(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    program = r"""
+import asyncio, hashlib, json, logging, os, socket, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from gobby.agents import srt_monitor
+from gobby.runner_lifecycle_processes import (
+    _preserved_agent_terminal_pids,
+    _reap_remaining_child_processes,
+)
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
+root, node, runner = map(Path, sys.argv[1:])
+temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+
+
+async def main() -> None:
+    # The spawn path starts the broker from a worker thread, not the loop thread.
+    path = await asyncio.to_thread(
+        srt_monitor.ensure_srt_monitor,
+        node=node,
+        runner=runner,
+        env=os.environ,
+        run_key='prod-run',
+    )
+    broker = srt_monitor._children[-1]
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(10)
+    noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
+    stream = None
+    try:
+        identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
+        assert broker.pid in identities, identities
+        client.connect(path)
+        subscribe = {'suffix': '_prod_SBX', 'runKey': 'prod-run', 'runnerPid': os.getpid()}
+        client.sendall(json.dumps(subscribe).encode() + b'\n')
+        stream = client.makefile('rb')
+        assert json.loads(stream.readline())['ready']
+        runner_state = SimpleNamespace(terminal_host_manager=None, agent_runner=None)
+        preserved = await _preserved_agent_terminal_pids(runner_state)
+        await _reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids=preserved,
+            preserve_srt_monitor=True,
+        )
+        noise.wait(timeout=5)
+        assert noise.poll() is not None
+        assert broker.poll() is None
+        message = 'Sandbox: prod deny file-read-data /prod\nCMD64_x_END__prod_SBX'
+        with (root / 'events').open('a') as events:
+            events.write(json.dumps({'eventMessage': message}) + '\n')
+        assert json.loads(stream.readline())['message'] == message
+        print('production restart reap preserved the broker and its subscription')
+    finally:
+        if stream is not None:
+            stream.close()
+        client.close()
+        for child in (noise, broker):
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+        temporary.cleanup()
+
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(harness.root), str(harness.node), str(harness.runner)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "production restart reap preserved the broker and its subscription" in result.stdout
+    assert "during restart" in result.stderr
+
+
 def test_registration_survives_slow_identity_work(monitor_harness: MonitorHarness) -> None:
     harness = monitor_harness
     (harness.root / "ps-delay").write_text("6")
