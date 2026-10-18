@@ -16,6 +16,7 @@ import pytest
 from gobby import runner_lifecycle_agents
 from gobby.agents import resume_executor, spawn_executor, spawn_in_doubt_owner
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
@@ -23,11 +24,12 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.storage.agents import AgentRun
-from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
+from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY, REAPED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.runtime import TerminalSpawnRequest
+from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.mcp_proxy.tools.spawn_agent.test_placement import (
     LOCAL_MACHINE_ID,
@@ -411,6 +413,53 @@ async def test_kill_parked_seat_prevents_automatic_recovery(
     assert current.status == "cancelled"
     assert current.child_session_id == original.child_session_id
     assert finalize.await_count == 0
+
+
+@pytest.mark.parametrize("stop", [True, False])
+async def test_kill_parked_seat_reaps_immediately_with_lifecycle_monitor(
+    placed: _Harness,
+    finalize: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    stop: bool,
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert h.runs.merge_resume_metadata(original.id, _metadata(h, _tab_snapshot(h))) is not None
+    h.runner.get_run.side_effect = h.runs.get
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=h.runs,
+        db=h.db,
+        detection_registry=BundledDetectionRegistry(),
+        session_manager=h.sessions,
+    )
+    registry = create_agents_registry(
+        h.runner, session_manager=h.sessions, db=h.db, lifecycle_monitor=monitor
+    )
+    kill = registry._tools["kill_agent"].func
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.agents._kill_agent_process",
+        AsyncMock(return_value={"success": True, "already_dead": True}),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope", AsyncMock()
+    )
+
+    await kill(run_id=original.id, stop=stop)
+
+    killed = h.runs.get(original.id)
+    assert killed is not None
+    assert killed.status == "cancelled"
+    meta = killed.resume_metadata_json or {}
+    assert meta.get(REAP_REQUESTED_AT_KEY)
+    assert h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID) == []
+    orphans = h.runs.list_daemon_stop_orphans(machine_id=LOCAL_MACHINE_ID, max_age_hours=24)
+    if stop:
+        assert meta.get(REAPED_AT_KEY)
+        assert orphans == []
+    else:
+        assert not meta.get(REAPED_AT_KEY)
+        assert [run.id for run in orphans] == [original.id]
+    finalize.assert_not_awaited()
 
 
 async def test_refused_kill_keeps_parked_seat_recoverable(
