@@ -88,14 +88,14 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
   - `compare` does the same. For a POST, the front door's existing compare path
     serves the proxied response (`crates/gdaemon/src/front_door/routes.rs::compare`).
   - No leaf adds code for either setting.
-- **Concurrent editors.** These open leaves of other plans edit files that P1, P3, P4
-  or P7 targets, without changing a seam those phases build on. Apart from 3.1's edge on
-  #23834, no leaf takes a dependency edge on them. Each executor re-resolves its
-  Targets against the tree it starts from.
+- **Concurrent editors.** These open leaves of other plans edit files that P1, P3, P4,
+  P7 or P8 targets, without changing a seam those phases build on. Apart from 3.1's edge
+  on #23834 and 8.5's on #23835, no leaf takes a dependency edge on them. Each executor
+  re-resolves its Targets against the tree it starts from.
   - workspace-index-pin:
     - #23833 (Scoped PostgreSQL and BM25 reads): `commands/search.rs`, `db/queries.rs`, `visibility.rs`;
     - #23834 (Vector and graph pin scope): `commands/graph/lifecycle.rs`, `commands/vector.rs`, `db/queries.rs`;
-    - #23835 (Pin-aware retention): `index/indexer/lifecycle.rs`;
+    - #23835 (Pin-aware retention): `index/indexer/lifecycle.rs`, `commands/status/content_gc.rs` and its `tests.rs`, `commands/status/prune/tests.rs`;
     - #23836 (Candidate-only reconciliation): `index/indexer/overlay.rs`, `freshness.rs`, `local_imports.rs`.
   - code-index-vector-reconciliation:
     - #23579 and #23580 (`gcode vector reconcile`): `contract.rs`, `dispatch.rs`, `commands/vector.rs`, both contract JSON copies;
@@ -1222,7 +1222,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.4, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.5, #24449)
 `kind: deliverable`
 
 Targets:
@@ -3648,7 +3648,7 @@ P8 moves Python's code-index background work into gdaemon on the hub:
 - 8.2: the maintenance pass;
 - 8.3: symbol summaries and community labels;
 - 8.4: the hourly prune and `POST /api/code-index/prune` (D17);
-- 8.5: content GC for projects only nodes index;
+- 8.5: content GC for projects only nodes index, after #23835 (Pin-aware retention);
 - 8.6: the edit trigger, after #24151 (S2.11 hub half: hook ingress and rule engine in
   Rust);
 - 8.7: nightly repair, after #21582 (Cron and scheduler route family).
@@ -3754,9 +3754,10 @@ Release ownership (Constraints): every P8 leaf bumps `gdaemon`, and a leaf that 
 gcode also bumps `gcode`.
 
 Ordering. The P8 leaves form one chain after 7.2: 8.1 to 8.7. They share the release
-files, `crates/gcodeindex/src/jobs.rs` and `node/hub.rs`. The two leaves gated on other
-plans come last, so 8.1 to 8.5 wait on nothing outside this plan. The release files
-force one order between them, so 8.7 also waits for 8.6's gate. 1.10 depends on 8.7.
+files, `crates/gcodeindex/src/jobs.rs` and `node/hub.rs`. The three leaves gated on
+other plans come last, so 8.1 to 8.4 wait on nothing outside this plan. The release
+files force one order between them, so 8.6 also waits for 8.5's gate and 8.7 for both.
+1.10 depends on 8.7.
 
 ### 8.1 Hub job seam and sync worker [category: code] (depends: 7.2, #23576)
 `kind: deliverable`
@@ -4835,6 +4836,160 @@ Consumers unchanged:
 - 8.4.7 - `enabled` false and no published state return 503 `{"detail":"Code index pruner not available"}`. Invalid JSON, a string `force`, a string `retention_days` and `retention_days` 0 return Python's 422 bodies. An unreachable hub database returns 500 `{"detail":"Code index prune failed"}`. test: `crates/gcodeindex/tests/family_prune.rs::prune_route_follows_python_gates_and_errors`.
 - 8.4.8 - `delete_removed_automation_jobs` deletes a system `gobby:code-index-prune` row and its runs, and `list_jobs(exclude_removed_automation=True)` omits the row before the deletion. test: `tests/storage/test_cron.py::test_removed_automation_drops_the_code_index_prune_row`.
 - 8.4.9 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 8.5 Content GC for projects only nodes index [category: code] (depends: 8.4, #23835)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/status/content_gc.rs::discover_content_gc`
+- `crates/gcode/src/commands/status/content_gc/tests.rs::*` — scope-reason: existing discovery calls pass `true`, and adds the discovery test without git history
+- `crates/gcode/src/commands/status/prune.rs::*` — scope-reason: discovery passes `true`, and the new `prune_content_by_age` runs content GC alone for the hub
+- `crates/gcode/src/commands/status.rs`
+- `crates/gcode/src/node/hub/job_prune.rs`
+- `crates/gcode/src/node/hub/job_prune/tests.rs`
+- `docs/guides/code-index.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Content GC finds its candidates through the hub machine's own state row, because it
+reads that checkout's git history. A project that only nodes index has no such row,
+so its old content versions are never collected. This leaf collects them by age
+(writer's choice 4, accepted 2026-10-17 21:46). It also settles the node rows that
+8.2 leaves to it: rows whose registry row was purged.
+
+The leaf deletes no Python code. Python's prune lists only the hub machine's rows, so
+it never collected these projects.
+
+gcode's content GC:
+
+- `discover_content_gc` gains `check_git_history: bool`. With `true` it behaves as
+  today. With `false` it drops the local machine's state join and the git-history
+  check, so it returns every version of the filtered project that no selector names and
+  that has gone unreferenced past the retention. Both modes keep one SELECT, so #23835's
+  pin predicate (below) applies to both.
+- `prune_project_scoped` and 8.4's `prune_project_unattended` pass `true`.
+- `pub(crate) fn prune_content_by_age(ctx, retention_days, deadline)` (new, in
+  `prune.rs`) discovers with `false` and no stale records. It then runs 8.4's
+  `apply_project_prune` with `print` false and `|_| Ok(ctx.clone())` as the
+  resolver. `crates/gcode/src/commands/status.rs` re-exports it.
+
+Why the leaf waits on #23835 (Pin-aware retention). A node overlay pins its parent's
+versions. A node-only parent's by-age GC must never collect a version a live overlay
+still pins, and #23835 makes pins a content-GC reference in `content_gc.rs`.
+
+`prune_all` (8.4) gains a node-only step after the hub rows. A node-only project is one
+that some machine selects in `job_sync::sync_rows` and the hub machine does not. The
+step handles these projects in `sync_rows` order:
+
+1. A file pending for any of its machines, from `db::pending_graph_files` or
+   `db::pending_vector_files` with `limit` 1, puts the project in `completed` with
+   nothing collected, as 8.4's step 2 does for a hub row.
+2. `db::hub_maintenance::registry_state` classifies the project:
+   - live: collection by age;
+   - soft-deleted: `job_maintenance::reconcile_deleted` for the machines that
+     `deleted_selected_projects` returns, with 8.4's outcome mapping;
+   - missing, with some row whose `root_path` hashes to the project id: a node overlay,
+     skipped with reason `skipped_overlay`, as 8.4 skips a hub overlay;
+   - missing, with no row whose root hashes to the id: a purged project's leftover.
+     `reconcile_deleted` runs for every machine whose row selects it, with 8.4's
+     outcome mapping. 8.2's orphan sweep then purges the `code_indexed_projects` row,
+     which no machine selects and no registry row owns.
+3. Collection by age takes `HubScope::context` for the hub machine at an empty root,
+   as 8.2's sweep does, with `ServiceConfigSelection::projection_cleanup()`. It runs
+   `commands::status::prune_content_by_age(&ctx, retention_days, Some(now + 90 s))`.
+   `Ok` is completed. An error is failed with reason `<id>:failed`, and the error goes
+   to stderr.
+
+The root hash is `uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, root_path.as_bytes())`,
+computed over the stored text:
+
+- An overlay's id is `gobby_core::project::code_overlay_project_id(root)`, which is
+  `code_index_id_for_root` over the canonical root. A node stores that same canonical
+  root (`config/context.rs::detect_project_root_from`).
+- `code_index_id_for_root` itself would canonicalize against the hub's disk, where the
+  node's path is absent or names another directory.
+- A node writes its rows under an interactive grant (D3). The handshake admits that
+  grant only for a live registry row (the admission query in
+  `src/gobby/runner_init/servers.py`, `deleted_at IS NULL`). Registered ids are random
+  (`src/gobby/storage/projects.py`), so a row with no registry row and no matching hash
+  was written before its registry row was purged.
+
+The job and `POST /api/code-index/prune` call `prune_all` unchanged, so both cover
+node-only projects, and `gcode prune --global` counts them.
+
+`docs/guides/code-index.md` says the hourly prune also collects content for projects
+that only nodes index, by age, and reconciles a purged project's node rows.
+
+Deliberate differences from Python:
+
+- Python never collects a project the hub machine does not select. The native prune
+  collects it, and the response lists it.
+- No git-history protection for node-only projects. The hub has no checkout to read.
+  A node that returns to a version older than the retention re-parses and re-projects
+  it, and no fact is lost.
+- The pending check covers every machine's rows, for vectors too, although a node
+  pulls its own vector work (D13). A project whose node has unsynced vectors waits for
+  that node.
+- A node row outlives its checkout. The hub cannot see a node's disk, so a node row
+  whose checkout or worktree is gone is neither reconciled nor swept. 8.2's
+  `missing_root` heals a hub row. #15977 holds the decision between a node-side
+  `gcode invalidate` on worktree removal and a hub age rule. This leaf does not widen
+  the gap.
+
+Research context:
+- `crates/gcode/src/commands/status/content_gc.rs::discover_content_gc` joins
+  `code_indexed_project_states` on the local machine for `root_path`, reads one git
+  history batch per root, and retains every version when history cannot be read. Its
+  `NOT EXISTS` on `code_indexed_file_states` has no machine filter, so it never selects
+  a version any machine's selector names. Its only production caller is
+  `prune.rs::discover_project_scoped_records`.
+- `prune_content_versions_with` never reads the project root. It leases the project
+  lock per candidate, re-checks `content_is_unreferenced`, and retains a version whose
+  projection store is not configured. A node mid-index holds the lock, so its project
+  counts as busy and is skipped.
+- `crates/gcode/src/index/api/file_state.rs::upsert_file_state` stamps
+  `last_referenced_at` in both write modes for the writing machine, and P1's hub apply
+  writes node rows through it (1.4). Age means the same for node rows.
+- A node's vectors are applied to the hub's Qdrant (4.2), and graph facts project into
+  the hub's Falkor (8.1). The `projection_cleanup()` context reaches both.
+- `src/gobby/projects/purge.py::ProjectPurgeService._invalidate_code` removes only the
+  hub machine's rows. `reconcile_deleted` (8.2) is the only step that removes node
+  selectors. A clear that keeps failing, or `code_index.enabled` false, leaves them in
+  place through the purge.
+- #23835's Targets are `content_gc.rs::*`, `content_gc/tests.rs::*`,
+  `prune/tests.rs::*` and `index/indexer/lifecycle.rs::invalidate` (Constraints,
+  concurrent editors).
+- Rejected alternatives:
+  - `code_index_id_for_root` on the hub, which canonicalizes against the hub's disk;
+  - a second discovery SELECT, which would need #23835's pin predicate copied into it;
+  - collecting node overlays by age, when 8.4 skips hub overlays and the edit trigger
+    owns an overlay's freshness;
+  - reconciling every node row with no registry row, which would delete live overlays;
+  - a new hub query for node-only projects, when `sync_rows` already lists them.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(job_prune) | test(content_gc) | test(prune)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+**Granularity:** four acceptance items. Collection by age needs each node-only
+project classified first. The purged-leftover branch is the class that collection must
+not run on, and reconciling it is 8.2's carry-forward.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.5.1 - For a live registered project that only a foreign machine selects, at a root absent from the hub, `prune_all` deletes an unsynced version unreferenced past `retention_days`, keeps the version the foreign selector names and one inside the retention, and lists the project completed. A second such project with a graph-pending file on its machine is completed with its content left. test: `crates/gcode/src/node/hub/job_prune/tests.rs::node_only_projects_prune_content_by_age`.
+- 8.5.2 - A foreign row with no registry row whose `root_path` hashes to its project id is skipped with reason `skipped_overlay` and keeps its selector and content. A project with no registry row, selected by two foreign machines at roots that do not hash to it, fails with reason `<id>:failed` and keeps both selectors when no Falkor is configured. With the project lock held by another connection it is skipped with reason `skipped_locked`, as a soft-deleted node-only project is. test: `crates/gcode/src/node/hub/job_prune/tests.rs::unregistered_node_rows_skip_overlays_and_reconcile_purged_projects`.
+- 8.5.3 - `discover_content_gc` with `check_git_history` false returns a past-retention version of a project that only a foreign machine selects and omits the version its selector names. With `true` it returns nothing for that project. test: `crates/gcode/src/commands/status/content_gc/tests.rs::discovery_without_git_history_needs_no_local_checkout`.
+- 8.5.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## E1 End-to-end verification
 `kind: verification`
