@@ -173,9 +173,67 @@ impl Ledger {
         .await
     }
 
-    /// Release only the matching owner; boot cleanup uses `clear_stale`.
+    /// Release only the matching owner.
     pub async fn release(&self, id: &str, token: &str) -> io::Result<bool> {
         self.mutate(id, token, |_| Ok(None)).await
+    }
+
+    /// A hub requeue has retired this envelope, including any cached response.
+    pub async fn forget(&self, id: &str) -> io::Result<()> {
+        let id = id.to_owned();
+        self.run(move |directory| {
+            let path = marker_path(&directory, &id);
+            let _lock = marker_lock(&path)?;
+            match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .await
+    }
+
+    /// Boot invalidates prior process owners even when their leases are fresh.
+    pub async fn release_previous_process(&self) -> io::Result<()> {
+        self.run(move |directory| {
+            let entries = match fs::read_dir(&directory) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let pid = std::process::id();
+            let started = process_start(pid);
+            for entry in entries {
+                let entry = entry?;
+                if !entry.file_type()?.is_file()
+                    || entry.path().extension().is_none_or(|ext| ext != "json")
+                {
+                    continue;
+                }
+                let path = entry.path();
+                let _lock = marker_lock(&path)?;
+                let Some(record) = read_marker(&path, "")? else {
+                    continue;
+                };
+                let ours = record["owner_pid"].as_u64() == Some(u64::from(pid))
+                    && started.is_none_or(|actual| {
+                        record["owner_create_time"]
+                            .as_f64()
+                            .is_some_and(|expected| {
+                                (actual - expected).abs() < OWNER_CREATE_TIME_MATCH_SECONDS
+                            })
+                    });
+                if record["status"] == "processing" && !ours {
+                    match fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub async fn is_processed(&self, id: &str) -> io::Result<bool> {
