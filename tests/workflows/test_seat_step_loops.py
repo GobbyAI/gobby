@@ -310,6 +310,80 @@ async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -
     assert run.step == ("claim" if name == "developer" else "await")
 
 
+@pytest.mark.parametrize("trigger", ["get_task", "record_close_receipt"])
+@pytest.mark.parametrize(
+    "kind,author,sha,ready",
+    [
+        ("independent_review_approval", SESSION_ID, SHA, True),
+        ("independent_review_approval", PEER_ID, SHA, False),
+        ("independent_review_approval", COORDINATOR_ID, SHA, False),
+        ("independent_review_approval", SESSION_ID, REPLACEMENT_SHA, False),
+        ("landing_approval", COORDINATOR_ID, SHA, False),
+    ],
+)
+async def test_reviewer_own_review_receipt_controls_land_admission(
+    temp_db: HubDatabase, trigger: str, kind: str, author: str, sha: str, ready: bool
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
+    receipt, _ = record_close_receipt(
+        temp_db,
+        task=task,
+        author_session_id=author,
+        kind=kind,
+        commit_sha=sha,
+        facts={"reason": "restart"} if kind == "landing_approval" else {},
+    )
+    await run.call(
+        "gobby-tasks",
+        trigger,
+        {"task_id": task.id, "kind": kind, "commit_sha": sha},
+        {"success": True, "receipt": {"id": receipt.id}},
+    )
+    assert run.step == ("verdict" if ready else "review")
+    assert (
+        await run.admits("gobby-tasks-ops", "land_commit", {"task_id": task.id, "commit_sha": SHA})
+        is ready
+    )
+
+
+@pytest.mark.parametrize(
+    "event", ["CANDIDATE_RESUMED", "LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"]
+)
+async def test_reviewer_resume_and_clear_follow_own_review_receipt(
+    temp_db: HubDatabase, event: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
+    record_close_receipt(
+        temp_db,
+        task=task,
+        author_session_id=SESSION_ID,
+        kind="independent_review_approval",
+        commit_sha=SHA,
+    )
+    if event == "CANDIDATE_RESUMED":
+        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
+        assert run.step == "await"
+    else:
+        # Exercise the completion guard independently of the readiness transition.
+        instance = run.instances.get_for_session(SESSION_ID)
+        assert instance is not None
+        instance.current_step = "verdict"
+        instance.variables["verdict_ready"] = True
+        run.instances.save(instance)
+    suffix = " VERDICT=LAND LANDING=NOT_REQUIRED" if event == "REVIEW_COMPLETE" else ""
+    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA}{suffix}")
+    assert run.step == ("verdict" if event == "CANDIDATE_RESUMED" else "await")
+    assert run.vars["candidate_received"] is (event == "CANDIDATE_RESUMED")
+
+
 @pytest.mark.parametrize("kind", ["independent_review_approval", "wrong-sha", "landing_approval"])
 async def test_land_phase_requires_exact_stored_landing_approval(
     temp_db: HubDatabase, kind: str
