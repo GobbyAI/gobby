@@ -374,12 +374,12 @@ def prepare_terminal_resume(
     """Prepare a successor run against an existing durable session.
 
     Explicit relaunch can revive an inactive seat under a new parent; daemon-stop
-    recovery retains its original parent and nonterminal-session requirements.
+    recovery retains its original parent and requires a run parked by daemon stop.
     """
     child_session = session_manager._storage.get(existing_session_id)
     if child_session is None:
         raise ValueError("Daemon resume child session does not exist")
-    if child_session.status == "deleted" or (child_session.status == "expired" and not relaunch):
+    if child_session.status == "deleted":
         raise ValueError("Daemon resume child session is terminal")
     if child_session.parent_session_id != parent_session_id and not relaunch:
         raise ValueError("Daemon resume child session belongs to another parent")

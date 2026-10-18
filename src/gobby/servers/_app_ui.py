@@ -13,6 +13,7 @@ from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 from websockets.typing import Subprotocol
 
+from gobby.servers.routes._database import require_hub_database
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 from gobby.servers.websocket.native_bridge import mount_native_bridge
 
@@ -59,16 +60,20 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
             await adapter.close(code=1013, reason="WebSocket server unavailable")
             return
 
-        authenticated = await websocket_server.run_db(
-            server.auth_service.is_request_authenticated,
+        decision = await websocket_server.run_db(
+            server.auth_service.authenticate,
             websocket,
         )
-        if not authenticated:
+        if not decision.allowed:
             await adapter.close(code=4401, reason="Authentication required")
             return
 
         try:
-            await websocket_server.handle_connection(adapter)
+            await websocket_server.handle_connection(
+                adapter,
+                decision,
+                database=require_hub_database(server.services.database),
+            )
         except Exception:
             logger.exception("ASGI WebSocket handler failed")
         if not adapter.closed and not adapter.disconnected:

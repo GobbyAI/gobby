@@ -844,6 +844,7 @@ class TestLocalAgentRunManager:
             machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
+            parent_session_id=sample_session["id"],
         )
         agent_run = agent_manager.create(
             parent_session_id=sample_session["id"],

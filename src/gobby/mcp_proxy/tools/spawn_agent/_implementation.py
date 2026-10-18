@@ -63,8 +63,9 @@ from ._provider_resolution import (
 from ._request import build_spawn_request
 from ._resume import (
     ResumeSeatGone,
-    resolve_resume_target,
+    resolve_seat_resume,
     resume_isolation,
+    resumed_seat_lane,
     resumed_seat_placement,
 )
 from ._run_lifetime import resolve_run_lifetime
@@ -146,23 +147,18 @@ async def spawn_agent_impl(
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
     if resume_session_id:
-        resume_project_id = target_project_id
-        if resume_project_id is None:
-            resume_ctx = await asyncio.to_thread(
-                get_project_context, Path(project_path) if project_path else None
-            )
-            resume_project_id = (
-                (resume_ctx.get("id") or resume_ctx.get("project_id")) if resume_ctx else None
-            )
+        live_host_epoch = agent_pane_reserver.live_host_epoch() if agent_pane_reserver else None
         try:
-            resume_target = await asyncio.to_thread(
-                resolve_resume_target,
+            resume_target = await resolve_seat_resume(
                 session_manager,
                 resume_session_id,
-                resume_project_id,
-                concrete_provider(provider),
+                target_project_id,
+                project_path,
+                provider,
                 runner.run_storage,
-                agent_body.name if agent_body is not None else "default",
+                agent_body,
+                lane,
+                live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
@@ -442,6 +438,9 @@ async def spawn_agent_impl(
         machine_id=machine_id,
         project_id=project_id,
         project_context_authoritative=project_context_authoritative,
+        session_manager=session_manager,
+        agent_name=requested_agent_name,
+        resume_session_id=resume_session_id,
     )
     if isinstance(placed, dict):
         return placed
@@ -684,8 +683,8 @@ async def spawn_agent_impl(
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
         resume_metadata["allow_closed_task"] = True
-    if lane and lane.strip():
-        resume_metadata["lane"] = lane.strip()
+    if seat_lane := (lane or "").strip() or resumed_seat_lane(resume_target, runner.run_storage):
+        resume_metadata["lane"] = seat_lane
     if resume_target is not None:
         resume_metadata.update(
             {

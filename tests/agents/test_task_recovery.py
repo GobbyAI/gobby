@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -713,6 +714,41 @@ async def test_unclaimed_terminal_run_settles_only_when_verified_dead(
             assert await handler.recover_tasks_from_terminal_agents() == 0
 
     assert resolve.call_count == expected_resolves
+
+
+@pytest.mark.asyncio
+async def test_hung_terminal_verify_is_bounded_and_leaves_the_run_for_the_sweep(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A kill/verify that never returns stops at the deadline, unsettled, so the sweep retries."""
+    monkeypatch.setattr("gobby.agents.task_recovery.TERMINAL_VERIFY_TIMEOUT_SECONDS", 0.01)
+    child = _register(temp_db, sample_project["id"], "task-recovery-verify-hangs")
+    run = _Run("verify-hangs", "error", None, child, child, terminal_id="term-1")
+
+    async def hang(_run: Any) -> dict[str, Any]:
+        await asyncio.Event().wait()
+        return {"success": True}
+
+    handler = TaskRecoveryHandler(
+        LocalTaskManager(temp_db),
+        _SweepRunManager(run),
+        _Classifier(),
+        terminal_agent_killer=hang,
+        run_db=_run_db,
+    )
+
+    with patch.object(
+        handler,
+        "resolve_claimed_task_for_run",
+        wraps=handler.resolve_claimed_task_for_run,
+    ) as resolve:
+        for _ in range(2):
+            recovered = await asyncio.wait_for(handler.recover_tasks_from_terminal_agents(), 5)
+            assert recovered == 0
+
+    assert resolve.call_count == 2
 
 
 @pytest.mark.asyncio

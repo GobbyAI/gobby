@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.56"
+version = "0.1.57"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.37"
+version = "1.9.38"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2478,7 +2478,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.10.12"
+version = "0.10.13"
 dependencies = [
  "anyhow",
  "axum",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.51"
+version = "0.4.56"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2525,6 +2525,7 @@ dependencies = [
  "deadpool-postgres",
  "futures-util",
  "gobby-core",
+ "gobby-runtime",
  "gobby-terminals",
  "hmac 0.12.1",
  "http-body-util",
@@ -2550,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.26"
+version = "0.9.27"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2565,6 +2566,24 @@ dependencies = [
  "temp-env",
  "tempfile",
  "ureq",
+ "uuid",
+]
+
+[[package]]
+name = "gobby-runtime"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "gobby-core",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tower-service",
  "uuid",
 ]
 
