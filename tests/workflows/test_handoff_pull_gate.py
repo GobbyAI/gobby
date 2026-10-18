@@ -10,6 +10,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.workflows._variables import set_variable
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.session_context import SessionContext, reset_session_context, set_session_context
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -24,18 +25,28 @@ RULE_NAME = "require-handoff-pull-before-tool"
 @pytest.mark.parametrize("value", [None, True, {"attempt_id": "forged"}])
 def test_pending_pull_marker_cannot_be_cleared_or_forged(value: Any) -> None:
     variables = MagicMock()
-    with patch(
-        "gobby.mcp_proxy.tools.workflows._variables.resolve_session_id",
-        return_value=SESSION_ID,
-    ):
-        result = set_variable(
-            MagicMock(),
-            MagicMock(),
-            "handoff_pull_pending",
-            value,
-            SESSION_ID,
-            session_var_manager=variables,
-        )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = SESSION_ID
+    token = set_session_context(SessionContext(session_id=SESSION_ID))
+    try:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.workflows._variables.resolve_session_id",
+                return_value=SESSION_ID,
+            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager") as authority,
+        ):
+            authority.return_value.get_variable_subset.return_value = {"_agent_type": "default"}
+            result = set_variable(
+                sessions,
+                MagicMock(),
+                "handoff_pull_pending",
+                value,
+                SESSION_ID,
+                session_var_manager=variables,
+            )
+    finally:
+        reset_session_context(token)
     assert result["success"] is False
     assert "managed by the workflow runtime" in result["error"]
     variables.set_variable.assert_not_called()
