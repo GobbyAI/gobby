@@ -135,7 +135,8 @@ recommendation. D5 to D9 are the Plan Writer's, recorded for review.
 - **D6, SRT tarball.** `npm pack @anthropic-ai/sandbox-runtime@0.0.79 --pack-destination <staging> --ignore-scripts`
   fetches the tarball, and the stager checks it against the pinned SHA-256. npm is
   already required, so gdaemon needs no web-PKI HTTPS client. The lockfile and runner
-  are embedded with `include_bytes!` and checked against their pins.
+  are embedded from their D11 copies with `include_bytes!` and checked against their
+  pins.
 - **D7, password and trust prompts.** On a TTY, enroll prompts `Password: ` with
   echo off. Otherwise it reads one line from stdin, which the e2e fixture pipes.
   Without `--fingerprint`, enroll shows the fingerprint and asks `Trust this
@@ -149,6 +150,23 @@ recommendation. D5 to D9 are the Plan Writer's, recorded for review.
   path reaches it, and retiring it belongs with #21591 (Install and setup route
   family) and the parked #20151 (installer wizard). 1.10 removes it from the node
   setup docs.
+- **D10, SRT fixture.** The harness's `npm pack` stub copies the real registry
+  tarball, committed as `crates/gdaemon/tests/fixtures/node_setup/sandbox-runtime-0.0.79.tgz`
+  (3,975,831 bytes). `.pre-commit-config.yaml` excludes that exact path from
+  `check-added-large-files --maxkb=500`. Each SRT bump adds about 4 MB to history.
+  Rejected: a tarball composed from the `tests/fixtures/srt/` pieces. The receipt
+  records `tarball_sha256` and the verb stages with the pinned consts, so the verb's
+  own staging path (1.6.1, 1.9.3, 1.10.3) could not run without Python or a pin
+  seam in the shipped binary.
+- **D11, embedded Python-tree files.** gdaemon embeds crate-local copies, under
+  `crates/gdaemon/assets/node_setup/`, of the SRT lockfile, `srt_runner.mjs`, and
+  the claude and codex hook templates. `workspace_source_identity`
+  (`src/gobby/install/bin_release_identity.py`) hashes only the crate closure and the
+  root Cargo and toolchain files. Embedding a `src/gobby` file would change
+  gdaemon's bytes with no bump, which the same-version promotion guard cannot see. A
+  test under `crates/gdaemon/tests` compares each copy with its original byte for
+  byte. A Python-side edit then fails that test until the copy changes, and changing
+  the copy bumps gdaemon.
 
 ## P1: Node install and enrollment
 `kind: framing`
@@ -380,6 +398,8 @@ operator to.
   `MIN_GCODE_PRUNE_BUDGET_VERSION` and `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION` to
   the new `gcode_versions.py`, derives the prune floor from the `gcode` pin, and
   imports them back into `gcode_gateway.py`, as code-index-family 1.1 specifies.
+  The validator's production-size-growth rule requires that new file for any edit
+  to the 969-line `gcode_gateway.py`.
 - A guard test walks every `crates/*/src` file and fails on the literal
   `gobby auth login`.
 
@@ -431,6 +451,8 @@ Targets:
 - `tests/e2e/test_auth_login_e2e.py::*` — scope-reason: `_login` becomes `_enroll`, which runs `gdaemon node enroll` with a tripwire-only `PATH`; both tests drive it
 - `tests/e2e/test_hub_node_pair.py::*` — scope-reason: `pair_node` enrolls through `_enroll` and asserts no tripwire fired
 - `tests/fixtures/test_gdaemon_binary.py::test_pair_node_launches_prepared_binary`
+- `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json::*` — scope-reason: the `CLI gobby auth login` row becomes `dropped by decision #24657`, and the `auth key` notes' line references follow the shortened module
+- `docs/contracts/parity-ledger.md`
 
 Python surface replaced: `gobby auth login` itself.
 
@@ -448,13 +470,22 @@ Python surface replaced: `gobby auth login` itself.
   `native_cli` entry for `gdaemon node enroll --hub URL --email EMAIL [--fingerprint sha256:...] [--label LABEL] [--insecure]`
   points at `crates/gdaemon/src/node_setup/enroll.rs::run` with the same reference
   and the `source-inventory` evidence. `authentication.md` step 3 names the verb.
+- Parity ledger: the `CLI gobby auth login` row's status becomes
+  `dropped by decision #24657`, with a note naming `gdaemon node enroll`
+  (`crates/gdaemon/src/node_setup/enroll.rs::run`). `docs/contracts/parity-ledger.md`
+  is regenerated with `scripts/generate_parity_ledger.py`. The dropped row keeps its
+  surface key.
 
 Research context:
+- `scripts/generate_parity_ledger.py::render_ledger` refuses a surface absent from
+  the inventory unless its status is `dropped by decision #N`, and statuses other
+  than `proxied`, `delegated` and that drop are invalid. The row therefore changes
+  in the leaf that deletes the command.
 - `tests/skills/reference_library_helpers.py::documentation_errors` resolves every
   `gobby ` operation in the Click registry, so the deleted command must leave
   `operations` in the same leaf.
 - `tests/fixtures/test_gdaemon_binary.py` patches `pair._login` by name.
-- Planned checks: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth_login.py tests/cli/test_pack.py tests/config/test_remote_ui_auth.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/utils/test_daemon_client.py tests/workflows/test_dirty_edit_grants.py tests/fixtures/test_gdaemon_binary.py tests/skills/test_reference_library.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py -v`.
+- Planned checks: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth_login.py tests/cli/test_pack.py tests/config/test_remote_ui_auth.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/utils/test_daemon_client.py tests/workflows/test_dirty_edit_grants.py tests/fixtures/test_gdaemon_binary.py tests/skills/test_reference_library.py tests/test_parity_ledger.py tests/contracts/test_http_corpus.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py -v`.
 
 Consumers unchanged:
 - `src/gobby/cli/install.py` — no-edit-reason: its remote path keeps calling `run_remote_preflight` (D9).
@@ -469,6 +500,7 @@ Consumers unchanged:
 - 1.5.3 - `gobby auth login` is no longer a registered command, and `gobby auth key` still is. test: `tests/cli/test_auth_login.py::test_login_command_is_gone`.
 - 1.5.4 - The audit lists `gdaemon node enroll` and no `gobby auth login` operation. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.
 - 1.5.5 - The middleware guidance names the new verb. test: `tests/servers/test_auth_middleware.py::test_protected_routes_require_auth_when_enabled`.
+- 1.5.6 - The committed parity ledger matches the inventory with `CLI gobby auth login` dropped by decision #24657. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
 
 ### 1.6 `gdaemon node install` stages the pinned SRT [category: code] (depends: 1.4, #24374)
 `kind: deliverable`
@@ -478,9 +510,12 @@ Targets:
 - `crates/gdaemon/src/node_setup/srt.rs`
 - `crates/gdaemon/src/node_setup/srt/tests.rs`
 - `crates/gdaemon/src/nodes/agents/sandbox/runtime.rs`
+- `crates/gdaemon/assets/node_setup/srt-package-lock.json`
+- `crates/gdaemon/assets/node_setup/srt_runner.mjs`
 - `crates/gdaemon/tests/node_setup.rs`
 - `crates/gdaemon/tests/node_setup_support/mod.rs`
 - `crates/gdaemon/tests/fixtures/node_setup/sandbox-runtime-0.0.79.tgz`
+- `.pre-commit-config.yaml`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
@@ -496,14 +531,14 @@ uses:
   22.12.0 (`NODE_MIN_VERSION`). Either missing is refused naming the requirement.
 - Staging is a `.<version>-*` directory beside the target. D6's `npm pack` writes
   the tarball, whose SHA-256 must equal the pin. `package.json` is
-  `install_setup_srt.py::_PACKAGE_JSON`. The embedded lockfile
-  (`src/gobby/install/srt-package-lock.json`) is written as `package-lock.json` and
+  `install_setup_srt.py::_PACKAGE_JSON`. The embedded lockfile (the D11 copy of
+  `src/gobby/install/srt-package-lock.json`) is written as `package-lock.json` and
   checked. `npm ci --ignore-scripts --no-audit --no-fund --omit=dev` runs (180 s).
   The installed package's name and version must match.
 - The patch table ports `src/gobby/agents/srt_package_patch.py`: each entry's file,
   original and expected SHA-256, needle and replacement, plus the macOS monitor
   needle. A file already at its expected hash is skipped; any other hash refuses.
-- The embedded runner (`src/gobby/agents/srt_runner.mjs`) is written as `runner.mjs`
+- The embedded runner (the D11 copy of `src/gobby/agents/srt_runner.mjs`) is written as `runner.mjs`
   (0700) and checked. `receipt.json` is `SrtRelease.receipt_fields()` plus `node`.
 - The content manifest uses #24374's builder (widened to `pub(crate)` in
   `runtime.rs`). The tree is made immutable as `make_srt_installation_immutable`
@@ -515,10 +550,12 @@ uses:
   receipt field) sit beside `SRT_VERSION` in `runtime.rs`. Its lockout remediation
   `run \`gobby install srt\`` becomes `run \`gdaemon node install\``.
 - The harness gains stub `node` (prints `v22.12.0`) and `npm`. `npm pack` copies the
-  committed registry tarball fixture, and `npm ci` extracts it into
+  committed registry tarball fixture (D10), and `npm ci` extracts it into
   `node_modules/@anthropic-ai/sandbox-runtime` with `/usr/bin/tar`. All four patch
   targets are in that package. The executor fetches the fixture once with
-  `npm pack @anthropic-ai/sandbox-runtime@0.0.79`; a test checks its hash.
+  `npm pack @anthropic-ai/sandbox-runtime@0.0.79`, and a test checks its hash. The
+  fixture's exact path joins the `exclude` of `.pre-commit-config.yaml`'s
+  `check-added-large-files` hook.
 
 Research context:
 - `SrtRelease` (`src/gobby/utils/dependency_requirements.py`) pins version 0.0.79
@@ -530,7 +567,7 @@ Research context:
 
 - 1.6.1 - Install stages SRT from the fixture with stub `node` and `npm`, #24374's verifier accepts it, and a second run reuses it, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_stages_pinned_srt_without_python`.
 - 1.6.2 - A tarball off its pin, Node older than 22.12.0, or no `npm` is refused, leaving no staging directory and no install. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
-- 1.6.3 - The Rust pins, receipt fields and patch table equal the Python ones (read with `include_str!`), and the embedded lockfile, runner and fixture match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
+- 1.6.3 - The Rust pins, receipt fields and patch table equal the Python ones (read with `include_str!`), the lockfile and runner copies equal their Python originals byte for byte, and the embedded lockfile, runner and fixture match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
 - 1.6.4 - Patches apply once, skip a patched file, and refuse unknown bytes; a failed promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`.
 - 1.6.5 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -542,6 +579,7 @@ Targets:
 - `crates/gdaemon/src/node_setup/hooks.rs`
 - `crates/gdaemon/src/node_setup/claude.rs`
 - `crates/gdaemon/src/nodes/agents/repair.rs`
+- `crates/gdaemon/assets/node_setup/claude-hooks-template.json`
 - `crates/gdaemon/tests/node_setup.rs`
 - `crates/gdaemon/tests/node_setup_support/mod.rs`
 - `crates/gdaemon/tests/fixtures/node_setup/claude_golden.json`
@@ -564,7 +602,7 @@ Python surface replaced: the hook, timeout and MCP steps of
   used: it quotes `=` and `%`, which Python leaves bare, and codex's trust hash
   covers the command bytes. Merging uses `repair.rs`'s `merge_gobby_hook_groups`
   port, widened to `pub(crate)`.
-- `claude.rs`: the template is `include_str!` of
+- `claude.rs`: the template is `include_str!` of the D11 copy of
   `src/gobby/install/claude/hooks-template.json`; timeouts are 120 s with
   `SessionEnd` 60 s. `~/.claude/settings.json` is backed up as
   `settings.json.<unix seconds>.backup`, each hook type is merged, and the file is
@@ -573,10 +611,13 @@ Python surface replaced: the hook, timeout and MCP steps of
   other key.
 - Golden: `claude_golden.json` holds an input `settings.json` and `.claude.json`
   and the expected `hooks` and `mcpServers.gobby`, with the home written as
-  `$HOME`. The Python test runs `install_claude(project, mode="global")` under a
-  temporary `HOME` and `GOBBY_HOME` and compares; with
-  `GOBBY_RECORD_NODE_SETUP_GOLDEN=1` it rewrites the golden. The Rust test runs the
-  verb and compares parsed values.
+  `$HOME`. The Python test sets `HOME` to a temporary directory and `GOBBY_HOME` to
+  `$HOME/.gobby`, removes `GOBBY_NATIVE_BIN_DIR`, and creates executable
+  `$HOME/.gobby/bin/ghook` and `gmcp`, so `resolve_native_bin` returns those paths
+  (`src/gobby/utils/native_bin.py::native_bin_dir` reads `Path.home()`). It runs
+  `install_claude(project, mode="global")` and compares; with
+  `GOBBY_RECORD_NODE_SETUP_GOLDEN=1` it rewrites the golden. The Rust test uses the
+  same layout, runs the verb, and compares parsed values.
 
 Research context:
 - `install_claude` also installs shared content, router commands, the statusline,
@@ -593,6 +634,7 @@ Research context:
 - 1.7.2 - Python's installer produces the claude golden. test: `tests/install/test_node_setup_golden.py::test_claude_golden_matches_python`.
 - 1.7.3 - A CLI absent from `PATH` is skipped with its config untouched, and a path with a space is single-quoted as Python quotes it. test: `crates/gdaemon/tests/node_setup.rs::install_skips_absent_cli_and_quotes_like_python`.
 - 1.7.4 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 1.7.5 - The crate-local claude template copy equals `src/gobby/install/claude/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::claude_template_copy_matches_python`.
 
 ### 1.8 `gdaemon node install` installs codex hooks, trust and the MCP entry [category: code] (depends: 1.7)
 `kind: deliverable`
@@ -600,9 +642,12 @@ Research context:
 Targets:
 - `crates/gdaemon/src/node_setup/mod.rs`
 - `crates/gdaemon/src/node_setup/codex.rs`
+- `crates/gdaemon/src/node_setup/codex/tests.rs`
+- `crates/gdaemon/assets/node_setup/codex-hooks-template.json`
 - `crates/gdaemon/tests/node_setup.rs`
 - `crates/gdaemon/tests/node_setup_support/mod.rs`
 - `crates/gdaemon/tests/fixtures/node_setup/codex_golden.json`
+- `crates/gdaemon/tests/fixtures/node_setup/codex_trust_vectors.json`
 - `tests/install/test_node_setup_golden.py`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -611,7 +656,7 @@ Targets:
 Python surface replaced: `src/gobby/cli/installers/codex.py::install_codex`'s hook,
 trust and MCP steps.
 
-- Hooks as `_install_hooks_file`: the template is `include_str!` of
+- Hooks as `_install_hooks_file`: the template is `include_str!` of the D11 copy of
   `src/gobby/install/codex/hooks-template.json`; timeouts are 120 s with
   `Interrupt` and `SessionEnd` 3 s; a corrupt `~/.codex/hooks.json` is quarantined
   as Python names it; groups are merged.
@@ -627,19 +672,28 @@ trust and MCP steps.
 - The MCP entry is `configure_mcp_server_toml`'s `[mcp_servers.gobby]` block with
   the `gmcp` command and `args = []`.
 - Golden: `codex_golden.json` holds an input `hooks.json` and `config.toml` and the
-  expected hooks, `features`, `hooks.state` and `mcp_servers.gobby` as JSON. The
-  Python test runs `install_codex` the same way as 1.7's.
+  expected hooks, `features`, `hooks.state` and `mcp_servers.gobby` as JSON, with the
+  home as `$HOME` and every `trusted_hash` value blanked on both sides. The hashed
+  command embeds the temporary home, so no recorded hash can match another run. The
+  Python test sets up the home as 1.7's does and runs `install_codex`.
+- Trust vectors: `codex_trust_vectors.json` holds fixed hook entries with fixed
+  commands and their `_normalized_codex_command_hook_hash` values. The Python test
+  checks them and rewrites them under `GOBBY_RECORD_NODE_SETUP_GOLDEN=1`;
+  `codex/tests.rs` replays them against the Rust hash.
 
 Research context:
 - Codex rejects a hook whose trust hash differs from its own computation, so the
-  golden pins the hash bytes.
+  vectors pin the hash bytes.
 - Planned checks: as 1.7.
 
 **Acceptance:**
 
-- 1.8.1 - Install over the golden's input writes the golden's codex hooks, trust entries and `gmcp` block, and keeps a user comment in `config.toml`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_codex_hooks_match_python_golden`.
+- 1.8.1 - Install over the golden's input writes the golden's codex hooks, trust-entry keys and `gmcp` block, each `trusted_hash` is the Rust hash of the hook it names, and a user comment in `config.toml` survives, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_codex_hooks_match_python_golden`.
 - 1.8.2 - Python's installer produces the codex golden. test: `tests/install/test_node_setup_golden.py::test_codex_golden_matches_python`.
 - 1.8.3 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 1.8.4 - The Rust trust hash equals each vector's Python hash. test: `crates/gdaemon/src/node_setup/codex/tests.rs::trust_hash_matches_python_vectors`.
+- 1.8.5 - Python's hash produces the trust vectors. test: `tests/install/test_node_setup_golden.py::test_codex_trust_vectors_match_python`.
+- 1.8.6 - The crate-local codex template copy equals `src/gobby/install/codex/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::codex_template_copy_matches_python`.
 
 ### 1.9 `gdaemon node install` installs droid hooks and the MCP entry [category: code] (depends: 1.8)
 `kind: deliverable`
@@ -691,8 +745,7 @@ Targets:
 - `docs/guides/http-endpoints.md`
 - `docs/guides/gterminal-development-guide.md`
 - `docs/contracts/secrets.md`
-- `docs/contracts/parity-ledger.md`
-- `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json::*` — scope-reason: the `CLI gobby auth login` row becomes native
+- `tests/docs/test_node_setup_docs.py`
 
 Python surface replaced: the Python node setup in `shared-stack.md` (Client setup),
 which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
@@ -705,24 +758,25 @@ which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
   and that interactive node sessions register at the hub only after #24151.
 - Every other page names `gdaemon node enroll` where it named `gobby auth login`.
   `cli-commands.md` documents both `gdaemon node` verbs and drops the login entry.
-  `http-endpoints.md` shows the new guidance text. The parity ledger row for
-  `CLI gobby auth login` becomes native, pointing at
-  `crates/gdaemon/src/node_setup/enroll.rs`.
+  `http-endpoints.md` shows the new guidance text.
+- `tests/docs/test_node_setup_docs.py` walks `docs/**/*.md`, skipping `docs/audits/`,
+  `docs/research/` and the generated `docs/contracts/parity-ledger.md`, whose dropped
+  row keeps the surface key (1.5), and fails on `gobby auth login`.
 
 Research context:
 - Sites: `shared-stack.md` 102 to 105, `system-requirements.md` 235 to 246,
   `cli-commands.md` 463, 505 and 837, `configuration.md` 271 to 280,
   `admin-operations.md` 60, `hub-install-contract.md` 86, `http-endpoints.md` 50
-  and 88, `gterminal-development-guide.md` 354, `secrets.md` 27,
-  `parity-ledger.md` 51, and the status JSON line 22. `docs/audits/` and
-  `docs/research/` are historical and stay.
+  and 88, `gterminal-development-guide.md` 354, and `secrets.md` 27. `docs/audits/`
+  and `docs/research/` are historical and stay.
+- Planned checks: `GOBBY_TEST_PROTECT=1 uv run pytest tests/docs/test_node_setup_docs.py -v`.
 
 **Acceptance:**
 
 - 1.10.1 - Client setup documents the five commands, the node requirements, manual `gdaemon serve`, #21571 D1 and the #24151 note, and no Python step. file: `docs/guides/shared-stack.md`.
 - 1.10.2 - The CLI reference documents `gdaemon node install` and `gdaemon node enroll` and has no `gobby auth login` entry. file: `docs/guides/cli-commands.md`.
 - 1.10.3 - The documented sequence is the one the sandbox runs without Python. test: `crates/gdaemon/tests/node_setup.rs::documented_node_sequence_runs_without_python`.
-- 1.10.4 - No page outside `docs/audits/` and `docs/research/` names `gobby auth login`. file: `docs/contracts/parity-ledger.md`.
+- 1.10.4 - No Markdown page under `docs/` outside `docs/audits/`, `docs/research/` and the generated parity ledger names `gobby auth login`. test: `tests/docs/test_node_setup_docs.py::test_no_page_names_python_login`.
 
 ## E1 End-to-end verification
 `kind: verification`
@@ -733,7 +787,7 @@ none has run yet. Each must hold on `0.5.0`:
 
 1. `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -p gobby-core -p gobby-code -p gobby-hooks -p gobby-client`
    must pass.
-2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py`
+2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py tests/docs/test_node_setup_docs.py`
    must pass.
 3. On a machine of the operator's whose `PATH` has no Python, the Overview's five
    commands must enroll a node that the hub lists as connected, and
