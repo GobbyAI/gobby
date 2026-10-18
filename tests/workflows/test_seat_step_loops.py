@@ -9,9 +9,11 @@ and reset between units.
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -20,20 +22,28 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import record_close_receipt
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from tests.fixtures.isolated_checkout import (
+    install_isolated_checkout_project,
+    patch_local_machine_id,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -57,8 +67,9 @@ EDIT_INPUT = {"file_path": "src/gobby/example.py", "old_string": "a", "new_strin
 class SeatRun:
     """One bundled seat's agent-step instance, driven by hook events."""
 
-    def __init__(self, db: HubDatabase, name: str) -> None:
+    def __init__(self, db: HubDatabase, name: str, *, project_id: str = PROJECT_ID) -> None:
         self.db = db
+        self.project_id = project_id
         self.sessions = SessionManager(db)
         self.engine = RuleEngine(db, session_manager=self.sessions)
         self.instances = AgentStepInstanceManager(db)
@@ -73,13 +84,13 @@ class SeatRun:
         db.execute(
             "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
             "ON CONFLICT (id) DO NOTHING",
-            (PROJECT_ID, "seat-loops"),
+            (project_id, "seat-loops"),
         )
         db.execute(
             "INSERT INTO sessions "
             "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
             "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            (SESSION_ID, "ext-seat", "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
+            (SESSION_ID, "ext-seat", "21000000-0000-4000-8000-000000000001", "claude", project_id),
         )
         for other_id, role in (
             (OWNER_ID, "developer"),
@@ -90,7 +101,7 @@ class SeatRun:
                 "INSERT INTO sessions "
                 "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
                 "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (other_id, other_id, "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
+                (other_id, other_id, "21000000-0000-4000-8000-000000000001", "claude", project_id),
             )
             SessionVariableManager(db).set_variable(other_id, "_agent_type", role)
         SessionVariableManager(db).set_variable(SESSION_ID, "_agent_type", name)
@@ -182,7 +193,7 @@ class SeatRun:
 
     def task(self, *, owner: str = OWNER_ID, skills: list[str] | None = None) -> Task:
         return LocalTaskManager(self.db).create_task(
-            project_id=PROJECT_ID,
+            project_id=self.project_id,
             title="Seat protocol unit",
             validation_criteria="The seat advances only after its stored protocol event is verified.",
             created_in_session_id=COORDINATOR_ID,
@@ -441,12 +452,47 @@ async def test_park_review_next_resume_and_withdraw_exact_unit(temp_db: HubDatab
     assert run.vars["parked_candidates"] == []
     await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={REPLACEMENT_SHA}")
     assert run.step == "verdict"
-    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={SHA}")
+    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={SHA}", COORDINATOR_ID)
     assert run.step == "await"
 
 
-async def test_developer_bounce_requires_incoming_assigned_reviewer(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "developer")
+def _git(repo: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", *arguments], cwd=repo, capture_output=True, text=True, check=True, timeout=10
+    ).stdout.strip()
+
+
+@pytest.fixture
+async def linked_developer(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SeatRun, Task, str, str]:
+    """Persist Git's real canonical-short identity through the MCP linking handler."""
+    checkout = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "repo",
+        name="seat-bounce",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        monkeypatch=monkeypatch,
+    )
+    repo = Path(checkout.root_path)
+    _git(repo, "init", "-q", "-b", "main")
+    commit = (
+        "-c",
+        "user.name=Gobby Tests",
+        "-c",
+        "user.email=gobby-tests@example.com",
+        "commit",
+        "--allow-empty",
+        "--no-gpg-sign",
+        "-q",
+        "-m",
+    )
+    _git(repo, *commit, "unlinked base")
+    unlinked_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, *commit, "linked candidate")
+    sha = _git(repo, "rev-parse", "HEAD")
+    short_sha = _git(repo, "rev-parse", "--short", "HEAD")
+    run = SeatRun(temp_db, "developer", project_id=checkout.project.id)
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)
     await run.call(
@@ -457,18 +503,169 @@ async def test_developer_bounce_requires_incoming_assigned_reviewer(temp_db: Hub
     )
     await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
     assert run.step == "implement"
-    run.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([SHA]), task.id))
+    registry = create_commit_registry(
+        task_manager=LocalTaskManager(temp_db),
+        project_manager=LocalProjectManager(temp_db),
+        session_manager=run.sessions,
+    )
+    arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
+    with session_context_for_test(SESSION_ID):
+        output = cast(dict[str, Any], await registry.call("link_commit", arguments))
+    assert output == {"task_id": task.id, "commits": [short_sha]}
+    assert LocalTaskManager(temp_db).get_task(task.id).commits == [short_sha]
+    assert len(short_sha) < len(sha) == 40
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
-    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
+    await run.call("gobby-tasks", "link_commit", arguments, output)
     assert run.step == "submit"
-    line = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE"
+    await run.send(f"EVENT=CANDIDATE TASK={task.id} SHA={sha} NOTE=ready")
+    return run, task, sha, unlinked_sha
+
+
+async def test_developer_bounce_requires_incoming_assigned_reviewer(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, unlinked_sha = linked_developer
+    line = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE"
     await run.send(line)
     assert run.step == "submit"
     await run.incoming(line, OWNER_ID)
     assert run.step == "submit"
-    await run.incoming(line, PEER_ID)
+    other = run.task(owner=SESSION_ID)
+    await run.incoming(f"EVENT=CANDIDATE_VERDICT TASK={other.id} SHA={sha} VERDICT=BOUNCE", PEER_ID)
+    assert run.step == "submit"
+    for rejected_sha in (unlinked_sha, SHA):
+        await run.incoming(
+            f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={rejected_sha} VERDICT=BOUNCE", PEER_ID
+        )
+        assert run.step == "submit"
+    message_id = await run.incoming(line, PEER_ID)
     assert run.step == "implement"
     assert run.vars["implementation_complete"] is False
+    assert run.vars["candidate_sent"] is True
+    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": sha})
+    message = InterSessionMessageManager(run.db).get_message(message_id)
+    assert message is not None
+    await run.call(
+        "gobby-agents",
+        "get_inter_session_message",
+        {"message_id": message_id},
+        {"success": True, "message": message.to_dict()},
+    )
+    assert run.step == "submit"
+
+
+@pytest.fixture
+async def reviewer_authorities(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SeatRun, Task, dict[str, str]]:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    definitions = AgentDefinitionManager(temp_db)
+    definitions.create("orchestrator", {}, project_id=PROJECT_ID)
+    definitions.create("lane-manager", {}, project_id=PROJECT_ID)
+    actors = {
+        "author": OWNER_ID,
+        "reviewer": SESSION_ID,
+        "orchestrator": COORDINATOR_ID,
+        "other_reviewer": PEER_ID,
+    }
+    for name in ("own_lm", "other_lm", "unbound_lm"):
+        actor_session = run.sessions.register(
+            external_id=name,
+            source="codex",
+            project_id=PROJECT_ID,
+            machine_id="21000000-0000-4000-8000-000000000001",
+        )
+        actors[name] = actor_session.id
+        SessionVariableManager(temp_db).set_variable(
+            actor_session.id, "_agent_type", "lane-manager"
+        )
+    runs = LocalAgentRunManager(temp_db)
+    for actor, role, lane in (
+        (SESSION_ID, "code-reviewer", "1"),
+        (actors["own_lm"], "lane-manager", "1"),
+        (actors["other_lm"], "lane-manager", "2"),
+    ):
+        record = runs.create(
+            parent_session_id=COORDINATOR_ID,
+            provider="codex",
+            prompt="Seat authority fixture",
+            agent_name=role,
+            child_session_id=actor,
+            resume_metadata_json={"lane": lane},
+        )
+        runs.start(record.id)
+        temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (record.id, actor))
+    for reviewer in (SESSION_ID, PEER_ID):
+        SessionTaskManager(temp_db).link_task(reviewer, task.id, "reviewing")
+    await run.intake(task)
+    assert run.step == "review"
+    return run, task, actors
+
+
+@pytest.mark.parametrize("phase", ["active", "parked"])
+@pytest.mark.parametrize("kind", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED"])
+@pytest.mark.parametrize(
+    "actor",
+    ["author", "reviewer", "orchestrator", "own_lm", "other_lm", "other_reviewer", "unbound_lm"],
+)
+async def test_reviewer_withdraw_resume_requires_own_unit_authority(
+    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], phase: str, kind: str, actor: str
+) -> None:
+    run, task, actors = reviewer_authorities
+    if phase == "parked":
+        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
+        assert run.step == "await"
+    before, step = run.vars, run.step
+    line = f"EVENT={kind} TASK={task.id} SHA={SHA}"
+    if actor == "reviewer":
+        await run.send(line)
+    else:
+        await run.incoming(line, actors[actor])
+    authorized = actor in {"reviewer", "orchestrator", "own_lm"}
+    changes_unit = kind == "CANDIDATE_WITHDRAWN" or phase == "parked"
+    if not authorized or not changes_unit:
+        assert run.vars == before
+        assert run.step == step
+    elif kind == "CANDIDATE_WITHDRAWN":
+        assert run.step == "await"
+        assert run.vars["candidate_received"] is False
+        assert run.vars["parked_candidates"] == []
+    else:
+        assert run.step == "review"
+        assert run.vars["candidate_task"] == task.id
+        assert run.vars["candidate_sha"] == SHA
+        assert run.vars["parked_candidates"] == []
+
+
+@pytest.mark.parametrize("phase", ["active", "parked"])
+@pytest.mark.parametrize("kind", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED"])
+@pytest.mark.parametrize("mismatch", ["task", "sha"])
+@pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_lm"])
+async def test_reviewer_withdraw_resume_refuses_another_unit(
+    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]],
+    phase: str,
+    kind: str,
+    mismatch: str,
+    actor: str,
+) -> None:
+    run, task, actors = reviewer_authorities
+    if phase == "parked":
+        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
+        assert run.step == "await"
+    before, step = run.vars, run.step
+    other = run.task()
+    task_id = other.id if mismatch == "task" else task.id
+    sha = REPLACEMENT_SHA if mismatch == "sha" else SHA
+    line = f"EVENT={kind} TASK={task_id} SHA={sha}"
+    if actor == "reviewer":
+        await run.send(line)
+    else:
+        await run.incoming(line, actors[actor])
+    assert run.vars == before
+    assert run.step == step
 
 
 @pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
@@ -699,21 +896,9 @@ async def test_idle_is_declared_only_by_readiness_rule(
 
 
 async def test_candidate_latch_survives_native_reset_and_blocks_already_implemented_close(
-    temp_db: HubDatabase,
+    linked_developer: tuple[SeatRun, Task, str, str],
 ) -> None:
-    run = SeatRun(temp_db, "developer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task(owner=SESSION_ID)
-    ref = f"#{task.seq_num}"
-    await run.call(
-        "gobby-tasks",
-        "claim_task",
-        {"task_id": task.id},
-        {"result": {"task_id": task.id, "ref": ref}},
-    )
-    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
-    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
-    await run.send(f"EVENT=CANDIDATE TASK={ref} SHA={SHA} NOTE=ready")
+    run, task, sha, _ = linked_developer
     assert run.vars["candidate_sent"] is True
     assert not await run.admits_native(
         "mcp__gobby__set_variable",
@@ -733,10 +918,8 @@ async def test_candidate_latch_survives_native_reset_and_blocks_already_implemen
         },
     )
     assert run.vars["candidate_sent"] is True
-    run.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([SHA]), task.id))
-    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
     await run.incoming(
-        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE",
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE",
         PEER_ID,
     )
     assert run.step == "implement"
