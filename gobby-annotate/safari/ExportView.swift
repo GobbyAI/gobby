@@ -50,10 +50,19 @@ struct ExportView: View {
                     saving = true
                   } catch { self.error = error.localizedDescription }
                 }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
                 ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
+                  .lineLimit(1)
+                  .fixedSize(horizontal: true, vertical: false)
+                  .frame(minHeight: 44)
                 Button("Delete", systemImage: "trash") { pendingDelete = file }
                   .tint(Color("Destructive"))
                   .accessibilityLabel("Delete \(file.lastPathComponent)")
+                  .lineLimit(1)
+                  .fixedSize(horizontal: true, vertical: false)
+                  .frame(minHeight: 44)
               }.buttonStyle(.bordered)
             }.padding(.vertical, 4)
           }
@@ -72,12 +81,23 @@ struct ExportView: View {
               status = "Interrupted transfers cleared. Completed exports retained."
             } catch { self.error = error.localizedDescription }
           }
-          if !status.isEmpty { Text(status).accessibilityAddTraits(.updatesFrequently) }
         }
       }
       .navigationTitle("Gobby Annotate")
       .tint(Color.accentColor)
       .task { refresh() }
+      .safeAreaInset(edge: .bottom) {
+        if !status.isEmpty {
+          Label(status, systemImage: "checkmark.circle")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(.bar)
+            .accessibilityAddTraits(.isStatusElement)
+        }
+      }
       .confirmationDialog(
         "Delete this staged export?",
         isPresented: Binding(
@@ -94,7 +114,8 @@ struct ExportView: View {
         )
       }
       .confirmationDialog(
-        files.count == 1 ? "Delete the staged export?" : "Delete all \(files.count) staged exports?",
+        files.count == 1
+          ? "Delete the staged export?" : "Delete all \(files.count) staged exports?",
         isPresented: $confirmingDeleteAll, titleVisibility: .visible
       ) {
         Button(
