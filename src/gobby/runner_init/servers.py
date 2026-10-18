@@ -33,6 +33,7 @@ from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
+from gobby.servers.websocket.native_publish import native_publisher_from_environment
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.model_metadata import ModelMetadataStore
 
@@ -312,6 +313,10 @@ def init_servers(runner: GobbyRunner) -> None:
             tool_proxy_getter=tool_proxy_getter,
             completion_registry=runner.completion_registry,
             shutdown_in_progress=lambda: services.shutdown_in_progress,
+        )
+        # Native mode is decided by the environment the supervisor sets (decision 5).
+        runner.websocket_server.native_publisher = native_publisher_from_environment(
+            websocket_config, runner.bootstrap_config
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         attention_manager = services.attention_manager

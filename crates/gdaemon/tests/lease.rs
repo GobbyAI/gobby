@@ -73,6 +73,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
             lease: Some(standby),
             lease_state,
             backend: rx,
+            write_token: Default::default(),
         });
         let home = tempfile::tempdir()?;
         let bootstrap = home.path().join("bootstrap.yaml");

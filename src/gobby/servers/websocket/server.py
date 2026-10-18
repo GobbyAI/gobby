@@ -148,6 +148,7 @@ if TYPE_CHECKING:
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
+    from gobby.servers.websocket.native_publish import NativePublisher
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -261,6 +262,8 @@ class WebSocketServer(
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
+        # Set in native mode (init_servers); the websockets listener is not served then.
+        self.native_publisher: NativePublisher | None = None
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
         self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
         self._off_loop_durable_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
@@ -733,17 +736,22 @@ class WebSocketServer(
 
         self.lease_registry.start_lifecycle_publication()
         try:
-            self._server = await serve(
-                self.handle_connection,
-                host=self.config.host,
-                port=self.config.port,
-                process_request=self._authenticate,
-                ping_interval=self.config.ping_interval,
-                ping_timeout=self.config.ping_timeout,
-                max_size=self.config.max_message_size,
-                compression="deflate",
-                logger=websockets_logger,
-            )
+            if self.native_publisher is not None:
+                # Native mode serves no websockets listener. The bind is the readiness
+                # signal, so a failed bind raises here and reaches the subsystem failure path.
+                await self.native_publisher.bind()
+            else:
+                self._server = await serve(
+                    self.handle_connection,
+                    host=self.config.host,
+                    port=self.config.port,
+                    process_request=self._authenticate,
+                    ping_interval=self.config.ping_interval,
+                    ping_timeout=self.config.ping_timeout,
+                    max_size=self.config.max_message_size,
+                    compression="deflate",
+                    logger=websockets_logger,
+                )
         except BaseException:
             await self.lease_registry.shutdown_lifecycle_publication()
             raise
@@ -790,6 +798,8 @@ class WebSocketServer(
             if server is not None:
                 server.close()
                 await server.wait_closed()
+            if self.native_publisher is not None:
+                await self.native_publisher.stop()
 
             # Close remaining client connections with timeout
             for websocket in list(self.clients.keys()):

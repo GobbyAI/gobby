@@ -14,6 +14,7 @@ use crate::{
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::{HubDatabaseBootstrap, RouteBackend, RunMode};
 use gobby_core::postgres_pool::Pool;
+use gobby_terminals::write_api::TokenSlot;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -80,6 +81,8 @@ pub struct RuntimeState {
     pub lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
     pub lease_state: Option<watch::Receiver<LeaseState>>,
     pub backend: watch::Receiver<BackendStatus>,
+    /// The supervisor's write token slot, which native WebSocket binds present.
+    pub write_token: TokenSlot,
 }
 
 impl RuntimeState {
@@ -115,12 +118,14 @@ impl RuntimeState {
         config
             .environment
             .insert("GOBBY_TERMINAL_ROUTE".into(), route.into());
+        let write_token = config.write_token.clone();
         let supervisor = BackendSupervisor::with_lease(lease.clone(), claim, config);
         let state = Arc::new(Self {
             mode: bootstrap.mode,
             lease,
             lease_state,
             backend: supervisor.subscribe(),
+            write_token,
         });
         Ok(Some((state, supervisor)))
     }

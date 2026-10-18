@@ -12,11 +12,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::header::{CONNECTION, UPGRADE};
+use axum::http::{Request, Response, StatusCode};
 use futures_util::{SinkExt, StreamExt};
+use gobby_daemon::front_door::auth::AuthState;
+use gobby_daemon::front_door::health::BackendState;
+use gobby_daemon::front_door::routes::{FAMILIES, RouteTable};
+use gobby_daemon::front_door::{FrontDoor, FrontDoorState};
 use gobby_daemon::lifecycle::backend::BackendStatus;
 use gobby_daemon::websocket::broker::BroadcastBroker;
 use gobby_daemon::websocket::publish;
@@ -28,15 +34,13 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{
-    Request as BridgeRequest, Response as BridgeResponse,
-};
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::http::HeaderMap;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role};
@@ -74,7 +78,7 @@ async fn within<T>(context: &str, future: impl Future<Output = T>) -> T {
 struct Leg {
     path: String,
     headers: HeaderMap,
-    ws: WebSocketStream<TcpStream>,
+    ws: WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>,
 }
 
 impl Leg {
@@ -207,19 +211,50 @@ async fn stub_bridge() -> (SocketAddr, mpsc::UnboundedReceiver<Leg>) {
         while let Ok((stream, _)) = listener.accept().await {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let mut seen = None;
-                let callback = |request: &BridgeRequest, response: BridgeResponse| {
-                    seen = Some((request.uri().to_string(), request.headers().clone()));
-                    Ok(response)
-                };
-                let accepted = tokio_tungstenite::accept_hdr_async(stream, callback).await;
-                if let (Ok(ws), Some((path, headers))) = (accepted, seen) {
-                    let _ = tx.send(Leg { path, headers, ws });
-                }
+                let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+                    let tx = tx.clone();
+                    async move { Ok::<_, std::convert::Infallible>(accept_leg(request, tx)) }
+                });
+                let _ = http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .with_upgrades()
+                    .await;
             });
         }
     });
     (addr, rx)
+}
+
+/// Answers an upgrade request with 101 and sends its leg once the connection upgrades.
+fn accept_leg(
+    mut request: Request<hyper::body::Incoming>,
+    tx: mpsc::UnboundedSender<Leg>,
+) -> Response<Body> {
+    let Some(key) = request.headers().get("sec-websocket-key") else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .expect("static response");
+    };
+    let accept = derive_accept_key(key.as_bytes());
+    let path = request.uri().to_string();
+    let headers = request.headers().clone();
+    let upgrade = hyper::upgrade::on(&mut request);
+    tokio::spawn(async move {
+        let Ok(upgraded) = upgrade.await else {
+            return;
+        };
+        let ws =
+            WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+        let _ = tx.send(Leg { path, headers, ws });
+    });
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(UPGRADE, "websocket")
+        .header(CONNECTION, "upgrade")
+        .header("sec-websocket-accept", accept)
+        .body(Body::empty())
+        .expect("static response")
 }
 
 /// A backend that accepts connections and never answers.
@@ -1507,5 +1542,138 @@ async fn generation_changes_commit_under_the_binding_lock() {
     assert_eq!(
         frames_before_marker(&mut public, &mut leg, "after the held publish").await,
         Vec::<Message>::new()
+    );
+}
+
+/// Serves `FrontDoor::handle` on two in-process listeners that share one
+/// `NativeWs`: the daemon-port browser listener and the WebSocket-port direct
+/// listener. Both target the same backend HTTP address.
+async fn serve_front_doors(native: NativeWs, backend: SocketAddr) -> [SocketAddr; 2] {
+    let mut addresses = [SocketAddr::from(([127, 0, 0, 1], 0)); 2];
+    for (address, ws_listener) in addresses.iter_mut().zip([false, true]) {
+        let auth = Arc::new(
+            AuthState::new("boot-secret".into(), None, Default::default()).expect("auth state"),
+        );
+        let mut state = FrontDoorState::new(backend, BackendState::Down, auth);
+        state.native_ws = native.clone();
+        state.ws_listener = ws_listener;
+        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+        let door = Arc::new(FrontDoor::new(state, table));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("front door listener");
+        *address = listener.local_addr().expect("front door address");
+        tokio::spawn(async move {
+            while let Ok((stream, peer)) = listener.accept().await {
+                let door = door.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+                        let door = door.clone();
+                        async move {
+                            let request = request.map(Body::new);
+                            Ok::<_, std::convert::Infallible>(
+                                door.handle(request, peer, false).await,
+                            )
+                        }
+                    });
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .with_upgrades()
+                        .await;
+                });
+            }
+        });
+    }
+    addresses
+}
+
+/// Admits one upgrade on a front-door listener and returns its public socket
+/// and the private leg the stub bridge received for it.
+async fn admit_at(h: &mut Harness, address: SocketAddr, path: &str) -> (Public, Leg) {
+    let connecting = tokio::spawn(handshake(address, upgrade_request(path, &[])));
+    let mut leg = h.next_leg().await;
+    leg.send(Message::text(ready_frame(&h.generation))).await;
+    let (stream, head, rest) = within("public response", connecting)
+        .await
+        .expect("handshake task");
+    assert_eq!(status(&head), 101, "{head}");
+    (Public::upgraded(stream, head, rest).await, leg)
+}
+
+/// A plain (non-upgrade) request on a front-door listener, answered in full.
+async fn plain_request(address: SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(address).await.expect("connect");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: gobby.test\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("write request");
+    let mut response = Vec::new();
+    within(
+        "plain response",
+        AsyncReadExt::read_to_end(&mut stream, &mut response),
+    )
+    .await
+    .expect("read response");
+    String::from_utf8_lossy(&response).into_owned()
+}
+
+#[tokio::test]
+async fn application_paths_are_native_and_hmr_is_proxy() {
+    let (hmr_backend, hmr) = common::ws_backend(0, Vec::new()).await;
+    let mut h = Harness::start().await;
+    h.bind().await;
+    let [browser, direct] = serve_front_doors(h.native.clone(), hmr_backend).await;
+
+    // The browser entry: /ws and /ws/x are native, each leg marked browser.
+    for path in ["/ws", "/ws/x"] {
+        let (mut public, mut leg) = admit_at(&mut h, browser, path).await;
+        assert_eq!(leg.single("x-gobby-ws-entry"), "browser", "{path}");
+        leg.send(Message::text("browser-probe")).await;
+        assert_eq!(public.text("browser probe").await, "browser-probe", "{path}");
+    }
+
+    // The direct entry: every path on the WebSocket listener is native.
+    for path in ["/direct", "/ws/x"] {
+        let (mut public, mut leg) = admit_at(&mut h, direct, path).await;
+        assert_eq!(leg.single("x-gobby-ws-entry"), "direct", "{path}");
+        leg.send(Message::text("direct-probe")).await;
+        assert_eq!(public.text("direct probe").await, "direct-probe", "{path}");
+    }
+
+    // Vite HMR keeps the splice to the backend HTTP target and never reaches
+    // the native bridge.
+    let (_, head, _) = within(
+        "hmr handshake",
+        handshake(browser, upgrade_request("/__vite_hmr", &[])),
+    )
+    .await;
+    assert_eq!(status(&head), 101, "{head}");
+    let capture = within("hmr backend capture", hmr)
+        .await
+        .expect("hmr backend capture");
+    assert!(
+        capture.request_head.starts_with("GET /__vite_hmr "),
+        "{}",
+        capture.request_head
+    );
+    assert!(
+        h.legs.try_recv().is_err(),
+        "the HMR upgrade reached the native bridge"
+    );
+
+    // Other /_gobby/ paths answer 404 on both listeners, and a plain request
+    // on the direct listener answers 426 with the upgrade it requires.
+    for address in [browser, direct] {
+        let response = plain_request(address, "/_gobby/other").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    }
+    let response = plain_request(direct, "/direct").await;
+    assert!(response.starts_with("HTTP/1.1 426"), "{response}");
+    assert!(
+        response
+            .to_ascii_lowercase()
+            .contains("upgrade: websocket"),
+        "{response}"
     );
 }

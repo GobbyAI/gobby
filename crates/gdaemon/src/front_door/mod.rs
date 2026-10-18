@@ -15,12 +15,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::header::{CONNECTION, HeaderName, HeaderValue};
-use axum::http::{HeaderMap, Request, Response};
+use axum::http::header::{CONNECTION, HeaderName, HeaderValue, UPGRADE};
+use axum::http::{HeaderMap, Request, Response, StatusCode};
 
 use health::BackendState;
 use proxy::ProxyClient;
 use routes::RouteTable;
+
+use crate::websocket::broker::BroadcastBroker;
+use crate::websocket::subscriptions::EntryMode;
+use crate::websocket::transport::NativeWs;
 
 /// Shared state for one listener: its backend target and the proxy client.
 #[derive(Clone)]
@@ -34,6 +38,10 @@ pub struct FrontDoorState {
     pub auth: Arc<auth::AuthState>,
     /// Where Compare-mode families record outcomes; `None` records nothing.
     pub compare_log: Option<Arc<compare::CompareLog>>,
+    /// The native WebSocket transport, shared by every listener of one daemon.
+    pub native_ws: NativeWs,
+    /// True on the WebSocket-port listener, whose upgrades are the direct entry.
+    pub ws_listener: bool,
 }
 
 impl FrontDoorState {
@@ -51,6 +59,8 @@ impl FrontDoorState {
             client: proxy::client(),
             auth,
             compare_log: None,
+            native_ws: NativeWs::new(BroadcastBroker::default(), String::new(), None, target),
+            ws_listener: false,
         }
     }
 }
@@ -136,6 +146,10 @@ impl FrontDoor {
                 };
             }
         };
+        if request.uri().path().starts_with("/_gobby/") {
+            return crate::websocket::publish::handle(&backend_state.native_ws, request, peer)
+                .await;
+        }
         let state = backend_state.clone();
         #[cfg(unix)]
         let mut state = state;
@@ -200,11 +214,38 @@ impl FrontDoor {
             return crate::nodes::machines_api::handle(machines.clone(), request).await;
         }
         if ws::is_upgrade(request.headers()) {
-            ws::splice(&state, request).await
+            let entry = if state.ws_listener {
+                Some(EntryMode::Direct)
+            } else if is_browser_ws(request.uri().path()) {
+                Some(EntryMode::Browser)
+            } else {
+                None
+            };
+            match entry {
+                Some(entry) => state.native_ws.accept(request, entry, peer).await,
+                None => ws::splice(&state, request).await,
+            }
+        } else if state.ws_listener {
+            upgrade_required()
         } else {
             table.dispatch(&state, request).await
         }
     }
+}
+
+/// Browser WebSocket entry: `/ws` and anything under `/ws/`.
+fn is_browser_ws(path: &str) -> bool {
+    path == "/ws" || path.starts_with("/ws/")
+}
+
+/// The WebSocket listener serves upgrades only; a plain request names the upgrade it needs.
+fn upgrade_required() -> Response<Body> {
+    let mut response = Response::new(Body::from("WebSocket upgrade required"));
+    *response.status_mut() = StatusCode::UPGRADE_REQUIRED;
+    response
+        .headers_mut()
+        .insert(UPGRADE, HeaderValue::from_static("websocket"));
+    response
 }
 
 /// Client-supplied forwarding headers. Each is dropped before any route or

@@ -428,7 +428,11 @@ async fn start_authenticated_front_door(backend: SocketAddr, auth: Arc<AuthState
     let addr = listener.local_addr().expect("front door addr");
     tokio::spawn(async move {
         gobby_daemon::serve::serve(
-            vec![gobby_daemon::serve::PublicListener { listener, backend }],
+            vec![gobby_daemon::serve::PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &BTreeMap::new(),
             None,
             auth,
@@ -494,7 +498,7 @@ async fn valid_key_forwards_identity_headers() {
         "authorization: Bearer {TEST_API_KEY}\r\nx-gobby-user-id: forged\r\nx-gobby-machine-id: forged\r\nx-gobby-key-id: forged\r\nx-gobby-front-door: forged\r\n"
     );
     let (response, _) =
-        tokio::time::timeout(TIMEOUT, ws_upgrade(&mut client, address, "/ws", &forged))
+        tokio::time::timeout(TIMEOUT, ws_upgrade(&mut client, address, "/__vite_hmr", &forged))
             .await
             .expect("upgrade");
     assert!(response.starts_with("HTTP/1.1 101"), "{response}");
@@ -702,7 +706,7 @@ async fn ws_splice_preserves_deflate_and_close() {
 
     let (backend, captured) = ws_backend(client_frames.len(), backend_frames.clone()).await;
     let front_door = start_front_door(backend).await;
-    let (mut stream, head, mut received) = ws_client(front_door, "/ws").await;
+    let (mut stream, head, mut received) = ws_client(front_door, "/__vite_hmr").await;
 
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     assert!(
@@ -793,6 +797,7 @@ async fn unavailable_native_backend_reports_supervisor_state() {
             lease: None,
             lease_state: None,
             backend: receiver,
+            write_token: Default::default(),
         }));
         let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
         let door = FrontDoor::new(state, table);
@@ -980,7 +985,7 @@ async fn refused_upgrade_strips_connection_listed_fields() {
     });
     let front_door = start_front_door(backend).await;
 
-    let (_stream, head, _) = tokio::time::timeout(TIMEOUT, ws_client(front_door, "/ws"))
+    let (_stream, head, _) = tokio::time::timeout(TIMEOUT, ws_client(front_door, "/__vite_hmr"))
         .await
         .expect("refusal timed out");
 
@@ -1236,7 +1241,7 @@ async fn ws_splice_over_self_signed_tls() {
     let mut stream = tls_connect(front_door, &cert.cert_pem)
         .await
         .expect("pinned handshake");
-    let (head, mut received) = ws_upgrade(&mut stream, front_door, "/ws", "").await;
+    let (head, mut received) = ws_upgrade(&mut stream, front_door, "/__vite_hmr", "").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     stream.write_all(&client_frames).await.expect("send frames");
     tokio::time::timeout(
@@ -1403,20 +1408,20 @@ async fn concrete_bind_adds_loopback_listener() {
         );
     }
 
-    let wildcard = bind("0.0.0.0", 0, 1).await.expect("wildcard bind");
+    let wildcard = bind("0.0.0.0", 0, 1, false).await.expect("wildcard bind");
     assert_eq!(wildcard.len(), 1, "a wildcard bind gets no companion");
     let port = wildcard[0].listener.local_addr().expect("addr").port();
     TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("a wildcard listener accepts loopback");
-    let loopback = bind("127.0.0.1", 0, 1).await.expect("loopback bind");
+    let loopback = bind("127.0.0.1", 0, 1, false).await.expect("loopback bind");
     assert_eq!(loopback.len(), 1, "a loopback bind gets no companion");
 
     let Some(ip) = local_non_loopback_ipv4() else {
         eprintln!("no non-loopback IPv4 address; the live companion check is skipped");
         return;
     };
-    let listeners = bind(&ip.to_string(), 0, 1).await.expect("concrete bind");
+    let listeners = bind(&ip.to_string(), 0, 1, false).await.expect("concrete bind");
     assert_eq!(listeners.len(), 2, "a concrete bind adds a companion");
     let primary = listeners[0].listener.local_addr().expect("primary addr");
     let companion = listeners[1].listener.local_addr().expect("companion addr");
@@ -1509,7 +1514,7 @@ async fn forwarding_headers_carry_only_observed_peer() {
     let (head, _) = ws_upgrade(
         &mut stream,
         front_door,
-        "/ws",
+        "/__vite_hmr",
         "forwarded: for=6.6.6.6\r\nx-forwarded-for: 6.6.6.6\r\nx-real-ip: 6.6.6.6\r\n\
          x-forwarded-proto: https\r\nx-forwarded-host: evil.example\r\n\
          connection: X-Forwarded-For, x-FORWARDED-proto\r\n",
