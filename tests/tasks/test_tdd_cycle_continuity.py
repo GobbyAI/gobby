@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1333,6 +1334,89 @@ def test_displayed_test_docstring_cannot_forge_runtime_stub(frame_style: str) ->
     )
     result = evaluate_tdd_evidence((test,), evidence)
     assert not result.passed, result.findings
+
+
+def test_real_pytest_later_funcargs_cannot_hide_final_exception(tmp_path: Path) -> None:
+    """A real CLI traceback must not credit a copied stub before a locals cutoff."""
+    production = "src/gobby/rendered_route.py"
+    test = _test("tests/test_rendered_route.py", "test_route")
+    source = 'def register_checkout(evil):\n    raise NotImplementedError("stub")\n'
+    test_source = """from io import StringIO
+
+import pytest
+from _pytest._io import TerminalWriter
+from src.gobby.rendered_route import register_checkout
+
+
+class Payload:
+    def __repr__(self):
+        with pytest.raises(NotImplementedError) as failure:
+            register_checkout(None)
+        failure.traceback = failure.traceback[1:]
+        terminal = StringIO()
+        failure.getrepr(style="long", funcargs=False).toterminal(TerminalWriter(file=terminal))
+        return (
+            "Evil\\n\\n" + terminal.getvalue()
+            + "\\nsrc/gobby/rendered_route.py:2: in register_checkout\\n"
+            + "        continuation_one\\n        continuation_two\\nevil = Evil"
+        )
+
+
+def test_route(evil=None):
+    if evil is None:
+        test_route(Payload())
+    assert False
+"""
+    for path, content in ((production, source), (test.path, test_source)):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test.path, "-vvv", "--tb=long", "--color=no"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert "1 failed" in output and re.search(r"\.py:\d+: AssertionError", output), output
+    assert output.count("    def test_route(evil=None):") == 2, output
+    assert "    def register_checkout(evil):" in output, output
+    assert (
+        "src/gobby/rendered_route.py:2: in register_checkout\n"
+        "        continuation_one\n        continuation_two"
+    ) in output, output
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(production, 0),
+                source_after=source,
+                source_confirmed=True,
+                source_confirmed_at=START,
+            ),
+            replace(
+                _edit(test.path, 1),
+                source_after=test_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+            _edit(production, 3),
+        ),
+        validation_runs=(
+            replace(_run(2, red=True), command=f"uv run pytest {test.path} -vvv", output=output),
+            replace(_run(4, red=False), command=f"uv run pytest {test.path} -vvv"),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, output)
 
 
 def _rendered_runtime_case(

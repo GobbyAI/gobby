@@ -297,30 +297,31 @@ def runtime_pytest_output(
     return "\n".join(trusted)
 
 
-def terminal_runtime_frame(section: str) -> str | None:
-    """Select only the terminal raising frame when its final exception agrees."""
-    rows = section.splitlines()
+def terminal_runtime_frame(section: str, original_section: str) -> str | None:
+    """Require the sanitized terminal stub to agree with the original final exception."""
     exception = r"(?:[A-Za-z_][\w.]*(?:Error|Exception)|Failed)"
     detail_pattern = re.compile(rf"E[ \t]+(?P<exception>{exception})(?::|[ \t]*$)")
     location_pattern = re.compile(rf"\S+\.py:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
-    frame_start = 0
-    terminal_start: int | None = None
-    terminal_exception: str | None = None
-    location_exception: str | None = None
-    for index, row in enumerate(rows):
-        if _SHORT.fullmatch(row) or _DEFINITION.match(row):
-            frame_start = index
-        detail = detail_pattern.match(row)
-        if detail is not None:
-            terminal_start = frame_start
-            terminal_exception = detail["exception"]
-        location = location_pattern.fullmatch(row)
-        if location is not None:
-            location_exception = location["exception"]
-    if (
-        terminal_start is None
-        or terminal_exception != "NotImplementedError"
-        or (location_exception or terminal_exception) != terminal_exception
-    ):
-        return None
+    for candidate in (original_section, section):
+        rows = candidate.splitlines()
+        frame_start = 0
+        terminal_start: int | None = None
+        terminal_exception: str | None = None
+        location_exception: str | None = None
+        for index, row in enumerate(rows):
+            if _SHORT.fullmatch(row) or _DEFINITION.match(row):
+                frame_start = index
+            detail = detail_pattern.match(row)
+            if detail is not None:
+                terminal_start = frame_start
+                terminal_exception = detail["exception"]
+            location = location_pattern.fullmatch(row)
+            if location is not None:
+                location_exception = location["exception"]
+        if (
+            terminal_start is None
+            or terminal_exception != "NotImplementedError"
+            or (location_exception or terminal_exception) != terminal_exception
+        ):
+            return None
     return "\n".join(rows[terminal_start:])

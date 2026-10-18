@@ -515,15 +515,18 @@ def _has_runtime_stub(
     source_output = runtime_pytest_output(output, evidence, run, parse_cache)
     if source_output is None:
         return False
-    lines = source_output.splitlines()
+    lines = output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
         if header is None or not _header_names_artifact(
             header.group("name"), test, nodes, same_file
         ):
             continue
-        section = _failure_section(lines, index)
-        terminal = terminal_runtime_frame(section)
+        original_section = _failure_section(lines, index)
+        section = runtime_pytest_output(original_section, evidence, run, parse_cache)
+        if section is None or section not in source_output:
+            continue
+        terminal = terminal_runtime_frame(section, original_section)
         if (
             _section_has_artifact_location(section, test)
             and terminal is not None
