@@ -1677,3 +1677,50 @@ async fn application_paths_are_native_and_hmr_is_proxy() {
         "{response}"
     );
 }
+
+/// A browser client that attaches to one session receives that session's
+/// `session_message` and `hook_event` frames and nothing from another session.
+/// The attach reaches the private leg, and the application handler answers it
+/// by subscribing the leg, which the publish route carries.
+#[tokio::test]
+async fn browser_attach_receives_only_its_session_frames() {
+    let mut h = Harness::start().await;
+    h.bind().await;
+    let (mut attached, mut attached_leg) = h.admit(BROWSER, &[]).await;
+    let (mut other, mut other_leg) = h.admit(BROWSER, &[]).await;
+    wait_connections(&h.broker, 2).await;
+
+    let attach = r#"{"type": "attach_to_session", "session_id": "s-1"}"#;
+    attached.send(Message::text(attach)).await;
+    assert_eq!(
+        attached_leg.next("attach relayed to the leg").await,
+        Message::text(attach)
+    );
+    h.publish(json!([subscribe_op(
+        attached_leg.id(),
+        &["session_message:session_id=s-1", "hook_event:session_id=s-1"],
+    )]))
+    .await;
+
+    let own_message = json!({"type": "session_message", "session_id": "s-1", "content": "mine"});
+    let own_hook = json!({"type": "hook_event", "session_id": "s-1", "event_type": "PreToolUse"});
+    let other_message =
+        json!({"type": "session_message", "session_id": "s-2", "content": "theirs"});
+    let other_hook = json!({"type": "hook_event", "session_id": "s-2", "event_type": "PreToolUse"});
+    h.publish(json!([
+        publish_op(&other_message),
+        publish_op(&own_message),
+        publish_op(&other_hook),
+        publish_op(&own_hook),
+    ]))
+    .await;
+
+    assert_eq!(
+        frames_before_marker(&mut attached, &mut attached_leg, "attached after publish").await,
+        texts(&[&own_message, &own_hook])
+    );
+    assert_eq!(
+        frames_before_marker(&mut other, &mut other_leg, "unattached after publish").await,
+        Vec::<Message>::new()
+    );
+}
