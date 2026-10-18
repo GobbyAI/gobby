@@ -59,7 +59,10 @@ def _required_auth_middleware_app(
         HTTPServer,
         SimpleNamespace(
             auth_service=auth_service,
-            services=SimpleNamespace(config=SimpleNamespace(bind_host=bind_host)),
+            services=SimpleNamespace(
+                config=SimpleNamespace(bind_host=bind_host),
+                database=MagicMock(),
+            ),
             run_db=_run_db,
         ),
     )
@@ -235,6 +238,7 @@ def test_verified_identity_and_cookie_accepted(temp_db: HubDatabase, tmp_path: P
                 break_glass_file=tmp_path / "missing-break-glass",
             ),
             run_db=_run_db,
+            services=SimpleNamespace(database=temp_db),
         ),
     )
     server.auth_service.bind_runtime(

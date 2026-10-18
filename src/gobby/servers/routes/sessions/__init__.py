@@ -17,6 +17,7 @@ from gobby.servers.routes.sessions.core import (
     _get_commit_count,
     register_core_routes,
 )
+from gobby.servers.routes.sessions.dirty_paths import register_dirty_path_routes
 from gobby.servers.routes.sessions.lifecycle import (
     _get_session_stats,
     register_lifecycle_routes,
@@ -76,5 +77,6 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
     register_analytics_routes(router, server, _get_session_manager, _broadcast_session)
     register_changes_routes(router, server)
     register_acp_routes(router, server, _get_session_manager)
+    register_dirty_path_routes(router, server)
 
     return router
