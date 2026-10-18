@@ -205,9 +205,12 @@ def resumed_seat_placement(
             return {"tab": {"workspace": workspace_id, "title": recorded_title}}
         snapshot = {"workspace_id": workspace_id, "tab_id": tab.id, "axis": "vertical"}
     target = split_target(workspaces, snapshot)
+    if target is None and isinstance(workspace_id, str):
+        # The seat's pane and tab are both gone, but its workspace is known: reopen a tab.
+        return {"tab": {"workspace": workspace_id, "title": recorded_title}}
     if target is None:
         raise ResumeSeatGone(
-            f"Resume target {session.id} was seated in a pane and tab that are both gone; "
+            f"Resume target {session.id} has no recorded workspace to return to; "
             "pass placement to seat it"
         )
     axis = snapshot.get("axis")

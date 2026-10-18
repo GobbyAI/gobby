@@ -769,6 +769,7 @@ async def spawn_agent_impl(
                     "existing_session_id": resume_target.id,
                     "original_run_id": resume_target.agent_run_id,
                     "relaunch": True,
+                    "paused_seat_not_live": resume_target.status == "paused",
                 }
             prepared_spawn = await run_thread_to_completion(
                 prepare,
