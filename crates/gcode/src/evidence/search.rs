@@ -165,6 +165,7 @@ fn symbols_to_items(
     library: &EvidenceLibrary,
     symbols: Vec<SymbolFact>,
 ) -> Result<Vec<EvidenceItem>> {
+    library.prefetch_bound_blobs(symbols.iter().map(|symbol| symbol.file_path.as_str()));
     symbols
         .into_iter()
         .map(|symbol| source_for_symbol(library, &symbol).map(EvidenceItem::Source))
@@ -187,6 +188,7 @@ fn content_search(
             })?;
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
+    library.prefetch_bound_blobs(page.items.iter().map(|hit| hit.path.as_str()));
     for hit in page.items {
         if !seen.insert((hit.path.clone(), hit.line_start, hit.line_end)) {
             continue;
@@ -225,6 +227,7 @@ fn grep_search(
         })?;
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
+    library.prefetch_bound_blobs(outcome.hits.iter().map(|hit| hit.path.as_str()));
     for hit in outcome.hits {
         if !seen.insert((hit.path.clone(), hit.line)) {
             continue;

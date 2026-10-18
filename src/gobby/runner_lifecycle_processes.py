@@ -101,17 +101,35 @@ async def _reap_remaining_child_processes(
             return
 
         if preserve_agents:
-            from gobby.agents.srt_monitor import live_monitor_identities
-
-            monitor_identities = (
-                await asyncio.to_thread(live_monitor_identities) if preserve_srt_monitor else {}
+            from gobby.agents.srt_monitor import (
+                live_monitor_identities,
+                pinned_monitor_identities,
+                verified_monitor_paths,
             )
+
+            monitor_identities: dict[int, float] = {}
+            pinned_only: set[int] = set()
+            if preserve_srt_monitor:
+                registered = await asyncio.to_thread(live_monitor_identities)
+                paths = await asyncio.to_thread(verified_monitor_paths)
+                pinned: dict[int, float] = {}
+                if paths is not None:
+                    node, runner = paths
+                    pinned = await asyncio.to_thread(
+                        pinned_monitor_identities, children, node, runner
+                    )
+                pinned_only = set(pinned) - set(registered)
+                monitor_identities = {**pinned, **registered}
             preserved_pids = _expand_preserved_agent_processes(
                 psutil,
                 children,
                 (preserved_agent_pids or set()) | set(monitor_identities),
                 monitor_identities,
             )
+            for pid in sorted(monitor_identities):
+                if pid in preserved_pids:
+                    source = "pinned-argv" if pid in pinned_only else "registry-or-record"
+                    logger.info("Preserving SRT monitor broker pid=%d source=%s", pid, source)
             reapable_children = [child for child in children if child.pid not in preserved_pids]
             preserved_count = len(children) - len(reapable_children)
             if preserved_count:

@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import struct
@@ -53,6 +54,58 @@ def live_monitor_identities() -> dict[int, float]:
     if recorded is not None:
         broker_pid, broker_started = recorded
         identities.setdefault(broker_pid, broker_started)
+    return identities
+
+
+def verified_monitor_paths() -> tuple[str, str] | None:
+    """Return the realpaths of the installed node and runner that a pinned broker must run.
+
+    Lock-free and hash-free: verify_srt_installation takes the install lock on the
+    shutdown path, and a runner-changing cutover makes it raise.
+    """
+    from gobby.agents.srt_runtime import srt_install_root  # srt_runtime imports this module
+
+    found = shutil.which("node")
+    if found is None:
+        return None
+    try:
+        node = str(Path(found).resolve(strict=True))
+        runner = str((srt_install_root() / "runner.mjs").resolve(strict=True))
+    except OSError:
+        return None
+    return node, runner
+
+
+def pinned_monitor_identities(
+    children: list[psutil.Process], node: str, runner: str
+) -> dict[int, float]:
+    """Return brokers whose process is the pinned monitor: exact socket, node and runner.
+
+    The restart reaper uses this beside the registry and owner record. It takes no lock,
+    probes no socket and reads no record, so a broker the registry lost still survives a
+    restart. Adoption and subscription trust still go through _verified_recorded_broker.
+    """
+    try:
+        directory = srt_mux_tmpdir()
+    except OSError:
+        # No broker can sit under a directory that cannot be ensured. Failing here would
+        # abort the whole reap and leave every child alive.
+        return {}
+    socket_path = directory / f"v-{SRT_RELEASE.runner_sha256[:12]}"
+    uid = os.getuid()
+    identities: dict[int, float] = {}
+    for process in children:
+        try:
+            argv = process.cmdline()
+            if len(argv) != 6 or process.uids().real != uid:
+                continue
+            if not _argv_is_pinned(argv, argv[0], socket_path) or argv[1] != runner:
+                continue
+            if os.path.realpath(argv[0]) != node or os.path.realpath(process.exe()) != node:
+                continue
+            identities[process.pid] = process.create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
     return identities
 
 
