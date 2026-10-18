@@ -10,8 +10,9 @@ rules:
       variables.get('current_step_idle') and not variables.get('task_claimed')
       and event.data.get('mcp_server') == 'gobby-agents'
       and event.data.get('mcp_tool') == 'send_message'
-      and event.data.get('tool_succeeded') is True
-      and seat_readiness_completed(session_id, tool_output)
+      and event.data.get('tool_outcome', {}).get('status') == 'succeeded'
+      and not event.metadata.get('is_failure')
+      and seat_readiness_completed(event.session_id, event.data.get('tool_output'))
     effect:
       type: set_variable
       variable: seat_idle

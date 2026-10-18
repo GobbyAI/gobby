@@ -19,6 +19,7 @@ import yaml
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -131,7 +132,7 @@ class SeatRun:
             session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data=data,
+            data=normalize_tool_fields(data),
             metadata={},
         )
 
@@ -183,6 +184,7 @@ class SeatRun:
         return LocalTaskManager(self.db).create_task(
             project_id=PROJECT_ID,
             title="Seat protocol unit",
+            validation_criteria="The seat advances only after its stored protocol event is verified.",
             created_in_session_id=COORDINATOR_ID,
             claimed_by_session_id=owner,
             additional_skills=skills,
@@ -518,10 +520,20 @@ async def test_standing_seats_never_use_native_idle_writes(temp_db: HubDatabase,
 
 
 @pytest.mark.parametrize(
-    "content",
-    ["EVENT=SEAT_READY NOTE=idle", "Systems nominal | ready", "EVENT=SEAT_READY NOTE=busy"],
+    "content, failure",
+    [
+        ("EVENT=SEAT_READY NOTE=idle", ""),
+        ("Systems nominal | ready", ""),
+        ("EVENT=SEAT_READY NOTE=busy", ""),
+        ("EVENT=SEAT_READY NOTE=idle", "direct"),
+        ("EVENT=SEAT_READY NOTE=idle", "content"),
+        ("EVENT=SEAT_READY NOTE=idle", "structured"),
+        ("EVENT=SEAT_READY NOTE=idle", "transport"),
+    ],
 )
-async def test_idle_is_declared_only_by_readiness_rule(temp_db: HubDatabase, content: str) -> None:
+async def test_idle_is_declared_only_by_readiness_rule(
+    temp_db: HubDatabase, content: str, failure: str
+) -> None:
     run = SeatRun(temp_db, "developer")
     await run.load(*run.vars["required_skills"])
     path = AGENTS_DIR.parent / "rules/stop-gates/declare-seat-idle-on-readiness.yaml"
@@ -540,8 +552,35 @@ async def test_idle_is_declared_only_by_readiness_rule(temp_db: HubDatabase, con
         priority=6,
     )
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
-    await run.send(content)
-    assert bool(run.session_vars.get("seat_idle")) == (content == "EVENT=SEAT_READY NOTE=idle")
+    message = InterSessionMessageManager(temp_db).create_message(
+        SESSION_ID, COORDINATOR_ID, content
+    )
+    output: dict[str, Any] = {
+        "success": failure not in {"direct", "content", "structured"},
+        "message_ids": [message.id],
+    }
+    if failure == "content":
+        output = {"content": [{"type": "text", "text": json.dumps(output)}]}
+    elif failure == "structured":
+        output = {"structuredContent": output}
+    event = run._event(
+        HookEventType.AFTER_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": SEND[0],
+                "tool_name": SEND[1],
+                "arguments": {"target": "session", "target_id": COORDINATOR_ID, "content": content},
+            },
+            "tool_output": output,
+        },
+    )
+    if failure == "transport":
+        event.metadata["is_failure"] = True
+    await run._evaluate(event)
+    assert bool(run.session_vars.get("seat_idle")) == (
+        content == "EVENT=SEAT_READY NOTE=idle" and not failure
+    )
 
 
 async def test_candidate_latch_survives_native_reset_and_blocks_already_implemented_close(
