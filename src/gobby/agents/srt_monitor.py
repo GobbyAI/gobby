@@ -34,6 +34,7 @@ _RECORD_LIMIT = 65536
 _SOL_LOCAL = 0  # macOS sys/un.h
 _LOCAL_PEERPID = 2  # macOS sys/un.h
 _PROBE_TIMEOUT_SECONDS = 2
+_MONITOR_SOCKET_NAME = re.compile(r"v-[0-9a-f]{12}")
 
 
 def live_monitor_identities() -> dict[int, float]:
@@ -53,6 +54,40 @@ def live_monitor_identities() -> dict[int, float]:
     if recorded is not None:
         broker_pid, broker_started = recorded
         identities.setdefault(broker_pid, broker_started)
+    return identities
+
+
+def pinned_monitor_identities(children: list[psutil.Process]) -> dict[int, float]:
+    """Return brokers in a process snapshot whose live argv has the pinned monitor shape.
+
+    The restart reaper uses this beside the registry and owner record. It takes no lock,
+    probes no socket and reads no record, so a broker the registry lost still survives a
+    restart. Adoption and subscription trust still go through _verified_recorded_broker.
+    """
+    try:
+        directory = srt_mux_tmpdir()
+    except OSError:
+        # No broker can sit under a directory that cannot be ensured. Failing here would
+        # abort the whole reap and leave every child alive.
+        return {}
+    uid = os.getuid()
+    identities: dict[int, float] = {}
+    for process in children:
+        try:
+            argv = process.cmdline()
+            if len(argv) != 6 or process.uids().real != uid:
+                continue
+            path = Path(argv[3])
+            if (
+                path.parent != directory
+                or _MONITOR_SOCKET_NAME.fullmatch(path.name) is None
+                or not _argv_is_pinned(argv, argv[0], path)
+                or os.path.realpath(process.exe()) != os.path.realpath(argv[0])
+            ):
+                continue
+            identities[process.pid] = process.create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
     return identities
 
 
