@@ -1117,9 +1117,18 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     run = SeatRun(temp_db, name)
     await run.load(*run.vars["required_skills"])
     if name == "developer" and step != "claim":
-        task = run.task(owner=SESSION_ID)
-        await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, {"task_id": task.id})
-        await run.call("gobby-tasks", "get_task", {"task_id": task.id})
+        task = run.task(owner=SESSION_ID, skills=["rust"])
+        ref = f"#{task.seq_num}"
+        await run.call(
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": task.id},
+            {"result": {"task_id": task.id, "ref": ref}},
+        )
+        await run.call(
+            "gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id, "ref": ref}}
+        )
+        await run.load("rust")
         if step == "submit":
             await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
     elif name == "code-reviewer" and step == "review":
