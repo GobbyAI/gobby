@@ -62,7 +62,9 @@ fn case_content(case: &Value) -> String {
         return bundled_text(provider).to_owned();
     }
     if let Some(path) = case["manifest"].as_str() {
-        let full = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(path);
+        let full = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path);
         return std::fs::read_to_string(&full)
             .unwrap_or_else(|error| panic!("read {}: {error}", full.display()));
     }
@@ -123,7 +125,11 @@ fn bundled_manifests_compile() {
             "{provider} carries issues: {:?}",
             compiled.issues()
         );
-        assert_eq!(compiled.rule_ids().len(), rule_count, "{provider} rule count");
+        assert_eq!(
+            compiled.rule_ids().len(),
+            rule_count,
+            "{provider} rule count"
+        );
     }
 
     let rows: Vec<(String, String)> = BUNDLED

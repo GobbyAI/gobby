@@ -19,6 +19,7 @@ from gobby.terminals.workspace_agent_panes import (
     ResolvedPlacement,
 )
 from gobby.utils.git import run_to_completion
+from gobby.workflows.condition_helpers_sessions import own_seat_resume
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,9 @@ async def preflight_placement(
     machine_id: str | None,
     project_id: str | None,
     project_context_authoritative: bool,
+    session_manager: Any | None = None,
+    agent_name: str | None = None,
+    resume_session_id: str | None = None,
 ) -> PlacedLaunch | dict[str, Any] | None:
     """Resolve a placement before any side effect; return a refusal reply or ``None``."""
     if placement is None:
@@ -66,8 +70,21 @@ async def preflight_placement(
         )
     if reserver is None:
         return _refusal("invalid_op", "Agent pane placement is not available")
+    # Only a lane manager's own-lane seat resume may place from an autonomous caller.
+    own_seat = (
+        resume_session_id is not None
+        and session_manager is not None
+        and await asyncio.to_thread(
+            own_seat_resume, session_manager, parent_session_id, agent_name, resume_session_id
+        )
+    )
     try:
-        resolved = await reserver.preflight(f"session:{parent_session_id}", project_id, parsed)
+        resolved = await reserver.preflight(
+            f"session:{parent_session_id}",
+            project_id,
+            parsed,
+            own_seat_resume=own_seat,
+        )
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc))
     return PlacedLaunch(reserver=reserver, resolved=resolved)

@@ -166,7 +166,9 @@ fn is_identifier(value: &str) -> bool {
 fn manifest_id(value: &Value) -> Result<String, ManifestError> {
     let id = string(value)?;
     if !is_identifier(id) {
-        return Err(schema("manifest id must be a lowercase provider identifier"));
+        return Err(schema(
+            "manifest id must be a lowercase provider identifier",
+        ));
     }
     Ok(id.to_owned())
 }
@@ -236,9 +238,7 @@ fn clause(value: &Value) -> Result<ParsedClause, ManifestError> {
 
 fn require_condition(contains: &[String], line_regex: &[String]) -> Result<(), ManifestError> {
     if contains.is_empty() && line_regex.is_empty() {
-        return Err(schema(
-            "a match clause requires contains or line_regex",
-        ));
+        return Err(schema("a match clause requires contains or line_regex"));
     }
     Ok(())
 }
@@ -264,7 +264,8 @@ fn rule(value: &Value) -> Result<ParsedRule, ManifestError> {
     };
     check_extras(table, &RULE_KEYS)?;
     require_condition(&contains, &line_regex)?;
-    if state == DetectionState::Blocked && reason.as_deref().is_none_or(|r| py_strip(r).is_empty()) {
+    if state == DetectionState::Blocked && reason.as_deref().is_none_or(|r| py_strip(r).is_empty())
+    {
         return Err(schema("blocked rules require a reason"));
     }
     Ok(ParsedRule {
@@ -297,9 +298,7 @@ fn state(value: &Value) -> Result<DetectionState, ManifestError> {
         "stall" => Some(DetectionState::Stall),
         _ => None,
     });
-    parsed.ok_or_else(|| {
-        schema("Input should be 'blocked', 'idle', 'working' or 'stall'")
-    })
+    parsed.ok_or_else(|| schema("Input should be 'blocked', 'idle', 'working' or 'stall'"))
 }
 
 fn priority(value: &Value) -> Result<i64, ManifestError> {

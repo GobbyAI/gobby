@@ -34,7 +34,15 @@ pub(super) fn casefold(value: &str) -> String {
 fn is_line_boundary(c: char) -> bool {
     matches!(
         c,
-        '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        '\n' | '\r'
+            | '\u{b}'
+            | '\u{c}'
+            | '\u{1c}'
+            | '\u{1d}'
+            | '\u{1e}'
+            | '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
     )
 }
 
@@ -103,7 +111,9 @@ pub(super) fn composer_region(pane: &str) -> String {
 
 fn bare_codex_composer(lines: &[&str]) -> String {
     let len = lines.len();
-    if len < 3 || !matches(codex_footer(), lines[len - 1]) || !matches(codex_model(), lines[len - 2])
+    if len < 3
+        || !matches(codex_footer(), lines[len - 1])
+        || !matches(codex_model(), lines[len - 2])
     {
         return String::new();
     }

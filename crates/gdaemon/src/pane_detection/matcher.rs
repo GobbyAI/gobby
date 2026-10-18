@@ -3,7 +3,9 @@
 
 use fancy_regex::{Regex, RegexBuilder};
 
-use super::manifest::{DetectionState, ManifestError, ParsedClause, ParsedRule, Region, parse_manifest};
+use super::manifest::{
+    DetectionState, ManifestError, ParsedClause, ParsedRule, Region, parse_manifest,
+};
 use super::regions::{casefold, select_region};
 
 /// The longest pattern accepted, in code points, as `MAX_PATTERN_SIZE` in `safe_regex.py`.
@@ -152,7 +154,11 @@ fn compile_clause(clause: &ParsedClause, rule_id: &str) -> Result<CompiledClause
         });
     }
     Ok(CompiledClause {
-        contains: clause.contains.iter().map(|needle| casefold(needle)).collect(),
+        contains: clause
+            .contains
+            .iter()
+            .map(|needle| casefold(needle))
+            .collect(),
         line_regex,
     })
 }

@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -24,6 +25,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows import observers
@@ -46,8 +48,12 @@ def caller(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> Iterator[LinkCaller]:
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", MACHINE_ID)
+    LocalProjectCheckoutManager(temp_db).register(
+        MACHINE_ID, sample_project["id"], str(tmp_path / "isolated-checkout")
+    )
     manager = LocalTaskManager(temp_db)
     ctx = RegistryContext(task_manager=manager)
     caller_session = ctx.session_manager.register(
@@ -98,7 +104,6 @@ def caller(
         "evaluate_task_scope",
         MagicMock(return_value=SimpleNamespace(accepted=True, scope_justification=None)),
     )
-    monkeypatch.setattr(ctx, "get_project_repo_path", MagicMock(return_value=None))
     registry = InternalToolRegistry(name="lifecycle-links")
     _lifecycle_status.register_reopen_task(registry, ctx)
     _lifecycle_status.register_de_escalate_task(registry, ctx)

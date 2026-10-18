@@ -19,18 +19,31 @@ pub struct ManifestSet {
 
 impl ManifestSet {
     /// Compiles `(provider_id, content)` rows as `_install_rows` does. A row that fails to
-    /// compile, or whose manifest names another provider, is skipped. A later row for the same
-    /// provider replaces an earlier one.
+    /// compile, or whose manifest names another provider, is skipped with a warning on stderr.
+    /// A later row for the same provider replaces an earlier one.
     pub fn from_rows(rows: &[(String, String)]) -> Self {
+        Self::from_rows_logged(rows, |line| eprintln!("gdaemon: {line}"))
+    }
+
+    /// `from_rows` with each skipped row reported through `warn`, in the same
+    /// `Skipping invalid detection manifest` form Python logs.
+    pub fn from_rows_logged(rows: &[(String, String)], mut warn: impl FnMut(&str)) -> Self {
         let mut manifests = HashMap::new();
         for (provider_id, content) in rows {
-            let Ok(compiled) = compile_manifest(content) else {
-                continue;
+            let error = match compile_manifest(content) {
+                Ok(compiled) if compiled.manifest_id() == provider_id.as_str() => {
+                    manifests.insert(provider_id.clone(), compiled);
+                    continue;
+                }
+                Ok(compiled) => format!(
+                    "row provider {provider_id:?} disagrees with manifest id {:?}",
+                    compiled.manifest_id()
+                ),
+                Err(err) => err.message().to_owned(),
             };
-            if compiled.manifest_id() != provider_id.as_str() {
-                continue;
-            }
-            manifests.insert(provider_id.clone(), compiled);
+            warn(&format!(
+                "Skipping invalid detection manifest provider_id={provider_id} error={error}"
+            ));
         }
         Self { manifests }
     }

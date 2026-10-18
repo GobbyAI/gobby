@@ -109,14 +109,17 @@ def test_binding_reaches_child_tasks() -> None:
         scope = current_caller()
         return None if scope is None else scope.user_id
 
-    async def _run() -> None:
+    async def _run() -> tuple[str | None, str | None]:
         token = bind_caller(TEST_USER_ID, database)
         try:
             child = asyncio.create_task(_seen_user())
-            assert await child == TEST_USER_ID
-            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID
+            child_user = await child
+            thread_user = await asyncio.to_thread(_seen_user_sync)
+            return child_user, thread_user
         finally:
             token.var.reset(token)
-        assert current_caller() is None
 
-    asyncio.run(_run())
+    child_user, thread_user = asyncio.run(_run())
+    assert child_user == TEST_USER_ID
+    assert thread_user == TEST_USER_ID
+    assert current_caller() is None
