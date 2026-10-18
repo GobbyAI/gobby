@@ -17,6 +17,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -50,6 +51,9 @@ SHAPING_FIXTURE = CONTRACTS_DIR / "shaping_cases.v1.json"
 
 _DAEMON_PORT = 61040
 _CWD = "/fixture/cwd"
+# stdio_tools reads the working directory only through its own ``os`` name, so
+# this stand-in pins that one lookup without patching the process-wide os.getcwd.
+_STDIO_TOOLS_OS = SimpleNamespace(getcwd=lambda: _CWD)
 _TASKS_LISTING = {
     "success": True,
     "tools": [
@@ -295,7 +299,7 @@ async def _capture() -> dict[str, Any]:
             "gobby.mcp_proxy.stdio_server.resolve_daemon_url",
             return_value=f"http://127.0.0.1:{_DAEMON_PORT}",
         ),
-        patch("gobby.mcp_proxy.stdio_tools.os.getcwd", return_value=_CWD),
+        patch("gobby.mcp_proxy.stdio_tools.os", _STDIO_TOOLS_OS),
     ):
         daemon = _ScriptedDaemon()
         async with _connected_client(_server(daemon)) as session:
@@ -346,7 +350,7 @@ async def _capture_shaping() -> dict[str, Any]:
             "gobby.mcp_proxy.stdio_server.resolve_daemon_url",
             return_value=f"http://127.0.0.1:{_DAEMON_PORT}",
         ),
-        patch("gobby.mcp_proxy.stdio_tools.os.getcwd", return_value=_CWD),
+        patch("gobby.mcp_proxy.stdio_tools.os", _STDIO_TOOLS_OS),
     ):
         for name, tool, arguments, responses in _SHAPING_CASES:
             daemon = _ScriptedDaemon(script=copy.deepcopy(responses))
