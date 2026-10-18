@@ -112,6 +112,7 @@ class SeatRun:
             definition_json=json.dumps(definition),
             enabled=True,
         )
+        AgentDefinitionManager(db).create("orchestrator", {}, project_id=project_id)
         self.instances.save(
             AgentStepInstance(
                 id=str(uuid.uuid4()),
@@ -436,7 +437,10 @@ async def test_bounce_and_park_use_current_unit_durable_outgoing_message(
     )
 
 
-async def test_park_review_next_resume_and_withdraw_exact_unit(temp_db: HubDatabase) -> None:
+async def test_park_review_next_resume_and_withdraw_exact_unit(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     first, second = run.task(), run.task()
@@ -517,7 +521,7 @@ async def linked_developer(
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
     await run.call("gobby-tasks", "link_commit", arguments, output)
     assert run.step == "submit"
-    await run.send(f"EVENT=CANDIDATE TASK={task.id} SHA={sha} NOTE=ready")
+    await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} SHA={sha} NOTE=ready")
     return run, task, sha, unlinked_sha
 
 
@@ -563,7 +567,6 @@ async def reviewer_authorities(
     await run.load(*run.vars["required_skills"])
     task = run.task()
     definitions = AgentDefinitionManager(temp_db)
-    definitions.create("orchestrator", {}, project_id=PROJECT_ID)
     definitions.create("lane-manager", {}, project_id=PROJECT_ID)
     actors = {
         "author": OWNER_ID,

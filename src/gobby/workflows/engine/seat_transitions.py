@@ -9,10 +9,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.close_receipts import LANDING_APPROVAL, list_close_receipts
+from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
     CandidateEvent,
@@ -67,6 +70,34 @@ def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
         )
     except (ValueError, TaskNotFoundError):
         return False
+
+
+def _linked_candidate_matches(db: HubDatabase, session_id: str, event: CandidateEvent) -> bool:
+    """Verify full and linked short IDs as commit objects in the task's checkout."""
+    tasks = LocalTaskManager(db)
+    owner = SessionManager(db).get(session_id)
+    if owner is None or event.task.claimed_by_session_id != owner.id:
+        return False
+    artifacts = tasks.artifacts.get_artifacts(event.task.id)
+    try:
+        repo_path = resolve_task_repo_path(
+            task_manager=tasks,
+            project_manager=LocalProjectManager(db),
+            task=event.task,
+            project_path=artifacts.worktree_path or artifacts.clone_path or owner.workspace_path,
+            machine_id=owner.machine_id,
+        )
+    except ValueError:
+        return False
+    if repo_path is None:
+        return False
+    identity = normalize_commit_sha(event.sha, cwd=repo_path)
+    if identity is None:
+        return False
+    return any(
+        normalize_commit_sha(linked, cwd=repo_path) == identity
+        for linked in event.task.commits or []
+    )
 
 
 def _clear_candidate() -> dict[str, Any]:
@@ -149,7 +180,7 @@ def _reviewer_message(
                 record for record in parked if not _same_task(db, record.get("task"), event)
             ],
         }
-    if incoming and kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(event):
+    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
         changes = _clear_candidate() if same_unit else {}
         remaining = [
             record
@@ -159,7 +190,7 @@ def _reviewer_message(
         if remaining != parked:
             changes["parked_candidates"] = remaining
         return changes
-    if incoming and kind == "CANDIDATE_RESUMED" and is_task_coordinator(event):
+    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(db, event, session_id):
         matching = [
             record
             for record in parked
@@ -275,10 +306,10 @@ def advance_seat(
             if (
                 message.to_session == session_id
                 and _same_task(db, state.get("assigned_task_id"), event)
-                and event.sha in (event.task.commits or [])
                 and event.fields.get("EVENT") == "CANDIDATE_VERDICT"
                 and event.fields.get("VERDICT") == "BOUNCE"
                 and is_task_reviewer(db, event)
+                and _linked_candidate_matches(db, session_id, event)
             ):
                 changes = {"bounced": True, "implementation_complete": False}
         if changes:

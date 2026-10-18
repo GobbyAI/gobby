@@ -135,13 +135,28 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     return CandidateEvent(message, task, sha, fields)
 
 
-def is_task_coordinator(event: CandidateEvent) -> bool:
-    """Withdrawal/resume comes from the owner, creator or delegator of that task."""
-    return event.message.from_session in {
-        event.task.claimed_by_session_id,
-        event.task.created_in_session_id,
-        event.task.delegated_by_session_id,
-    }
+def is_task_coordinator(db: HubDatabase, event: CandidateEvent, reviewer_session_id: str) -> bool:
+    """Only the unit's reviewer, root Orchestrator or owning LM controls its state."""
+    from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+
+    sessions = SessionManager(db)
+    caller = sessions.get(event.message.from_session)
+    reviewer = sessions.get(reviewer_session_id)
+    if (
+        caller is None
+        or reviewer is None
+        or caller.project_id != event.task.project_id
+        or reviewer.project_id != event.task.project_id
+        or caller.machine_id != reviewer.machine_id
+        or caller.id == event.task.claimed_by_session_id
+    ):
+        return False
+    if caller.id == reviewer.id:
+        return is_task_reviewer(db, event)
+    # Reuse the claim-release rule, including the enabled definition, root
+    # Orchestrator and bound running LM run with the reviewer's recorded lane.
+    return _can_release(RegistryContext(task_manager=LocalTaskManager(db)), caller, reviewer)
 
 
 def is_task_reviewer(db: HubDatabase, event: CandidateEvent) -> bool:
