@@ -1222,7 +1222,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.2, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.3, #24449)
 `kind: deliverable`
 
 Targets:
@@ -4227,6 +4227,321 @@ Consumers unchanged:
 - 8.2.7 - `_run_maintenance` summarizes and labels active projects and calls no reconcile, sweep, pending-cleanup retry or gcode index. test: `tests/code_index/test_code_index_maintenance.py::test_run_maintenance_only_summarizes_and_labels`.
 - 8.2.8 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 8.2.9 - For a soft-deleted project that the hub machine and a foreign machine select, `reconcile_deleted` returns `Busy` and deletes nothing while another connection holds the project lock. With no Falkor configured it returns `Failed` and keeps both selectors. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::deleted_projects_reconcile_for_every_machine`.
+
+### 8.3 Symbol summaries and community labels [category: code] (depends: 8.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/db/hub_summaries.rs`
+- `crates/gcode/src/db/hub_summaries/tests.rs`
+- `crates/gcode/src/db/hub_labels.rs`
+- `crates/gcode/src/db/hub_labels/tests.rs`
+- `crates/gcode/src/db/mod.rs::*` — scope-reason: declares `hub_summaries` and `hub_labels`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/job_summaries.rs`
+- `crates/gcode/src/node/hub/job_summaries/tests.rs`
+- `crates/gcode/src/node/hub/job_labels.rs`
+- `crates/gcode/src/node/hub/job_labels/tests.rs`
+- `crates/gcodeindex/src/jobs/config.rs`
+- `crates/gcodeindex/src/jobs/maintenance.rs`
+- `crates/gcodeindex/src/jobs/tests.rs`
+- `crates/gcodeindex/tests/job_maintenance.rs`
+- `src/gobby/code_index/summarizer.py::*` — operation: delete — scope-reason: the native summary job replaces it
+- `src/gobby/code_index/community_labeler.py::*` — operation: delete — scope-reason: the native label job replaces it
+- `src/gobby/code_index/summary_safety.py::*` — operation: delete — scope-reason: ported to `job_summaries`, and its last importers go
+- `src/gobby/code_index/community_label_safety.py::*` — operation: delete — scope-reason: ported to `job_labels`, and its last importer goes
+- `src/gobby/code_index/_storage/summaries.py::*` — operation: delete — scope-reason: ported to `db::hub_summaries`
+- `src/gobby/code_index/_storage/communities.py::*` — operation: delete — scope-reason: ported to `db::hub_labels`
+- `src/gobby/code_index/storage.py::*` — scope-reason: `CodeIndexStorage` drops the summary and community mixins
+- `src/gobby/code_index/models.py::*` — scope-reason: deletes `StoredCommunity`, whose last readers go
+- `src/gobby/code_index/maintenance.py::*` — scope-reason: deletes the loop, `_run_maintenance` and the summary and label helpers; `_registry_state`, `_reconcile_stale_selector` and `_sweep_orphaned_index_projects` stay for `prune.py` until 8.4
+- `src/gobby/runner_startup_code_index.py::*` — scope-reason: deletes `_start_code_index_tasks`, and `_repair_code_index_bm25`'s docstring and failure line name no worker
+- `src/gobby/runner.py::*` — scope-reason: drops `GobbyRunner`'s four code-index task and event annotations
+- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: `init_subsystems` stops starting the code-index tasks, and `_check_embedding_service` and `_initialize_vector_store` move out
+- `src/gobby/runner_startup_vectors.py`
+- `src/gobby/runner_lifecycle_shutdown.py::*` — operation: delete-lines — base-blob: 0909c6a910d75e89971a4591ead22e00713c371d — lines: 242-259, 261, 817-819 — scope-reason: removes the code-index drain and its two calls, because no code-index task is left to drain
+- `tests/code_index/test_summarizer.py::*` — operation: delete — scope-reason: tests the deleted summarizer
+- `tests/code_index/test_community_labeler.py::*` — operation: delete — scope-reason: tests the deleted labeler
+- `tests/test_runner_code_index_shutdown.py::*` — operation: delete — scope-reason: tests the deleted start and drain
+- `tests/code_index/test_maintenance_config_capture.py::*` — scope-reason: drops the maintenance-loop test and its imports, and the schema-sweep test stays
+- `tests/code_index/test_code_index_maintenance.py::*` — scope-reason: drops the tests of the deleted loop, `_run_maintenance` and summary helpers
+- `tests/code_index/test_code_index_storage.py::*` — scope-reason: drops the summary and community storage tests, and the remaining tests set summaries and attempts with SQL
+- `tests/code_index/test_gcode_storage_conformance.py::*` — scope-reason: sets the fixture's summary with SQL
+- `tests/test_bm25_startup.py::*` — scope-reason: deletes the worker-gate test, because the gate goes
+- `tests/test_runner_lifecycle.py::*` — scope-reason: two init tests stop patching `_start_code_index_tasks`
+- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: the phase recorder and the every-phase test drop `_start_code_index_tasks`
+- `tests/terminals/test_host_manager.py::*` — scope-reason: a shutdown test stops patching `_stop_code_index_workers`
+- `docs/guides/code-index.md`
+- `docs/guides/llm-features.md`
+- `docs/contracts/truncation.md`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Where it runs. The maintenance job (8.2) gains two steps for each hub row whose
+`maintain_project` returns `Indexed`, `IndexBusy` or `IndexFailed`, in Python's order:
+
+1. when `code_index.symbol_summary.enabled` holds,
+   `node::hub::job_summaries::summarize_project(&HubScope, root, SummaryRequest { batch_size, max_concurrency }, generate)`;
+2. when `code_index.community_label.enabled` holds,
+   `node::hub::job_labels::label_project(&HubScope, LabelRequest { batch_size, max_concurrency, profile }, generate)`.
+
+Each logs its report or error with the project to stderr, and the run moves on. A
+soft-deleted project gets neither, because `reconcile_deleted` returns no
+`ProjectOutcome` (8.2).
+
+`JobConfig` gains `code_index.symbol_summary.*` and `code_index.community_label.*`:
+`enabled`, `batch_size`, `max_concurrency`, `max_tokens`, `profile` and `candidates`.
+These keys are `activation: restart_required`, unlike the live keys of the P8 framing.
+`active_values` keeps a restart-required key at the value Python started with
+(`src/gobby/config/runtime_activation.py`), so the native job sees a change after
+Python restarts, as Python's loop does today.
+
+Generation. Both jobs take
+`generate: &(dyn Fn(&str) -> anyhow::Result<String> + Sync)`, so tests inject a fake.
+The production closure is `job_summaries::daemon_generator(project_id, candidates, profile, max_tokens)`,
+compiled under gcode's `ai` feature, which gcodeindex's default `gobby-code` dependency
+enables. For each prompt it:
+
+- resolves a fresh `AiContext::resolve(Some(project_id), &mut LocalAiConfigSource::empty())`,
+  as `crates/gcode/src/vector/code_symbols/embedding.rs` does. One shared context would
+  run every call one at a time, because its `AiLimiter` holds `ai.max_concurrency`,
+  which an empty source leaves at 1;
+- with a non-empty `candidates` list, calls
+  `generate_via_daemon_with_candidates(&ctx, prompt, None, Some(max_tokens), &candidates, GenerationBudget::Interactive)`,
+  each candidate as `FeatureCandidate { candidate, reasoning_effort: None }`;
+- with an empty list, calls
+  `generate_via_daemon_with_max_tokens(&ctx, prompt, None, Some(max_tokens), Some(profile), GenerationBudget::Interactive)`,
+  because Python falls back to the profile's candidates then;
+- returns the result's `text`.
+
+Each job runs up to its `max_concurrency` generations at once on `std::thread::scope`
+threads. Python bounds its calls with a semaphore of that size.
+
+Summaries (`node::hub::job_summaries`):
+
+1. `db::hub_summaries::unsummarized_symbols(conn, machine_id, project_id, batch_size)`
+   returns the hub machine's queue.
+2. Each symbol's source is lines `line_start..=line_end` (1-indexed) of the file at the
+   hub root, read with `String::from_utf8_lossy` and split at `\n`. A missing or
+   unreadable file, or an empty source, skips the symbol without a stamp, as Python's
+   `summarize_batch` does.
+3. The prompt is Python's `_SUMMARY_PROMPT`, verbatim, with kind, name, signature (empty
+   when absent) and source. The source is cut to `_MAX_SOURCE_CHARS` (2000). A longer
+   source adds Python's truncation marker:
+   `\n[truncated: rendered <n> chars from first 2000 of <len>; full source: <file>:<start>-<end>]`.
+4. A success writes the sanitized summary through
+   `db::hub_summaries::update_symbol_summary`, which matches the content hash. A
+   generation error, or an output that sanitizes to nothing, is stamped through
+   `mark_summaries_attempted`.
+5. `SummaryReport` counts written, skipped and failed symbols.
+
+The sanitizers port `src/gobby/code_index/summary_safety.py` into `job_summaries`:
+
+- `sanitize_source_for_summary_prompt(source, max_chars)` keeps the first `max_chars`
+  characters, turns each backtick into `'` and drops NUL.
+- `sanitize_symbol_summary(text)` keeps the text before the first ```` ``` ````, turns
+  backticks into `'`, drops NUL, collapses whitespace runs to one space, cuts to 500
+  characters and trims the end. An empty result is `None`.
+
+Counts and cuts are in `char`s, as Python's `str` counts code points.
+
+Labels (`node::hub::job_labels`):
+
+1. `db::hub_labels::unlabeled_communities(conn, machine_id, project_id, batch_size)`
+   returns the hub machine's queue.
+2. The prompt is Python's `_LABEL_PROMPT`, verbatim, which asks for JSON. Its data block
+   follows `_label_prompt`: `member_count`, `deterministic_label`, `label_candidates`,
+   `representatives`, then `members:` with the representatives, then the other members
+   sorted, cut to 40. The block passes through `sanitize_source_for_summary_prompt` at
+   8000 characters.
+3. `parse_label(text)` strips one surrounding code fence and parses a JSON object. It
+   needs a string `name` of 3 to 40 characters and a string `rationale` of at most 120,
+   the bounds of Python's `_LABEL_SCHEMA`. Anything else is `SchemaRejected`. A
+   generation error is `GenerationFailed`.
+4. A name equal to the community's deterministic label or one of its candidates is
+   written with source `deterministic`. Any other name passes
+   `sanitize_community_label(name, members)`, a port of
+   `src/gobby/code_index/community_label_safety.py`:
+   - strip a fence with `\A```[^\n]*\n` and `\n?```\s*\Z`, then surrounding quotes;
+   - 2 to 5 words and at most 40 characters;
+   - only `[A-Za-z0-9 /&+.-]`;
+   - no source extension (`\.(py|pyi|ts|tsx|js|mjs|cjs|css|rs|sh)\b`, ignoring case);
+   - not a member path.
+
+   A name that passes is written with source `model`, and one that fails is
+   `SanitationRejected`.
+5. Writes go through `db::hub_labels::update_community_label` with `label_model` set to
+   the profile and `label_confidence` NULL, as Python writes them. The write matches the
+   member signature. A write that loses to a newer partition is skipped without a
+   stamp, because the new row is queued afresh.
+6. Every outcome other than a write is stamped through `mark_labels_attempted`.
+   `LabelReport` counts each outcome, and the job logs it as Python's
+   `code_index.community_label.batch` line does.
+
+`db::hub_summaries` and `db::hub_labels` hold the SQL of
+`src/gobby/code_index/_storage/summaries.py` and `_storage/communities.py` with an
+explicit machine:
+
+- `unsummarized_symbols`: `function`, `class` and `method` symbols of the machine's
+  selected file versions with no summary and no attempt within the 300 s cooloff,
+  newest `updated_at` first;
+- `update_symbol_summary` and `mark_summaries_attempted`, both matching the content
+  hash;
+- `unlabeled_communities`: the machine's communities whose `labeled_signature` differs
+  from `member_signature`, outside the cooloff, largest first;
+- `update_community_label` and `mark_labels_attempted`, both matching the member
+  signature.
+
+Deliberate differences from Python:
+
+- No provider JSON schema. `/api/llm/generate` takes none, so the job parses the text
+  and applies the schema's bounds itself. Python's provider-structured call rejects the
+  same shapes.
+- Python's text service records the callers `code_index.symbol_summary` and
+  `code_index.community_label`. The route records `llm-generate-route` for both.
+- The calls use the `Interactive` budget: 30 s per candidate and 60 s per CLI candidate,
+  with the route capping the total.
+- With Python down, a call fails at the transport, and the symbol or community is
+  stamped and retried after the cooloff. Python's in-process failure is stamped the same
+  way.
+- Source lines split at `\n`, as the indexer counts them. Python's `splitlines` also
+  splits at `\r`, form feeds and Unicode separators.
+
+Python deletion:
+
+- `summarizer.py`, `community_labeler.py`, `summary_safety.py`,
+  `community_label_safety.py`, `_storage/summaries.py` and `_storage/communities.py`
+  go. `CodeIndexStorage` drops both mixins, and `models.py` drops `StoredCommunity`.
+- `maintenance.py` loses `code_index_maintenance_loop`, `_run_maintenance`,
+  `_label_unlabeled_communities`, `_summarize_unsummarized`, `_read_symbol_sources`,
+  `_update_symbol_summaries`, `_read_symbol_source` and `_SUMMARY_DB_WRITE_CONCURRENCY`.
+  `_registry_state`, `_reconcile_stale_selector` and `_sweep_orphaned_index_projects`
+  stay for `prune.py` until 8.4.
+- `runner_startup_code_index.py` loses `_start_code_index_tasks`, Python's last
+  code-index task. `_repair_code_index_bm25` keeps its `bool` return, which
+  `tests/config/test_runtime_loop_consumers.py` and `tests/test_bm25_startup.py`
+  assert. Its failure line reads "Code-index BM25 recovery failed: %s. Run `gobby
+  postgres repair-code-index`, then restart Gobby." and its docstring names no worker.
+- `init_subsystems` awaits the BM25 phase without keeping its result, and the
+  `_start_code_index_tasks` call and its import go.
+- `GobbyRunner` drops the `_code_index_task`, `_code_index_shutdown`,
+  `_sync_worker_task` and `_sync_worker_shutdown` annotations. Nothing else sets or
+  reads them once the start and the drain go.
+- `runner_lifecycle_shutdown.py` loses `_stop_code_index_workers` (lines 242-259 with
+  its trailing blank lines), its call in `_cancel_periodic_tasks` (261), and its call
+  and comment in `shutdown_daemon_services` (817-819). The file is 916 lines, and this
+  is a pure deletion, so it carries the `delete-lines` proof in Targets.
+
+Split. `src/gobby/runner_lifecycle_subsystems.py` is 883 lines. This leaf moves
+`_check_embedding_service` and `_initialize_vector_store` (lines 99-137 and 168-218),
+with the imports only they use, to the new `src/gobby/runner_startup_vectors.py`. The
+new module's logger is `logging.getLogger("gobby.runner_lifecycle")`, so log capture
+in tests still matches. `runner_lifecycle_subsystems.py` imports both names, so
+`init_subsystems` calls them through its module globals, and every
+`patch.object(runner_lifecycle_subsystems, …)` site keeps working.
+
+Tests:
+
+- `test_summarizer.py`, `test_community_labeler.py` and
+  `tests/test_runner_code_index_shutdown.py` go.
+- `test_maintenance_config_capture.py` keeps
+  `test_schema_sweep_applies_captured_database_url_on_the_next_pass`.
+- `test_code_index_storage.py` drops the community tests and the
+  `get_unsummarized_symbols`, `update_symbol_summary` and
+  `mark_symbol_summaries_attempted` tests, with the `StoredCommunity` and
+  `SUMMARY_MAX_CHARS` imports. `test_upsert_nulls_summary_on_hash_change`,
+  `test_upsert_preserves_summary_on_same_hash` and
+  `test_upsert_symbols_resets_summary_attempt_on_content_change` set the summary or
+  the attempt with SQL. `test_stale_content_hash_rejects_sync_marks_and_summary` drops
+  its summary assertion, which `db::hub_summaries` now covers.
+- `test_gcode_storage_conformance.py` sets its fixture's summary with SQL.
+- `test_code_index_maintenance.py` keeps only the reconcile and sweep tests, until 8.4.
+- `test_bm25_startup.py` deletes
+  `test_init_subsystems_skips_code_index_workers_after_failed_repair`.
+- `test_runner_lifecycle.py`, `test_runner_lifecycle_subsystems.py` and
+  `tests/terminals/test_host_manager.py` drop their `_start_code_index_tasks` and
+  `_stop_code_index_workers` patches. `test_runner_lifecycle.py`'s ordered events drop
+  `"code-index"`.
+
+Docs:
+
+- `docs/guides/code-index.md` says gdaemon's maintenance job writes symbol summaries
+  and community labels through the hub's `/api/llm/generate`.
+- `docs/guides/llm-features.md`'s `code_index.symbol_summary` row and the paragraph
+  under the table name the native job. A `code_index.community_label` row is added.
+- `docs/contracts/truncation.md` names `job_summaries::sanitize_symbol_summary` for the
+  500-character summary bound.
+
+Research context:
+- Python's summaries: `src/gobby/code_index/maintenance.py::_summarize_unsummarized`
+  reads sources with `_read_symbol_source` (1-indexed lines, `None` for a missing file)
+  and stamps only symbols that had a source.
+  `src/gobby/code_index/summarizer.py::SymbolSummarizer.summarize_one` sends the
+  profile and candidates with caller `code_index.symbol_summary`, and returns `None` on
+  any error.
+- Python's labels: `src/gobby/code_index/community_labeler.py::CommunityLabeler`.
+  `_generate_one` calls `generate_json` with `_LABEL_SCHEMA`. `_write_label` returns
+  `None` when the signature-guarded write loses, and `label_batch` stamps every outcome
+  that wrote nothing.
+- `src/gobby/ai/_text_generation_service.py::_candidate_requests` uses the request's
+  candidates when the list is non-empty, else the profile's. With candidates, the
+  profile only fills a missing reasoning effort (`src/gobby/config/feature_base.py::candidate_runtime_entries`),
+  and `_DEFAULT_PROFILE_REASONING` is `auto` for every profile. The adapters treat a
+  missing effort as `auto`, so dropping the profile changes nothing.
+- `crates/gcore/src/ai/daemon/operations.rs::generate_via_daemon_with_candidates`
+  sends no profile, and `generate_via_daemon_with_max_tokens` sends one. Both return a
+  `TextResult` whose `text` is the output.
+- `crates/gcore/src/ai_context.rs`: `AiContext::resolve` builds its `AiLimiter` from
+  `ai.max_concurrency`, which defaults to 1 (`config/resolve.rs::AI_DEFAULT_MAX_CONCURRENCY`).
+- The contract's default `candidates` lists are non-empty
+  (`crates/gcore/assets/config/runtime_config_contract.json`).
+- `src/gobby/servers/routes/llm.py` records caller `llm-generate-route` and accepts no
+  JSON schema.
+- The jobs run on the maintenance job's own thread (P8 framing), so the blocking HTTP
+  client never runs on a tokio worker.
+- Rejected alternatives:
+  - adding a schema field to `/api/llm/generate`, a Python route outside this plan,
+    when local parsing gives the same bounds;
+  - one shared `AiContext`, whose limiter serializes the calls;
+  - one leaf per feature: both run in one Python loop through one generator seam, and
+    the loop, the start function and the drain go once.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(hub_summaries) | test(hub_labels) | test(job_summaries) | test(job_labels)'`;
+  - `cargo nextest run -p gobby-codeindex`;
+  - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_code_index_storage.py tests/code_index/test_gcode_storage_conformance.py tests/code_index/test_code_index_maintenance.py tests/code_index/test_maintenance_config_capture.py tests/test_bm25_startup.py tests/test_runner_lifecycle.py tests/test_runner_lifecycle_subsystems.py tests/test_runner_backlog.py tests/terminals/test_host_manager.py tests/config/test_runtime_loop_consumers.py -v`.
+
+**Granularity:** eleven acceptance items. Summaries and labels are one outcome: one
+Python loop runs both through one generator seam, and the leaf that stops it must
+start both native halves (writer's choice 3). Deleting the loop removes Python's last
+code-index task, so the start function, the runner attributes and the drain go in the
+same leaf.
+
+Consumers unchanged:
+- `src/gobby/code_index/prune.py` — no-edit-reason: imports only `_reconcile_stale_selector`, which stays until 8.4.
+- `tests/test_runner_backlog.py` — no-edit-reason: patches `_check_embedding_service` and `_initialize_vector_store` on `runner_lifecycle_subsystems`, which still imports both.
+- `tests/config/test_runtime_loop_consumers.py` — no-edit-reason: asserts `_repair_code_index_bm25`'s `bool` return, which stays.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.3.1 - `unsummarized_symbols` returns the machine's selected versions' function, class and method symbols with no summary, skips a symbol within 300 s of an attempt and one of a foreign machine's version, orders by newest `updated_at` and honors `limit`. `update_symbol_summary` and `mark_summaries_attempted` change nothing under a stale content hash. test: `crates/gcode/src/db/hub_summaries/tests.rs::summary_queue_follows_the_python_storage`.
+- 8.3.2 - `unlabeled_communities` returns the machine's communities whose labeled signature differs from the member signature, outside the cooloff, largest first. `update_community_label` and `mark_labels_attempted` change nothing under a stale member signature. test: `crates/gcode/src/db/hub_labels/tests.rs::label_queue_and_writes_are_signature_guarded`.
+- 8.3.3 - On fixtures with backticks, NUL, a fence, whitespace runs, a 600-character summary and a multi-byte character at the cut, `sanitize_source_for_summary_prompt` and `sanitize_symbol_summary` return Python's `summary_safety` results, and an all-whitespace summary is `None`. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::sanitizers_match_summary_safety`.
+- 8.3.4 - With a fake generator, `summarize_project` sends nothing for a symbol whose file is missing and leaves it unstamped, stamps a symbol whose call fails and one whose output sanitizes to nothing, writes the sanitized summary on success, adds the truncation marker to a source over 2000 characters, and never runs more than `max_concurrency` calls at once. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::summaries_stamp_failures_and_skip_missing_files`.
+- 8.3.5 - `parse_label` accepts a fenced JSON object, and rejects non-JSON text, a name of 2 or 41 characters, a 121-character rationale and a non-string field. `sanitize_community_label` returns Python's `community_label_safety` results on fixtures for quotes, word count, charset, a source extension and a member path. test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_parsing_and_safety_match_python`.
+- 8.3.6 - With a fake generator, `label_project` writes a candidate name with source `deterministic`, writes a new safe name with source `model`, the profile as `label_model` and NULL confidence, stamps an unsafe name, a rejected shape and a failed call, and neither writes nor stamps a community whose member signature changed before the write. test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_outcomes_follow_the_python_labeler`.
+- 8.3.7 - The maintenance plan summarizes and then labels after `Indexed`, `IndexBusy` and `IndexFailed`, does neither after `Overlay` or any reconcile outcome, and drops each step when its `enabled` key is false. test: `crates/gcodeindex/src/jobs/tests.rs::maintenance_summarizes_then_labels_indexed_rows`.
+- 8.3.8 - Every `symbol_summary` and `community_label` default in `JobConfig` equals the contract's, and the default `candidates` lists are non-empty. test: `crates/gcodeindex/src/jobs/tests.rs::config_defaults_match_the_runtime_contract`.
+- 8.3.9 - One maintenance run over an active hub row with a queued symbol and no daemon to reach stamps that symbol attempted and leaves its summary NULL. test: `crates/gcodeindex/tests/job_maintenance.rs::maintenance_run_stamps_summaries_when_generation_fails`.
+- 8.3.10 - In standalone and hub mode, `init_subsystems` runs every phase and starts no code-index task. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
+- 8.3.11 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## E1 End-to-end verification
 `kind: verification`
