@@ -26,6 +26,7 @@ from gobby.tasks.tdd_compacted_output import (
     has_compacted_pytest_failure,
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
+from gobby.tasks.tdd_pytest_provenance import has_unverified_pytest_assignments
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
@@ -510,8 +511,8 @@ def _has_runtime_stub(
     output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
         0
     ]
-    # Config/env-enabled locals can forge fresh headers as well as frame markers.
-    if re.search(r"(?m)^\w+[ \t]+=[ \t]", output):
+    # Verify source spans before a local repr can forge fresh headers or frame markers.
+    if has_unverified_pytest_assignments(output, evidence, run, parse_cache):
         return False
     lines = output.splitlines()
     for index, line in enumerate(lines):
