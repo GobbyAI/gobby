@@ -412,6 +412,8 @@ async def main() -> None:
         identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
         assert broker.pid in identities, identities
         client.connect(path)
+        # The fixture's fake ps reads root/*.pid, so register this runner's identity first.
+        (root / 'runner-observer.pid').write_text(f'{os.getpid()} {os.getppid()} 123 {os.getpid()}-start\n')
         subscribe = {'suffix': '_prod_SBX', 'runKey': 'prod-run', 'runnerPid': os.getpid()}
         client.sendall(json.dumps(subscribe).encode() + b'\n')
         stream = client.makefile('rb')
@@ -454,6 +456,83 @@ asyncio.run(main())
     assert result.returncode == 0, result.stderr
     assert "production restart reap preserved the broker and its subscription" in result.stdout
     assert "during restart" in result.stderr
+
+
+def test_restart_reap_keeps_a_broker_started_by_a_worker_process(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    program = r"""
+import asyncio, json, os, signal, subprocess, sys, tempfile
+from pathlib import Path
+import psutil
+from gobby.agents import srt_monitor
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+root, node, runner = map(Path, sys.argv[1:])
+temporary = tempfile.TemporaryDirectory(prefix='sw-', dir=root.parent)
+directory = Path(temporary.name)
+worker_program = r'''
+import hashlib, json, os, sys
+from dataclasses import replace
+from pathlib import Path
+from gobby.agents import srt_monitor
+root, node, runner, directory = map(Path, sys.argv[1:])
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ, run_key='prod-run')
+print(json.dumps({'path': path, 'pid': srt_monitor._children[-1].pid}), flush=True)
+sys.stdin.read()
+'''
+
+
+async def main() -> None:
+    worker = subprocess.Popen(
+        [sys.executable, '-c', worker_program, str(root), str(node), str(runner), str(directory)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    started = None
+    try:
+        started = json.loads(await asyncio.to_thread(worker.stdout.readline))
+        # The broker is a grandchild of this runner but was registered in the worker.
+        identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
+        assert started['pid'] in identities, identities
+        await _reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        try:
+            survivor = psutil.Process(started['pid'])
+            alive = survivor.status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            alive = False
+        assert alive, 'restart reap killed the worker-started broker'
+        print('restart reap kept the worker-started broker')
+    finally:
+        worker.stdin.close()
+        worker.wait(timeout=10)
+        if started is not None:
+            try:
+                os.kill(started['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        temporary.cleanup()
+
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(harness.root), str(harness.node), str(harness.runner)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "restart reap kept the worker-started broker" in result.stdout
 
 
 def test_registration_survives_slow_identity_work(monitor_harness: MonitorHarness) -> None:
