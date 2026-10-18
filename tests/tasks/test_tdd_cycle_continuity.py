@@ -1494,9 +1494,16 @@ def test_real_pytest_error_heading_cannot_credit_runtime_stub(
     assert terminal_runtime_frame(original_section, original_tail) is None, original_tail
 
 
-@pytest.mark.parametrize("style", ["short", "long"])
+@pytest.mark.parametrize(
+    "style,helper_path",
+    [
+        pytest.param("short", None, id="short"),
+        pytest.param("long", None, id="long"),
+        pytest.param("long", "src/gobby/assert:1:helper.py", id="colon_filename"),
+    ],
+)
 def test_real_pytest_decoy_exception_message_cannot_credit_runtime_stub(
-    tmp_path: Path, style: str
+    tmp_path: Path, style: str, helper_path: str | None
 ) -> None:
     """A chained assertion's message cannot supply a NotImplementedError location."""
     production = "src/gobby/rendered_route.py"
@@ -1511,7 +1518,16 @@ def test_route():
     except AssertionError:
         register_checkout()
 """
-    for path, content in ((production, source), (test.path, test_source)):
+    helper_source = 'def fail():\n    raise AssertionError("decoy.py:1: NotImplementedError")\n'
+    if helper_path is not None:
+        test_source = test_source.replace(
+            'raise AssertionError("decoy.py:1: NotImplementedError")',
+            f'__import__("runpy").run_path("{helper_path}")["fail"]()',
+        )
+    sources = [(production, source), (test.path, test_source)]
+    if helper_path is not None:
+        sources.append((helper_path, helper_source))
+    for path, content in sources:
         file = tmp_path / path
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(content)
@@ -1535,7 +1551,20 @@ def test_route():
     assert re.search(r"E[ \t]+AssertionError: decoy.py:1: NotImplementedError", output), output
     assert "During handling of the above exception" in output, output
     if style == "long":
-        assert f"{test.path}:6: AssertionError\n" in output, output
+        assertion_location = f"{helper_path}:2" if helper_path else f"{test.path}:6"
+        assert f"{assertion_location}: AssertionError\n" in output, output
+    helper_edits = (
+        (
+            replace(
+                _edit(helper_path, 1),
+                source_after=helper_source,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=1),
+            ),
+        )
+        if helper_path is not None
+        else ()
+    )
     evidence = TranscriptEvidence(
         edits=(
             replace(
@@ -1550,6 +1579,7 @@ def test_route():
                 source_confirmed=True,
                 source_confirmed_at=START + timedelta(seconds=1),
             ),
+            *helper_edits,
             _edit(production, 3),
         ),
         validation_runs=(

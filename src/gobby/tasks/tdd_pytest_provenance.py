@@ -323,6 +323,12 @@ def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
     # attribution ambiguous, even when the later failure has the same exception.
     if (
         original_exceptions != {"NotImplementedError"}
+        or any(
+            not row.startswith(("E ", "E\t"))
+            and exception_location(row) is None
+            and len(location_pattern.findall(row)) > 1
+            for row in original_rows
+        )
         or any(error_header_pattern.match(row) for row in original_rows)
         or any(
             _PYTEST_FAILURE_HEADER_RE.match(row) or _RTK_FAILURE_HEADER_RE.match(row)
