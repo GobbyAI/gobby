@@ -190,3 +190,71 @@ def test_prepare_terminal_resume_refuses_foreign_owner(
             clone_id=None,
             workspace_path="/tmp/resume-foreign-owner",
         )
+
+
+def test_prepare_terminal_resume_names_an_ended_run_it_cannot_resume(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="resume-prep-parent-3",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="test",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id="resume-prep-child-3",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+        parent_session_id=parent.id,
+    )
+    runs = LocalAgentRunManager(temp_db)
+    original = runs.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="work",
+    )
+    temp_db.execute(
+        "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+        (original.id, child.id),
+    )
+    runs.start(original.id)
+    assert runs.complete(original.id) is not None
+
+    with pytest.raises(ValueError, match=f"run {original.id} is completed"):
+        prepare_terminal_resume(
+            ChildSessionManager(sessions),
+            existing_session_id=child.id,
+            original_run_id=original.id,
+            parent_session_id=parent.id,
+            project_id=sample_project["id"],
+            source="codex",
+            workflow_name=None,
+            agent_name=None,
+            initial_variables=None,
+            git_branch=None,
+            prompt="Continue",
+            model=None,
+            is_local=False,
+            max_agent_depth=3,
+            agent_run_id=str(uuid.uuid4()),
+            task_id=None,
+            claimed_session_id=None,
+            timeout_seconds=None,
+            sandbox_enabled=False,
+            requested_reasoning_effort=None,
+            effective_reasoning_effort=None,
+            reasoning_required=False,
+            reasoning_status="not_requested",
+            reasoning_message=None,
+            resume_metadata_json={"resumed_from_run_id": original.id},
+            worktree_id=None,
+            clone_id=None,
+            workspace_path=str(tmp_path / "checkout"),
+        )
