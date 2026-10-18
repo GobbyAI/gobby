@@ -25,9 +25,11 @@ from pydantic import (
 
 from gobby.utils.terminal_output import redact_terminal_output
 
-CONTRACT_VERSION = 3
+CONTRACT_VERSION = 4
 
 _LIST_LIMIT = 1000
+_READ_BUDGET = 8_388_608
+_GIT_TIMEOUT_LIMIT = 600_000
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _SRT_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _OPERATION = re.compile(r"[a-z][a-z0-9*-]*")
@@ -250,6 +252,74 @@ class StatusResult(NodeModel):
     behind: Count | None
 
 
+def _contract_version_only(value: int) -> int:
+    if value != CONTRACT_VERSION:
+        raise ValueError("v must equal CONTRACT_VERSION")
+    return value
+
+
+ReadLimit = Annotated[int, Field(ge=0, le=_READ_BUDGET)]
+GitTimeout = Annotated[int, Field(ge=1, le=_GIT_TIMEOUT_LIMIT)]
+
+
+class FilesQuery(NodeModel):
+    kind: Literal["files"]
+    paths: list[str] = Field(max_length=_LIST_LIMIT)
+    read_limit: ReadLimit | None
+
+
+class GitQuery(NodeModel):
+    kind: Literal["git"]
+    args: list[str]
+    stdin: str | None
+    timeout_ms: GitTimeout
+
+
+CheckoutReadQuery = Annotated[FilesQuery | GitQuery, Field(discriminator="kind")]
+
+
+class CheckoutReadPayload(NodeModel):
+    cwd: str
+    query: CheckoutReadQuery
+
+
+class CheckoutReadCommand(NodeModel):
+    type: Literal["command"]
+    v: Annotated[int, AfterValidator(_contract_version_only)]
+    request_id: str
+    command: Literal["checkout.read"]
+    payload: CheckoutReadPayload
+
+
+class FileEntry(NodeModel):
+    path: str
+    resolved: str
+    kind: Literal["file", "dir", "other", "missing", "outside"]
+    checkout_root: str | None
+    git_common_dir: str | None
+    project_root: str | None
+    project_id: str | None
+    data: str | None
+    truncated: bool
+
+
+class GitResult(NodeModel):
+    exit_code: int | None
+    timed_out: bool
+    stdout: str
+    stderr: str
+    truncated: bool
+
+
+class CheckoutReadResult(NodeModel):
+    root: str
+    project_id: str
+    home: str
+    temp_dir: str
+    files: list[FileEntry] | None
+    git: GitResult | None
+
+
 class ErrorBody(NodeModel):
     code: str
     message: str
@@ -261,7 +331,15 @@ class OkReply(NodeModel):
     v: Version
     request_id: str
     ok: Literal[True]
-    result: AcceptedResult | StoppedResult | EmptyResult | MergeResult | RemoveResult | StatusResult
+    result: (
+        AcceptedResult
+        | StoppedResult
+        | EmptyResult
+        | MergeResult
+        | RemoveResult
+        | StatusResult
+        | CheckoutReadResult
+    )
 
 
 class ErrReply(NodeModel):
@@ -462,7 +540,13 @@ class DetectionManifestsResult(NodeModel):
 
 
 CommandFrame = (
-    SpawnCommand | CancelCommand | WriteCommand | MergeCommand | RemoveCommand | StatusCommand
+    SpawnCommand
+    | CancelCommand
+    | WriteCommand
+    | MergeCommand
+    | RemoveCommand
+    | StatusCommand
+    | CheckoutReadCommand
 )
 ReplyFrame = OkReply | ErrReply
 
