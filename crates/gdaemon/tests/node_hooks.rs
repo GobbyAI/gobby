@@ -117,6 +117,91 @@ async fn drain_applies_dispositions() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    for stage in ["replay", "execute", "recheck"] {
+        for disposition in ["unlink", "requeued", "archived", "below_floor", "unauthorized"] {
+            let hub = FakeHub::start().await?;
+            let node = NodeHome::new(&hub)?;
+            let ledger = node.node.hook_ledger.clone();
+            let path = spool(&ledger, ACK_ID)?;
+            let decision = if disposition == "unauthorized" {
+                (StatusCode::UNAUTHORIZED, json!({"error":"refused"}))
+            } else {
+                (StatusCode::OK, json!({"disposition":disposition}))
+            };
+            if stage == "replay" {
+                ledger.claim(ACK_ID).await?.unwrap();
+                hub.script(REPLAY, vec![decision]);
+            } else {
+                hub.script(
+                    REPLAY,
+                    vec![
+                        (StatusCode::OK, json!({"disposition":"execute"})),
+                        decision,
+                    ],
+                );
+                hub.script(
+                    "/api/hooks/execute",
+                    vec![(
+                        if stage == "execute" && disposition == "unauthorized" {
+                            StatusCode::UNAUTHORIZED
+                        } else {
+                            StatusCode::OK
+                        },
+                        json!({"decision":"allow"}),
+                    )],
+                );
+            }
+            let pause_route = if stage == "replay" { REPLAY } else { "/api/hooks/execute" };
+            let (entered, release) = hub.pause_next(pause_route);
+            let drain_node = node.node.clone();
+            let draining = tokio::spawn(async move {
+                drain_once(&drain_node, &drain_node.hook_ledger).await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+            let release = if stage == "recheck" {
+                let (entered, recheck_release) = hub.pause_next(REPLAY);
+                release.send(()).unwrap();
+                tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+                recheck_release
+            } else {
+                release
+            };
+            let marker = ledger.marker(ACK_ID).await?;
+            let replacement = serde_json::to_vec(&receipt())?;
+            let temporary = ledger.inbox.join("replacement.tmp");
+            fs::write(&temporary, &replacement)?;
+            fs::rename(&temporary, &path)?;
+            release.send(()).unwrap();
+            draining.await??;
+            assert_eq!(
+                fs::read(&path).ok().as_deref(),
+                Some(replacement.as_slice()),
+                "{stage}/{disposition}: the replacement receipt must survive unchanged"
+            );
+            assert!(quarantine_reasons(&ledger)?.is_empty(), "{stage}/{disposition}");
+            if stage != "execute" {
+                assert_eq!(
+                    ledger.marker(ACK_ID).await?, marker,
+                    "{stage}/{disposition}: the old decision must not clear replacement state"
+                );
+            }
+            hub.script(
+                RECEIPTS,
+                vec![(StatusCode::OK, json!({"acknowledged":true,"carrying_envelope_ids":[]}))],
+            );
+            drain_once(&node.node, &ledger).await?;
+            assert!(!path.exists(), "the next sweep must consume the acknowledged receipt");
+            assert_eq!(hub.requests().last().unwrap().path, RECEIPTS);
+            assert!(ledger.is_processed(ACK_ID).await?);
+            hub.shutdown().await;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn drain_auth_rejection_and_retry_retention() -> anyhow::Result<()> {
     use gobby_daemon::nodes::hooks::drain::drain_once;
     for (stage, status) in [

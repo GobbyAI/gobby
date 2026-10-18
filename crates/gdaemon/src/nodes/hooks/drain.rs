@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -113,7 +113,32 @@ fn hook_paths(inbox: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(paths.into_iter().map(|(_, path)| path).collect())
 }
 
-fn read_envelope(path: &Path) -> Result<(Value, f64)> {
+#[derive(Clone)]
+struct SpoolIdentity {
+    // Keep the inode alive so an atomic replacement cannot reuse its identity.
+    file: Arc<File>,
+}
+
+impl SpoolIdentity {
+    fn matches(&self, path: &Path) -> io::Result<bool> {
+        let original = self.file.metadata()?;
+        match fs::symlink_metadata(path) {
+            Ok(current) => Ok(current.is_file()
+                && current.dev() == original.dev()
+                && current.ino() == original.ino()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn is_current(&self, path: &Path) -> Result<bool> {
+        let identity = self.clone();
+        let path = path.to_owned();
+        Ok(tokio::task::spawn_blocking(move || identity.matches(&path)).await??)
+    }
+}
+
+fn read_envelope(path: &Path) -> Result<(Value, f64, SpoolIdentity)> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -123,7 +148,7 @@ fn read_envelope(path: &Path) -> Result<(Value, f64)> {
         bail!("invalid spool file size/type");
     }
     let mut bytes = Vec::new();
-    file.take(MAX_ENVELOPE_BYTES + 1).read_to_end(&mut bytes)?;
+    (&file).take(MAX_ENVELOPE_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_ENVELOPE_BYTES {
         bail!("spool envelope exceeds size limit");
     }
@@ -132,12 +157,13 @@ fn read_envelope(path: &Path) -> Result<(Value, f64)> {
         .duration_since(metadata.modified()?)
         .unwrap_or_default()
         .as_secs_f64();
-    Ok((envelope, age))
+    Ok((envelope, age, SpoolIdentity { file: Arc::new(file) }))
 }
 
 async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result<()> {
     let owned_path = path.to_owned();
-    let (envelope, age) = tokio::task::spawn_blocking(move || read_envelope(&owned_path)).await??;
+    let (envelope, age, identity) =
+        tokio::task::spawn_blocking(move || read_envelope(&owned_path)).await??;
     if envelope["kind"] == "delivery-receipt" {
         return Ok(());
     }
@@ -152,19 +178,29 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
     .await?;
     let live = fresh || ledger.is_active(id, None).await?;
     let processed = ledger.is_processed(id).await?;
-    let Some(disposition) = replay(node, id, &envelope, age, processed, live).await? else {
+    let disposition = replay(node, id, &envelope, age, processed, live).await?;
+    if !identity.is_current(path).await? {
+        return Ok(());
+    }
+    let Some(disposition) = disposition else {
         release_claim(ledger, id).await?;
-        return quarantine(path, "replay_auth_rejected").await;
+        return quarantine(path, "replay_auth_rejected", &identity).await;
     };
     if disposition != Disposition::Execute {
-        return apply(ledger, id, path, disposition).await;
+        return apply(ledger, id, path, disposition, &identity).await;
     }
     ledger.clear_stale(id, None).await?;
     let request = request(node, "/api/hooks/execute", &envelope, Some(id)).await?;
+    if !identity.is_current(path).await? {
+        return Ok(());
+    }
     let outcome = forward_claimed(node, ledger, id, request).await;
+    if !identity.is_current(path).await? {
+        return Ok(());
+    }
     if outcome.response.status() == StatusCode::UNAUTHORIZED {
         release_claim(ledger, id).await?;
-        return quarantine(path, "replay_auth_rejected").await;
+        return quarantine(path, "replay_auth_rejected", &identity).await;
     }
     if outcome.response.status().is_success() {
         // forward_claimed finalizes the owned claim before returning. It has no
@@ -172,11 +208,15 @@ async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result
         ledger
             .mark_processed(id, None, envelope["hook_type"].as_str())
             .await?;
-        match replay(node, id, &envelope, age, true, false).await? {
-            Some(disposition) => apply(ledger, id, path, disposition).await?,
+        let disposition = replay(node, id, &envelope, age, true, false).await?;
+        if !identity.is_current(path).await? {
+            return Ok(());
+        }
+        match disposition {
+            Some(disposition) => apply(ledger, id, path, disposition, &identity).await?,
             None => {
                 release_claim(ledger, id).await?;
-                quarantine(path, "replay_auth_rejected").await?;
+                quarantine(path, "replay_auth_rejected", &identity).await?;
             }
         }
     }
@@ -203,19 +243,29 @@ enum Disposition {
     Execute,
 }
 
-async fn apply(ledger: &Ledger, id: &str, path: &Path, disposition: Disposition) -> Result<()> {
+async fn apply(
+    ledger: &Ledger,
+    id: &str,
+    path: &Path,
+    disposition: Disposition,
+    identity: &SpoolIdentity,
+) -> Result<()> {
+    if !identity.is_current(path).await? {
+        return Ok(());
+    }
     match disposition {
         Disposition::Retain | Disposition::Execute => Ok(()),
         Disposition::Requeued => {
-            unlink(path).await?;
-            ledger.forget(id).await?;
+            if unlink(path, identity).await? {
+                ledger.forget(id).await?;
+            }
             Ok(())
         }
-        Disposition::Unlink => unlink(path).await,
-        Disposition::Archived => quarantine(path, "superseded_hook").await,
+        Disposition::Unlink => unlink(path, identity).await.map(|_| ()),
+        Disposition::Archived => quarantine(path, "superseded_hook", identity).await,
         Disposition::BelowFloor => {
             release_claim(ledger, id).await?;
-            quarantine(path, "below_floor_response_capability").await
+            quarantine(path, "below_floor_response_capability", identity).await
         }
     }
 }
@@ -288,15 +338,25 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-async fn unlink(path: &Path) -> Result<()> {
+async fn unlink(path: &Path, identity: &SpoolIdentity) -> Result<bool> {
     let path = path.to_owned();
-    tokio::task::spawn_blocking(move || remove_if_present(&path)).await??;
-    Ok(())
+    let identity = identity.clone();
+    Ok(tokio::task::spawn_blocking(move || {
+        if !identity.matches(&path)? {
+            return Ok::<_, io::Error>(false);
+        }
+        remove_if_present(&path)?;
+        Ok(true)
+    }).await??)
 }
 
-async fn quarantine(path: &Path, reason: &'static str) -> Result<()> {
+async fn quarantine(path: &Path, reason: &'static str, identity: &SpoolIdentity) -> Result<()> {
     let path = path.to_owned();
+    let identity = identity.clone();
     tokio::task::spawn_blocking(move || {
+        if !identity.matches(&path)? {
+            return Ok(());
+        }
         let directory = path
             .parent()
             .context("spool has no parent")?
@@ -315,6 +375,10 @@ async fn quarantine(path: &Path, reason: &'static str) -> Result<()> {
             .open(&meta)?;
         file.write_all(&serde_json::to_vec(&json!({"reason":reason}))?)?;
         file.sync_all()?;
+        if !identity.matches(&path)? {
+            fs::remove_file(meta)?;
+            return Ok(());
+        }
         fs::rename(&path, directory.join(format!("{stem}.json")))?;
         File::open(&directory)?.sync_all()?;
         File::open(path.parent().context("spool has no parent")?)?.sync_all()?;
