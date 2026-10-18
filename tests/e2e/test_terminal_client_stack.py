@@ -1305,6 +1305,15 @@ def _wait_for_live_seats(client: httpx.Client, run_ids: tuple[str, str], label: 
     )
 
 
+def _assert_seat_sandboxed(client: httpx.Client, run_id: str) -> None:
+    """The seat's run record shows managed SRT enforcement."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    sandbox = run_response.json()["run"].get("sandbox")
+    assert isinstance(sandbox, dict), run_response.json()
+    assert sandbox.get("backend") == "srt" and sandbox.get("enforced") is True, sandbox
+
+
 def _restart_seat_state(client: httpx.Client, run_id: str, task_id: str) -> dict[str, Any]:
     """Read the seat fields that a restart must not change."""
     run_response = client.get(f"/api/agents/runs/{run_id}")
@@ -1404,6 +1413,7 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
             assert state["terminal_id"], state
             assert state["worktree_id"], state
             assert state["task_claimed_by"] == seat["owner_id"], state
+            _assert_seat_sandboxed(client, seat["run_id"])
         owners_before = _srt_owner_records(daemon_instance.gobby_home)
         # Two real restarts. The second shutdown runs in a runner that may have adopted
         # the broker the first runner started rather than started it itself.
@@ -1418,15 +1428,12 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
                 seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
                 for seat in seats
             }
-            restarts.append(
-                {
-                    "restart": restart,
-                    "after": after,
-                    "owners": _srt_owner_records(daemon_instance.gobby_home),
-                }
-            )
+            owners = _srt_owner_records(daemon_instance.gobby_home)
+            restarts.append({"restart": restart, "after": after, "owners": owners})
+            assert owners, f"no SRT monitor owner record after restart {restart}: {owners}"
             for seat in seats:
                 assert after[seat["run_id"]] == before[seat["run_id"]], (restart, seat)
+                _assert_seat_sandboxed(client, seat["run_id"])
                 assert Path(seat["worktree_path"]).is_dir(), seat
     finally:
         # Evidence first, so a failed run keeps what the restarts showed.
