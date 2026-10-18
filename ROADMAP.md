@@ -265,7 +265,7 @@ claimed; S2.3 is the template.
 | **S2.4** · #21560 | Tasks family; closes with its two halves |
 | **S2.4a** · #21560 | Reduced list, then get, then the write path (#21561, which hosts the hub authority contract #20822), stages, dependencies |
 | **S2.5** · #21562 | Sessions and transcripts — including the resumability decision |
-| **S2.4b** · #21560 | Claim and the session-bound transitions, plus the tasks MCP server, which carries claim |
+| **S2.4b** · #21560 | Claim and the session-bound transitions behind HTTP; the tasks MCP server moves with S2.12 |
 | **S2.6** · #21563 | Memory and search — repositories, recall injection, dream |
 | **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only; closes with its two halves |
 | **S2.7 node** · #24148 | Node-local agent spawn and worktrees in `gdaemon`, driven by the hub over the node channel |
@@ -276,7 +276,7 @@ claimed; S2.3 is the template.
 | **S2.11** · #21569 | Hook ingress and the node-local envelope ledger; closes with its two halves |
 | **S2.11 node** · #24150 | `gdaemon` node-local envelope ledger that drains the `ghook` spool and forwards each envelope to the hub's `POST /api/hooks/execute` |
 | **S2.11 hub** · #24151 | Hub-side hook ingress and the rule engine in Rust |
-| **S2.12** · #21570 | MCP front door flip — the last MCP step |
+| **S2.12** · #21570 | MCP front door flip — the last MCP step, including the tasks MCP server |
 | **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
 Stage 2 has started early under Lane 5: S2.1 #21557 async Postgres has
