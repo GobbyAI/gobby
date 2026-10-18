@@ -1,0 +1,2245 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "claude.trust_prompt.positive",
+      "provider": "claude",
+      "pane": "Do you trust the files in this folder?\nReady for input",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.trust_prompt.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.loop_prompt.positive",
+      "provider": "claude",
+      "pane": "potential loop detected\ncontinue? (y/n)",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "loop_prompt",
+        "reason": "loop",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.loop_prompt.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.approval_prompt.positive",
+      "provider": "claude",
+      "pane": "Permission: press enter to approve this command",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.approval_prompt.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.pane_provider_error.positive",
+      "provider": "claude",
+      "pane": "Error: 429 rate limit exceeded",
+      "expect": {
+        "state": "stall",
+        "rule_id": "pane_provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.pane_provider_error.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.provider_error.positive",
+      "provider": "claude",
+      "pane": "rate limit exceeded, please retry",
+      "expect": {
+        "state": "stall",
+        "rule_id": "provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.provider_error.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.context_full.positive",
+      "provider": "claude",
+      "pane": "The context window is full.",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "context_full",
+        "reason": "context_full",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.context_full.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.stop_hook_blocked.positive",
+      "provider": "claude",
+      "pane": "Stop hook error: blocked",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stop_hook_blocked",
+        "reason": "stop_hook_blocked",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.stop_hook_blocked.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.turn_in_flight.positive",
+      "provider": "claude",
+      "pane": "working esc to interrupt",
+      "expect": {
+        "state": "working",
+        "rule_id": "turn_in_flight",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.turn_in_flight.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.active_work.positive",
+      "provider": "claude",
+      "pane": "Running tests",
+      "expect": {
+        "state": "working",
+        "rule_id": "active_work",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.active_work.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.queued_continuation.positive",
+      "provider": "claude",
+      "pane": "Continue working on your task\nqueued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_continuation",
+        "reason": "queued_continuation",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.queued_continuation.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.queued_message.positive",
+      "provider": "claude",
+      "pane": "3 queued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_message",
+        "reason": "queued_message",
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.queued_message.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.status_bar.positive",
+      "provider": "claude",
+      "pane": "Opus bypass permissions\n? for shortcuts\nGrok Build",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.status_bar.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.idle_prompt.positive",
+      "provider": "claude",
+      "pane": "done\n❯\n>",
+      "expect": {
+        "state": "idle",
+        "rule_id": "idle_prompt",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.idle_prompt.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.stalled_input.positive",
+      "provider": "claude",
+      "pane": "❯ draft text\n> draft text",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stalled_input",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.stalled_input.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.composer_empty.positive",
+      "provider": "claude",
+      "pane": "────────────────────\n❯ \n────────────────────",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.composer_empty.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.composer_draft.positive",
+      "provider": "claude",
+      "pane": "────────────────────\n❯ draft\n────────────────────",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.composer_draft.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.source_shaped.positive",
+      "provider": "claude",
+      "pane": "def run():",
+      "expect": {
+        "state": "working",
+        "rule_id": "source_shaped",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "claude.source_shaped.negative",
+      "provider": "claude",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.trust_prompt.positive",
+      "provider": "codex",
+      "pane": "Do you trust the files in this folder?\nReady for input",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.trust_prompt.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.loop_prompt.positive",
+      "provider": "codex",
+      "pane": "potential loop detected\ncontinue? (y/n)",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "loop_prompt",
+        "reason": "loop",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.loop_prompt.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.approval_prompt.positive",
+      "provider": "codex",
+      "pane": "Permission: press enter to approve this command",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.approval_prompt.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.pane_provider_error.positive",
+      "provider": "codex",
+      "pane": "Error: 429 rate limit exceeded",
+      "expect": {
+        "state": "stall",
+        "rule_id": "pane_provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.pane_provider_error.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.provider_error.positive",
+      "provider": "codex",
+      "pane": "rate limit exceeded, please retry",
+      "expect": {
+        "state": "stall",
+        "rule_id": "provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.provider_error.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.context_full.positive",
+      "provider": "codex",
+      "pane": "The context window is full.",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "context_full",
+        "reason": "context_full",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.context_full.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.stop_hook_blocked.positive",
+      "provider": "codex",
+      "pane": "Stop hook error: blocked",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stop_hook_blocked",
+        "reason": "stop_hook_blocked",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.stop_hook_blocked.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.turn_in_flight.positive",
+      "provider": "codex",
+      "pane": "working esc to interrupt",
+      "expect": {
+        "state": "working",
+        "rule_id": "turn_in_flight",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.turn_in_flight.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.active_work.positive",
+      "provider": "codex",
+      "pane": "Running tests",
+      "expect": {
+        "state": "working",
+        "rule_id": "active_work",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.active_work.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.queued_continuation.positive",
+      "provider": "codex",
+      "pane": "Continue working on your task\nqueued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_continuation",
+        "reason": "queued_continuation",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.queued_continuation.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.queued_message.positive",
+      "provider": "codex",
+      "pane": "3 queued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_message",
+        "reason": "queued_message",
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.queued_message.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.status_bar.positive",
+      "provider": "codex",
+      "pane": "Opus bypass permissions\n? for shortcuts\nGrok Build",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.status_bar.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.idle_prompt.positive",
+      "provider": "codex",
+      "pane": "done\n❯\n>",
+      "expect": {
+        "state": "idle",
+        "rule_id": "idle_prompt",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.idle_prompt.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.stalled_input.positive",
+      "provider": "codex",
+      "pane": "❯ draft text\n> draft text",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stalled_input",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.stalled_input.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.composer_empty.positive",
+      "provider": "codex",
+      "pane": "────────────────────\n❯ \n────────────────────",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.composer_empty.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.composer_draft.positive",
+      "provider": "codex",
+      "pane": "────────────────────\n❯ draft\n────────────────────",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.composer_draft.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.source_shaped.positive",
+      "provider": "codex",
+      "pane": "def run():",
+      "expect": {
+        "state": "working",
+        "rule_id": "source_shaped",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex.source_shaped.negative",
+      "provider": "codex",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.trust_prompt.positive",
+      "provider": "droid",
+      "pane": "Do you trust the files in this folder?\nReady for input",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.trust_prompt.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.loop_prompt.positive",
+      "provider": "droid",
+      "pane": "potential loop detected\ncontinue? (y/n)",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "loop_prompt",
+        "reason": "loop",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.loop_prompt.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.approval_prompt.positive",
+      "provider": "droid",
+      "pane": "Permission: press enter to approve this command",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.approval_prompt.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.pane_provider_error.positive",
+      "provider": "droid",
+      "pane": "Error: 429 rate limit exceeded",
+      "expect": {
+        "state": "stall",
+        "rule_id": "pane_provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.pane_provider_error.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.provider_error.positive",
+      "provider": "droid",
+      "pane": "rate limit exceeded, please retry",
+      "expect": {
+        "state": "stall",
+        "rule_id": "provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.provider_error.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.context_full.positive",
+      "provider": "droid",
+      "pane": "The context window is full.",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "context_full",
+        "reason": "context_full",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.context_full.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.stop_hook_blocked.positive",
+      "provider": "droid",
+      "pane": "Stop hook error: blocked",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stop_hook_blocked",
+        "reason": "stop_hook_blocked",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.stop_hook_blocked.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.turn_in_flight.positive",
+      "provider": "droid",
+      "pane": "working esc to interrupt",
+      "expect": {
+        "state": "working",
+        "rule_id": "turn_in_flight",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.turn_in_flight.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.active_work.positive",
+      "provider": "droid",
+      "pane": "Running tests",
+      "expect": {
+        "state": "working",
+        "rule_id": "active_work",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.active_work.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.queued_continuation.positive",
+      "provider": "droid",
+      "pane": "Continue working on your task\nqueued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_continuation",
+        "reason": "queued_continuation",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.queued_continuation.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.queued_message.positive",
+      "provider": "droid",
+      "pane": "3 queued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_message",
+        "reason": "queued_message",
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.queued_message.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.status_bar.positive",
+      "provider": "droid",
+      "pane": "Opus bypass permissions\n? for shortcuts\nGrok Build",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.status_bar.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.idle_prompt.positive",
+      "provider": "droid",
+      "pane": "done\n❯\n>",
+      "expect": {
+        "state": "idle",
+        "rule_id": "idle_prompt",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.idle_prompt.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.stalled_input.positive",
+      "provider": "droid",
+      "pane": "❯ draft text\n> draft text",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stalled_input",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.stalled_input.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.composer_empty.positive",
+      "provider": "droid",
+      "pane": "╭────────────╮\n│ >          │\n╰────────────╯",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_empty",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.composer_empty.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.composer_draft.positive",
+      "provider": "droid",
+      "pane": "╭────────────╮\n│ > draft    │\n╰────────────╯",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_draft",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.composer_draft.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.source_shaped.positive",
+      "provider": "droid",
+      "pane": "def run():",
+      "expect": {
+        "state": "working",
+        "rule_id": "source_shaped",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "droid.source_shaped.negative",
+      "provider": "droid",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.trust_prompt.positive",
+      "provider": "agy",
+      "pane": "Do you trust the files in this folder?\nReady for input",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.trust_prompt.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.loop_prompt.positive",
+      "provider": "agy",
+      "pane": "potential loop detected\ncontinue? (y/n)",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "loop_prompt",
+        "reason": "loop",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.loop_prompt.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.artifact_approval.positive",
+      "provider": "agy",
+      "pane": "Action required (2 left)\nnew change\nopen approve reject\nKeyboard: y/n Approve/reject  esc Done",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "artifact_approval",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.artifact_approval.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.approval_prompt.positive",
+      "provider": "agy",
+      "pane": "Permission: press enter to approve this command",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.approval_prompt.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.pane_provider_error.positive",
+      "provider": "agy",
+      "pane": "Error: 429 rate limit exceeded",
+      "expect": {
+        "state": "stall",
+        "rule_id": "pane_provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.pane_provider_error.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.provider_error.positive",
+      "provider": "agy",
+      "pane": "rate limit exceeded, please retry",
+      "expect": {
+        "state": "stall",
+        "rule_id": "provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.provider_error.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.context_full.positive",
+      "provider": "agy",
+      "pane": "The context window is full.",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "context_full",
+        "reason": "context_full",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.context_full.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.stop_hook_blocked.positive",
+      "provider": "agy",
+      "pane": "Stop hook error: blocked",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stop_hook_blocked",
+        "reason": "stop_hook_blocked",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.stop_hook_blocked.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.turn_in_flight.positive",
+      "provider": "agy",
+      "pane": "working esc to interrupt",
+      "expect": {
+        "state": "working",
+        "rule_id": "turn_in_flight",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.turn_in_flight.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.active_work.positive",
+      "provider": "agy",
+      "pane": "Running tests",
+      "expect": {
+        "state": "working",
+        "rule_id": "active_work",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.active_work.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.queued_continuation.positive",
+      "provider": "agy",
+      "pane": "Continue working on your task\nqueued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_continuation",
+        "reason": "queued_continuation",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.queued_continuation.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.queued_message.positive",
+      "provider": "agy",
+      "pane": "3 queued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_message",
+        "reason": "queued_message",
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.queued_message.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.status_bar.positive",
+      "provider": "agy",
+      "pane": "Opus bypass permissions\n? for shortcuts\nGrok Build",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.status_bar.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.idle_prompt.positive",
+      "provider": "agy",
+      "pane": "done\n❯\n>",
+      "expect": {
+        "state": "idle",
+        "rule_id": "idle_prompt",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.idle_prompt.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.stalled_input.positive",
+      "provider": "agy",
+      "pane": "❯ draft text\n> draft text",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stalled_input",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.stalled_input.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.source_shaped.positive",
+      "provider": "agy",
+      "pane": "def run():",
+      "expect": {
+        "state": "working",
+        "rule_id": "source_shaped",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "agy.source_shaped.negative",
+      "provider": "agy",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.trust_prompt.positive",
+      "provider": "grok",
+      "pane": "Do you trust the files in this folder?\nReady for input",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.trust_prompt.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.loop_prompt.positive",
+      "provider": "grok",
+      "pane": "potential loop detected\ncontinue? (y/n)",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "loop_prompt",
+        "reason": "loop",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.loop_prompt.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.approval_prompt.positive",
+      "provider": "grok",
+      "pane": "Permission: press enter to approve this command",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.approval_prompt.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.pane_provider_error.positive",
+      "provider": "grok",
+      "pane": "Error: 429 rate limit exceeded",
+      "expect": {
+        "state": "stall",
+        "rule_id": "pane_provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.pane_provider_error.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.provider_error.positive",
+      "provider": "grok",
+      "pane": "rate limit exceeded, please retry",
+      "expect": {
+        "state": "stall",
+        "rule_id": "provider_error",
+        "reason": "provider_error",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.provider_error.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.context_full.positive",
+      "provider": "grok",
+      "pane": "The context window is full.",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "context_full",
+        "reason": "context_full",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.context_full.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.stop_hook_blocked.positive",
+      "provider": "grok",
+      "pane": "Stop hook error: blocked",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stop_hook_blocked",
+        "reason": "stop_hook_blocked",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.stop_hook_blocked.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.turn_in_flight.positive",
+      "provider": "grok",
+      "pane": "working (to cancel the turn)",
+      "expect": {
+        "state": "working",
+        "rule_id": "turn_in_flight",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.turn_in_flight.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.active_work.positive",
+      "provider": "grok",
+      "pane": "Running tests",
+      "expect": {
+        "state": "working",
+        "rule_id": "active_work",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.active_work.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.queued_continuation.positive",
+      "provider": "grok",
+      "pane": "Continue working on your task\nqueued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_continuation",
+        "reason": "queued_continuation",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.queued_continuation.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.queued_message.positive",
+      "provider": "grok",
+      "pane": "3 queued messages",
+      "expect": {
+        "state": "idle",
+        "rule_id": "queued_message",
+        "reason": "queued_message",
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.queued_message.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.status_bar.positive",
+      "provider": "grok",
+      "pane": "Opus bypass permissions\n? for shortcuts\nGrok Build",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.status_bar.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.idle_prompt.positive",
+      "provider": "grok",
+      "pane": "done\n❯\n>",
+      "expect": {
+        "state": "idle",
+        "rule_id": "idle_prompt",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.idle_prompt.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.stalled_input.positive",
+      "provider": "grok",
+      "pane": "❯ draft text\n> draft text",
+      "expect": {
+        "state": "idle",
+        "rule_id": "stalled_input",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.stalled_input.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.source_shaped.positive",
+      "provider": "grok",
+      "pane": "def run():",
+      "expect": {
+        "state": "working",
+        "rule_id": "source_shaped",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "grok.source_shaped.negative",
+      "provider": "grok",
+      "pane": "ordinary output",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "fixture.full",
+      "manifest": "tests/agents/fixtures/detection_manifest.toml",
+      "pane": "historical approval marker\nEarlier work completed successfully.\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\n╭──────────────────────────────────────╮\n│ Do you trust the files in this folder?│\n│                                      │\n│ 1. Trust Folder                      │\n│ 2. Trust parent Folder               │\n│ 3. Don't Trust                       │\n╰──────────────────────────────────────╯\n",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "trust_prompt",
+        "reason": "trust",
+        "issues": []
+      }
+    },
+    {
+      "id": "fixture.before-box",
+      "manifest": "tests/agents/fixtures/detection_manifest.toml",
+      "pane": "historical approval marker\nEarlier work completed successfully.\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\n",
+      "expect": {
+        "state": "blocked",
+        "rule_id": "approval_prompt",
+        "reason": "approval",
+        "issues": []
+      }
+    },
+    {
+      "id": "fixture.historical-only",
+      "manifest": "tests/agents/fixtures/detection_manifest.toml",
+      "pane": "historical approval marker\nEarlier work completed successfully.\n",
+      "expect": {
+        "state": "stall",
+        "rule_id": "historical_stall",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "fixture.open-box-after-closed",
+      "manifest": "tests/agents/fixtures/detection_manifest.toml",
+      "pane": "historical approval marker\nEarlier work completed successfully.\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\n╭──────────────────────────────────────╮\n│ Do you trust the files in this folder?│\n│                                      │\n│ 1. Trust Folder                      │\n│ 2. Trust parent Folder               │\n│ 3. Don't Trust                       │\n╰──────────────────────────────────────╯\n╭──────╮\n│ Do you trust the files in this folder?│\n",
+      "expect": {
+        "state": "stall",
+        "rule_id": "historical_stall",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "fixture.excluded-approval",
+      "manifest": "tests/agents/fixtures/detection_manifest.toml",
+      "pane": "Do you want to proceed?\n❯ 1. Yes\nesc to interrupt",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "invalid-pattern-fallback",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"broken\"\nstate = \"blocked\"\nreason = \"broken\"\npriority = 500\nregion = \"whole_recent\"\nline_regex = [\"(\"]\n\n[[rules]]\nid = \"fallback\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"ready\"]\n\n",
+      "pane": "ready",
+      "expect": {
+        "state": "idle",
+        "rule_id": "fallback",
+        "reason": null,
+        "issues": [
+          {
+            "rule_id": "broken",
+            "code": "invalid_pattern",
+            "pattern": "("
+          }
+        ]
+      }
+    },
+    {
+      "id": "pathological-backtracking",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"runaway\"\nstate = \"working\"\npriority = 100\nregion = \"whole_recent\"\nline_regex = [\"(a+)+$(?<=!)\"]\n\n[[rules]]\nid = \"fallback\"\nstate = \"idle\"\npriority = 50\nregion = \"whole_recent\"\ncontains = [\"ready\"]\n\n",
+      "pane": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa! ready",
+      "expect": {
+        "state": "idle",
+        "rule_id": "fallback",
+        "reason": null,
+        "issues": [
+          {
+            "rule_id": "runaway",
+            "code": "pattern_timeout",
+            "pattern": "(a+)+$(?<=!)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "oversize-pattern-dropped",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"oversize\"\nstate = \"working\"\npriority = 500\nregion = \"whole_recent\"\nline_regex = [\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]\n\n[[rules]]\nid = \"exact\"\nstate = \"idle\"\npriority = 400\nregion = \"whole_recent\"\nline_regex = [\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]\n\n",
+      "pane": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expect": {
+        "state": "idle",
+        "rule_id": "exact",
+        "reason": null,
+        "issues": [
+          {
+            "rule_id": "oversize",
+            "code": "invalid_pattern",
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    {
+      "id": "exclusion-invalid-drops-rule",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"guarded\"\nstate = \"blocked\"\nreason = \"guard\"\npriority = 500\nregion = \"whole_recent\"\ncontains = [\"ready\"]\n\n[[rules.not]]\nline_regex = [\"(\"]\n\n[[rules]]\nid = \"plain\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"ready\"]\n\n",
+      "pane": "ready",
+      "expect": {
+        "state": "idle",
+        "rule_id": "plain",
+        "reason": null,
+        "issues": [
+          {
+            "rule_id": "guarded",
+            "code": "invalid_pattern",
+            "pattern": "("
+          }
+        ]
+      }
+    },
+    {
+      "id": "contains-casefold-match",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ready_word\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"Ready\"]\n\n",
+      "pane": "ready now",
+      "expect": {
+        "state": "idle",
+        "rule_id": "ready_word",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "contains-casefold-miss",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ready_word\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"Ready\"]\n\n",
+      "pane": "re ady",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "conjunction-miss",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"both\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\nline_regex = [\"alpha\", \"beta\"]\n\n",
+      "pane": "alpha only",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "conjunction-hit",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"both\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\nline_regex = [\"alpha\", \"beta\"]\n\n",
+      "pane": "alpha\nbeta",
+      "expect": {
+        "state": "idle",
+        "rule_id": "both",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "bottom-two-lines-crlf",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"tail\"\nstate = \"idle\"\npriority = 100\nregion = \"bottom_non_empty_lines(2)\"\nline_regex = ['\\A y \\n z (?![\\s\\S])']\n\n",
+      "pane": "x\r\n\r\n y \r\n z \r\n",
+      "expect": {
+        "state": "idle",
+        "rule_id": "tail",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "bottom-one-line-miss",
+      "content": "id = \"fixture\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"tail\"\nstate = \"idle\"\npriority = 100\nregion = \"bottom_non_empty_lines(1)\"\nline_regex = ['\\A y \\n z (?![\\s\\S])']\n\n",
+      "pane": "x\r\n\r\n y \r\n z \r\n",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "composer-frame-empty",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s+\\S']\n\n",
+      "pane": "────────────────────\n❯ \n────────────────────",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_empty",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "composer-frame-draft",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s+\\S']\n\n",
+      "pane": "────────────────────\n❯ draft\n────────────────────",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_draft",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "composer-named-frame",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s+\\S']\n\n",
+      "pane": "──────── my-session ────────\n❯ \n──────── my-session ────────",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_empty",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "composer-no-frame",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s+\\S']\n\n",
+      "pane": "❯ ",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "composer-box-draft-claude",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯>$]\\s+\\S']\n\n",
+      "pane": "╭────────────╮\n│ > draft    │\n╰────────────╯",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex-bare-draft",
+      "content": "id = \"codex\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s+\\S']\n\n",
+      "pane": "• Earlier output\n\n  › draft prompt\n\n  gpt-5 · ~/repo\n? for shortcuts",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_draft",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex-bare-footer-warning",
+      "content": "id = \"codex\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s+\\S']\n\n",
+      "pane": "• Earlier output\n\n  › draft prompt\n\n  gpt-5 · ~/repo\n? for shortcuts  ⚠️ 2 warnings · f2 to view",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_draft",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex-bare-output-between",
+      "content": "id = \"codex\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s+\\S']\n\n",
+      "pane": "  › draft prompt\n• Working on it\n  gpt-5 · ~/repo\n? for shortcuts",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "codex-bare-no-model-line",
+      "content": "id = \"codex\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"composer_empty\"\nstate = \"idle\"\npriority = 80\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s*$']\n\n[[rules]]\nid = \"composer_draft\"\nstate = \"idle\"\npriority = 79\nregion = \"composer\"\nline_regex = ['(?m)^\\s*[❯›>$]\\s+\\S']\n\n",
+      "pane": "  › draft prompt\nplain line\n? for shortcuts",
+      "expect": {
+        "state": null,
+        "rule_id": null,
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "bundled-claude-frame-draft",
+      "provider": "claude",
+      "pane": "────────────────────\n❯ draft\n────────────────────",
+      "expect": {
+        "state": "working",
+        "rule_id": "status_bar",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "bundled-droid-box-draft",
+      "provider": "droid",
+      "pane": "╭────────────╮\n│ > draft    │\n╰────────────╯",
+      "expect": {
+        "state": "idle",
+        "rule_id": "composer_draft",
+        "reason": null,
+        "issues": []
+      }
+    },
+    {
+      "id": "refusal-bad-manifest-id",
+      "content": "id = \"Claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "manifest id must be a lowercase provider identifier"
+      }
+    },
+    {
+      "id": "refusal-bad-version",
+      "content": "id = \"claude\"\nversion = \"1.a\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "manifest version must be dotted-numeric"
+      }
+    },
+    {
+      "id": "refusal-engine-too-new",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 2\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "manifest engine 2 is newer than supported engine 1"
+      }
+    },
+    {
+      "id": "refusal-engine-zero",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 0\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "Input should be greater than or equal to 1"
+      }
+    },
+    {
+      "id": "refusal-no-rules",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\nrules = []\n",
+      "expect": {
+        "refusal": "Tuple should have at least 1 item after validation, not 0"
+      }
+    },
+    {
+      "id": "refusal-duplicate-rule-ids",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"y\"]\n\n",
+      "expect": {
+        "refusal": "manifest rule ids must be unique"
+      }
+    },
+    {
+      "id": "refusal-bad-rule-id",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"Bad\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "rule id must be a lowercase identifier"
+      }
+    },
+    {
+      "id": "refusal-region-sometimes",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"sometimes\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "unsupported detection region"
+      }
+    },
+    {
+      "id": "refusal-bottom-201",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"bottom_non_empty_lines(201)\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "unsupported detection region"
+      }
+    },
+    {
+      "id": "refusal-bottom-0",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"bottom_non_empty_lines(0)\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "unsupported detection region"
+      }
+    },
+    {
+      "id": "refusal-blocked-no-reason",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"blocked\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "blocked rules require a reason"
+      }
+    },
+    {
+      "id": "refusal-no-condition",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\n\n",
+      "expect": {
+        "refusal": "a match clause requires contains or line_regex"
+      }
+    },
+    {
+      "id": "refusal-blank-match-value",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"  \"]\n\n",
+      "expect": {
+        "refusal": "match values must be non-empty strings"
+      }
+    },
+    {
+      "id": "refusal-priority-too-high",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 10001\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "Input should be less than or equal to 10000"
+      }
+    },
+    {
+      "id": "refusal-unknown-key",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\nbogus = 1\n\n",
+      "expect": {
+        "refusal": "Extra inputs are not permitted"
+      }
+    },
+    {
+      "id": "refusal-missing-state",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\npriority = 10\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "Field required"
+      }
+    },
+    {
+      "id": "refusal-unknown-state",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"sleeping\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n",
+      "expect": {
+        "refusal": "Input should be 'blocked', 'idle', 'working' or 'stall'"
+      }
+    },
+    {
+      "id": "refusal-empty-not-clause",
+      "content": "id = \"claude\"\nversion = \"1\"\nengine = 1\n\n[[rules]]\nid = \"ok\"\nstate = \"idle\"\npriority = 100\nregion = \"whole_recent\"\ncontains = [\"x\"]\n\n[[rules.not]]\n\n",
+      "expect": {
+        "refusal": "a match clause requires contains or line_regex"
+      }
+    }
+  ]
+}
