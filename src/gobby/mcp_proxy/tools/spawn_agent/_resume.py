@@ -24,15 +24,27 @@ _RESUME_CHAIN_LIMIT = 32
 _INPUT_AXES = {"horizontal": "right", "vertical": "down", "balanced": "balanced"}
 
 
-def _paused_seat_has_live_pane_or_run(session: Session, db: Any, run_storage: Any) -> bool:
+def _paused_seat_has_live_pane_or_run(
+    session: Session, db: Any, run_storage: Any, live_host_epoch: str | None
+) -> bool:
     """Whether a paused seat is still live: a live managed pane or an active run.
 
+    A native pane is live only under the running host's epoch. A row stamped with
+    another epoch, or a pending row (which never carries an epoch), belongs to a host
+    that stopped, so it does not hold the seat. An unknown epoch keeps every native
+    row holding it. Tmux panes survive a host respawn, so they count by state alone.
     A paused seat whose pane is gone and whose run is cancelled, failed or absent
     is a dead seat, and it must stay resumable.
     """
     pane_rows = db.fetchall(
-        "SELECT 1 FROM terminals WHERE session_id = %s AND state IN ('pending', 'live') LIMIT 1",
-        (session.id,),
+        """
+        SELECT 1 FROM terminals
+        WHERE session_id = %s
+          AND state IN ('pending', 'live')
+          AND (%s::text IS NULL OR backend <> 'native' OR host_epoch = %s)
+        LIMIT 1
+        """,
+        (session.id, live_host_epoch, live_host_epoch),
     )
     if pane_rows:
         return True
@@ -50,6 +62,8 @@ def resolve_resume_target(
     run_storage: Any,
     agent_type: str,
     lane: str | None = None,
+    *,
+    live_host_epoch: str | None = None,
 ) -> Session:
     if session_manager is None or not project_id:
         raise ValueError("Resume requires a session manager and project context")
@@ -65,7 +79,9 @@ def resolve_resume_target(
         raise ValueError(f"Resume target uses {session.source}, not requested provider {provider}")
     if session.status in LIVE_SESSION_STATUSES and (
         session.status != "paused"
-        or _paused_seat_has_live_pane_or_run(session, session_manager.db, run_storage)
+        or _paused_seat_has_live_pane_or_run(
+            session, session_manager.db, run_storage, live_host_epoch
+        )
     ):
         raise ValueError(f"Resume target {ref} is still live ({session.status})")
     if session.agent_run_id:
@@ -115,6 +131,8 @@ async def resolve_seat_resume(
     run_storage: Any,
     agent_body: AgentDefinitionBody | None,
     lane: str | None,
+    *,
+    live_host_epoch: str | None = None,
 ) -> Session:
     """Resolve the stored seat a resume reference names, in the target or checkout project."""
     project_id = target_project_id
@@ -134,6 +152,7 @@ async def resolve_seat_resume(
         run_storage,
         agent_body.name if agent_body is not None else "default",
         lane,
+        live_host_epoch=live_host_epoch,
     )
 
 
