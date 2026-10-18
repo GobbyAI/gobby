@@ -53,7 +53,9 @@ with a `PATH` holding no Python interpreter (#24657 validation criterion 3).
   scripts named `python`, `python3` and `uv`; each writes `<sandbox>/python-invoked`
   and exits 127. Every no-Python test asserts the marker is absent. Later leaves add
   their stubs (sibling binaries, `node`, `npm`, `claude`, `codex`, `droid`) to the same
-  sandbox, so every earlier verb-level test keeps running the whole verb.
+  sandbox, so every earlier verb-level test keeps running the whole verb. From 1.6
+  on, the sandbox also holds a seeded verified SRT install (D10), which the verb's
+  SRT step reuses. 1.6.3 and 1.6.6 are exempt; they run on an empty SRT home.
 - **Release ownership.** Each leaf bumps by 0.0.1, from the executor's starting tip,
   every shipped binary whose crate or recursive path dependencies it changes. It
   updates `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS` and
@@ -150,14 +152,20 @@ recommendation. D5 to D9 are the Plan Writer's, recorded for review.
   path reaches it, and retiring it belongs with #21591 (Install and setup route
   family) and the parked #20151 (installer wizard). 1.10 removes it from the node
   setup docs.
-- **D10, SRT fixture.** The harness's `npm pack` stub copies the real registry
-  tarball, committed as `crates/gdaemon/tests/fixtures/node_setup/sandbox-runtime-0.0.79.tgz`
-  (3,975,831 bytes). `.pre-commit-config.yaml` excludes that exact path from
-  `check-added-large-files --maxkb=500`. Each SRT bump adds about 4 MB to history.
-  Rejected: a tarball composed from the `tests/fixtures/srt/` pieces. The receipt
-  records `tarball_sha256` and the verb stages with the pinned consts, so the verb's
-  own staging path (1.6.1, 1.9.3, 1.10.3) could not run without Python or a pin
-  seam in the shipped binary.
+- **D10, SRT test tarball.** Orchestrator #15977 ruled at 12:30 CDT on 2026-10-18.
+  No registry tarball is committed. Tests compose a minimal tarball in a temporary
+  directory at test time, from the four patch targets' exact 0.0.79 bytes in
+  `tests/fixtures/srt/` and the `package.json` fields the installer reads. The SRT
+  step is two library functions: `fetch_tarball` (D6's `npm pack` and the pin check)
+  and `install_from_tarball`, which takes a tarball its caller has checked and writes
+  the pinned receipt. The verb chains them with the pinned consts.
+  - The default suite installs from the composed tarball through
+    `install_from_tarball`, and seeds a verified install that way for every
+    verb-level test from 1.6 on. The verb itself refuses the composed tarball as
+    off-pin.
+  - One operator-opt-in test (`#[ignore]`, network) runs the verb's real
+    `npm pack` fetch, and E1 gate 3 repeats it on a Python-free machine.
+  - Rejected: committing the 3,975,831-byte registry tarball (repository size).
 - **D11, embedded Python-tree files.** gdaemon embeds crate-local copies, under
   `crates/gdaemon/assets/node_setup/`, of the SRT lockfile, `srt_runner.mjs`, and
   the claude and codex hook templates. `workspace_source_identity`
@@ -514,8 +522,6 @@ Targets:
 - `crates/gdaemon/assets/node_setup/srt_runner.mjs`
 - `crates/gdaemon/tests/node_setup.rs`
 - `crates/gdaemon/tests/node_setup_support/mod.rs`
-- `crates/gdaemon/tests/fixtures/node_setup/sandbox-runtime-0.0.79.tgz`
-- `.pre-commit-config.yaml`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
@@ -529,8 +535,9 @@ uses:
   `.previous` backup is removed). Otherwise:
 - `node` and `npm` are resolved from `PATH`; `node --version` must be at least
   22.12.0 (`NODE_MIN_VERSION`). Either missing is refused naming the requirement.
-- Staging is a `.<version>-*` directory beside the target. D6's `npm pack` writes
-  the tarball, whose SHA-256 must equal the pin. `package.json` is
+- Staging is a `.<version>-*` directory beside the target. `fetch_tarball` runs
+  D6's `npm pack` and requires the tarball's SHA-256 to equal the pin;
+  `install_from_tarball` does every step below (D10). `package.json` is
   `install_setup_srt.py::_PACKAGE_JSON`. The embedded lockfile (the D11 copy of
   `src/gobby/install/srt-package-lock.json`) is written as `package-lock.json` and
   checked. `npm ci --ignore-scripts --no-audit --no-fund --omit=dev` runs (180 s).
@@ -549,27 +556,37 @@ uses:
 - The pins (tarball, lockfile, runner and the four patched-file hashes, with every
   receipt field) sit beside `SRT_VERSION` in `runtime.rs`. Its lockout remediation
   `run \`gobby install srt\`` becomes `run \`gdaemon node install\``.
-- The harness gains stub `node` (prints `v22.12.0`) and `npm`. `npm pack` copies the
-  committed registry tarball fixture (D10), and `npm ci` extracts it into
-  `node_modules/@anthropic-ai/sandbox-runtime` with `/usr/bin/tar`. All four patch
-  targets are in that package. The executor fetches the fixture once with
-  `npm pack @anthropic-ai/sandbox-runtime@0.0.79`, and a test checks its hash. The
-  fixture's exact path joins the `exclude` of `.pre-commit-config.yaml`'s
-  `check-added-large-files` hook.
+- The harness gains stub `node` (prints `v22.12.0`) and `npm`, and two helpers.
+  `minimal_srt_tarball` decompresses the four `.js.gz` originals in
+  `tests/fixtures/srt/` to their `package/dist/...` paths, writes `package.json` with
+  the pinned name and version, and archives them with `/usr/bin/tar -czf`. The stub
+  `npm pack` copies that tarball, and `npm ci` extracts it into
+  `node_modules/@anthropic-ai/sandbox-runtime`. `seed_verified_srt` runs
+  `install_from_tarball` on it, and every verb-level test from 1.6 on calls it, so the
+  verb's SRT step reuses that install. 1.6.3 and 1.6.6 do not, because they exercise
+  `fetch_tarball` on an empty SRT home.
 
 Research context:
 - `SrtRelease` (`src/gobby/utils/dependency_requirements.py`) pins version 0.0.79
   and the hashes; `verify_srt_installation_locked` checks the runner, lockfile,
-  receipt, patched files, manifest and the Node version.
-- Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_setup) | binary(node_agents)'`.
+  receipt, patched files, manifest and the Node version. It compares the receipt
+  with `SRT_RELEASE.receipt_fields()`, so a seeded install carrying the pinned
+  receipt verifies.
+- `tests/fixtures/srt/README.md`: the `.js.gz` files are the exact 0.0.79 bytes, and
+  Python's fake installations already copy them and apply the staging patches.
+- Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_setup) | binary(node_agents)'`;
+  operator opt-in, with network:
+  `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'test(install_fetches_registry_srt)' --run-ignored only`.
 
 **Acceptance:**
 
-- 1.6.1 - Install stages SRT from the fixture with stub `node` and `npm`, #24374's verifier accepts it, and a second run reuses it, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_stages_pinned_srt_without_python`.
-- 1.6.2 - A tarball off its pin, Node older than 22.12.0, or no `npm` is refused, leaving no staging directory and no install. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
-- 1.6.3 - The Rust pins, receipt fields and patch table equal the Python ones (read with `include_str!`), the lockfile and runner copies equal their Python originals byte for byte, and the embedded lockfile, runner and fixture match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
-- 1.6.4 - Patches apply once, skip a patched file, and refuse unknown bytes; a failed promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`.
-- 1.6.5 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 1.6.1 - `install_from_tarball` stages the composed minimal tarball with stub `node` and `npm`, and #24374's verifier accepts the result. test: `crates/gdaemon/tests/node_setup.rs::srt_installs_from_minimal_tarball`.
+- 1.6.2 - The verb reuses a seeded verified install without running `npm`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_reuses_verified_srt_without_python`.
+- 1.6.3 - The verb refuses a tarball off its pin (the composed one), Node older than 22.12.0, or no `npm`, leaving no staging directory and no install, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
+- 1.6.4 - The Rust pins, receipt fields and patch table equal the Python ones (read with `include_str!`), the lockfile and runner copies equal their Python originals byte for byte, and the embedded lockfile and runner match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
+- 1.6.5 - Patches apply once, skip a patched file, and refuse unknown bytes; a failed promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`.
+- 1.6.6 - Run as the opt-in check, with network and Node.js 22.12.0 or later on `PATH` after the tripwires, the verb fetches the registry tarball with `npm pack`, matches its pin, and #24374's verifier accepts the install, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_fetches_registry_srt`.
+- 1.6.7 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 1.7 `gdaemon node install` installs claude hooks and the MCP entry [category: code] (depends: 1.6, #24372, #24355)
 `kind: deliverable`
@@ -718,7 +735,8 @@ and MCP steps.
   stay.
 - Golden as 1.7's, with `install_droid(project, mode="global")`.
 - The sequence test runs `gdaemon node install` and then `gdaemon node enroll`
-  against the TLS stub hub in one sandbox, as 1.10 documents.
+  against the TLS stub hub in one sandbox with a seeded SRT install (D10), as 1.10
+  documents.
 
 Research context:
 - `install_droid` writes the flat global `hooks.json`; #24372's project file is
@@ -805,6 +823,16 @@ none has run yet. Each must hold on `0.5.0`:
   are closed. The 1.4 floor move stays because production-size-growth requires it.
   The bare targets on `gcode_versions.py`, `runtime.rs` and `repair.rs` are
   re-scoped before any re-derive once their files carry symbols.
+- 2026-10-18: Orchestrator #15977 (12:30 CDT) rejected the committed registry
+  tarball and accepted D5 to D9 and D11 as written. D10 now composes a minimal
+  tarball at test time, and 1.6 splits the SRT step into `fetch_tarball` and
+  `install_from_tarball`. Verb-level tests seed a verified install, and one opt-in
+  test proves the registry fetch. Re-scoping those bare targets is part of
+  expansion if their files land first.
+- 2026-10-18: Renewed consensus between Plan Writer gobby#16767 and Plan Adversary
+  gobby#16993 on the D10 repair at 91f3f31, with R1 folded in: 1.6.3 and 1.6.6 run
+  on an empty SRT home, not the seeded install. The stale M1 is withdrawn for a fresh
+  derivation.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -956,22 +984,30 @@ none has run yet. Each must hold on `0.5.0`:
   task_type: feature
   depends_on:
   - '1.4'
-  validation_criteria: '1.6.1: Install stages SRT from the fixture with stub `node`
-    and `npm`, #24374''s verifier accepts it, and a second run reuses it, with no
-    tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_stages_pinned_srt_without_python`.
+  validation_criteria: '1.6.1: `install_from_tarball` stages the composed minimal
+    tarball with stub `node` and `npm`, and #24374''s verifier accepts the result.
+    test: `crates/gdaemon/tests/node_setup.rs::srt_installs_from_minimal_tarball`.
 
-    1.6.2: A tarball off its pin, Node older than 22.12.0, or no `npm` is refused,
-    leaving no staging directory and no install. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
+    1.6.2: The verb reuses a seeded verified install without running `npm`, with no
+    tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_reuses_verified_srt_without_python`.
 
-    1.6.3: The Rust pins, receipt fields and patch table equal the Python ones (read
+    1.6.3: The verb refuses a tarball off its pin (the composed one), Node older than
+    22.12.0, or no `npm`, leaving no staging directory and no install, with no tripwire
+    fired. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`.
+
+    1.6.4: The Rust pins, receipt fields and patch table equal the Python ones (read
     with `include_str!`), the lockfile and runner copies equal their Python originals
-    byte for byte, and the embedded lockfile, runner and fixture match their pins.
-    test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
+    byte for byte, and the embedded lockfile and runner match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`.
 
-    1.6.4: Patches apply once, skip a patched file, and refuse unknown bytes; a failed
+    1.6.5: Patches apply once, skip a patched file, and refuse unknown bytes; a failed
     promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`.
 
-    1.6.5: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    1.6.6: Run as the opt-in check, with network and Node.js 22.12.0 or later on `PATH`
+    after the tripwires, the verb fetches the registry tarball with `npm pack`, matches
+    its pin, and #24374''s verifier accepts the install, with no tripwire fired. test:
+    `crates/gdaemon/tests/node_setup.rs::install_fetches_registry_srt`.
+
+    1.6.7: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
     `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
   labels:
   - covers:node-install-enrollment:1.6:1.6.1
@@ -979,6 +1015,8 @@ none has run yet. Each must hold on `0.5.0`:
   - covers:node-install-enrollment:1.6:1.6.3
   - covers:node-install-enrollment:1.6:1.6.4
   - covers:node-install-enrollment:1.6:1.6.5
+  - covers:node-install-enrollment:1.6:1.6.6
+  - covers:node-install-enrollment:1.6:1.6.7
   tdd: true
   source_section: '1.6'
   implementation_domain: backend
