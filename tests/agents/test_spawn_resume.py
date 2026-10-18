@@ -277,6 +277,45 @@ async def test_cleanup_preserves_session_when_run_cannot_be_read(
     assert "new-run" in caplog.text
 
 
+def test_relaunch_binds_a_paused_seat_only_when_the_resolver_proved_it_not_live(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    machine_id = "21000000-0000-4000-8000-000000000001"
+    parent = session_manager.register("parent-paused-seat", machine_id, "codex", project_id)
+    target = session_manager.register("paused-native-thread", machine_id, "codex", project_id)
+    session_manager.update_status(target.id, "paused")
+    run_id = str(uuid.uuid4())
+    LocalAgentRunManager(session_manager.db).create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="Continue",
+        run_id=run_id,
+        child_session_id=target.id,
+    )
+    assert not rebind_agent_run(
+        session_manager.db,
+        session_id=target.id,
+        expected_run_id=None,
+        new_run_id=run_id,
+        workflow_name=None,
+        relaunch_parent_session_id=parent.id,
+    )
+    assert rebind_agent_run(
+        session_manager.db,
+        session_id=target.id,
+        expected_run_id=None,
+        new_run_id=run_id,
+        workflow_name=None,
+        relaunch_parent_session_id=parent.id,
+        paused_seat_not_live=True,
+    )
+    refreshed = session_manager.get(target.id)
+    assert refreshed is not None
+    assert refreshed.status == "active"
+    assert refreshed.agent_run_id == run_id
+
+
 def test_relaunch_binding_is_atomic_and_hooks_reuse_session(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:

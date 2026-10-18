@@ -274,7 +274,9 @@ The persisted Markdown remains available to UI/API session reads.
 recent failed attempt. It returns authored content marked `failed_not_deliverable`,
 without a delivery receipt or pending marker. It cannot make a failed attempt
 eligible for automatic delivery. `get_handoff(agent_run_id=...)` separately reads
-a child's final handoff for its parent or bound clear successor.
+a child's final handoff for its parent or bound clear successor. That `agent_end`
+handoff is parent-facing by design: its delivery continuation is the parent session,
+no automatic path delivers it, and the ending child cannot read it back through this call.
 
 No handoff content is injected through provider `additionalContext`; no bounded copy,
 summary pointer, stale-tail merge, or latest-project fallback participates in delivery.
