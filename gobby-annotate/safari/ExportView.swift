@@ -49,6 +49,7 @@ struct ExportView: View {
               }
               .lineLimit(1)
               .buttonStyle(.bordered)
+              .controlSize(.large)
             }.padding(.vertical, 4)
           }
         }
@@ -63,7 +64,7 @@ struct ExportView: View {
           Button("Clear interrupted transfers") {
             do {
               try ExportStore.shared().clearInterrupted()
-              status = "Interrupted transfers cleared. Completed exports retained."
+              report("Interrupted transfers cleared. Completed exports retained.")
             } catch { self.error = error.localizedDescription }
           }
         }
@@ -110,7 +111,7 @@ struct ExportView: View {
         isPresented: $saving, document: document, contentType: .zip, defaultFilename: name
       ) { result in
         switch result {
-        case .success: status = "Export saved. Staged copy retained."
+        case .success: report("Export saved. Staged copy retained.")
         case .failure(let failure): error = failure.localizedDescription
         }
       }
@@ -154,14 +155,15 @@ struct ExportView: View {
           .accessibilityAddTraits(.updatesFrequently)
       }
     }
-    .onChange(of: status) { _, newValue in
-      if !newValue.isEmpty { AccessibilityNotification.Announcement(newValue).post() }
-    }
+  }
+  private func report(_ message: String) {
+    status = message
+    AccessibilityNotification.Announcement(message).post()
   }
   private func remove(_ done: String, _ work: (ExportStore) throws -> Void) {
     do {
       try work(ExportStore.shared())
-      status = done
+      report(done)
     } catch { self.error = error.localizedDescription }
     refresh()
   }
