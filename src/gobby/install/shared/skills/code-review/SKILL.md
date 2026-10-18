@@ -179,7 +179,7 @@ follows this workflow and returns findings in the field shape above.
 ## Pre-Commit Self-Review
 
 Two gates cover every Git operation that records reviewable content:
-`commit`, `merge`, `cherry-pick`, and `revert`. `require-code-review-skill`
+`commit`, `merge`, `rebase`, `cherry-pick`, and `revert`. `require-code-review-skill`
 blocks the first such operation of a context epoch until this skill is loaded.
 `require-code-review-self-review` blocks each later one until an
 `ocr delegate rule` call has run since the previous operation, so loading this
