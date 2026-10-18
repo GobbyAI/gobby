@@ -148,7 +148,9 @@ fn read_envelope(path: &Path) -> Result<(Value, f64, SpoolIdentity)> {
         bail!("invalid spool file size/type");
     }
     let mut bytes = Vec::new();
-    (&file).take(MAX_ENVELOPE_BYTES + 1).read_to_end(&mut bytes)?;
+    (&file)
+        .take(MAX_ENVELOPE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_ENVELOPE_BYTES {
         bail!("spool envelope exceeds size limit");
     }
@@ -157,7 +159,13 @@ fn read_envelope(path: &Path) -> Result<(Value, f64, SpoolIdentity)> {
         .duration_since(metadata.modified()?)
         .unwrap_or_default()
         .as_secs_f64();
-    Ok((envelope, age, SpoolIdentity { file: Arc::new(file) }))
+    Ok((
+        envelope,
+        age,
+        SpoolIdentity {
+            file: Arc::new(file),
+        },
+    ))
 }
 
 async fn drain_file(node: &NodeServices, ledger: &Ledger, path: &Path) -> Result<()> {
@@ -347,7 +355,8 @@ async fn unlink(path: &Path, identity: &SpoolIdentity) -> Result<bool> {
         }
         remove_if_present(&path)?;
         Ok(true)
-    }).await??)
+    })
+    .await??)
 }
 
 async fn quarantine(path: &Path, reason: &'static str, identity: &SpoolIdentity) -> Result<()> {

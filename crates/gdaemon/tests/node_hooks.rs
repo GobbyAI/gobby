@@ -120,7 +120,13 @@ async fn drain_applies_dispositions() -> anyhow::Result<()> {
 async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
     use gobby_daemon::nodes::hooks::drain::drain_once;
     for stage in ["replay", "execute", "recheck"] {
-        for disposition in ["unlink", "requeued", "archived", "below_floor", "unauthorized"] {
+        for disposition in [
+            "unlink",
+            "requeued",
+            "archived",
+            "below_floor",
+            "unauthorized",
+        ] {
             let hub = FakeHub::start().await?;
             let node = NodeHome::new(&hub)?;
             let ledger = node.node.hook_ledger.clone();
@@ -136,10 +142,7 @@ async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
             } else {
                 hub.script(
                     REPLAY,
-                    vec![
-                        (StatusCode::OK, json!({"disposition":"execute"})),
-                        decision,
-                    ],
+                    vec![(StatusCode::OK, json!({"disposition":"execute"})), decision],
                 );
                 hub.script(
                     "/api/hooks/execute",
@@ -153,12 +156,15 @@ async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
                     )],
                 );
             }
-            let pause_route = if stage == "replay" { REPLAY } else { "/api/hooks/execute" };
+            let pause_route = if stage == "replay" {
+                REPLAY
+            } else {
+                "/api/hooks/execute"
+            };
             let (entered, release) = hub.pause_next(pause_route);
             let drain_node = node.node.clone();
-            let draining = tokio::spawn(async move {
-                drain_once(&drain_node, &drain_node.hook_ledger).await
-            });
+            let draining =
+                tokio::spawn(async move { drain_once(&drain_node, &drain_node.hook_ledger).await });
             tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
             let release = if stage == "recheck" {
                 let (entered, recheck_release) = hub.pause_next(REPLAY);
@@ -180,19 +186,29 @@ async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
                 Some(replacement.as_slice()),
                 "{stage}/{disposition}: the replacement receipt must survive unchanged"
             );
-            assert!(quarantine_reasons(&ledger)?.is_empty(), "{stage}/{disposition}");
+            assert!(
+                quarantine_reasons(&ledger)?.is_empty(),
+                "{stage}/{disposition}"
+            );
             if stage != "execute" {
                 assert_eq!(
-                    ledger.marker(ACK_ID).await?, marker,
+                    ledger.marker(ACK_ID).await?,
+                    marker,
                     "{stage}/{disposition}: the old decision must not clear replacement state"
                 );
             }
             hub.script(
                 RECEIPTS,
-                vec![(StatusCode::OK, json!({"acknowledged":true,"carrying_envelope_ids":[]}))],
+                vec![(
+                    StatusCode::OK,
+                    json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+                )],
             );
             drain_once(&node.node, &ledger).await?;
-            assert!(!path.exists(), "the next sweep must consume the acknowledged receipt");
+            assert!(
+                !path.exists(),
+                "the next sweep must consume the acknowledged receipt"
+            );
             assert_eq!(hub.requests().last().unwrap().path, RECEIPTS);
             assert!(ledger.is_processed(ACK_ID).await?);
             hub.shutdown().await;
