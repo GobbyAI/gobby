@@ -61,6 +61,7 @@ from gobby.config.tasks import (
 )
 from gobby.config.ui import UIConfig
 from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
+from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
@@ -1234,6 +1235,14 @@ class TestSessionLifecycleConfig:
     def test_workflow_audit_retention_is_configurable(self) -> None:
         config = SessionLifecycleConfig(workflow_audit_retention_days=21)
         assert config.workflow_audit_retention_days == 21
+
+    def test_default_transcript_archive_dir_resolves_under_gobby_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(home))
+        archive_dir = get_archive_dir(SessionLifecycleConfig().transcript_archive_dir)
+        assert archive_dir == home / "session_transcripts"
 
 
 class TestMemoryConfig:

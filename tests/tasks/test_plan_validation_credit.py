@@ -51,6 +51,7 @@ async def test_plan_validation_credit_observes_source_edit_freshness(
         default_validation_detection_config(),
         {"src/changed.rs"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     assert len(evidence.validation_runs) == 1
     assert evidence.validation_runs[0].categories == ("lint",)

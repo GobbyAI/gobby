@@ -132,6 +132,7 @@ async def test_claude_task_claims_are_derived(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     expected = (
@@ -192,6 +193,7 @@ async def test_codex_direct_mcp_task_claims_are_derived(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.task_claims == expected
@@ -302,6 +304,7 @@ async def test_codex_functions_exec_task_claims_are_derived(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.task_claims == expected

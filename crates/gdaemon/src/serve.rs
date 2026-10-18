@@ -202,6 +202,9 @@ pub fn run() -> Result<()> {
             else {
                 return Ok(());
             };
+            crate::nodes::hooks::drain::boot_release(&node.hook_ledger).await?;
+            let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
+            crate::nodes::hooks::drain::register_jobs(&mut heartbeat, node.clone())?;
             let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
             let ws = bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?;
             let doors = http
@@ -216,8 +219,13 @@ pub fn run() -> Result<()> {
                 node.clone(),
                 crate::nodes::channel::ChannelTiming::default(),
             ));
-            let result =
-                serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
+            let result = serve_doors(
+                doors,
+                tls.map(|loaded| loaded.config),
+                heartbeat,
+                shutdown_signal(),
+            )
+            .await;
             channel.abort();
             let _ = channel.await;
             drop(claim);
@@ -499,7 +507,13 @@ async fn serve_with_runtime(
         let table = RouteTable::new(shared.families, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));
     }
-    let result = serve_doors(doors, tls, shutdown).await;
+    let result = serve_doors(
+        doors,
+        tls,
+        crate::heartbeat::HeartbeatHost::new(),
+        shutdown,
+    )
+    .await;
     if let Some(native_ws) = &shared.native_ws {
         native_ws.shutdown().await;
     }
@@ -510,10 +524,9 @@ async fn serve_with_runtime(
 pub async fn serve_doors(
     doors: Vec<(TcpListener, FrontDoor)>,
     tls: Option<Arc<ServerConfig>>,
+    mut heartbeat: crate::heartbeat::HeartbeatHost,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
-    let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
     heartbeat.start()?;
     let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();

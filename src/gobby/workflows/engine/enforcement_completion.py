@@ -349,7 +349,33 @@ class EnforcementCompletionMixin:
                 )
                 if not handler_matches:
                     continue
-            if handler.get("action") == "set_variable":
+            if handler.get("action") == "advance_seat":
+                from gobby.workflows.engine.seat_transitions import advance_seat
+
+                changes = await offload(
+                    advance_seat,
+                    self.db,
+                    session_id,
+                    instance,
+                    mcp_tool,
+                    variables,
+                    tool_input,
+                    tool_output,
+                )
+                for changed_name, changed_value in changes.items():
+                    instance.variables[changed_name] = changed_value
+                    variables[changed_name] = changed_value
+                    vars_changed = True
+                    await offload(
+                        self._audit_step_set_variable,
+                        session_id,
+                        instance.agent_name,
+                        step_name,
+                        mcp_key,
+                        changed_name,
+                        changed_value,
+                    )
+            elif handler.get("action") == "set_variable":
                 var_name = handler.get("variable")
                 ctx = {
                     # Instance variables last so workflow-local state wins

@@ -185,8 +185,30 @@ def _run_lane(runs: LocalAgentRunManager, run_id: str | None) -> str | None:
     return lane if isinstance(lane, str) and lane else None
 
 
+def own_seat_resume(
+    session_manager: SessionManager, caller_ref: Any, agent: Any, resume_session_id: Any
+) -> bool:
+    """Whether the caller is a lane manager resuming its own lane's seat.
+
+    Admission and placement both decide through this check, so an autonomous caller
+    passes placement only where admission already allowed the same resume. A caller
+    that does not resolve is not an own-seat resume; the actor scope still refuses it.
+    """
+    try:
+        caller, agent_name = _spawn_caller(session_manager, caller_ref)
+    except ValueError:
+        return False
+    return _lane_manager_resumes_own_seat(
+        session_manager, caller, agent_name, agent, resume_session_id
+    )
+
+
 def _lane_manager_resumes_own_seat(
-    session_manager: SessionManager, caller: Session, agent: Any, resume_session_id: Any
+    session_manager: SessionManager,
+    caller: Session,
+    agent_name: str | None,
+    agent: Any,
+    resume_session_id: Any,
 ) -> bool:
     """Whether a running lane manager resumes its own lane's seat as that seat's own type.
 
@@ -198,6 +220,8 @@ def _lane_manager_resumes_own_seat(
     """
     from gobby.workflows.state_manager import SessionVariableManager
 
+    if agent_name != "lane-manager":
+        return False
     if not isinstance(resume_session_id, str) or not resume_session_id:
         return False
     definition = AgentDefinitionManager(session_manager.db).get_by_name(
@@ -262,10 +286,8 @@ def spawn_target_allowed(
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
         return True
-    if (
-        agent_name == "lane-manager"
-        and tool_name == "spawn_agent"
-        and _lane_manager_resumes_own_seat(session_manager, caller, agent, resume_session_id)
+    if tool_name == "spawn_agent" and _lane_manager_resumes_own_seat(
+        session_manager, caller, agent_name, agent, resume_session_id
     ):
         return True
     body = resolve_agent(agent_name, session_manager.db, project_id=caller.project_id)
@@ -305,7 +327,22 @@ def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
+    from gobby.workflows.engine.idle_declaration import readiness_message_completed
+    from gobby.workflows.engine.seat_transitions import candidate_landing_approved
+
     return {
+        "candidate_landing_approved": lambda caller_id,
+        task_id,
+        sha,
+        requested_task,
+        requested_sha: (
+            candidate_landing_approved(
+                session_manager, caller_id, task_id, sha, requested_task, requested_sha
+            )
+        ),
+        "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
+            session_manager, caller_id, output
+        ),
         "session_refs_equal": lambda caller_ref, left_ref, right_ref: session_refs_equal(
             session_manager, caller_ref, left_ref, right_ref
         ),

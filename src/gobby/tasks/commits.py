@@ -819,10 +819,11 @@ async def unlinked_task_tagged_commits_async(
     project_name: str | None,
     project_id: str | None,
     linked: Collection[str],
+    revs: Sequence[str] = ("HEAD",),
 ) -> tuple[list[str], list[str]]:
     """Return task-tagged commits absent from ``linked``, split by reachability.
 
-    The first list holds commits reachable from HEAD, the second those reachable
+    The first list holds commits reachable from ``revs``, the second those reachable
     only from other refs. Neither owner window applies: the scan starts at
     ``since`` (the task's creation) so a commit tagged for the task before its
     current claim still surfaces (#21531). A failed log raises ``RuntimeError``.
@@ -848,9 +849,9 @@ async def unlinked_task_tagged_commits_async(
             and not _shares_sha_prefix(commit.sha, linked)
         ]
 
-    on_head = await tagged("HEAD")
-    elsewhere = [sha for sha in await tagged("--all") if sha not in on_head]
-    return on_head, elsewhere
+    reachable = await tagged(*revs)
+    elsewhere = [sha for sha in await tagged("--all") if sha not in reachable]
+    return reachable, elsewhere
 
 
 def unlinked_task_tagged_commits(
