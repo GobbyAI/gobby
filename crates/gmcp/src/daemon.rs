@@ -72,6 +72,20 @@ impl Dialer {
         })
     }
 
+    /// The directory the dialer was created in.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// The caller's project: the cached id, or the one `.gobby/project.json` names under the cwd.
+    pub fn caller_project_id(&self) -> Option<String> {
+        let cached = self
+            .cached()
+            .ok()
+            .and_then(|state| state.caller_project.clone());
+        cached.or_else(|| caller_project(&self.cwd))
+    }
+
     pub fn request(
         &self,
         method: &str,
@@ -303,8 +317,10 @@ fn backend_unavailable(text: &str) -> Option<String> {
     })
 }
 
+/// The unavailable answer, worded and addressed the way the Python wrapper words it: `localhost` and the port.
 fn unavailable(base: &str, detail: &str) -> Value {
-    json!({"success":false, "error_code":"DAEMON_UNAVAILABLE", "error":format!("Gobby daemon HTTP control plane is unavailable at {base}: {detail}. Start it with `gobby start`, or check `gobby status`.")})
+    let port = base.rsplit(':').next().unwrap_or(base);
+    json!({"success":false, "error_code":"DAEMON_UNAVAILABLE", "error":format!("Gobby daemon HTTP control plane is unavailable at localhost:{port}: {detail}. Check `gobby status` or restart with `gobby restart --verbose`.")})
 }
 
 fn request_timeout(path: &str, timeout: Duration) -> Value {

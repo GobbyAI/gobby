@@ -1,0 +1,373 @@
+{
+  "cases": [
+    {
+      "name": "list_mcp_servers_compacts_rows",
+      "tool": "list_mcp_servers",
+      "arguments": {},
+      "responses": [
+        {
+          "success": true,
+          "servers": [
+            {
+              "id": "srv-1",
+              "name": "gobby-tasks",
+              "state": "connected",
+              "enabled": true,
+              "transport": "stdio",
+              "scope": "global",
+              "template": null,
+              "description": "tasks"
+            },
+            {
+              "id": "srv-2",
+              "name": "notes",
+              "state": "error",
+              "enabled": false,
+              "transport": "http",
+              "project_id": "00000000-0000-0000-0000-000000000002",
+              "template": "notes-template"
+            },
+            "legacy-name",
+            {
+              "name": ""
+            },
+            42,
+            {
+              "name": "bare"
+            }
+          ],
+          "total": 4,
+          "connected": 1,
+          "extra": "kept"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        }
+      ],
+      "envelope": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"success\": true,\n  \"servers\": [\n    {\n      \"name\": \"gobby-tasks\",\n      \"state\": \"connected\",\n      \"enabled\": true,\n      \"transport\": \"stdio\",\n      \"scope\": \"global\"\n    },\n    {\n      \"name\": \"notes\",\n      \"state\": \"error\",\n      \"enabled\": false,\n      \"transport\": \"http\",\n      \"scope\": \"global\",\n      \"template\": \"notes-template\"\n    },\n    {\n      \"name\": \"legacy-name\"\n    },\n    {\n      \"name\": \"bare\",\n      \"state\": \"unknown\",\n      \"enabled\": true\n    }\n  ],\n  \"total\": 4,\n  \"connected\": 1,\n  \"issues\": [\n    {\n      \"name\": \"notes\",\n      \"state\": \"error\",\n      \"transport\": \"http\",\n      \"enabled\": false\n    },\n    {\n      \"name\": \"bare\",\n      \"state\": \"unknown\"\n    }\n  ],\n  \"extra\": \"kept\"\n}"
+          }
+        ],
+        "structuredContent": {
+          "success": true,
+          "servers": [
+            {
+              "name": "gobby-tasks",
+              "state": "connected",
+              "enabled": true,
+              "transport": "stdio",
+              "scope": "global"
+            },
+            {
+              "name": "notes",
+              "state": "error",
+              "enabled": false,
+              "transport": "http",
+              "scope": "global",
+              "template": "notes-template"
+            },
+            {
+              "name": "legacy-name"
+            },
+            {
+              "name": "bare",
+              "state": "unknown",
+              "enabled": true
+            }
+          ],
+          "total": 4,
+          "connected": 1,
+          "issues": [
+            {
+              "name": "notes",
+              "state": "error",
+              "transport": "http",
+              "enabled": false
+            },
+            {
+              "name": "bare",
+              "state": "unknown"
+            }
+          ],
+          "extra": "kept"
+        },
+        "isError": false,
+        "resultType": "complete"
+      }
+    },
+    {
+      "name": "list_tools_strips_none_for_one_server",
+      "tool": "list_tools",
+      "arguments": {
+        "server_name": "gobby-tasks"
+      },
+      "responses": [
+        {
+          "success": true,
+          "server": null,
+          "tools": [
+            {
+              "name": "create_task",
+              "description": null,
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": null
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/gobby-tasks/tools",
+          "query": {},
+          "body": null
+        }
+      ],
+      "envelope": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"success\": true,\n  \"tools\": [\n    {\n      \"name\": \"create_task\",\n      \"inputSchema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"title\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  ]\n}"
+          }
+        ],
+        "structuredContent": {
+          "success": true,
+          "tools": [
+            {
+              "name": "create_task",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "isError": false,
+        "resultType": "complete"
+      }
+    },
+    {
+      "name": "list_tools_aggregates_servers_without_a_name",
+      "tool": "list_tools",
+      "arguments": {
+        "server_name": ""
+      },
+      "responses": [
+        {
+          "success": true,
+          "mcp_servers": {
+            "gobby-tasks": {
+              "state": "connected"
+            },
+            "broken": {
+              "state": "error"
+            },
+            "notes": {
+              "state": "connected"
+            }
+          }
+        },
+        {
+          "success": true,
+          "tools": [
+            {
+              "name": "create_task",
+              "description": null
+            }
+          ]
+        },
+        {
+          "success": false,
+          "error": "unreachable"
+        },
+        {
+          "success": true,
+          "tools": [
+            {
+              "name": "note",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/admin/status",
+          "query": {},
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/mcp/gobby-tasks/tools",
+          "query": {},
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/mcp/broken/tools",
+          "query": {},
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/mcp/notes/tools",
+          "query": {},
+          "body": null
+        }
+      ],
+      "envelope": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"success\": true,\n  \"servers\": [\n    {\n      \"name\": \"gobby-tasks\",\n      \"tools\": [\n        {\n          \"name\": \"create_task\"\n        }\n      ]\n    },\n    {\n      \"name\": \"notes\",\n      \"tools\": [\n        {\n          \"name\": \"note\",\n          \"inputSchema\": {\n            \"type\": \"object\"\n          }\n        }\n      ]\n    }\n  ]\n}"
+          }
+        ],
+        "structuredContent": {
+          "success": true,
+          "servers": [
+            {
+              "name": "gobby-tasks",
+              "tools": [
+                {
+                  "name": "create_task"
+                }
+              ]
+            },
+            {
+              "name": "notes",
+              "tools": [
+                {
+                  "name": "note",
+                  "inputSchema": {
+                    "type": "object"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "isError": false,
+        "resultType": "complete"
+      }
+    },
+    {
+      "name": "get_tool_schema_reshapes_the_answer",
+      "tool": "get_tool_schema",
+      "arguments": {
+        "server_name": "gobby-tasks",
+        "tool_name": "create_task"
+      },
+      "responses": [
+        {
+          "name": "create_task",
+          "description": null,
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            }
+          },
+          "server_name": "gobby-tasks"
+        }
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/tools/schema",
+          "query": {},
+          "body": {
+            "server_name": "gobby-tasks",
+            "tool_name": "create_task"
+          }
+        }
+      ],
+      "envelope": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"success\": true,\n  \"tool\": {\n    \"name\": \"create_task\",\n    \"inputSchema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"title\": {\n          \"type\": \"string\"\n        }\n      }\n    }\n  }\n}"
+          }
+        ],
+        "structuredContent": {
+          "success": true,
+          "tool": {
+            "name": "create_task",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "isError": false,
+        "resultType": "complete"
+      }
+    },
+    {
+      "name": "get_tool_schema_keeps_only_the_error",
+      "tool": "get_tool_schema",
+      "arguments": {
+        "server_name": "gobby-tasks",
+        "tool_name": "missing"
+      },
+      "responses": [
+        {
+          "error": "tool not found",
+          "detail": "dropped"
+        }
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/tools/schema",
+          "query": {},
+          "body": {
+            "server_name": "gobby-tasks",
+            "tool_name": "missing"
+          }
+        }
+      ],
+      "envelope": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"success\": false,\n  \"error\": \"tool not found\"\n}"
+          }
+        ],
+        "structuredContent": {
+          "success": false,
+          "error": "tool not found"
+        },
+        "isError": false,
+        "resultType": "complete"
+      }
+    }
+  ]
+}

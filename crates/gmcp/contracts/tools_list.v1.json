@@ -1,0 +1,663 @@
+{
+  "ttlMs": 0,
+  "cacheScope": "private",
+  "tools": [
+    {
+      "name": "list_mcp_servers",
+      "description": "\nList all MCP servers configured in the daemon.\n\nUse this for unknown-server discovery or explicit registry inspection.\nReturns connection status, templates, available tools, and resources.\n\nReturns:\n    Dict with servers list, total count, and connected count\n",
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "type": "object",
+        "title": "list_mcp_serversArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "list_mcp_serversDictOutput"
+      }
+    },
+    {
+      "name": "list_tools",
+      "description": "\nList tools from MCP servers.\n\nUse this when the tool name is unknown or for explicit inventory inspection.\n\nArgs:\n    server_name: Known server name (e.g., \"context7\", \"supabase\").\n\nReturns:\n    Dict with tool listings\n",
+      "inputSchema": {
+        "properties": {
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "server_name"
+        ],
+        "type": "object",
+        "title": "list_toolsArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "list_toolsDictOutput"
+      }
+    },
+    {
+      "name": "get_tool_schema",
+      "description": "\nGet the full inputSchema for a specific MCP tool. Call this directly\nfor a known unleased tool; use list_tools only when the tool name\nitself is unknown.\n",
+      "inputSchema": {
+        "properties": {
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "server_name",
+          "tool_name"
+        ],
+        "type": "object",
+        "title": "get_tool_schemaArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "get_tool_schemaDictOutput"
+      }
+    },
+    {
+      "name": "call_tool",
+      "description": "\nExecute a tool on a connected MCP server \u2014 the primary way to reach\nGobby's sub-servers (tasks, memory, skills, ...).\n\nPass `arguments` as a dict; `session_id` is the caller's session ref\n(#N or UUID) and `project_id` targets another project. Full call-context\nsemantics live in the server instructions. Returns a dict with success\nstatus and the tool result.\n",
+      "inputSchema": {
+        "properties": {
+          "server_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Name"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          },
+          "arguments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arguments"
+          },
+          "args": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Args"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent"
+          },
+          "preflight_enabled": {
+            "default": true,
+            "title": "Preflight Enabled",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "call_toolArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "call_toolDictOutput"
+      }
+    },
+    {
+      "name": "recommend_tools",
+      "description": "\nGet tool recommendations for a task description. search_mode is \"llm\"\n(default), \"semantic\", or \"hybrid\"; top_k and min_similarity apply to\nthe semantic/hybrid modes.\n",
+      "inputSchema": {
+        "properties": {
+          "task_description": {
+            "title": "Task Description",
+            "type": "string"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "search_mode": {
+            "default": "llm",
+            "title": "Search Mode",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "min_similarity": {
+            "default": 0.3,
+            "title": "Min Similarity",
+            "type": "number"
+          }
+        },
+        "required": [
+          "task_description"
+        ],
+        "type": "object",
+        "title": "recommend_toolsArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "recommend_toolsDictOutput"
+      }
+    },
+    {
+      "name": "search_tools",
+      "description": "\nSearch tools by semantic similarity to a natural-language query;\nserver_name optionally filters results. Embeddings generate\nautomatically on first search.\n",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "min_similarity": {
+            "default": 0.0,
+            "title": "Min Similarity",
+            "type": "number"
+          },
+          "server_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Name"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object",
+        "title": "search_toolsArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "search_toolsDictOutput"
+      }
+    },
+    {
+      "name": "add_mcp_server",
+      "description": "\nAdd an MCP server to the daemon. transport is \"http\", \"stdio\", or\n\"websocket\"; http/websocket require url, stdio requires command\n(args/env optional). Pass template/values/scope to instantiate\nfrom a template.\n",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "transport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headers"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "args": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Args"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          },
+          "scope": {
+            "default": "project",
+            "title": "Scope",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "title": "add_mcp_serverArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "add_mcp_serverDictOutput"
+      }
+    },
+    {
+      "name": "remove_mcp_server",
+      "description": "\nRemove an MCP server from the daemon's configuration.\n\nArgs:\n    name: Server name to remove\n    scope: project or global\n\nReturns:\n    Result dict with success status\n",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "default": "project",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "title": "remove_mcp_serverArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "remove_mcp_serverDictOutput"
+      }
+    },
+    {
+      "name": "import_mcp_server",
+      "description": "\nImport MCP servers from another project (from_project, optionally\nnarrowed by servers), a GitHub repo URL, or a natural-language query.\n",
+      "inputSchema": {
+        "properties": {
+          "from_project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Project"
+          },
+          "servers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servers"
+          },
+          "github_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Url"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "title": "import_mcp_serverArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "import_mcp_serverDictOutput"
+      }
+    },
+    {
+      "name": "init_project",
+      "description": "\nInitialize a new Gobby project.\n\nNote: Project initialization requires CLI access and cannot be done\nvia the MCP proxy. Use 'gobby init' command instead.\n\nArgs:\n    name: Project name\n    project_path: Path to project directory (optional)\n\nReturns:\n    Result dict with error (CLI access required)\n",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Path"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "title": "init_projectArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "init_projectDictOutput"
+      }
+    },
+    {
+      "name": "set_variable",
+      "description": "\nSet a session or step variable. Top-level shortcut \u2014 no progressive discovery needed.\n\nArgs:\n    name: Variable name\n    value: JSON-compatible variable value\n    session_id: Session ID (accepts #N, N, UUID, or prefix)\n    scope: \"session\" (default), or \"step\" to write the agent's step workflow instance\n\nReturns:\n    Dict with ok status and stored value\n",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "session",
+            "enum": [
+              "session",
+              "step"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "session_id"
+        ],
+        "type": "object",
+        "title": "set_variableArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "set_variableDictOutput"
+      }
+    },
+    {
+      "name": "get_variable",
+      "description": "\nGet session-scoped variable(s). Top-level shortcut \u2014 no progressive discovery needed.\n\nArgs:\n    session_id: Session ID (accepts #N, N, UUID, or prefix)\n    name: Variable name (omit to get all variables)\n\nReturns:\n    Dict with variable value(s)\n",
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object",
+        "title": "get_variableArguments"
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "get_variableDictOutput"
+      }
+    }
+  ],
+  "resultType": "complete"
+}

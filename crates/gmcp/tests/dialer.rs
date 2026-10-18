@@ -258,7 +258,8 @@ fn unavailable_and_timeout_results_are_typed() -> anyhow::Result<()> {
                 assert_eq!(
                     result["error"],
                     format!(
-                        "Gobby daemon HTTP control plane is unavailable at http://{address}: connection failed. Start it with `gobby start`, or check `gobby status`."
+                        "Gobby daemon HTTP control plane is unavailable at localhost:{}: connection failed. Check `gobby status` or restart with `gobby restart --verbose`.",
+                        address.port()
                     )
                 );
                 Ok(())

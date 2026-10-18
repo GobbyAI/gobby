@@ -1,0 +1,288 @@
+{
+  "initialize": {
+    "protocolVersion": "2025-11-25",
+    "capabilities": {
+      "experimental": {},
+      "prompts": {
+        "listChanged": false
+      },
+      "resources": {
+        "subscribe": false,
+        "listChanged": false
+      },
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "serverInfo": {
+      "name": "gobby",
+      "version": "0.5.0"
+    },
+    "instructions": "<gobby_system>\n\n<tool_discovery>\nProgressive discovery keeps token usage low by fetching schemas only when the current context needs them.\n\n- Known tool with a current-context schema lease: call `call_tool` directly.\n- Known tool without a lease: call `get_tool_schema` directly, then `call_tool`.\n- Unknown tool name on a known server: call `list_tools`, then `get_tool_schema`, then `call_tool`.\n- Unknown server or registry inspection: call `list_mcp_servers`.\n\nThese are separate top-level proxy tools. Do not invoke `get_tool_schema` or another discovery step through `call_tool`.\n\nThe proxy validates every `call_tool`. Invalid arguments always return the current schema and retain its lease.\n</tool_discovery>\n\n<skills>\n`list_skills`, `get_skill`, and `search_skills` on `gobby-skills` are bootstrap tools. Call them directly through `call_tool`; they are exempt from the schema gate.\n\n`get_skill_file` and `get_skill_files` are not bootstrap tools: call `get_tool_schema(server_name=\"gobby-skills\", tool_name=\"get_skill_file\")` (or `get_skill_files`) once per context before the first reference load; the lease then covers later loads until context is cleared or compacted.\n\nInitial `get_skill` and `get_skill_file` lookups default to `brief=true`: instruction content stays exact while management metadata is omitted. Use `brief=false` only for management work.\n\nEach request returns one content page and must use its own outer tool result. Inspect `page.next_cursor`; while it is non-null, call the same tool again with only `cursor=<opaque cursor>`. Cursor continuation preserves the initial view. A skill is loaded only after the final entrypoint page is available in active context. Collapsed UI previews are presentation-only.\n\nFor multiple skills, call `get_skill` sequentially in required order after deduplicating names. Do not use `Promise.all` or aggregate full responses into one wrapper output.\n\nWhen using an execution wrapper, emit the current page's `content` together with `page`, keeping one page per outer result. Reassemble pages in order. If content is absent or contains an explicit truncation marker such as `\u2026N tokens truncated\u2026`, restart that skill or file lookup individually.\n\nAfter reassembling `SKILL.md`, follow its topic index. Load only references whose stated conditions apply, after the schema lease above, using the exact `get_skill_file(name=\"<skill>\", path=\"references/<topic>.md\")` call, and follow each file cursor until null.\n</skills>\n\n<code_search>\nIf the project has a code index, choose the `gcode` lane from the query shape:\n- Known symbol: `gcode search-symbol \"name\"`.\n- Exact identifier occurrence: `gcode grep -w \"identifier\" -m 50`.\n- Exact literal or call site: `gcode grep -F \"literal\" -m 50`.\n- Repository text, docs, or config: `gcode search-content \"text\"`.\n- Fuzzy code concept: `gcode search \"concept\"` (hybrid symbol search).\n- parser-backed source structure: `gcode outline path/to/file`; for Markdown headings use `gcode grep '^#{1,6} ' path/to/file.md -m 200`.\n\nAfter irrelevant or empty results, switch lanes based on the query shape. Do not paraphrase the same `search` query or page through noise. Direct `gcode` calls do not require loading `gobby:references/code-index/overview.md`. Navigation defaults to compact text with lossless pages; run the printed continuation command exactly. Use `gcode symbol-at path/to/file:line` after a search hit, and use `--format json` or `--verbose` only when IDs or diagnostics are required.\nUse these instead of reading entire files \u2014 saves 90%+ tokens on large files.\nRun `gcode --help` for all available commands.\n</code_search>\n\n<leases>\nSchema leases survive ordinary session resume and daemon restart. Context loss such as clear or compact resets schema leases, so fetch the schema again before the next ordinary call. Inventory observations from `list_tools` and `list_mcp_servers` are preserved.\n</leases>\n\n<common_mistakes>\nWRONG \u2014 Loading all schemas upfront (wastes 30-40K tokens):\n  for server in servers: get_tool_schema(server, tool) for each tool\n\nRIGHT \u2014 Fetch a known unleased tool schema directly:\nget_tool_schema(\"gobby-tasks\", \"create_task\")  # Learn required params\ncall_tool(\"gobby-tasks\", \"create_task\", {\"title\": \"Fix bug\", \"category\": \"code\"})\n</common_mistakes>\n\n<call_context>\n`call_tool` session_id is wrapper context: it accepts #N, N, UUID, or prefix, propagates to the\ndaemon for context/workflow resolution, and is auto-supplied to target arguments when the target\nschema requires it. Use arguments.session_id only to target a DIFFERENT session; local #N refs\nresolve in the caller project; address a session in another project as `<project>#N`\n(e.g. `gobby#11265`, project name or UUID) or by its full session UUID. Prefer\n`arguments` over its `args` alias (both accept dict or JSON string).\n</call_context>\n\n<variables>\n`set_variable` and `get_variable` are top-level tools \u2014 no progressive discovery needed.\nCall directly: set_variable(name=\"flag\", value=true, session_id=\"#123\")\n</variables>\n\n<rules>\n- Create/claim a task before using Edit, Write, or NotebookEdit tools\n- NEVER load all tool schemas upfront \u2014 use progressive discovery\n</rules>\n\n</gobby_system>"
+  },
+  "calls": {
+    "list_tools_success": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"success\": true,\n  \"tools\": [\n    {\n      \"name\": \"create_task\",\n      \"description\": \"Create a task\",\n      \"inputSchema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"title\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  ]\n}"
+        }
+      ],
+      "structuredContent": {
+        "success": true,
+        "tools": [
+          {
+            "name": "create_task",
+            "description": "Create a task",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "isError": false,
+      "resultType": "complete"
+    },
+    "daemon_unavailable": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"success\": false,\n  \"error\": \"Gobby daemon HTTP control plane is unavailable at localhost:61040: connection failed. Check `gobby status` or restart with `gobby restart --verbose`.\",\n  \"error_code\": \"DAEMON_UNAVAILABLE\"\n}"
+        }
+      ],
+      "structuredContent": {
+        "success": false,
+        "error": "Gobby daemon HTTP control plane is unavailable at localhost:61040: connection failed. Check `gobby status` or restart with `gobby restart --verbose`.",
+        "error_code": "DAEMON_UNAVAILABLE"
+      },
+      "isError": false,
+      "resultType": "complete"
+    },
+    "init_project": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"success\": false,\n  \"error\": \"Project initialization requires CLI access. Use 'gobby init' command instead.\"\n}"
+        }
+      ],
+      "structuredContent": {
+        "success": false,
+        "error": "Project initialization requires CLI access. Use 'gobby init' command instead."
+      },
+      "isError": false,
+      "resultType": "complete"
+    }
+  },
+  "forwarded": [
+    {
+      "tool": "list_mcp_servers",
+      "arguments": {},
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        }
+      ]
+    },
+    {
+      "tool": "list_tools",
+      "arguments": {
+        "server_name": "gobby-tasks"
+      },
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/gobby-tasks/tools",
+          "query": {},
+          "body": null
+        }
+      ]
+    },
+    {
+      "tool": "get_tool_schema",
+      "arguments": {
+        "server_name": "gobby-tasks",
+        "tool_name": "create_task"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/tools/schema",
+          "query": {},
+          "body": {
+            "server_name": "gobby-tasks",
+            "tool_name": "create_task"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "recommend_tools",
+      "arguments": {
+        "task_description": "fix the login bug"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/tools/recommend",
+          "query": {},
+          "body": {
+            "task_description": "fix the login bug",
+            "agent_id": null,
+            "search_mode": "llm",
+            "top_k": 10,
+            "min_similarity": 0.3,
+            "cwd": "<cwd>"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "search_tools",
+      "arguments": {
+        "query": "create a task"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/tools/search",
+          "query": {},
+          "body": {
+            "query": "create a task",
+            "top_k": 10,
+            "min_similarity": 0.0,
+            "server": null,
+            "cwd": "<cwd>"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "add_mcp_server",
+      "arguments": {
+        "name": "demo",
+        "transport": "stdio",
+        "command": "demo-server"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": {
+            "name": "demo",
+            "transport": "stdio",
+            "command": "demo-server",
+            "enabled": true,
+            "scope": "project"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "remove_mcp_server",
+      "arguments": {
+        "name": "demo"
+      },
+      "requests": [
+        {
+          "method": "DELETE",
+          "path": "/api/mcp/servers/demo",
+          "query": {
+            "scope": "project"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "tool": "import_mcp_server",
+      "arguments": {
+        "query": "github tools"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/mcp/servers/import",
+          "query": {},
+          "body": {
+            "from_project": null,
+            "servers": null,
+            "github_url": null,
+            "query": "github tools"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "set_variable",
+      "arguments": {
+        "name": "flag",
+        "value": true,
+        "session_id": "#123"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/sessions/%23123/variables/set",
+          "query": {},
+          "body": {
+            "name": "flag",
+            "value": true,
+            "scope": "session"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "get_variable",
+      "arguments": {
+        "name": "flag",
+        "session_id": "#123"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/sessions/%23123/variables/get",
+          "query": {},
+          "body": {
+            "name": "flag",
+            "scope": "session"
+          }
+        }
+      ]
+    },
+    {
+      "tool": "init_project",
+      "arguments": {
+        "name": "demo"
+      },
+      "requests": []
+    }
+  ],
+  "bridge_ready": {
+    "delays_seconds": [
+      0.0,
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      15.0,
+      30.0,
+      30.0
+    ],
+    "retry_error_codes": [
+      "DAEMON_UNAVAILABLE",
+      "REQUEST_TIMEOUT",
+      "SESSION_REQUIRED"
+    ]
+  }
+}
