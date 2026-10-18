@@ -302,3 +302,22 @@ async def test_resumed_seat_whose_pane_and_tab_are_gone_reopens_its_tab(placed: 
     assert pane is not None
     tab = next(tab for tab in h.workspaces.list_tabs(h.workspace.id) if tab.id == pane.tab_id)
     assert tab.title == SEAT
+
+
+async def test_resumed_seat_replaces_its_empty_recorded_tab(placed: _Harness) -> None:
+    h = placed
+    lane = _held_seat(h, SEAT, state="exited")
+    h.db.execute("DELETE FROM workspace_panes WHERE id = %s", (lane.id,))
+    session = _seat_session(
+        h, _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id))
+    )
+
+    reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
+
+    assert reply["success"] is True, reply
+    run = h.runs.get(reply["run_id"])
+    assert run is not None and run.terminal_id is not None
+    pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
+    assert pane is not None and pane.tab_id != lane.tab_id
+    assert [tab.title for tab in h.workspaces.list_tabs(h.workspace.id)] == [SEAT]
