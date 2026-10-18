@@ -6186,3 +6186,1498 @@ closes, gates 1, 2 and 7 must hold again before P8's phase epic closes, and gate
   - N20: 9.3's Research context records that gcode's own prune request is unaffected;
   - N21: 9.4 leaves gcode's HTTP clear and rebuild client in place, as a consumer
     left unchanged.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Machine-explicit index, status and content-search paths
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Indexing a fixture project with a `Context` whose `machine_id`
+    is a fresh UUID writes `code_indexed_project_states` and `code_indexed_file_states`
+    rows only under that UUID, and none under the local machine. test: `crates/gcode/src/index/indexer/tests/serial_db.rs::foreign_machine_index_writes_only_that_machine`.
+
+    1.1.2: `current::run` for a foreign-machine context reports that machine''s project
+    state, and reports the project unindexed when only the local machine has indexed
+    it. test: `crates/gcode/src/index/indexer/tests/serial_db.rs::status_reads_the_context_machine`.
+
+    1.1.3: Content search under a foreign-machine context returns chunks visible to
+    that machine''s selectors and none visible only to the local machine, and `indexed_file_exists`
+    answers for that machine. test: `crates/gcode/src/search/fts/tests.rs::content_search_reads_the_context_machine`.
+
+    1.1.4: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    1.1.5: `gcode_versions.py` holds the three version floors, `MIN_GCODE_PRUNE_BUDGET_VERSION`
+    reads `MANAGED_BIN_VERSION_PINS["gcode"]`, `gcode_gateway.py` imports all three
+    back, and the floor equals the bumped `gcode` crate version. test: `tests/code_index/test_gcode_gateway.py::test_prune_budget_version_matches_gcode_crate_version`.'
+  labels:
+  - covers:code-index-family:1.1:1.1.1
+  - covers:code-index-family:1.1:1.1.2
+  - covers:code-index-family:1.1:1.1.3
+  - covers:code-index-family:1.1:1.1.4
+  - covers:code-index-family:1.1:1.1.5
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: developer
+- title: Parent-optional overlay status and index
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `gcode index` on an overlay whose parent has no file
+    states indexes the parent in Primary mode first, adopting fully projected unchanged
+    files, then indexes the overlay. test: `crates/gcode/src/index/indexer/tests/overlay.rs::overlay_index_indexes_a_missing_parent_first`.
+
+    1.2.2: `status` on an overlay whose parent is unindexed returns the unindexed
+    report with exit 0, and `search-content` on it still fails with the parent-missing
+    error. test: `crates/gcode/src/index/indexer/tests/serial_db.rs::missing_parent_reads_as_unindexed_for_status_only`.
+
+    1.2.3: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.2:1.2.1
+  - covers:code-index-family:1.2:1.2.2
+  - covers:code-index-family:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Node wire contract and hub read entry points
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `status` JSON and text output is byte-identical before
+    and after the collect/render split. test: `crates/gcode/src/node/tests.rs::status_render_matches_the_cli_output`.
+
+    1.3.2: `node::hub::status` and `node::hub::search_content` for a foreign machine
+    whose roots do not exist on the hub''s disk return that machine''s report and
+    candidates, and a scope whose overlay shape disagrees with the principal returns
+    `claims_mismatch`. test: `crates/gcode/src/node/tests.rs::hub_reads_run_as_the_principal_machine`.
+
+    1.3.3: Local `search-content` output is byte-identical before and after the candidates
+    and page split, including a result whose file was deleted on disk after indexing.
+    test: `crates/gcode/src/node/tests.rs::content_search_split_matches_the_cli_output`.
+
+    1.3.4: Every wire type round-trips through serde_json unchanged. test: `crates/gcode/src/node/tests.rs::wire_types_round_trip`.
+
+    1.3.5: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.3:1.3.1
+  - covers:code-index-family:1.3:1.3.2
+  - covers:code-index-family:1.3:1.3.3
+  - covers:code-index-family:1.3:1.3.4
+  - covers:code-index-family:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Primary-mode index plan and apply
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: Local `gcode index` of a fixture writes the same file
+    states, facts and outcome counts before and after the split. test: `crates/gcode/src/node/index_tests.rs::local_index_is_unchanged_by_the_split`.
+
+    1.4.2: Plan then apply for a foreign machine, with the node half run in-process,
+    yields the same rows under that machine as a local index under it. test: `crates/gcode/src/node/index_tests.rs::plan_and_apply_match_a_local_index`.
+
+    1.4.3: Plan returns only stale paths that cannot be adopted, and every path when
+    `full` is set. test: `crates/gcode/src/node/index_tests.rs::plan_lists_only_paths_to_parse`.
+
+    1.4.4: When a path''s adoptable facts disappear between plan and apply, the final
+    batch returns it in `reparse` and skips the post-pass. A second final batch that
+    carries its facts completes. test: `crates/gcode/src/node/index_tests.rs::apply_returns_reparse_and_completes_on_retry`.
+
+    1.4.5: Apply against a Primary root with no `project_checkouts` row returns `checkout_required`
+    and writes nothing. A held project lock returns `index_busy` after the bounded
+    wait. test: `crates/gcode/src/node/index_tests.rs::apply_keeps_the_checkout_fence_and_bounded_lock`.
+
+    1.4.6: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.4:1.4.1
+  - covers:code-index-family:1.4:1.4.2
+  - covers:code-index-family:1.4:1.4.3
+  - covers:code-index-family:1.4:1.4.4
+  - covers:code-index-family:1.4:1.4.5
+  - covers:code-index-family:1.4:1.4.6
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Overlay-mode index plan and apply
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '1.5.1: Plan then apply of an overlay for a foreign machine
+    yields the same overlay rows and tombstones as a local overlay index under that
+    machine. test: `crates/gcode/src/node/index_tests.rs::overlay_plan_and_apply_match_a_local_index`.
+
+    1.5.2: `plan_index` for an overlay whose parent is unindexed reports `parent_indexed:
+    false`, and a Primary pass over the parent root followed by the overlay pass leaves
+    both indexed. test: `crates/gcode/src/node/index_tests.rs::overlay_plan_reports_a_missing_parent`.
+
+    1.5.3: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.5:1.5.1
+  - covers:code-index-family:1.5:1.5.2
+  - covers:code-index-family:1.5:1.5.3
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Remote interactive principals get Brokered datastores
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.6.1: A handshake for an interactive principal on another
+    machine returns Postgres `brokered` with exactly the `node_code_index` operation,
+    and Falkor and Qdrant `brokered`, without calling `issue_postgres`. The same principal
+    on the hub''s machine still gets `direct`. test: `tests/runtime_grants/test_remote_principal_grants.py::test_remote_interactive_principal_gets_brokered_datastores`.
+
+    1.6.2: A Brokered grant''s expiry is the TTL bound and never reads `valid_until`.
+    test: `tests/runtime_grants/test_remote_principal_grants.py::test_brokered_grant_ttl_ignores_valid_until`.
+
+    1.6.3: The new golden round-trips and its checksum is pinned (the directory readers
+    include it). test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+
+    1.6.4: Binding condition: Python issuance for the golden''s fixed inputs reproduces
+    `remote_interactive_brokered.json` byte for byte, so the shape nodes depend on
+    is pinned while the hub''s Python is ported. test: `tests/runtime_grants/test_remote_principal_grants.py::test_remote_issuance_reproduces_the_golden`.'
+  labels:
+  - covers:code-index-family:1.6:1.6.1
+  - covers:code-index-family:1.6:1.6.2
+  - covers:code-index-family:1.6:1.6.3
+  - covers:code-index-family:1.6:1.6.4
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Brokered access resolution and the typed refusal
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.5'
+  validation_criteria: '1.7.1: Under a Brokered grant, `Context` resolution fails
+    with `brokered_unsupported` and its recovery text, before any connection attempt.
+    test: `crates/gcode/src/config/access_tests.rs::brokered_context_resolution_is_refused`.
+
+    1.7.2: `resolve_access` returns `Node` for the remote golden grant, `Direct` for
+    a direct grant, and `capability_unavailable` when the Brokered grant lacks `node_code_index`.
+    test: `crates/gcode/src/config/access_tests.rs::resolve_access_reads_the_remote_golden`.
+
+    1.7.3: The contract lists `brokered_unsupported`, `node_code_index_failed`, `node_index_conflict`
+    and the seven node route codes, and both JSON copies match `contract()`. test:
+    `crates/gcode/tests/contract.rs::contract_lists_the_node_facing_codes`.
+
+    1.7.4: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.7:1.7.1
+  - covers:code-index-family:1.7:1.7.2
+  - covers:code-index-family:1.7:1.7.3
+  - covers:code-index-family:1.7:1.7.4
+  tdd: true
+  source_section: '1.7'
+  implementation_domain: backend
+- title: gcode node client for status, search-content and index
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  - '1.7'
+  validation_criteria: '1.8.1: Under the remote golden grant, `gcode status` prints
+    exactly what the stubbed hub''s report renders to, and `gcode search-content`
+    with a relative path filter sends the project-root-relative path and prints the
+    page of the returned candidates whose files exist on the node. test: `crates/gcode/src/node/client_tests.rs::node_reads_render_hub_results`.
+
+    1.8.2: `gcode index` on a node overlay with an unindexed parent runs parent plan
+    and apply, then overlay plan and apply, splitting facts into batches of at most
+    8 MiB. test: `crates/gcode/src/node/client_tests.rs::node_index_indexes_parent_then_overlay_in_batches`.
+
+    1.8.3: A final response with `reparse` triggers exactly one retry, and a second
+    `reparse` exits `node_index_conflict`. test: `crates/gcode/src/node/client_tests.rs::node_index_retries_reparse_once`.
+
+    1.8.4: Route error bodies surface as typed errors with their codes (`checkout_required`,
+    `index_busy`, `claims_mismatch`), and a non-2xx response whose body has no `code`
+    surfaces as `node_code_index_failed`. test: `crates/gcode/src/node/client_tests.rs::route_errors_keep_their_codes`.
+
+    1.8.5: A 409 `index_busy` surfaces as `index_busy` with no re-handshake, and a
+    409 `stale_epoch` triggers exactly one re-handshake and resend of the same body.
+    test: `crates/gcode/src/node/client_tests.rs::grant_rejections_refresh_once_and_route_codes_do_not`.
+
+    1.8.6: `gcode` is one patch version above the executor''s starting tip in `crates/gcode/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.8:1.8.1
+  - covers:code-index-family:1.8:1.8.2
+  - covers:code-index-family:1.8:1.8.3
+  - covers:code-index-family:1.8:1.8.4
+  - covers:code-index-family:1.8:1.8.5
+  - covers:code-index-family:1.8:1.8.6
+  tdd: true
+  source_section: '1.8'
+  implementation_domain: backend
+- title: '`gobby-codeindex` family serving the node routes'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.8'
+  validation_criteria: '1.9.1: `crates/gcodeindex` builds as workspace member `gobby-codeindex`
+    (publish false, workspace version) and gdaemon links it. file: `crates/gcodeindex/Cargo.toml`.
+
+    1.9.2: With a valid remote grant and a matching machine header, each of the four
+    routes returns what the library call returns for that machine. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_serve_the_principal_machine`.
+
+    1.9.3: A grant whose machine differs from `x-gobby-machine-id`, a managed principal,
+    and a grant without the `node_code_index` operation return 403 `claims_mismatch`,
+    `claims_mismatch` and `wrong_capability`. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_bind_machine_and_capability`.
+
+    1.9.4: A stale epoch returns 409, an expired grant 401, a bad signature 403, and
+    a missing or malformed header Python''s 401 or 400. test: `crates/gcodeindex/tests/node_routes.rs::node_routes_follow_python_presentation_order`.
+
+    1.9.5: A 15 MiB apply body is accepted and a 17 MiB body returns 413. test: `crates/gcodeindex/tests/node_routes.rs::apply_body_limit_is_sixteen_mib`.
+
+    1.9.6: With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run`
+    composes them, and `code_index_node` absent from `front_door.routes`, a node route
+    request with no grant header gets the native 401 body; with `proxy` it reaches
+    the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
+
+    1.9.7: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.9:1.9.1
+  - covers:code-index-family:1.9:1.9.2
+  - covers:code-index-family:1.9:1.9.3
+  - covers:code-index-family:1.9:1.9.4
+  - covers:code-index-family:1.9:1.9.5
+  - covers:code-index-family:1.9:1.9.6
+  - covers:code-index-family:1.9:1.9.7
+  tdd: true
+  source_section: '1.9'
+  implementation_domain: backend
+- title: Native handshake issues the remote grant shape
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  - '9.6'
+  validation_criteria: '1.10.1: The Rust capability port matches the Python vector
+    with Brokered Postgres. test: `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.
+
+    1.10.2: Binding condition: a native handshake for the golden''s fixed remote principal
+    returns capabilities and expiry rules equal to `remote_interactive_brokered.json`,
+    so a node built at P1 keeps working after the handshake goes native. test: `crates/gruntime/tests/handshake.rs::remote_principal_handshake_matches_the_golden`.
+
+    1.10.3: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:1.10:1.10.1
+  - covers:code-index-family:1.10:1.10.2
+  - covers:code-index-family:1.10:1.10.3
+  tdd: true
+  source_section: '1.10'
+  implementation_domain: backend
+- title: 'E2E: node preflight through the hub routes'
+  category: test
+  task_type: feature
+  depends_on:
+  - '1.9'
+  validation_criteria: '1.11.1: On an enrolled node with no managed credential, the
+    preflight''s status reports unindexed, index indexes the parent then the overlay,
+    and search-content exits 0. The hub''s `code_indexed_file_states` rows carry the
+    node''s machine id. test: `tests/e2e/test_hub_node_pair.py::test_node_code_index_preflight_through_hub`.'
+  labels:
+  - covers:code-index-family:1.11:1.11.1
+  tdd: false
+  source_section: '1.11'
+  assigned_agent: developer
+- title: Machine-explicit read paths
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.9'
+  validation_criteria: '2.1.1: Symbol-by-file, symbol-by-id, kinds and tree reads
+    under a `Context` whose `machine_id` is a fresh UUID return the rows visible to
+    that machine''s selectors and none visible only to the local machine. test: `crates/gcode/src/visibility/tests.rs::read_paths_use_the_context_machine`.
+
+    2.1.2: Grep''s chunk load and coverage check under a foreign-machine context see
+    only that machine''s files. test: `crates/gcode/src/commands/grep/db_tests.rs::grep_reads_the_context_machine`.
+
+    2.1.3: `communities::read_for_context` and `visible_graph_paths` under a foreign-machine
+    context read that machine''s partition and paths. test: `crates/gcode/src/communities/refresh_tests.rs::community_and_graph_reads_use_the_context_machine`.
+
+    2.1.4: `resolve_symbol_with_connection` under a foreign-machine context resolves
+    a name and an id to the symbol that machine sees, and resolves nothing visible
+    only to the local machine. test: `crates/gcode/src/commands/graph/reads/tests.rs::graph_symbol_resolution_uses_the_context_machine`.
+
+    2.1.5: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.1:2.1.1
+  - covers:code-index-family:2.1:2.1.2
+  - covers:code-index-family:2.1:2.1.3
+  - covers:code-index-family:2.1:2.1.4
+  - covers:code-index-family:2.1:2.1.5
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: developer
+- title: Node freshness
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The local overlay pre-gate behaves as before the split:
+    it counts inherited paths and trips on a parent reindex or an edit. test: `crates/gcode/src/freshness.rs::overlay_pre_gate_counts_inherited_paths_and_trips_on_parent_reindex_or_edits`.
+
+    2.2.2: `node::hub::freshness` for a foreign machine returns `Refresh` when that
+    machine never indexed the project, even when the local machine has, and otherwise
+    `Compare` with that machine''s paths. test: `crates/gcode/src/node/freshness_tests.rs::hub_freshness_facts_are_per_machine`.
+
+    2.2.3: A node project read after an edit indexes the edited file through plan
+    and apply with `freshness` set, and a read of an unchanged tree posts only the
+    facts call. test: `crates/gcode/src/node/freshness_tests.rs::node_project_freshness_indexes_changes_only`.
+
+    2.2.4: With the project lock held, a freshness apply returns `index_busy` after
+    the brief try, and the node prints the local busy warning and reads the existing
+    index. test: `crates/gcode/src/node/freshness_tests.rs::busy_lock_skips_node_freshness_with_the_local_warning`.
+
+    2.2.5: A node `search-content` runs project freshness first, and `--allow-stale`
+    skips it with the local notice. test: `crates/gcode/src/node/freshness_tests.rs::node_search_content_runs_freshness_unless_allow_stale`.
+
+    2.2.6: The freshness route serves the principal''s machine. test: `crates/gcodeindex/tests/node_freshness.rs::freshness_route_serves_the_principal_machine`.
+
+    2.2.7: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.2:2.2.1
+  - covers:code-index-family:2.2:2.2.2
+  - covers:code-index-family:2.2:2.2.3
+  - covers:code-index-family:2.2:2.2.4
+  - covers:code-index-family:2.2:2.2.5
+  - covers:code-index-family:2.2:2.2.6
+  - covers:code-index-family:2.2:2.2.7
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Node search, search-symbol and search-text
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: Local `search`, `search-symbol` (with and without `--with-graph`)
+    and `search-text` output is byte-identical before and after the split, including
+    a result whose file was deleted on disk after indexing. test: `crates/gcode/src/node/search_tests.rs::symbol_search_split_matches_the_cli_output`.
+
+    2.3.2: Under the remote golden grant, `gcode search` with a relative path filter
+    sends the project-root-relative path and a query vector with its model and dimension,
+    and prints the page of the returned candidates whose files exist on the node.
+    test: `crates/gcode/src/node/search_tests.rs::node_search_renders_hub_candidates`.
+
+    2.3.3: A query vector whose model or dimension differs from the hub''s yields
+    the BM25 and graph results with one `embedding_identity_mismatch` semantic warning.
+    test: `crates/gcode/src/node/search_tests.rs::identity_mismatch_degrades_the_semantic_lane`.
+
+    2.3.4: With the daemon unreachable, a node `search` sends no vector and prints
+    the local grant-outage warning. test: `crates/gcode/src/node/search_tests.rs::grant_outage_sends_no_vector`.
+
+    2.3.5: `Context::for_machine` resolves the selected services from the hub''s PostgreSQL
+    configuration snapshot, and P1''s routes still resolve none. test: `crates/gcode/src/node/search_tests.rs::hub_context_resolves_selected_services_from_the_hub_snapshot`.
+
+    2.3.6: The three routes serve the principal''s machine. test: `crates/gcodeindex/tests/node_search.rs::search_routes_serve_the_principal_machine`.
+
+    2.3.7: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.3:2.3.1
+  - covers:code-index-family:2.3:2.3.2
+  - covers:code-index-family:2.3:2.3.3
+  - covers:code-index-family:2.3:2.3.4
+  - covers:code-index-family:2.3:2.3.5
+  - covers:code-index-family:2.3:2.3.6
+  - covers:code-index-family:2.3:2.3.7
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Node grep
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: Local `grep` output (matches, `-l`, context lines and
+    JSON counts) is byte-identical before and after the split, including a match in
+    a file deleted on disk after indexing. test: `crates/gcode/src/node/grep_tests.rs::grep_split_matches_the_cli_output`.
+
+    2.4.2: Under the remote golden grant, `gcode grep` prints the page of the returned
+    matches whose files exist on the node, with `scanned_chunks` and `matched_lines`
+    excluding files missing there. test: `crates/gcode/src/node/grep_tests.rs::node_grep_pages_and_corrects_counts`.
+
+    2.4.3: The grep route serves the principal''s machine. test: `crates/gcodeindex/tests/node_grep.rs::grep_route_serves_the_principal_machine`.
+
+    2.4.4: Under the remote golden grant, a node `gcode grep` whose `GrepCandidates`
+    reply exceeds 10 MiB prints the page that local paging of the same candidates
+    prints. test: `crates/gcode/src/node/grep_tests.rs::node_grep_reads_a_reply_over_ten_mib`.
+
+    2.4.5: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.4:2.4.1
+  - covers:code-index-family:2.4:2.4.2
+  - covers:code-index-family:2.4:2.4.3
+  - covers:code-index-family:2.4:2.4.4
+  - covers:code-index-family:2.4:2.4.5
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Node symbol navigation and symbol-at
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: Local `outline`, `symbol`, `symbols`, `kinds`, `tree`,
+    `repo-outline` and `symbol-at` output is byte-identical before and after the split,
+    including the missing-outline diagnostic for an unindexed file. test: `crates/gcode/src/node/symbols_tests.rs::symbol_navigation_split_matches_the_cli_output`.
+
+    2.5.2: Under the remote golden grant, `gcode symbol` and `gcode symbol-at` print
+    source read from the node''s file, and `gcode outline` of a file missing on the
+    node prints the local diagnostic. test: `crates/gcode/src/node/symbols_tests.rs::node_symbol_reads_use_node_source`.
+
+    2.5.3: A node `symbol` whose stored slice no longer matches the node''s file refreshes
+    that file before printing. test: `crates/gcode/src/node/symbols_tests.rs::node_symbol_freshness_refreshes_a_stale_slice`.
+
+    2.5.4: The four routes serve the principal''s machine. test: `crates/gcodeindex/tests/node_symbols.rs::symbol_routes_serve_the_principal_machine`.
+
+    2.5.5: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.5:2.5.1
+  - covers:code-index-family:2.5:2.5.2
+  - covers:code-index-family:2.5:2.5.3
+  - covers:code-index-family:2.5:2.5.4
+  - covers:code-index-family:2.5:2.5.5
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Node graph navigation
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '2.6.1: Local output of the six commands is byte-identical
+    before and after the split, including the unresolved-symbol suggestions and the
+    unavailable-graph hint. test: `crates/gcode/src/node/graph_nav_tests.rs::graph_navigation_split_matches_the_cli_output`.
+
+    2.6.2: Under the remote golden grant, each command prints the page the stubbed
+    hub returns, and an `Unavailable` read prints the local hint. test: `crates/gcode/src/node/graph_nav_tests.rs::node_graph_navigation_renders_hub_reads`.
+
+    2.6.3: The six routes serve the principal''s machine. test: `crates/gcodeindex/tests/node_graph_nav.rs::graph_navigation_routes_serve_the_principal_machine`.
+
+    2.6.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.6:2.6.1
+  - covers:code-index-family:2.6:2.6.2
+  - covers:code-index-family:2.6:2.6.3
+  - covers:code-index-family:2.6:2.6.4
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Node `gcode graph` reports and views
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  validation_criteria: '2.7.1: Local output of the six subcommands, including every
+    view and seed combination, is byte-identical before and after the payload split.
+    test: `crates/gcode/src/node/graph_views_tests.rs::graph_payload_split_matches_the_cli_output`.
+
+    2.7.2: Under the remote golden grant, each subcommand prints the payload the stubbed
+    hub returns, in JSON and text. test: `crates/gcode/src/node/graph_views_tests.rs::node_graph_subcommands_render_hub_payloads`.
+
+    2.7.3: The six routes serve the principal''s machine. test: `crates/gcodeindex/tests/node_graph_views.rs::graph_routes_serve_the_principal_machine`.
+
+    2.7.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.7:2.7.1
+  - covers:code-index-family:2.7:2.7.2
+  - covers:code-index-family:2.7:2.7.3
+  - covers:code-index-family:2.7:2.7.4
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: backend
+- title: Node evidence
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.7'
+  validation_criteria: '2.8.1: Local `gcode evidence` output is byte-identical before
+    and after `run` takes its seams from the caller, for a lookup, a content search,
+    a grep, a graph walk and a hybrid search. test: `crates/gcode/src/node/evidence_tests.rs::evidence_seam_injection_matches_the_cli_output`.
+
+    2.8.2: Under the remote golden grant, `gcode evidence` answers each request through
+    `/evidence/facts` with the node''s git binding and working tree, and prints what
+    a local run against the same index prints. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_forwards_facts_to_the_hub`.
+
+    2.8.3: A node hybrid search whose query embedding''s model or dimension differs
+    from the hub''s identity fails with the local identity-mismatch error, and a `Failed`
+    reply surfaces as the local fact error. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_keeps_local_errors`.
+
+    2.8.4: Every `FactsCall` case round-trips through serde_json, and the route serves
+    the principal''s machine. test: `crates/gcodeindex/tests/node_evidence.rs::evidence_route_serves_every_facts_call`.
+
+    2.8.5: Under the remote golden grant, an evidence grep omits a hit whose file
+    is missing on the node, as a local run does. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_grep_drops_files_missing_on_the_node`.
+
+    2.8.6: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:2.8:2.8.1
+  - covers:code-index-family:2.8:2.8.2
+  - covers:code-index-family:2.8:2.8.3
+  - covers:code-index-family:2.8:2.8.4
+  - covers:code-index-family:2.8:2.8.5
+  - covers:code-index-family:2.8:2.8.6
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: backend
+- title: 'E2E: node read commands through the hub routes'
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.8'
+  - '1.11'
+  validation_criteria: '2.9.1: On an enrolled node, `search`, `search-symbol`, `search-text`,
+    `grep`, `outline`, `symbol`, `symbols`, `kinds`, `tree`, `repo-outline`, `symbol-at`,
+    `callers`, `graph report` and `evidence` exit 0 with results, and a file edited
+    on the node shows up in `search-text` without a manual `index`. test: `tests/e2e/test_hub_node_pair.py::test_node_read_commands_through_hub`.'
+  labels:
+  - covers:code-index-family:2.9:2.9.1
+  tdd: false
+  source_section: '2.9'
+  assigned_agent: developer
+- title: Machine-explicit projection selection
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.8'
+  validation_criteria: '3.1.1: With version A selected by the local machine and version
+    B by a foreign machine at one path, `read_graph_file_facts` returns each machine''s
+    own version''s facts, and `mark_graph_sync_attempted` then `mark_graph_synced`
+    under the foreign machine set B''s `graph_synced` and leave A''s flag and attempt
+    unchanged. test: `crates/gcode/src/db/queries_cas_tests.rs::graph_sync_selects_the_context_machine_version`.
+
+    3.1.2: Under the same fixture, `fetch_symbols_for_project` under the foreign machine
+    returns B''s symbols and not A''s, and `mark_project_vector_sync_attempted` and
+    `mark_project_vectors_synced` under the foreign machine mark B''s row and leave
+    A''s unchanged. test: `crates/gcode/src/db/queries_cas_tests.rs::project_vector_reads_and_marks_select_the_context_machine`.
+
+    3.1.3: Against the fake Qdrant, the local machine''s context projects A and a
+    foreign machine''s context projects B of the same path through `VectorProjectionState::sync_file`.
+    Both rows end `vectors_synced`, the two upserts carry A''s and B''s symbol ids,
+    and neither run sends a delete. test: `crates/gcode/src/projection/sync/tests.rs::vector_sync_projects_each_machine_version`.
+
+    3.1.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:3.1:3.1.1
+  - covers:code-index-family:3.1:3.1.2
+  - covers:code-index-family:3.1:3.1.3
+  - covers:code-index-family:3.1:3.1.4
+  tdd: false
+  source_section: '3.1'
+  assigned_agent: developer
+- title: Node-local `/api/embeddings`
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '4.1.1: With the block and the node key, a query for a nomic
+    model sends `search_query: <text>` and the stripped model to the endpoint, and
+    returns `{embeddings, model, dim}` with the hub''s model and dimension. A second
+    request within 30 s does not fetch the hub config again. test: `crates/gdaemon/tests/node_embeddings.rs::node_embeds_locally_with_the_hub_identity`.
+
+    4.1.2: A vector whose length differs from the served dimension, and a request
+    model other than the served model, each return 503 `embedding_identity_mismatch`.
+    test: `crates/gdaemon/tests/node_embeddings.rs::identity_mismatch_returns_503`.
+
+    4.1.3: An endpoint 500, an unreachable endpoint and a failed hub config fetch
+    each return 503 `embedding_unavailable`. test: `crates/gdaemon/tests/node_embeddings.rs::endpoint_failure_returns_embedding_unavailable`.
+
+    4.1.4: Without the block, or with a bearer other than the node key, the request
+    reaches the hub unchanged. test: `crates/gdaemon/tests/node_embeddings.rs::without_the_block_or_key_the_request_relays`.
+
+    4.1.5: `prefixed_input` and `wire_model` return Python''s outputs for the cases
+    in `tests/search/test_nomic_prefix.py`, for a query prefix, and for both local
+    model prefixes. test: `crates/gdaemon/tests/node_embeddings.rs::prefix_rules_match_python`.
+
+    4.1.6: The block parses in a remote-mode bootstrap, is refused in local mode,
+    and its key prints redacted. test: `crates/gcore/src/bootstrap/tests.rs::node_embeddings_block_parses_only_in_remote_mode`.
+
+    4.1.7: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:4.1:4.1.1
+  - covers:code-index-family:4.1:4.1.2
+  - covers:code-index-family:4.1:4.1.3
+  - covers:code-index-family:4.1:4.1.4
+  - covers:code-index-family:4.1:4.1.5
+  - covers:code-index-family:4.1:4.1.6
+  - covers:code-index-family:4.1:4.1.7
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Node vector sync routes and `gcode vector sync-node`
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: With version A selected by the local machine and version
+    B by a foreign machine at one path, and C at a second path selected only by the
+    foreign machine, pending under the foreign machine returns B and C with their
+    symbol texts and attempt stamps, honors `limit`, and returns neither again within
+    300 s. test: `crates/gcode/src/node/vector_tests.rs::pending_claims_the_machine_versions_once_per_cooloff`.
+
+    4.2.2: Against a fake Qdrant, a file''s apply chunks upsert its points, and the
+    `complete` chunk marks its version `vectors_synced`. A file with no symbols is
+    marked by one empty `complete` chunk. test: `crates/gcode/src/node/vector_tests.rs::apply_upserts_and_marks_the_version`.
+
+    4.2.3: A model other than the hub''s, a dimension other than `vector_dim`, and
+    a dimension other than an existing collection''s size each return `embedding_identity_mismatch`
+    with no upsert. With `vector_dim` unset and no collection, the collection is created
+    at the reported size and no probe is embedded. test: `crates/gcode/src/node/vector_tests.rs::apply_checks_the_embedding_identity`.
+
+    4.2.4: A point id outside the version, or a `total` other than its symbol count,
+    returns `vector_version_moved`. A selector that moved after the attempt makes
+    `synced` false. test: `crates/gcode/src/node/vector_tests.rs::apply_refuses_moved_versions`.
+
+    4.2.5: Under the remote golden grant, `gcode vector sync-node` against a stub
+    hub and daemon embeds with `is_query` false in batches of `DEFAULT_UPSERT_BATCH_SIZE`,
+    marks each file''s last chunk `complete`, counts a moved file and continues, and
+    prints the four counts. Under a direct grant it exits `node_access_required`.
+    test: `crates/gcode/src/node/vector_tests.rs::sync_node_embeds_and_applies_in_batches`.
+
+    4.2.6: The pending and apply routes serve the principal''s machine. test: `crates/gcodeindex/tests/node_vector.rs::vector_routes_serve_the_principal_machine`.
+
+    4.2.7: The contract lists `vector sync-node` and its four codes, and both JSON
+    copies match `contract()`. test: `crates/gcode/tests/contract.rs::contract_lists_vector_sync_node`.
+
+    4.2.8: The reference audit covers `gcode vector sync-node`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+
+    4.2.9: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:4.2:4.2.1
+  - covers:code-index-family:4.2:4.2.2
+  - covers:code-index-family:4.2:4.2.3
+  - covers:code-index-family:4.2:4.2.4
+  - covers:code-index-family:4.2:4.2.5
+  - covers:code-index-family:4.2:4.2.6
+  - covers:code-index-family:4.2:4.2.7
+  - covers:code-index-family:4.2:4.2.8
+  - covers:code-index-family:4.2:4.2.9
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Node heartbeat vector sync
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: With pending files for the local machine and a foreign
+    machine, the roots route under the foreign machine''s key headers returns only
+    the foreign machine''s project with pending work, and omits a project whose pending
+    files are all cooling off and a soft-deleted project. A request missing either
+    header returns 403 `claims_mismatch`. test: `crates/gcodeindex/tests/node_vector.rs::roots_serve_only_the_key_machine`.
+
+    4.3.2: With a stub hub that returns two roots, one missing on disk, and a stub
+    `gcode` script, one tick runs the script once, with `vector sync-node --project
+    <root> --format json --quiet` and `GOBBY_HOME` set, and skips the missing root.
+    test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_runs_gcode_for_each_present_root`.
+
+    4.3.3: A run past its deadline is killed and the next root still runs, and an
+    absent `gcode` logs once over two ticks. A stub `gcode` that runs `exec sleep`
+    is running when `HeartbeatHost::stop` runs, and within 5 s after `stop` returns
+    its pid is gone or a zombie. test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_kills_late_runs_and_tolerates_missing_gcode`.
+
+    4.3.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:4.3:4.3.1
+  - covers:code-index-family:4.3:4.3.2
+  - covers:code-index-family:4.3:4.3.3
+  - covers:code-index-family:4.3:4.3.4
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: '`code_index` family and `GET /graph/search`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '5.1.1: `claims` holds for an API-key `GET /api/code-index/graph/search`.
+    It does not hold without `x-gobby-key-id`, for a `POST` to that path, or for an
+    unlisted path such as `/api/code-index/unlisted`. test: `crates/gcodeindex/tests/family_search.rs::family_claims_api_key_callers_on_listed_routes`.
+
+    5.1.2: With `FAMILIES` and the leaked runtime, node and code-index families composed
+    as `serve::run` composes them, and `code_index` absent from `front_door.routes`,
+    an API-key search request reaches the backend stub. With `native` it gets the
+    family''s 500 body on an unreachable pool. An `/api/code-index/node/*` request
+    still reaches the node family. test: `crates/gdaemon/tests/front_door.rs::code_index_defaults_to_proxy_and_honors_native`.
+
+    5.1.3: With symbols indexed for the hub machine and for a foreign machine, search
+    returns only hub-visible symbols in Python''s seven-key shape. It falls back to
+    name search when BM25 finds none, and returns `{"results": []}` for a project
+    with no hub-machine row. test: `crates/gcodeindex/tests/family_search.rs::search_returns_hub_visible_symbols_in_python_shape`.
+
+    5.1.4: `enabled` false returns 503 `Code indexer not available`, and `graph_enabled`
+    false still serves. An absent or empty `project_id` returns 400. A missing `q`
+    and a non-integer `limit` return Python''s 422 bodies, and a negative `limit`
+    returns 500 `Code graph request failed`. test: `crates/gcodeindex/tests/family_search.rs::search_follows_python_gates_and_errors`.
+
+    5.1.5: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:5.1:5.1.1
+  - covers:code-index-family:5.1:5.1.2
+  - covers:code-index-family:5.1:5.1.3
+  - covers:code-index-family:5.1:5.1.4
+  - covers:code-index-family:5.1:5.1.5
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Overview, file, neighbors and blast-radius routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '6.1.1: With Python''s defaults, each of the four routes returns
+    the JSON that `gcode graph overview`, `file`, `neighbors` or `blast-radius` prints
+    with `--format json --allow-stale` for the hub machine''s checkout. test: `crates/gcodeindex/tests/family_graph.rs::graph_reads_return_the_cli_payload_for_the_hub_machine`.
+
+    6.1.2: Python''s order and bodies hold: - either gate false returns 503 `Code
+    graph not available`; - blast radius with both or neither target returns 400 before
+    the `project_id` check; - an absent `project_id` returns 400; - an unknown project
+    returns 404; - an absolute or `..` value returns 400 with Python''s messages.
+    test: `crates/gcodeindex/tests/family_graph.rs::graph_reads_follow_python_order_and_bodies`.
+
+    6.1.3: `a.rs` and `./a.rs` select the same file, and an encoded `/` in `symbol_id`
+    returns 404 `Not Found`. test: `crates/gcodeindex/tests/family_graph.rs::graph_read_paths_resolve_against_the_checkout_root`.
+
+    6.1.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:6.1:6.1.1
+  - covers:code-index-family:6.1:6.1.2
+  - covers:code-index-family:6.1:6.1.3
+  - covers:code-index-family:6.1:6.1.4
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Path route
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: "6.2.1: A found path, an unresolved endpoint and a graph that\
+    \ is off each return the JSON that `gcode path \u2026 --format json --allow-stale`\
+    \ prints for the hub machine's checkout. test: `crates/gcodeindex/tests/family_path.rs::path_returns_the_cli_response`.\n\
+    6.2.2: A leading `-` and an absolute value return Python's 400 bodies. A missing\
+    \ `symbol_b` and `max_depth=0` return Python's 422 bodies. An unknown project\
+    \ returns 404. test: `crates/gcodeindex/tests/family_path.rs::path_follows_python_order_and_bodies`.\n\
+    6.2.3: `gdaemon` is one patch version above the executor's starting tip in its\
+    \ `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`."
+  labels:
+  - covers:code-index-family:6.2:6.2.1
+  - covers:code-index-family:6.2:6.2.2
+  - covers:code-index-family:6.2:6.2.3
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Graph clear and rebuild routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '7.1.1: Clear marks every machine''s files of the project graph-pending,
+    a foreign machine''s row included, as `reset_graph_sync_for_project` does. It
+    clears the project''s projection and returns the payload `gcode graph clear --format
+    json` prints. test: `crates/gcodeindex/tests/family_lifecycle.rs::clear_returns_the_cli_payload`.
+
+    7.1.2: Rebuild returns the CLI payload, and a rebuild with a per-file failure
+    returns 400 with the payload''s `error` as `detail`. test: `crates/gcodeindex/tests/family_lifecycle.rs::rebuild_returns_the_cli_payload_and_400_on_failure`.
+
+    7.1.3: Python''s order and bodies hold: - `enabled` false returns 503 `Code indexer
+    not available`; - `graph_enabled` false returns 503 `Code graph not available`;
+    - an absent `project_id` returns 400; - an unknown project returns 404. test:
+    `crates/gcodeindex/tests/family_lifecycle.rs::lifecycle_routes_follow_python_order_and_bodies`.
+
+    7.1.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:7.1:7.1.1
+  - covers:code-index-family:7.1:7.1.2
+  - covers:code-index-family:7.1:7.1.3
+  - covers:code-index-family:7.1:7.1.4
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Invalidate route
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: Local `gcode invalidate` deletes the context machine''s
+    communities, file states and project state, and leaves another machine''s rows.
+    test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
+
+    7.2.2: For an indexed project, the route deletes only the hub machine''s rows
+    and returns Python''s body with `projects` equal to 1. For a project with no hub-machine
+    row it returns the `not indexed` body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_returns_python_bodies_for_the_hub_machine`.
+
+    7.2.3: `enabled` false returns 503 `{"error":"Code indexer not available"}`. A
+    missing `project_id` returns Python''s 422 body, an empty one returns 400, and
+    an unreachable hub database returns Python''s 503 body. With the project lock
+    held by another connection, the route deletes nothing and returns the 500 body.
+    test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_follows_python_gates_and_errors`.
+
+    7.2.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:7.2:7.2.1
+  - covers:code-index-family:7.2:7.2.2
+  - covers:code-index-family:7.2:7.2.3
+  - covers:code-index-family:7.2:7.2.4
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Hub job seam and sync worker
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '8.1.1: With version A selected by the local machine and version
+    B by a foreign machine at one path, `pending_graph_files` under the foreign machine
+    returns B with its language and symbol count, honors `limit`, orders by `indexed_at`,
+    and skips B within 300 s of a graph attempt. `sync_rows` returns both machines''
+    rows. test: `crates/gcode/src/db/sync_pending/tests.rs::pending_graph_files_select_the_machine_versions`.
+
+    8.1.2: With no Falkor configured, `sync_row` marks a zero-symbol file and a file
+    in a language outside `GRAPH_SYNC_LANGUAGES` `graph_synced` through the compare-and-set,
+    and leaves a Rust file with symbols pending with `missing_falkordb_config` as
+    its error kind. test: `crates/gcode/src/node/hub/job_sync/tests.rs::shortcut_marks_files_without_graph_facts`.
+
+    8.1.3: While another connection holds the project''s index lock exclusively, `sync_row`
+    skips every file and stamps no attempt. test: `crates/gcode/src/node/hub/job_sync/tests.rs::busy_files_stay_pending_without_an_attempt`.
+
+    8.1.4: `run_files_bounded` with a per-file function that blocks on its second
+    file returns the first file''s outcome and `stalled` within the stall timeout
+    plus one second, and never runs the third file. Until the blocked function is
+    released, another connection''s exclusive project lock stays busy. After its release
+    that lock succeeds. test: `crates/gcode/src/node/hub/job_sync/tests.rs::a_stall_abandons_the_worker`.
+
+    8.1.5: `plan_row` gives the hub machine''s row graph and vectors, a foreign machine''s
+    row graph only, nothing for an empty root or a soft-deleted project''s row of
+    either machine, and one probe file to a target whose breaker is due. `embedding_enabled`
+    false and `graph_enabled` false drop their targets. test: `crates/gcodeindex/src/jobs/tests.rs::rows_plan_targets_per_machine_and_breaker`.
+
+    8.1.6: Under a fake clock, the breaker opens after the threshold''s consecutive
+    transport failures, and a stall opens it at once. A failed probe doubles the backoff
+    up to the maximum, a busy probe reopens without doubling, and a successful probe
+    closes it and resets the backoff. test: `crates/gcodeindex/src/jobs/tests.rs::breaker_follows_the_python_state_machine`.
+
+    8.1.7: A tick with `enabled` false starts nothing. A tick before the interval
+    passes starts nothing. A tick while a run is in flight starts nothing, and returns
+    at once. The tick after the run ends and the interval passes starts the next run.
+    test: `crates/gcodeindex/src/jobs/tests.rs::ticks_start_one_run_per_interval`.
+
+    8.1.8: Every `JobConfig` default equals the `default` of its key in `crates/gcore/assets/config/runtime_config_contract.json`,
+    and an absent key or a mistyped value reads as that default. test: `crates/gcodeindex/src/jobs/tests.rs::config_defaults_match_the_runtime_contract`.
+
+    8.1.9: With pending shortcut files for the hub machine and a foreign machine,
+    and pending vector files for both, one sync run marks both machines'' shortcut
+    files `graph_synced` and stamps no vector attempt on the foreign machine''s files.
+    test: `crates/gcodeindex/tests/job_sync.rs::sync_job_covers_every_machine_row`.
+
+    8.1.10: `code_index_jobs::register` adds every `HubJobs::ticks()` name, so a second
+    registration of the same jobs on that host fails as a duplicate. The started host
+    stops within `SHUTDOWN_GRACE`. test: `crates/gdaemon/tests/code_index_jobs.rs::registers_each_hub_job_once`.
+
+    8.1.11: With a code indexer, `_start_code_index_tasks` creates only the `code-index-maintenance`
+    task and leaves `_sync_worker_task` `None`. test: `tests/test_runner_code_index_shutdown.py::test_start_code_index_tasks_starts_only_the_maintenance_loop`.
+
+    8.1.12: `gcode`, `gdaemon` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    8.1.13: `code_index.sync_worker_concurrency`''s description reads "Maximum machine-project
+    rows the sync job projects at once", and the checked-in contract equals fresh
+    generator output. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.'
+  labels:
+  - covers:code-index-family:8.1:8.1.1
+  - covers:code-index-family:8.1:8.1.2
+  - covers:code-index-family:8.1:8.1.3
+  - covers:code-index-family:8.1:8.1.4
+  - covers:code-index-family:8.1:8.1.5
+  - covers:code-index-family:8.1:8.1.6
+  - covers:code-index-family:8.1:8.1.7
+  - covers:code-index-family:8.1:8.1.8
+  - covers:code-index-family:8.1:8.1.9
+  - covers:code-index-family:8.1:8.1.10
+  - covers:code-index-family:8.1:8.1.11
+  - covers:code-index-family:8.1:8.1.12
+  - covers:code-index-family:8.1:8.1.13
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: 'Maintenance pass: reconcile and reindex'
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: '8.2.1: `orphaned_index_projects` returns an indexed project
+    with no machine''s selector and no registry row, and omits one with a registry
+    row and one that a foreign machine selects. `purge_index_project` deletes the
+    row and its files and symbols. `registry_state` reports a missing, a live and
+    a deleted project. `deleted_selected_projects` returns a soft-deleted project
+    with both machines that select it, and omits a live project and one with no registry
+    row. test: `crates/gcode/src/db/hub_maintenance/tests.rs::orphans_have_no_selector_and_no_registry_row`.
+
+    8.2.2: `eligibility` returns `overlay` for an unregistered directory whose derived
+    id matches, `unregistered` when it does not match, `missing_root` for an empty
+    or absent root, `identity_mismatch` for a differing `.gobby/project.json` id,
+    and `active` otherwise. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::eligibility_follows_resolve_indexed_project`.
+
+    8.2.3: For an unregistered project, `maintain_project` deletes the hub machine''s
+    communities, file states and project state and leaves a foreign machine''s. With
+    the project lock held by another connection it deletes nothing and returns `ReconcileBusy`.
+    For a `missing_root` project with no Falkor configured it returns `ReconcileFailed`
+    and keeps the selector. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::stale_selectors_reconcile_under_the_project_lock`.
+
+    8.2.4: For an active project with a new file, `maintain_project` returns `Indexed`
+    and leaves the file `graph_synced` and `vectors_synced` false. With the project
+    lock held it returns `IndexBusy`. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::active_projects_reindex_without_projections`.
+
+    8.2.5: The maintenance plan sweeps orphans only when `graph_enabled` and `embedding_enabled`
+    both hold, keeps only the hub machine''s rows, and runs at `maintenance_interval_seconds`,
+    whose default equals the contract''s. test: `crates/gcodeindex/src/jobs/tests.rs::maintenance_plans_the_sweep_and_hub_rows`.
+
+    8.2.6: One maintenance run over an unregistered hub row, an active hub row and
+    a foreign machine''s row reconciles the first, indexes the second, and leaves
+    the foreign row. test: `crates/gcodeindex/tests/job_maintenance.rs::maintenance_run_reconciles_and_reindexes_hub_rows`.
+
+    8.2.7: `_run_maintenance` summarizes and labels active projects and calls no reconcile,
+    sweep, pending-cleanup retry or gcode index. test: `tests/code_index/test_code_index_maintenance.py::test_run_maintenance_only_summarizes_and_labels`.
+
+    8.2.8: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    8.2.9: For a soft-deleted project that the hub machine and a foreign machine select,
+    `reconcile_deleted` returns `Busy` and deletes nothing while another connection
+    holds the project lock. With no Falkor configured it returns `Failed` and keeps
+    both selectors. test: `crates/gcode/src/node/hub/job_maintenance/tests.rs::deleted_projects_reconcile_for_every_machine`.'
+  labels:
+  - covers:code-index-family:8.2:8.2.1
+  - covers:code-index-family:8.2:8.2.2
+  - covers:code-index-family:8.2:8.2.3
+  - covers:code-index-family:8.2:8.2.4
+  - covers:code-index-family:8.2:8.2.5
+  - covers:code-index-family:8.2:8.2.6
+  - covers:code-index-family:8.2:8.2.7
+  - covers:code-index-family:8.2:8.2.8
+  - covers:code-index-family:8.2:8.2.9
+  tdd: true
+  source_section: '8.2'
+  implementation_domain: backend
+- title: Symbol summaries and community labels
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.2'
+  validation_criteria: '8.3.1: `unsummarized_symbols` returns the machine''s selected
+    versions'' function, class and method symbols with no summary, skips a symbol
+    within 300 s of an attempt and one of a foreign machine''s version, orders by
+    newest `updated_at` and honors `limit`. `update_symbol_summary` and `mark_summaries_attempted`
+    change nothing under a stale content hash. test: `crates/gcode/src/db/hub_summaries/tests.rs::summary_queue_follows_the_python_storage`.
+
+    8.3.2: `unlabeled_communities` returns the machine''s communities whose labeled
+    signature differs from the member signature, outside the cooloff, largest first.
+    `update_community_label` and `mark_labels_attempted` change nothing under a stale
+    member signature. test: `crates/gcode/src/db/hub_labels/tests.rs::label_queue_and_writes_are_signature_guarded`.
+
+    8.3.3: On fixtures with backticks, NUL, a fence, whitespace runs, a 600-character
+    summary and a multi-byte character at the cut, `sanitize_source_for_summary_prompt`
+    and `sanitize_symbol_summary` return Python''s `summary_safety` results, and an
+    all-whitespace summary is `None`. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::sanitizers_match_summary_safety`.
+
+    8.3.4: With a fake generator, `summarize_project` sends nothing for a symbol whose
+    file is missing and leaves it unstamped, stamps a symbol whose call fails and
+    one whose output sanitizes to nothing, writes the sanitized summary on success,
+    adds the truncation marker to a source over 2000 characters, and never runs more
+    than `max_concurrency` calls at once. test: `crates/gcode/src/node/hub/job_summaries/tests.rs::summaries_stamp_failures_and_skip_missing_files`.
+
+    8.3.5: `parse_label` accepts a fenced JSON object, and rejects non-JSON text,
+    a name of 2 or 41 characters, a 121-character rationale and a non-string field.
+    `sanitize_community_label` returns Python''s `community_label_safety` results
+    on fixtures for quotes, word count, charset, a source extension and a member path.
+    test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_parsing_and_safety_match_python`.
+
+    8.3.6: With a fake generator, `label_project` writes a candidate name with source
+    `deterministic`, writes a new safe name with source `model`, the profile as `label_model`
+    and NULL confidence, stamps an unsafe name, a rejected shape and a failed call,
+    and neither writes nor stamps a community whose member signature changed before
+    the write. test: `crates/gcode/src/node/hub/job_labels/tests.rs::label_outcomes_follow_the_python_labeler`.
+
+    8.3.7: The maintenance plan summarizes and then labels after `Indexed`, `IndexBusy`
+    and `IndexFailed`, does neither after `Overlay` or any reconcile outcome, and
+    drops each step when its `enabled` key is false. test: `crates/gcodeindex/src/jobs/tests.rs::maintenance_summarizes_then_labels_indexed_rows`.
+
+    8.3.8: Every `symbol_summary` and `community_label` default in `JobConfig` equals
+    the contract''s, and the default `candidates` lists are non-empty. test: `crates/gcodeindex/src/jobs/tests.rs::config_defaults_match_the_runtime_contract`.
+
+    8.3.9: One maintenance run over an active hub row with a queued symbol and no
+    daemon to reach stamps that symbol attempted and leaves its summary NULL. test:
+    `crates/gcodeindex/tests/job_maintenance.rs::maintenance_run_stamps_summaries_when_generation_fails`.
+
+    8.3.10: In standalone and hub mode, `init_subsystems` runs every phase and starts
+    no code-index task. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
+
+    8.3.11: `gcode`, `gdaemon` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.3:8.3.1
+  - covers:code-index-family:8.3:8.3.2
+  - covers:code-index-family:8.3:8.3.3
+  - covers:code-index-family:8.3:8.3.4
+  - covers:code-index-family:8.3:8.3.5
+  - covers:code-index-family:8.3:8.3.6
+  - covers:code-index-family:8.3:8.3.7
+  - covers:code-index-family:8.3:8.3.8
+  - covers:code-index-family:8.3:8.3.9
+  - covers:code-index-family:8.3:8.3.10
+  - covers:code-index-family:8.3:8.3.11
+  tdd: true
+  source_section: '8.3'
+  implementation_domain: backend
+- title: Hourly prune and `POST /api/code-index/prune`
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.3'
+  validation_criteria: '8.4.1: Over the hub machine''s rows, `prune_all` skips an
+    empty root with reason `missing_root`, completes a project with a graph-pending
+    file outside the cooloff and leaves its content, skips a live overlay with reason
+    `skipped_overlay`, and neither lists nor touches a foreign machine''s row. test:
+    `crates/gcode/src/node/hub/job_prune/tests.rs::prune_all_defers_skips_and_ignores_foreign_rows`.
+
+    8.4.2: `prune_all` completes an unregistered project and removes its hub selector.
+    With no Falkor configured it fails a registered `missing_root` project with reason
+    `<id>:failed` and keeps its selector. With the project lock held by another connection
+    it skips a stale project and a soft-deleted project with reason `skipped_locked`.
+    test: `crates/gcode/src/node/hub/job_prune/tests.rs::stale_and_deleted_rows_reconcile_or_skip`.
+
+    8.4.3: For an active project, `prune_all` deletes an unsynced content version
+    unreferenced for longer than `retention_days`, keeps a referenced one and one
+    inside the retention, and lists the project as completed. test: `crates/gcode/src/node/hub/job_prune/tests.rs::active_projects_prune_content_past_retention`.
+
+    8.4.4: While `GLOBAL_PRUNE` is held, `prune_all` with `Skip` returns `None` at
+    once, and with `Wait` returns its outcome after the release. test: `crates/gcode/src/node/hub/job_prune/tests.rs::the_global_lock_skips_or_waits`.
+
+    8.4.5: The prune job runs at 3600 s with `PruneEntry::Skip` and the published
+    `content_retention_days`, and does nothing with `enabled` false. test: `crates/gcodeindex/src/jobs/tests.rs::prune_runs_hourly_with_live_retention`.
+
+    8.4.6: An API-key `POST /api/code-index/prune` is claimed. Over an active, an
+    overlay and a failing project it returns 200 with Python''s compact body for the
+    three lists. With `retention_days` 5 a version unreferenced for 3 days stays,
+    an absent body deletes it under the published retention of 1, and `force` changes
+    nothing. test: `crates/gcodeindex/tests/family_prune.rs::prune_route_returns_the_python_outcome`.
+
+    8.4.7: `enabled` false and no published state return 503 `{"detail":"Code index
+    pruner not available"}`. Invalid JSON, a string `force`, a string `retention_days`
+    and `retention_days` 0 return Python''s 422 bodies. An unreachable hub database
+    returns 500 `{"detail":"Code index prune failed"}`. test: `crates/gcodeindex/tests/family_prune.rs::prune_route_follows_python_gates_and_errors`.
+
+    8.4.8: `delete_removed_automation_jobs` deletes a system `gobby:code-index-prune`
+    row and its runs, and `list_jobs(exclude_removed_automation=True)` omits the row
+    before the deletion. test: `tests/storage/test_cron.py::test_removed_automation_drops_the_code_index_prune_row`.
+
+    8.4.9: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.4:8.4.1
+  - covers:code-index-family:8.4:8.4.2
+  - covers:code-index-family:8.4:8.4.3
+  - covers:code-index-family:8.4:8.4.4
+  - covers:code-index-family:8.4:8.4.5
+  - covers:code-index-family:8.4:8.4.6
+  - covers:code-index-family:8.4:8.4.7
+  - covers:code-index-family:8.4:8.4.8
+  - covers:code-index-family:8.4:8.4.9
+  tdd: true
+  source_section: '8.4'
+  implementation_domain: backend
+- title: Content GC for projects only nodes index
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.8'
+  validation_criteria: '8.5.1: For a live registered project that only a foreign machine
+    selects, at a root absent from the hub, `prune_all` deletes an unsynced version
+    unreferenced past `retention_days`, keeps the version the foreign selector names
+    and one inside the retention, and lists the project completed. A second such project
+    with a graph-pending file on its machine is completed with its content left. test:
+    `crates/gcode/src/node/hub/job_prune/tests.rs::node_only_projects_prune_content_by_age`.
+
+    8.5.2: A foreign row with no registry row whose `root_path` hashes to its project
+    id is skipped with reason `skipped_overlay` and keeps its selector and content,
+    and so is one at `<dir>/worktrees/<live parent>/<run_id>`. One at `<dir>/worktrees/<soft-deleted
+    parent>/<run_id>` is a leftover: with no Falkor configured it fails with reason
+    `<id>:failed` and keeps its selector. A project with no registry row, selected
+    by two foreign machines at roots that do not hash to it, fails with reason `<id>:failed`
+    and keeps both selectors when no Falkor is configured. With the project lock held
+    by another connection it is skipped with reason `skipped_locked`, as a soft-deleted
+    node-only project is. test: `crates/gcode/src/node/hub/job_prune/tests.rs::unregistered_node_rows_skip_overlays_and_reconcile_purged_projects`.
+
+    8.5.3: `discover_content_gc` with `check_git_history` false returns a past-retention
+    version of a project that only a foreign machine selects and omits the version
+    its selector names. With `true` it returns nothing for that project. test: `crates/gcode/src/commands/status/content_gc/tests.rs::discovery_without_git_history_needs_no_local_checkout`.
+
+    8.5.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.5:8.5.1
+  - covers:code-index-family:8.5:8.5.2
+  - covers:code-index-family:8.5:8.5.3
+  - covers:code-index-family:8.5:8.5.4
+  tdd: true
+  source_section: '8.5'
+  implementation_domain: backend
+- title: Node workspace removal releases its code-index rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.5'
+  validation_criteria: '8.6.1: `node::hub::invalidate` for a foreign machine''s overlay
+    deletes that machine''s communities, file states and project state for the overlay
+    id, and keeps the parent''s rows and the hub machine''s rows for the same overlay.
+    A scope whose overlay shape disagrees with the principal returns `claims_mismatch`.
+    With the project lock held by another connection it returns `index_busy` and deletes
+    nothing. test: `crates/gcode/src/node/invalidate_tests.rs::hub_invalidate_deletes_only_the_principal_machine_rows`.
+
+    8.6.2: Under the remote golden grant, against the stub hub, `gcode invalidate
+    --force` on a node overlay deletes the node machine''s rows for it and prints
+    the local line. Without `--force`, an answer other than `y` prints `Aborted.`
+    and posts nothing. `invalidate --project-id` fails with `brokered_unsupported`.
+    test: `crates/gcode/src/node/invalidate_tests.rs::node_invalidate_clears_the_hub_rows`.
+
+    8.6.3: With a valid remote grant, the route deletes the principal machine''s rows
+    and returns the report, and a held project lock returns 409 `index_busy`. test:
+    `crates/gcodeindex/tests/node_invalidate.rs::invalidate_route_serves_the_principal_machine`.
+
+    8.6.4: `remove` of a worktree record and of a clone record whose workspace holds
+    `.gobby/project.json` runs a stub `gcode` once, with `invalidate --project <path>
+    --force --quiet` and `GOBBY_HOME` set, while the path still exists. It then removes
+    the path and deletes the record. A workspace without `.gobby/project.json`, a
+    path already gone and an absent `gcode` run no stub and remove as 2.3 does. test:
+    `crates/gdaemon/tests/node_workspace_release.rs::removal_invalidates_before_the_path_goes`.
+
+    8.6.5: A stub that exits 1 keeps the record and the path until a later retry succeeds.
+    A stub whose stderr is an `unauthorized` JSON line lets the removal finish. test:
+    `crates/gdaemon/tests/node_workspace_release.rs::removal_failures_keep_the_workspace_except_unauthorized`.
+
+    8.6.6: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.6:8.6.1
+  - covers:code-index-family:8.6:8.6.2
+  - covers:code-index-family:8.6:8.6.3
+  - covers:code-index-family:8.6:8.6.4
+  - covers:code-index-family:8.6:8.6.5
+  - covers:code-index-family:8.6:8.6.6
+  tdd: true
+  source_section: '8.6'
+  implementation_domain: backend
+- title: Edit trigger entry point
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.4'
+  validation_criteria: '8.7.1: `index_files` on a registered checkout indexes only
+    the named files for the hub machine, leaves them `graph_synced` and `vectors_synced`
+    false, and returns no busy files. With another connection holding one named file''s
+    lock it returns that file and indexes the other. With every named file''s lock
+    held it indexes nothing and returns them all. test: `crates/gcode/src/node/hub/job_trigger/tests.rs::index_files_indexes_named_files_and_returns_busy_ones`.
+
+    8.7.2: `index_files` returns `Checkout("checkout_required")` for a root with no
+    Gobby identity and `Checkout("checkout_mismatch")` for a checkout of a project
+    the hub machine registers at another root. It indexes an isolated overlay''s file
+    under the overlay id. test: `crates/gcode/src/node/hub/job_trigger/tests.rs::checkout_refusals_are_typed_and_overlays_index`.
+
+    8.7.3: `notify_file_changed` keys a root by its canonical path, keeps a file relative
+    to it, and drops the root itself, a directory and a path outside the root. A tick
+    starts one run for each root with pending files and none for a root whose run
+    is in flight. A file notified during a run starts at the first tick after the
+    run ends. With `enabled` false a tick drops pending files and starts nothing.
+    test: `crates/gcodeindex/src/jobs/tests.rs::trigger_batches_each_root_once`.
+
+    8.7.4: Under a fake clock, a `Failed` run''s files retry after 1 s, then 2 s,
+    doubling to 30 s. A run that indexed a file clears the backoff, and its busy files
+    retry after 1 s. A `Checkout` refusal suspends the root: a second notice of an
+    unchanged file starts nothing, and a changed marker, a changed file or a new file
+    lifts the suspension. A refusal for a batch during which a file arrived does not
+    suspend. test: `crates/gcodeindex/src/jobs/tests.rs::trigger_backs_off_and_suspends_like_python`.
+
+    8.7.5: Through `HubJobs::edit_trigger()`, a notified file of a registered checkout
+    reaches the index for the hub machine after one trigger tick. test: `crates/gcodeindex/tests/job_trigger.rs::a_notified_edit_reaches_the_index`.
+
+    8.7.6: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.7:8.7.1
+  - covers:code-index-family:8.7:8.7.2
+  - covers:code-index-family:8.7:8.7.3
+  - covers:code-index-family:8.7:8.7.4
+  - covers:code-index-family:8.7:8.7.5
+  - covers:code-index-family:8.7:8.7.6
+  tdd: true
+  source_section: '8.7'
+  implementation_domain: backend
+- title: Nightly repair handler
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.7'
+  validation_criteria: '8.8.1: `repair_row` returns `Skipped("missing_root")` for
+    an empty and an absent root, `Skipped("overlay")` for a root whose derived id
+    equals the row''s, `Skipped("deleted")` for a soft-deleted project''s row, and
+    `Completed` for an indexed project. For a project whose stored indexer version
+    differs, it returns `Completed` and the project state holds the current indexer
+    version. test: `crates/gcode/src/node/hub/job_repair/tests.rs::repair_row_skips_and_repairs_like_gcode_repair`.
+
+    8.8.2: `run` over a hub machine''s active row, an empty-root row, an overlay row
+    and a foreign machine''s row returns `Code index nightly repair completed: completed=1
+    failed=0 skipped=2` and leaves the foreign row unchanged. test: `crates/gcodeindex/tests/job_nightly_repair.rs::nightly_repair_returns_the_python_summary`.
+
+    8.8.3: A `run` while another is in flight returns the `already running` line,
+    `enabled` false returns the `code index disabled` line, and `nightly_repair_concurrency`''s
+    default equals the contract''s. test: `crates/gcodeindex/src/jobs/tests.rs::nightly_repair_skips_when_running_or_disabled`.
+
+    8.8.4: `gcode` and `gdaemon` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:8.8:8.8.1
+  - covers:code-index-family:8.8:8.8.2
+  - covers:code-index-family:8.8:8.8.3
+  - covers:code-index-family:8.8:8.8.4
+  tdd: true
+  source_section: '8.8'
+  implementation_domain: backend
+- title: '`code_index` defaults to native'
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.6'
+  validation_criteria: '9.1.1: `CodeIndexFamily::default_backend()` returns `Native`.
+    With `code_index` absent from `front_door.routes`, an API-key search request gets
+    the family''s 500 body on an unreachable pool. With `proxy` it reaches the backend
+    stub, and an `/api/code-index/node/*` request still reaches the node family. test:
+    `crates/gdaemon/tests/front_door.rs::code_index_defaults_to_native_and_honors_proxy`.
+
+    9.1.2: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:9.1:9.1.1
+  - covers:code-index-family:9.1:9.1.2
+  tdd: true
+  source_section: '9.1'
+  implementation_domain: backend
+- title: 'Corpus: `code_index` family cases replayed natively'
+  category: test
+  task_type: feature
+  depends_on:
+  - '9.1'
+  validation_criteria: '9.2.1: The manifest declares `code_index` native with origin
+    python and lists both cases. file: `tests/contracts/http/manifest.json`.
+
+    9.2.2: `code_index_search_disabled` is recorded from Python with status 503 and
+    body `{"detail":"Code indexer not available"}`. file: `tests/contracts/http/code_index_search_disabled.json`.
+
+    9.2.3: `code_index_overview_disabled` is recorded from Python with status 503
+    and body `{"detail":"Code graph not available"}`. file: `tests/contracts/http/code_index_overview_disabled.json`.
+
+    9.2.4: Every corpus case replays equal against the e2e daemon with `code_index`
+    on its native default. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    9.2.5: The Rust parity precheck passes with `code_index` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.'
+  labels:
+  - covers:code-index-family:9.2:9.2.1
+  - covers:code-index-family:9.2:9.2.2
+  - covers:code-index-family:9.2:9.2.3
+  - covers:code-index-family:9.2:9.2.4
+  - covers:code-index-family:9.2:9.2.5
+  tdd: false
+  source_section: '9.2'
+  assigned_agent: developer
+- title: Delete Python's pruner
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.2'
+  validation_criteria: '9.3.1: `CodeIndexStorage` has no prune-dirty or projection-cleanup
+    method, and its remaining storage tests pass. test: `tests/code_index/test_code_index_storage.py::test_code_index_storage_has_no_prune_or_cleanup_methods`.
+
+    9.3.2: `init_orchestration` with a code indexer builds no pruner and registers
+    no code-index prune cron job. test: `tests/test_runner_lifecycle.py::test_orchestration_builds_no_code_index_pruner`.
+
+    9.3.3: The ledger names no `HTTP POST /api/code-index/prune` key, and the regenerated
+    ledger matches its status files. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    9.3.4: The audit''s prune entry points at `crates/gcodeindex/src/family/prune.rs`,
+    and the documentation check passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.'
+  labels:
+  - covers:code-index-family:9.3:9.3.1
+  - covers:code-index-family:9.3:9.3.2
+  - covers:code-index-family:9.3:9.3.3
+  - covers:code-index-family:9.3:9.3.4
+  tdd: true
+  source_section: '9.3'
+  implementation_domain: backend
+- title: Delete Python's graph path, clear, rebuild and invalidate routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.3'
+  validation_criteria: '9.4.1: The OpenAPI paths list the five web UI routes and none
+    of `/graph/path`, `/graph/clear`, `/graph/rebuild` or `/invalidate`. test: `tests/servers/routes/test_code_index_routes.py::test_router_serves_only_the_web_ui_reads`.
+
+    9.4.2: `match_grant_route` returns `None` for the three deleted POST paths, and
+    an agent bearer is not authorized for them. test: `tests/servers/test_auth_service.py::test_code_index_projection_routes_are_not_agent_routes`.
+
+    9.4.3: `CodeIndexContext` keeps its overview and read methods, and their tests
+    pass. test: `tests/code_index/test_code_index_context.py::test_context_graph_overview_resolves_project_root_and_delegates`.
+
+    9.4.4: The ledger names none of the four keys, the five web UI rows stay `proxied`,
+    and the regenerated ledger matches. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    9.4.5: The audit''s four entries point at the native handler files, and the documentation
+    check passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.'
+  labels:
+  - covers:code-index-family:9.4:9.4.1
+  - covers:code-index-family:9.4:9.4.2
+  - covers:code-index-family:9.4:9.4.3
+  - covers:code-index-family:9.4:9.4.4
+  - covers:code-index-family:9.4:9.4.5
+  tdd: true
+  source_section: '9.4'
+  implementation_domain: backend
+- title: Drop the pruner's tables
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.4'
+  validation_criteria: '9.5.1: The migration drops both tables, and a migrated schema
+    has neither. file: `crates/gcore/assets/schema/migrations/470_drop_code_index_prune_tables.sql`.
+
+    9.5.2: The embedded schema identity names the new migration and the checked-in
+    catalog is fresh. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+
+    9.5.3: Every golden grant''s pinned payload checksum matches under the new identity.
+    test: `tests/runtime_grants/test_golden_vectors.py::test_payload_checksum_pinned`.
+
+    9.5.4: The gcode privilege manifest names neither table and matches the migrated
+    grants. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
+
+    9.5.5: `gcode`, `gdaemon` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:9.5:9.5.1
+  - covers:code-index-family:9.5:9.5.2
+  - covers:code-index-family:9.5:9.5.3
+  - covers:code-index-family:9.5:9.5.4
+  - covers:code-index-family:9.5:9.5.5
+  tdd: true
+  source_section: '9.5'
+  implementation_domain: backend
+- title: Grants stop listing the projection operations
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.5'
+  validation_criteria: '9.6.1: With Falkor and Qdrant brokered, an issued grant''s
+    Falkor and Qdrant capabilities carry no operations and `broker_operations` names
+    no projection operation. test: `tests/runtime_grants/test_remote_principal_grants.py::test_brokered_projection_stores_carry_no_operations`.
+
+    9.6.2: The Rust capability port matches the regenerated Python vectors. test:
+    `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.
+
+    9.6.3: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:9.6:9.6.1
+  - covers:code-index-family:9.6:9.6.2
+  - covers:code-index-family:9.6:9.6.3
+  tdd: true
+  source_section: '9.6'
+  implementation_domain: backend
+- title: Delete what only the trigger and nightly repair used
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.10'
+  validation_criteria: '9.7.1: `CodeIndexContext` takes no breaker, and its tests
+    pass. test: `tests/code_index/test_code_index_context.py::test_context_graph_overview_resolves_project_root_and_delegates`.
+
+    9.7.2: The worktree test derives the overlay id from the namespace and passes.
+    test: `tests/worktrees/test_creation.py::test_creation_registers_canonical_root_for_overlay_grants`.
+
+    9.7.3: `CodeIndexConfig` has neither key, and the checked-in contract equals fresh
+    generator output. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    9.7.4: The settings section renders without the two fields. test: `web/src/components/settings/sections/__tests__/RuntimeInfrastructureSection.test.tsx::renders
+    kept code-index summary fields and omits retired controls`.
+
+    9.7.5: Every corpus case replays equal with the re-recorded config cases. test:
+    `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    9.7.6: `gcode`, `gdaemon` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:code-index-family:9.7:9.7.1
+  - covers:code-index-family:9.7:9.7.2
+  - covers:code-index-family:9.7:9.7.3
+  - covers:code-index-family:9.7:9.7.4
+  - covers:code-index-family:9.7:9.7.5
+  - covers:code-index-family:9.7:9.7.6
+  tdd: true
+  source_section: '9.7'
+  implementation_domain: fullstack
+```
