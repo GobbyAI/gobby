@@ -88,10 +88,19 @@ def rebind_agent_run(
         UPDATE sessions
         SET agent_run_id = %s,
             workflow_name = COALESCE(%s, workflow_name),
+            status = CASE WHEN status = 'expired' THEN 'active' ELSE status END,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
           AND agent_run_id = %s
-          AND status NOT IN ('expired', 'deleted')
+          AND status <> 'deleted'
+          AND EXISTS (
+              SELECT 1 FROM agent_runs AS original
+              WHERE original.id = sessions.agent_run_id
+                AND original.child_session_id = sessions.id
+                AND original.parent_session_id = sessions.parent_session_id
+                AND original.status = 'cancelled'
+                AND original.terminal_reason = 'daemon_stop'
+          )
         """,
         (new_run_id, workflow_name, session_id, expected_run_id),
     )

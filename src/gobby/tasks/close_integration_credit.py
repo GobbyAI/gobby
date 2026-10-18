@@ -22,6 +22,9 @@ class LandedCandidateCredit:
     _results: dict[str, str | None] = field(default_factory=dict)
 
     def credits(self, tree: str) -> bool:
+        # Target matching also offers test-file paths, which are not checkouts.
+        if not Path(tree).is_dir():
+            return False
         if tree not in self._results:
             self._results[tree] = self._refusal(tree)
         return self._results[tree] is None

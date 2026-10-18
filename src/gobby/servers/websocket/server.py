@@ -356,6 +356,7 @@ class WebSocketServer(
                 registry=runtime_registry,
                 sessions=sessions,
                 publish=self.broadcast_workspace_event,
+                live_host_epoch=lambda: getattr(self.terminal_host_manager, "host_epoch", None),
             )
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)

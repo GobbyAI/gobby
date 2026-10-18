@@ -103,7 +103,7 @@ async def _preflight(
     if kind == "split":
         ref = await asyncio.to_thread(split_target, reserver.workspaces, snapshot)
         if ref is None:
-            return "not_found"
+            ref = snapshot.get("beside_pane_id")
     else:
         ref = workspace_id
     title, axis = snapshot.get("title"), snapshot.get("axis")
@@ -128,7 +128,18 @@ async def _preflight(
     try:
         resolved = await reserver.preflight(f"session:{parent_session_id}", project_id, placement)
     except AgentPlacementError as exc:
-        return exc.code
+        if kind != "split" or exc.code != "not_found" or not isinstance(workspace_id, str):
+            return exc.code
+        # A reboot or sweep can remove the whole tab. Revalidate a fresh tab in
+        # the recorded workspace; foreign or moved targets never reach this path.
+        try:
+            resolved = await reserver.preflight(
+                f"session:{parent_session_id}",
+                project_id,
+                AgentPlacement(kind="tab", ref=workspace_id, title=title),
+            )
+        except AgentPlacementError as fallback_exc:
+            return fallback_exc.code
     if resolved.workspace_id != workspace_id:
         # The split target moved to another workspace since the agent was placed.
         return "not_found"

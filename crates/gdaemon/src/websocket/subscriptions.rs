@@ -95,6 +95,17 @@ impl SubscriptionState {
         }
     }
 
+    /// Adds server-side subscriptions, as the Python handler sites do. Sends
+    /// nothing; a connection that never subscribed starts from the set.
+    pub fn add_server_subscriptions(&mut self, events: impl IntoIterator<Item = String>) {
+        match self {
+            Self::Initialized(set) => set.extend(events),
+            Self::Absent | Self::ExplicitNull => {
+                *self = Self::Initialized(events.into_iter().collect());
+            }
+        }
+    }
+
     /// Resolve one inbound text frame. A subscription control is validated in
     /// full before the state changes, so a rejected frame never mutates it.
     pub fn apply_subscription_request<'a>(&mut self, text: &'a str) -> Inbound<'a> {

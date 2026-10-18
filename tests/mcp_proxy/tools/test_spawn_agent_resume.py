@@ -36,6 +36,11 @@ def stored_agent_type() -> Iterator[MagicMock]:
         yield manager.return_value.get_variable_subset
 
 
+def _run(**fields: object) -> SimpleNamespace:
+    """A stored agent run; resume reads its metadata, so every run fixture carries it."""
+    return SimpleNamespace(resume_metadata_json={}, **fields)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stored", "requested"),
@@ -142,7 +147,7 @@ async def test_resume_refuses_before_allocating(changes: dict[str, str], reason:
     sessions.resolve_session_reference.return_value = target.id
     sessions.get.return_value = target
     runner = MagicMock()
-    runner.run_storage.get.return_value = SimpleNamespace(status="running")
+    runner.run_storage.get.return_value = _run(status="running")
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
         return_value={"id": "project", "project_path": "/repo"},
@@ -230,9 +235,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "Can spawn", 0)
     runner.run_storage.has_active_run_for_task.return_value = False
-    runner.run_storage.get.return_value = SimpleNamespace(
-        status="expired", worktree_id=None, clone_id=None
-    )
+    runner.run_storage.get.return_value = _run(status="expired", worktree_id=None, clone_id=None)
     handler = NoneIsolationHandler()
     prepared = PreparedSpawn(
         session_id="existing",
@@ -323,9 +326,9 @@ async def test_resume_refuses_a_stored_workspace_that_is_not_a_directory(
         reasoning_effort=None,
     )
     runner = MagicMock()
-    runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
+    runner.run_storage.get.return_value = _run(worktree_id=None, clone_id=None)
     with (
-        patch.object(implementation, "resolve_resume_target", return_value=target),
+        patch.object(resume, "resolve_resume_target", return_value=target),
         patch.object(
             implementation, "authorize_write_grant", side_effect=ValueError("past resume preflight")
         ) as authorize,
@@ -405,7 +408,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "Can spawn", 0)
     runner.run_storage.has_active_run_for_task.return_value = False
-    runner.run_storage.get.return_value = SimpleNamespace(
+    runner.run_storage.get.return_value = _run(
         status="expired", worktree_id="lane-worktree", clone_id=None
     )
     lane = SimpleNamespace(

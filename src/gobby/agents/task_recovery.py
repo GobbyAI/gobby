@@ -20,6 +20,9 @@ from gobby.tasks.state_semantics import (
 
 logger = logging.getLogger(__name__)
 RECOVERABLE_TERMINAL_STATUSES = ("error", "timeout", "cancelled")
+# Bounds the terminal kill/verify that gates claim recovery. A run whose verify exceeds
+# this deadline is left unsettled for the sweep, the same as any unverified run.
+TERMINAL_VERIFY_TIMEOUT_SECONDS = 10.0
 
 if TYPE_CHECKING:
     from gobby.storage.agents._models import AgentRunListRow
@@ -454,7 +457,19 @@ class TaskRecoveryHandler:
             )
             return False
 
-        result = await self._terminal_agent_killer(db_run)
+        try:
+            result = await asyncio.wait_for(
+                self._terminal_agent_killer(db_run),
+                timeout=TERMINAL_VERIFY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Cannot recover task %s after agent %s; terminal kill/verify exceeded %.0fs",
+                task_ref,
+                db_run.id,
+                TERMINAL_VERIFY_TIMEOUT_SECONDS,
+            )
+            return False
         if result.get("success"):
             return True
         logger.warning(
