@@ -35,6 +35,7 @@ from gobby.agents.idle_detector import (
     composer_text,
 )
 from gobby.agents.srt_runtime import SRT_PREFLIGHT_TIMEOUT_SECONDS
+from gobby.agents.srt_socket_paths import srt_socket_directory
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.storage.terminals import AttachLocator, TerminalManager
@@ -51,6 +52,7 @@ from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    MCPTestClient,
     copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
@@ -531,27 +533,30 @@ def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     )
 
 
-def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
+def _spawn_agent(
+    client: httpx.Client, *, task_id: str | None = None, checkout_mode: str = "none"
+) -> dict[str, Any]:
     """Spawn one agent run; agent spawn is native-only."""
     backend = "native"
-    created = client.post(
-        "/api/tasks",
-        json={
-            "title": f"stack-{backend}",
-            "task_type": "task",
-            "project_id": E2E_PROJECT_ID,
-            "validation_criteria": f"{backend} agent run is live in a terminal.",
-        },
-    )
-    assert created.status_code == 201, created.text
-    task_id = str(created.json()["id"])
+    if task_id is None:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "title": f"stack-{backend}",
+                "task_type": "task",
+                "project_id": E2E_PROJECT_ID,
+                "validation_criteria": f"{backend} agent run is live in a terminal.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = str(created.json()["id"])
     spawned = client.post(
         "/api/agents/spawn",
         json={
             "task_id": task_id,
             "agent_name": "default",
             "provider": "claude",
-            "checkout_mode": "none",
+            "checkout_mode": checkout_mode,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
             # until the test cancels them.
@@ -1264,6 +1269,184 @@ async def test_terminal_client_stack_end_to_end(
             json.dumps({"before_host_crash": before_host_crash, "after_cleanup": after_cleanup})
         )
     client.close()
+
+
+_RESTART_SEAT_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+def _claim_for_seat(
+    cli_events: CLIEventSimulator, mcp_client: MCPTestClient, project_dir: Path, task_id: str
+) -> str:
+    """Claim the task for a registered owner session before the seat spawns."""
+    owner = cli_events.register_session(
+        external_id=f"seat-owner-{uuid.uuid4().hex[:8]}",
+        machine_id=_RESTART_SEAT_MACHINE_ID,
+        project_id=E2E_PROJECT_ID,
+        cwd=str(project_dir),
+    )
+    owner_id = str(owner["id"])
+    mcp_client.session_id = owner_id
+    claimed = mcp_client.call_tool(
+        server_name="gobby-tasks",
+        tool_name="claim_task",
+        arguments={"task_id": task_id},
+    )
+    claim: dict[str, Any] = claimed.get("result", claimed)
+    assert claim.get("task_id") == task_id, claimed
+    return owner_id
+
+
+def _wait_for_live_seats(client: httpx.Client, run_ids: tuple[str, str], label: str) -> None:
+    wait_for_condition(
+        lambda: _live_native_items(client, run_ids),
+        timeout=120.0,
+        interval=0.2,
+        description=f"live native terminals {label}",
+    )
+
+
+def _assert_seat_sandboxed(client: httpx.Client, run_id: str) -> None:
+    """The seat's run record shows managed SRT enforcement."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    sandbox = run_response.json()["run"].get("sandbox")
+    assert isinstance(sandbox, dict), run_response.json()
+    assert sandbox.get("backend") == "srt" and sandbox.get("enforced") is True, sandbox
+
+
+def _restart_seat_state(client: httpx.Client, run_id: str, task_id: str) -> dict[str, Any]:
+    """Read the seat fields that a restart must not change."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    run = run_response.json()["run"]
+    task_response = client.get(f"/api/tasks/{task_id}")
+    assert task_response.status_code == 200, task_response.text
+    return {
+        "session_id": run.get("session_id"),
+        "claimed_session_id": run.get("claimed_session_id"),
+        "terminal_id": run.get("terminal_id"),
+        "worktree_id": run.get("worktree_id"),
+        "status": run.get("status"),
+        "task_claimed_by": task_response.json().get("claimed_by_session_id"),
+    }
+
+
+def _seat_worktree_path(client: httpx.Client, run_id: str) -> str:
+    """Resolve the seat run's worktree record to its checkout path."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    worktree_id = run_response.json()["run"].get("worktree_id")
+    assert worktree_id, run_response.json()
+    listed = client.get("/api/source-control/worktrees", params={"project_id": E2E_PROJECT_ID})
+    assert listed.status_code == 200, listed.text
+    for record in listed.json()["worktrees"]:
+        if record["id"] == worktree_id:
+            return str(record["worktree_path"])
+    raise AssertionError(f"worktree {worktree_id} is not listed for the E2E project")
+
+
+def _srt_owner_records(gobby_home: Path) -> dict[str, str]:
+    """Evidence only: the SRT broker owner records beside the socket."""
+    root = srt_socket_directory(gobby_home)
+    if not root.is_dir():
+        return {}
+    return {record.name: record.read_text() for record in sorted(root.glob("v-*.owner.json"))}
+
+
+def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
+    daemon_instance: DaemonInstance,
+    daemon_client: httpx.Client,
+    cli_events: CLIEventSimulator,
+    mcp_client: MCPTestClient,
+    tmp_path: Path,
+) -> None:
+    """Each sandboxed seat keeps its session, task claim, and worktree across a restart."""
+    client = _http(daemon_instance)
+    host_before = _wait_for_host(daemon_client, daemon_instance)
+    seats: list[dict[str, Any]] = []
+    before: dict[str, dict[str, Any]] = {}
+    owners_before: dict[str, str] = {}
+    restarts: list[dict[str, Any]] = []
+    try:
+        for label in ("first", "second"):
+            created = client.post(
+                "/api/tasks",
+                json={
+                    "title": f"restart-seat-{label}",
+                    "task_type": "task",
+                    "project_id": E2E_PROJECT_ID,
+                    "validation_criteria": "Seat keeps its session, claim and worktree.",
+                },
+            )
+            assert created.status_code == 201, created.text
+            task_id = str(created.json()["id"])
+            owner_id = _claim_for_seat(cli_events, mcp_client, daemon_instance.project_dir, task_id)
+            spawned = _spawn_agent(client, task_id=task_id, checkout_mode="worktree")
+            run_id = str(spawned["run_id"])
+            seats.append(
+                {
+                    "task_id": task_id,
+                    "owner_id": owner_id,
+                    "run_id": run_id,
+                    "worktree_path": _seat_worktree_path(client, run_id),
+                }
+            )
+        run_ids = (str(seats[0]["run_id"]), str(seats[1]["run_id"]))
+        for seat in seats:
+            worktree = Path(seat["worktree_path"])
+            assert worktree.is_dir(), seat
+            # The worktree must live under the isolated home, never the operator's ~/.gobby.
+            assert worktree.resolve().is_relative_to(daemon_instance.gobby_home.resolve()), seat
+        wait_for_condition(
+            lambda: _live_native_items(client, run_ids),
+            timeout=120.0,
+            interval=0.2,
+            description=f"live native terminals for seat runs {run_ids}",
+        )
+        before = {
+            seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
+            for seat in seats
+        }
+        for seat in seats:
+            state = before[seat["run_id"]]
+            assert state["session_id"], state
+            assert state["terminal_id"], state
+            assert state["worktree_id"], state
+            assert state["task_claimed_by"] == seat["owner_id"], state
+            _assert_seat_sandboxed(client, seat["run_id"])
+        owners_before = _srt_owner_records(daemon_instance.gobby_home)
+        # Two real restarts. The second shutdown runs in a runner that may have adopted
+        # the broker the first runner started rather than started it itself.
+        for restart in (1, 2):
+            _restart_daemon_preserving_host(daemon_instance)
+            client.close()
+            client = _http(daemon_instance)
+            host_after = _wait_for_host(client, daemon_instance)
+            assert host_after["host_epoch"] == host_before["host_epoch"], host_after
+            _wait_for_live_seats(client, run_ids, f"after restart {restart} for {run_ids}")
+            after = {
+                seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
+                for seat in seats
+            }
+            owners = _srt_owner_records(daemon_instance.gobby_home)
+            restarts.append({"restart": restart, "after": after, "owners": owners})
+            if sys.platform == "darwin":
+                assert owners, f"no SRT monitor owner record after restart {restart}: {owners}"
+            for seat in seats:
+                assert after[seat["run_id"]] == before[seat["run_id"]], (restart, seat)
+                assert Path(seat["worktree_path"]).is_dir(), seat
+    finally:
+        # Evidence first, so a failed run keeps what the restarts showed.
+        (tmp_path / "seat-restart.json").write_text(
+            json.dumps(
+                {"before": before, "owners_before": owners_before, "restarts": restarts},
+                indent=2,
+                default=str,
+            )
+        )
+        for seat in seats:
+            _cancel_stack_run(client, str(seat["run_id"]))
+        client.close()
 
 
 def _gclient(
