@@ -505,7 +505,10 @@ fn validation_run_records_enforce_outcomes_reuse_and_runtime_grants() -> anyhow:
         );
     }
     assert_eq!(
-        client.execute(insert, &[&"passed", &Some(0_i32), &false, &Some("dirty tree")])?,
+        client.execute(
+            insert,
+            &[&"passed", &Some(0_i32), &false, &Some("dirty tree")]
+        )?,
         1
     );
     for (outcome, exit_code, reusable, reason) in [
@@ -518,7 +521,10 @@ fn validation_run_records_enforce_outcomes_reuse_and_runtime_grants() -> anyhow:
         let error = client
             .execute(insert, &[&outcome, &exit_code, &reusable, &reason])
             .expect_err("invalid run record must fail a CHECK constraint");
-        assert_eq!(error.code(), Some(&postgres::error::SqlState::CHECK_VIOLATION));
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::CHECK_VIOLATION)
+        );
     }
 
     for privilege in ["SELECT", "INSERT", "DELETE"] {
