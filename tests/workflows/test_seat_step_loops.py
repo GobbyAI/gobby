@@ -228,11 +228,18 @@ class SeatRun:
     async def intake(self, task: Task, sha: str = SHA) -> None:
         await self.incoming(f"LANE=1 EVENT=CANDIDATE TASK={task.id} COMMIT={sha} NOTE=ready")
 
-    async def approve(self, task: Task, sha: str = SHA, kind: str = "landing_approval") -> None:
+    async def approve(
+        self,
+        task: Task,
+        sha: str = SHA,
+        kind: str = "independent_review_approval",
+        author: str = SESSION_ID,
+    ) -> None:
+        SessionTaskManager(self.db).link_task(SESSION_ID, task.id, "reviewing")
         record_close_receipt(
             self.db,
             task=task,
-            author_session_id=COORDINATOR_ID,
+            author_session_id=author,
             kind=kind,
             commit_sha=sha,
             facts={"reason": "restart"} if kind == "landing_approval" else {},
@@ -387,25 +394,35 @@ async def test_reviewer_resume_and_clear_follow_own_review_receipt(
     assert run.vars["candidate_received"] is (event == "CANDIDATE_RESUMED")
 
 
-@pytest.mark.parametrize("kind", ["independent_review_approval", "wrong-sha", "landing_approval"])
-async def test_land_phase_requires_exact_stored_landing_approval(
-    temp_db: HubDatabase, kind: str
+@pytest.mark.parametrize(
+    "kind,sha,author,ready",
+    [
+        ("independent_review_approval", SHA, SESSION_ID, True),
+        ("independent_review_approval", REPLACEMENT_SHA, SESSION_ID, False),
+        ("independent_review_approval", SHA, COORDINATOR_ID, False),
+        ("landing_approval", SHA, COORDINATOR_ID, False),
+    ],
+)
+async def test_land_phase_requires_exact_stored_own_review_approval(
+    temp_db: HubDatabase, kind: str, sha: str, author: str, ready: bool
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     await run.intake(task)
-    receipt_kind = "landing_approval" if kind == "wrong-sha" else kind
-    await run.approve(task, REPLACEMENT_SHA if kind == "wrong-sha" else SHA, receipt_kind)
-    assert run.step == ("verdict" if kind == "landing_approval" else "review")
-    assert await run.admits(
-        "gobby-tasks-ops",
-        "land_commit",
-        {
-            "task_id": f"#{task.seq_num}",
-            "commit_sha": SHA,
-        },
-    ) is (kind == "landing_approval")
+    await run.approve(task, sha, kind, author)
+    assert run.step == ("verdict" if ready else "review")
+    assert (
+        await run.admits(
+            "gobby-tasks-ops",
+            "land_commit",
+            {
+                "task_id": f"#{task.seq_num}",
+                "commit_sha": SHA,
+            },
+        )
+        is ready
+    )
     assert not await run.admits(
         "gobby-tasks-ops",
         "land_commit",
@@ -416,7 +433,9 @@ async def test_land_phase_requires_exact_stored_landing_approval(
     )
 
 
-async def test_stale_verdict_snapshot_cannot_bypass_landing_approval(temp_db: HubDatabase) -> None:
+async def test_stale_verdict_snapshot_cannot_bypass_own_review_approval(
+    temp_db: HubDatabase,
+) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task, other = run.task(), run.task()
@@ -1238,10 +1257,9 @@ async def test_task_reads_accept_aliases_and_replacement_clears_only_same_task_p
     record_close_receipt(
         run.db,
         task=first,
-        author_session_id=COORDINATOR_ID,
-        kind="landing_approval",
+        author_session_id=SESSION_ID,
+        kind="independent_review_approval",
         commit_sha=REPLACEMENT_SHA,
-        facts={"reason": "restart"},
     )
     await run.call("gobby-tasks", "get_task", {"task_id": ref})
     assert run.step == "verdict"

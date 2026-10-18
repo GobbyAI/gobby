@@ -23,8 +23,11 @@ from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import Task
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.condition_helpers_sessions import session_refs_equal
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
@@ -34,8 +37,10 @@ from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
     build_agent_workflow_allowed_funcs,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from tests.agents._yaml_helpers import flat
+from tests.workflows.test_seat_step_loops import COORDINATOR_ID, SESSION_ID, SHA, SeatRun
 
 pytestmark = pytest.mark.unit
 
@@ -138,27 +143,22 @@ def _allowed_mcp_tools(step: WorkflowStep) -> set[str]:
     return set(step.allowed_mcp_tools)
 
 
-def _send_message_resets(step: WorkflowStep) -> dict[str, dict[str, Any]]:
-    """The step's ``send_message`` success handlers, keyed by the variable each sets."""
-    return {
-        handler["variable"]: handler
-        for handler in step.on_mcp_success
-        if (handler["server"], handler["tool"]) == ("gobby-agents", "send_message")
-    }
+async def _reviewer_run(db: PostgresHubDatabase, step: str = "verdict") -> tuple[SeatRun, Task]:
+    run = SeatRun(db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    SessionTaskManager(db).link_task(SESSION_ID, task.id, "reviewing")
+    if step == "verdict":
+        await run.approve(task)
+    assert run.step == step
+    return run, task
 
 
 def _matches(condition: str, content: str, **variables: Any) -> bool:
     context: dict[str, Any] = {"vars": variables, "tool_input": {"content": content}}
     evaluator = SafeExpressionEvaluator(context, build_agent_workflow_allowed_funcs(context))
     return bool(evaluator.evaluate(condition))
-
-
-def _code_reviewer_completion_when() -> str:
-    return next(
-        str(handler["when"])
-        for handler in _steps("code-reviewer")["verdict"].on_mcp_success
-        if handler.get("variable") == "_unit_done" and handler.get("value") is True
-    )
 
 
 @pytest.mark.parametrize("name", SEATS)
@@ -266,6 +266,8 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         for name in ("caller", "orchestrator", "log-monitor", "other")
     )
     recipients = {"gobby#10": orchestrator, "gobby#11": log_monitor, "gobby#12": other}
+    for recipient, role in ((orchestrator, "orchestrator"), (log_monitor, "log-monitor")):
+        SessionVariableManager(temp_db).set_variable(recipient.id, "_agent_type", role)
     body = _load("metrics-monitor")
     assert body.step_workflow is not None
     stored_refs = {
@@ -280,8 +282,9 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         **body.step_workflow.variables,
         "orchestrator_session": stored_refs[stored_form][0],
         "log_monitor_session": stored_refs[stored_form][1],
-        "tick_done": True,
+        "tick_done": tick_done_value,
         "tick_window": "sample-window",
+        "_window_report": content,
         "orchestrator_reported": False,
         "log_monitor_reported": False,
     }
@@ -299,6 +302,9 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
 
     async def send(recipient_id: str, recipient_seq: int | None) -> str | None:
         ref = f"{sample_project['name']}#{recipient_seq}" if stored_form == "uuid" else recipient_id
+        message = InterSessionMessageManager(temp_db).create_message(
+            caller.id, recipient_id, content
+        )
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             session_id=caller.id,
@@ -311,7 +317,10 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
                     "tool_name": "send_message",
                     "arguments": {"target": "session", "target_id": ref, "content": content},
                 },
-                "tool_output": {"success": succeeded, "result": {"target_id": recipient_id}},
+                "tool_output": {
+                    "success": succeeded,
+                    "result": {"target_id": recipient_id, "message_ids": [message.id]},
+                },
             },
             metadata={},
         )
@@ -338,27 +347,15 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         assert instance.variables["tick_done"] is False
         assert instance.variables["tick_window"] is None
 
-        # The native setter persists step state before its AFTER_TOOL hook.
-        instance.variables.update(tick_done=tick_done_value, tick_window="next-window")
-        manager.save(instance)
-        event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id=caller.id,
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "mcp__gobby__set_variable",
-                "tool_input": {"name": "tick_done", "value": tick_done_value, "scope": "step"},
-                "tool_output": {"success": True},
-            },
-            metadata={},
-        )
-        notice = await engine._process_step_after_tool(event, caller.id, {})
+        # The first durable report opens the next window without a native setter.
+        notice = await send(recipient.id, recipient.seq_num)
         assert notice is not None and notice.startswith("Step transition: tick -> report")
         instance = manager.get_for_session(caller.id)
         assert instance is not None and instance.current_step == "report"
-        assert instance.variables["orchestrator_reported"] is False
-        assert instance.variables["log_monitor_reported"] is False
+        assert instance.variables["orchestrator_reported"] is (target == "gobby#10")
+        assert instance.variables["log_monitor_reported"] is (target == "gobby#11")
+        assert instance.variables["tick_window"] != "sample-window"
+        # Repeating one recipient cannot complete the two-recipient window.
         assert await send(recipient.id, recipient.seq_num) is None
         notice = await send(remaining.id, remaining.seq_num)
         assert notice is not None and notice.startswith("Step transition: report -> tick")
@@ -434,6 +431,7 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
         expected.update(
             {
                 "gobby-agents:send_message",
+                "gobby-agents:get_inter_session_message",
                 "gobby-agents:wait_for_coordination",
                 "gobby-sessions:get_session",
                 "gobby-sessions:set_title",
@@ -450,19 +448,18 @@ def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link
     prompt = _prompt("code-reviewer")
     steps = _steps("code-reviewer")
     replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
-    assert "same active task supersedes its old SHA" in replacement
-    assert "First set verdict_ready=false, then candidate_received=false" in replacement
-    assert "return to await" in replacement
-    assert "through Intake and Review" in replacement
-    assert "fresh independent_review_approval receipt for that SHA" in replacement
-    assert "Never reuse the superseded SHA's approval" in replacement
+    assert "Read the stored incoming replacement CANDIDATE" in replacement
+    assert "same-task replacement resets verdict state" in replacement
+    assert "fresh independent_review_approval for its full SHA" in replacement
+    assert "Finish the active unit before reading a different queued task" in replacement
     resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
     assert 'action="reviewing"' in resume
     assert "before landing or review-only completion" in resume
     assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["verdict"])
     status = steps["verdict"].status_message
     assert status is not None
-    assert "set verdict_ready=false, then candidate_received=false" in status
+    assert "supersede the current SHA and return to fresh review" in status
+    assert "never reuse the old one" in status
 
 
 def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
@@ -486,15 +483,19 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
         ("await", "not vars.candidate_received"),
         ("verdict", "vars.verdict_ready"),
     ]
-    assert _transitions(steps["verdict"]) == [("await", "not vars.candidate_received")]
+    assert _transitions(steps["verdict"]) == [
+        ("review", "vars.candidate_received and not vars.verdict_ready"),
+        ("await", "not vars.candidate_received"),
+    ]
     assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
         _allowed_mcp_tools(steps["await"])
     )
-    assert "mcp__gobby__set_variable" in _allowed_tools(steps["await"])
-    assert {"Bash", "Read", "Grep", "mcp__gobby__set_variable"} <= _allowed_tools(steps["review"])
+    for step in steps.values():
+        assert "mcp__gobby__set_variable" not in _allowed_tools(step)
+    assert {"Bash", "Read", "Grep"} <= _allowed_tools(steps["review"])
     assert "gobby-agents:send_message" in _allowed_mcp_tools(steps["review"])
-    assert 'set_variable(name="candidate_task"' in prompt
-    assert 'scope="step"' in prompt
+    assert "stored incoming" in prompt
+    assert "set_variable(" not in prompt
     assert "integration branch named by the injected project policy" in prompt
     assert "EVENT=CANDIDATE_VERDICT TASK=#NNNNN" in prompt
     assert "VERDICT=LAND|BOUNCE" in prompt
@@ -517,69 +518,37 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
 )
 async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_receipt(
     temp_db: PostgresHubDatabase,
-    sample_project: dict[str, Any],
     step_name: str,
     succeeded: bool,
     content: str,
     withdrawn: bool,
 ) -> None:
-    session = SessionManager(temp_db).register(
-        external_id="reviewer-withdrawal",
-        machine_id=get_machine_id(),
-        source="codex",
-        project_id=sample_project["id"],
-    )
+    run, task = await _reviewer_run(temp_db, step_name)
     candidate = content.split("TASK=", 1)[1].split(" ", 1)[0] if withdrawn else "#24164"
-    body = _load("code-reviewer")
-    assert body.step_workflow is not None
-    variables = {
-        **body.step_workflow.variables,
-        "candidate_task": candidate,
-        "candidate_sha": "a" * 40,
-        "candidate_received": True,
-        "verdict_ready": step_name == "verdict",
-    }
-    manager = AgentStepInstanceManager(temp_db)
-    manager.save(
-        build_step_instance(
-            body,
-            session_id=session.id,
-            step_workflow_id=None,
-            variables=variables,
-            current_step=step_name,
-        )
+    content = content.replace(candidate, task.id).replace(" NOTE=", f" SHA={SHA} NOTE=")
+    before = run.vars
+    comments = temp_db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
+    message = InterSessionMessageManager(temp_db).create_message(
+        SESSION_ID, COORDINATOR_ID, content
     )
-    event = HookEvent(
-        event_type=HookEventType.AFTER_TOOL,
-        session_id=session.id,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-agents",
-                "tool_name": "send_message",
-                "arguments": {"target": "session", "target_id": "#1", "content": content},
-            },
-            "tool_output": {"success": succeeded},
-        },
-        metadata={},
+    await run.call(
+        "gobby-agents",
+        "send_message",
+        {"target": "session", "target_id": message.to_session, "content": content},
+        {"success": succeeded, "message_ids": [message.id]},
     )
-    notice = await RuleEngine(temp_db)._process_step_after_tool(event, session.id, {})
-    instance = manager.get_for_session(session.id)
-    assert instance is not None
     if withdrawn and succeeded:
-        assert notice is not None and notice.startswith(f"Step transition: {step_name} -> await")
-        assert instance.current_step == "await"
-        assert instance.variables["candidate_task"] is None
-        assert instance.variables["candidate_sha"] is None
-        assert instance.variables["candidate_received"] is False
-        assert instance.variables["verdict_ready"] is False
+        assert run.step == "await"
+        assert run.vars["candidate_task"] is None
+        assert run.vars["candidate_sha"] is None
+        assert run.vars["candidate_received"] is False
+        assert run.vars["verdict_ready"] is False
     else:
-        assert notice is None
-        assert instance.current_step == step_name
-        assert instance.variables == variables
-    assert temp_db.fetchall("SELECT id FROM task_comments") == []
+        assert run.step == step_name
+        assert run.vars == before
+    assert (
+        temp_db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,)) == comments
+    )
 
 
 def test_security_reviewer_has_no_step_workflow_to_strand() -> None:
@@ -631,13 +600,18 @@ def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
         ),
     ],
 )
-def test_review_only_land_requires_explicit_matching_completion(content: str, resets: bool) -> None:
-    assert (
-        _matches(
-            _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha="a" * 40
-        )
-        is resets
-    )
+async def test_review_only_land_requires_explicit_matching_completion(
+    temp_db: PostgresHubDatabase, content: str, resets: bool
+) -> None:
+    run, task = await _reviewer_run(temp_db)
+    before = run.vars
+    await run.send(content.replace("TASK=#42", f"TASK={task.id}"))
+    assert run.step == ("await" if resets else "verdict")
+    if resets:
+        assert run.vars["candidate_task"] is None
+        assert run.vars["candidate_sha"] is None
+    else:
+        assert run.vars == before
 
 
 def test_code_reviewer_requests_review_only_confirmation_for_unmarked_no_change_land() -> None:
@@ -647,13 +621,20 @@ def test_code_reviewer_requests_review_only_confirmation_for_unmarked_no_change_
 
 
 @pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
-def test_review_only_land_rejects_malformed_bound_sha(candidate_sha: str | None) -> None:
-    content = (
-        f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={candidate_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
-    )
-    assert not _matches(
-        _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha=candidate_sha
-    )
+async def test_review_only_land_rejects_malformed_bound_sha(
+    temp_db: PostgresHubDatabase, candidate_sha: str | None
+) -> None:
+    run, task = await _reviewer_run(temp_db)
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    # A corrupt recovered snapshot must never authorize completion.
+    instance.variables["candidate_sha"] = candidate_sha
+    run.instances.save(instance)
+    content = f"EVENT=REVIEW_COMPLETE TASK={task.id} SHA={candidate_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+    before = run.vars
+    await run.send(content)
+    assert run.step == "verdict"
+    assert run.vars == before
 
 
 def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
@@ -662,12 +643,15 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
 
     assert _allowed_mcp_tools(verdict) == {
         "gobby-agents:send_message",
+        "gobby-agents:get_inter_session_message",
+        "gobby-tasks:get_task",
         "gobby-tasks:record_close_receipt",
         "gobby-tasks:link_task_to_session",
         "gobby-tasks-ops:land_commit",
         "gobby-agents:wait_for_coordination",
     }
-    assert {"mcp__gobby__set_variable", "Bash"} <= _allowed_tools(verdict)
+    assert "Bash" in _allowed_tools(verdict)
+    assert "mcp__gobby__set_variable" not in _allowed_tools(verdict)
     receipt = prompt.index('kind="independent_review_approval"')
     assert receipt < prompt.index("gobby-tasks-ops:land_commit(task_id")
     assert "`retest_required`" in prompt
@@ -705,7 +689,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
     # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
     new_sha = prompt.index("- Replacement SHA.")
-    assert "fresh independent_review_approval receipt for that SHA" in prompt[new_sha:]
+    assert "fresh independent_review_approval for its full SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
 
 
@@ -736,21 +720,25 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
         "replay-note",
     ],
 )
-def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
-    content: str, resets: bool
+async def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
+    temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
-    handlers = _send_message_resets(_steps("code-reviewer")["verdict"])
-
-    assert {
-        variable: handlers[variable]["value"]
-        for variable in ("candidate_received", "verdict_ready", "candidate_task", "candidate_sha")
-    } == {
-        "candidate_received": False,
-        "verdict_ready": False,
-        "candidate_task": None,
-        "candidate_sha": None,
-    }
-    assert _matches(_code_reviewer_completion_when(), content, candidate_task="#42") is resets
+    run, task = await _reviewer_run(temp_db)
+    before = run.vars
+    await run.send(content.replace("TASK=#42", f"TASK={task.id}").replace("SHA=abc", f"SHA={SHA}"))
+    assert run.step == ("await" if resets else "verdict")
+    if resets:
+        assert {
+            key: run.vars[key]
+            for key in ("candidate_received", "verdict_ready", "candidate_task", "candidate_sha")
+        } == {
+            "candidate_received": False,
+            "verdict_ready": False,
+            "candidate_task": None,
+            "candidate_sha": None,
+        }
+    else:
+        assert run.vars == before
 
 
 def test_archivist_writes_only_the_workspace_digest() -> None:
@@ -784,16 +772,16 @@ def test_log_monitor_runs_the_tick_report_loop() -> None:
     assert variables["tick_window"] is None
     assert list(steps) == ["load_skills", "tick", "report"]
     assert _transitions(steps["load_skills"]) == [("tick", LOAD_SKILLS_WHEN)]
-    assert _transitions(steps["tick"]) == [("report", "vars.tick_done")]
+    assert _transitions(steps["tick"]) == []
     assert _transitions(steps["report"]) == [("tick", "not vars.tick_done")]
     assert "gobby-agents:wait_for_coordination" in _allowed_mcp_tools(steps["tick"])
     assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
         _allowed_mcp_tools(steps["report"])
     )
     for step in ("tick", "report"):
-        assert "mcp__gobby__set_variable" in _allowed_tools(steps[step])
+        assert "mcp__gobby__set_variable" not in _allowed_tools(steps[step])
     assert "reply=true, timeout=600" in prompt
-    assert 'set_variable(name="tick_window"' in prompt
+    assert "set_variable(" not in prompt
     assert (
         "Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped"
     ) in prompt
@@ -813,15 +801,25 @@ def test_log_monitor_runs_the_tick_report_loop() -> None:
     ],
     ids=["nominal", "alarm", "status-reply"],
 )
-def test_log_monitor_resets_only_on_a_nominal_or_alarm_report(content: str, resets: bool) -> None:
-    handlers = _send_message_resets(_steps("log-monitor")["report"])
-
-    assert {variable: handler["value"] for variable, handler in handlers.items()} == {
-        "tick_done": False,
-        "tick_window": None,
-    }
-    for handler in handlers.values():
-        assert _matches(handler["when"], content) is resets
+async def test_log_monitor_resets_only_on_a_nominal_or_alarm_report(
+    temp_db: PostgresHubDatabase, content: str, resets: bool
+) -> None:
+    run = SeatRun(temp_db, "log-monitor")
+    await run.load(*run.vars["required_skills"])
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    # Recover an older report-step snapshot; fresh monitors remain in tick.
+    instance.current_step = "report"
+    instance.variables.update(tick_done=True, tick_window="previous-window")
+    run.instances.save(instance)
+    before = run.vars
+    await run.send(content)
+    assert run.step == ("tick" if resets else "report")
+    if resets:
+        assert run.vars["tick_done"] is False
+        assert run.vars["tick_window"] != "previous-window"
+    else:
+        assert run.vars == before
 
 
 def test_researcher_is_a_research_only_serving_seat() -> None:
