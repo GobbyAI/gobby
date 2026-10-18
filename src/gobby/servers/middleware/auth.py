@@ -91,6 +91,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if decision.allowed:
+            if services is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Database not available"},
+                )
             token = bind_decision(
                 decision,
                 require_hub_database(services.database),

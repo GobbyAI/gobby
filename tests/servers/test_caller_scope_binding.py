@@ -781,3 +781,35 @@ def test_allowed_request_without_database_is_refused() -> None:
         TestClient(app).get("/api/tasks")
 
     assert called is False
+
+
+def test_allowed_request_without_services_is_refused() -> None:
+    """An allowed request whose server has no services is refused and does not run."""
+    called = False
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True, user_id=TEST_USER_ID)
+    server = cast(
+        HTTPServer,
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=run_db,
+        ),
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    response = TestClient(app).get("/api/tasks")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "Database not available"
+    assert called is False
