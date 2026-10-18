@@ -96,6 +96,7 @@ def storage(
 def _git_manager() -> MagicMock:
     git_manager = MagicMock()
     git_manager.get_current_branch = AsyncMock(return_value="main")
+    git_manager.get_local_commit = AsyncMock(return_value="base-sha")
     return git_manager
 
 
@@ -279,7 +280,7 @@ async def test_team_lane_observer_preserves_candidate_checkout(
             return_value={"id": checkout.project.id, "project_path": checkout.root_path},
         ),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_resume_target",
+            "gobby.mcp_proxy.tools.spawn_agent._resume.resolve_resume_target",
             return_value=target,
         ),
         patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared_spawn()),
@@ -290,6 +291,7 @@ async def test_team_lane_observer_preserves_candidate_checkout(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
             get_project_context,
         ),
+        patch("gobby.mcp_proxy.tools.spawn_agent._resume.get_project_context", get_project_context),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base", sync
         ),

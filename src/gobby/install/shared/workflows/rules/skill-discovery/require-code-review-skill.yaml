@@ -46,6 +46,13 @@ rules:
           operation. Do not include another session's staged paths.
           {% endif %}
 
+          For a clean lane worktree syncing to an already-landed integration
+          commit, run `git merge --ff-only <landed-integration-commit>` alone
+          in its own tool call. Run preflight and status checks in separate
+          calls. The exemption requires an empty index and proof that every
+          incoming commit is already on the registered integration branch;
+          compound commands remain gated.
+
   require-code-review-self-review:
     description: "Block each later review-gated Git operation until a fresh ocr rule review"
     event: before_tool
@@ -97,6 +104,13 @@ rules:
           command. Run the review in its own call: a review chained onto the Git
           operation is still blocked here, because the findings have to reach you
           before the commit does.
+
+          For a clean lane worktree syncing to an already-landed integration
+          commit, run `git merge --ff-only <landed-integration-commit>` alone
+          in its own tool call. Run preflight and status checks in separate
+          calls. The exemption requires an empty index and proof that every
+          incoming commit is already on the registered integration branch;
+          compound commands remain gated.
 
   track-ocr-review-freshness:
     description: "Record that an ocr rule review covered the current staged work"

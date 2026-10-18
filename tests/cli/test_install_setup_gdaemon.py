@@ -70,6 +70,40 @@ def test_ensure_gdaemon_wraps_unbumped_workspace_release_refusal(
     assert installed.read_bytes() == b"installed gdaemon"
 
 
+def test_failed_workspace_build_surfaces_cargo_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "workspace" / "Cargo.toml"
+    manifest.parent.mkdir()
+    manifest.write_text("[workspace]\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = bin_dir / "gdaemon"
+    installed.write_bytes(b"installed gdaemon")
+    stderr = "error[E0308]: mismatched types\n  expected usize, found &str\n"
+    monkeypatch.setattr(install_setup_gdaemon, "_workspace_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        install_setup_gdaemon, "shutil", SimpleNamespace(which=lambda _name: "cargo")
+    )
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 101, "", stderr),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda _binary: None)
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_identity", lambda _binary: None)
+
+    with pytest.raises(install_setup_gdaemon.GdaemonInstallError) as exc:
+        install_setup_gdaemon.ensure_gdaemon(bin_dir=bin_dir, force=True)
+
+    assert "cargo build failed (exit 101)" in str(exc.value)
+    assert stderr.strip() in str(exc.value)
+    assert installed.read_bytes() == b"installed gdaemon"
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_default_bin_dir_follows_gobby_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, existing: bool

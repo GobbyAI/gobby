@@ -17,6 +17,437 @@ use node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
 const RECEIPTS: &str = "/api/nodes/receipts";
 const ACK_ID: &str = "n-1730000000000-ack-envelope";
 
+const REPLAY: &str = "/api/nodes/hooks/replay";
+
+fn spool(ledger: &Ledger, id: &str) -> anyhow::Result<std::path::PathBuf> {
+    fs::create_dir_all(&ledger.inbox)?;
+    let path = ledger.inbox.join(format!("{id}.json"));
+    fs::write(
+        &path,
+        serde_json::to_vec(&json!({
+            "hook_type":"pre_tool_use", "response_capability":"hook-response.v1",
+            "input_data":{"tool_name":"Bash"}
+        }))?,
+    )?;
+    age(&path, 300);
+    Ok(path)
+}
+
+fn quarantine_reasons(ledger: &Ledger) -> anyhow::Result<Vec<String>> {
+    let mut reasons = Vec::new();
+    let directory = ledger.inbox.join("quarantine");
+    if directory.exists() {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.to_string_lossy().ends_with(".meta.json") {
+                let meta: Value = serde_json::from_slice(&fs::read(path)?)?;
+                reasons.push(meta["reason"].as_str().unwrap().to_owned());
+            }
+        }
+    }
+    Ok(reasons)
+}
+
+#[tokio::test]
+async fn drain_applies_dispositions() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    for (disposition, reason) in [
+        ("retain", None),
+        ("requeued", None),
+        ("unlink", None),
+        ("archived", Some("superseded_hook")),
+        ("below_floor", Some("below_floor_response_capability")),
+        ("execute", Some("superseded_hook")),
+    ] {
+        let hub = FakeHub::start().await?;
+        let node = NodeHome::new(&hub)?;
+        let ledger = &node.node.hook_ledger;
+        let id = "n-1730000000000-drain";
+        let path = spool(ledger, id)?;
+        let mut replies = vec![(StatusCode::OK, json!({"disposition":disposition}))];
+        if disposition == "execute" {
+            replies.push((StatusCode::OK, json!({"disposition":"archived"})));
+            hub.script(
+                "/api/hooks/execute",
+                vec![(
+                    StatusCode::OK,
+                    json!({
+                        "decision":"allow", "_gobby_delivery_receipt":receipt()
+                    }),
+                )],
+            );
+        } else if matches!(disposition, "requeued" | "below_floor") {
+            ledger.claim(id).await?.unwrap();
+        }
+        hub.script(REPLAY, replies);
+        drain_once(&node.node, ledger).await?;
+        let requests = hub.requests();
+        assert!(
+            !requests.is_empty(),
+            "{disposition} must reach the replay route"
+        );
+        assert_eq!(requests[0].path, REPLAY, "{disposition}");
+        assert_eq!(requests[0].body["envelope_id"], id);
+        assert_eq!(requests[0].body["v"], 1);
+        assert_eq!(requests[0].body["processed"], false);
+        assert!(requests[0].body["age_seconds"].as_f64().unwrap() >= 300.0);
+        assert_eq!(
+            requests[0].headers["authorization"],
+            format!("Bearer {NODE_KEY}")
+        );
+        assert_eq!(path.exists(), disposition == "retain", "{disposition}");
+        assert_eq!(
+            quarantine_reasons(ledger)?,
+            reason.into_iter().map(str::to_owned).collect::<Vec<_>>()
+        );
+        if disposition == "execute" {
+            assert_eq!(
+                requests.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+                [REPLAY, "/api/hooks/execute", REPLAY]
+            );
+            assert_eq!(requests[1].headers["x-gobby-envelope-id"], id);
+            assert_eq!(requests[2].body["processed"], true);
+            assert!(ledger.is_processed(id).await?);
+        } else if matches!(disposition, "requeued" | "below_floor") {
+            assert!(ledger.marker(id).await?.is_none());
+        }
+        hub.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn drain_preserves_replaced_delivery_receipts() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    for stage in ["replay", "execute", "recheck"] {
+        for disposition in [
+            "unlink",
+            "requeued",
+            "archived",
+            "below_floor",
+            "unauthorized",
+        ] {
+            let hub = FakeHub::start().await?;
+            let node = NodeHome::new(&hub)?;
+            let ledger = node.node.hook_ledger.clone();
+            let path = spool(&ledger, ACK_ID)?;
+            let decision = if disposition == "unauthorized" {
+                (StatusCode::UNAUTHORIZED, json!({"error":"refused"}))
+            } else {
+                (StatusCode::OK, json!({"disposition":disposition}))
+            };
+            if stage == "replay" {
+                ledger.claim(ACK_ID).await?.unwrap();
+                hub.script(REPLAY, vec![decision]);
+            } else {
+                hub.script(
+                    REPLAY,
+                    vec![(StatusCode::OK, json!({"disposition":"execute"})), decision],
+                );
+                hub.script(
+                    "/api/hooks/execute",
+                    vec![(
+                        if stage == "execute" && disposition == "unauthorized" {
+                            StatusCode::UNAUTHORIZED
+                        } else {
+                            StatusCode::OK
+                        },
+                        json!({"decision":"allow"}),
+                    )],
+                );
+            }
+            let pause_route = if stage == "replay" {
+                REPLAY
+            } else {
+                "/api/hooks/execute"
+            };
+            let (entered, release) = hub.pause_next(pause_route);
+            let drain_node = node.node.clone();
+            let draining =
+                tokio::spawn(async move { drain_once(&drain_node, &drain_node.hook_ledger).await });
+            tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+            let release = if stage == "recheck" {
+                let (entered, recheck_release) = hub.pause_next(REPLAY);
+                release.send(()).unwrap();
+                tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+                recheck_release
+            } else {
+                release
+            };
+            let marker = ledger.marker(ACK_ID).await?;
+            let replacement = serde_json::to_vec(&receipt())?;
+            let temporary = ledger.inbox.join("replacement.tmp");
+            fs::write(&temporary, &replacement)?;
+            fs::rename(&temporary, &path)?;
+            release.send(()).unwrap();
+            draining.await??;
+            assert_eq!(
+                fs::read(&path).ok().as_deref(),
+                Some(replacement.as_slice()),
+                "{stage}/{disposition}: the replacement receipt must survive unchanged"
+            );
+            assert!(
+                quarantine_reasons(&ledger)?.is_empty(),
+                "{stage}/{disposition}"
+            );
+            if stage != "execute" {
+                assert_eq!(
+                    ledger.marker(ACK_ID).await?,
+                    marker,
+                    "{stage}/{disposition}: the old decision must not clear replacement state"
+                );
+            }
+            hub.script(
+                RECEIPTS,
+                vec![(
+                    StatusCode::OK,
+                    json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+                )],
+            );
+            drain_once(&node.node, &ledger).await?;
+            assert!(
+                !path.exists(),
+                "the next sweep must consume the acknowledged receipt"
+            );
+            assert_eq!(hub.requests().last().unwrap().path, RECEIPTS);
+            assert!(ledger.is_processed(ACK_ID).await?);
+            hub.shutdown().await;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn drain_auth_rejection_and_retry_retention() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    for (stage, status) in [
+        ("replay", StatusCode::UNAUTHORIZED),
+        ("execute", StatusCode::UNAUTHORIZED),
+        ("recheck", StatusCode::UNAUTHORIZED),
+        ("replay", StatusCode::SERVICE_UNAVAILABLE),
+        ("execute", StatusCode::SERVICE_UNAVAILABLE),
+        ("execute", StatusCode::CONFLICT),
+    ] {
+        let hub = FakeHub::start().await?;
+        let node = NodeHome::new(&hub)?;
+        let ledger = &node.node.hook_ledger;
+        let id = "n-1730000000000-rejected";
+        let path = spool(ledger, id)?;
+        if stage == "replay" {
+            ledger.claim(id).await?.unwrap();
+            hub.script(REPLAY, vec![(status, json!({"error":"refused"}))]);
+        } else {
+            let mut replies = vec![(StatusCode::OK, json!({"disposition":"execute"}))];
+            if stage == "recheck" {
+                replies.push((status, json!({"error":"refused"})));
+            }
+            hub.script(REPLAY, replies);
+            hub.script(
+                "/api/hooks/execute",
+                vec![(
+                    if stage == "recheck" {
+                        StatusCode::OK
+                    } else {
+                        status
+                    },
+                    json!({"decision":"allow"}),
+                )],
+            );
+        }
+        drain_once(&node.node, ledger).await?;
+        assert_eq!(
+            path.exists(),
+            status != StatusCode::UNAUTHORIZED,
+            "{stage}/{status}"
+        );
+        assert_eq!(
+            quarantine_reasons(ledger)?,
+            if status == StatusCode::UNAUTHORIZED {
+                vec!["replay_auth_rejected".to_owned()]
+            } else {
+                vec![]
+            }
+        );
+        if status == StatusCode::UNAUTHORIZED && stage != "recheck" {
+            assert!(
+                ledger.marker(id).await?.is_none(),
+                "rejected claims must be released"
+            );
+        }
+        assert_eq!(
+            hub.requests().len(),
+            match stage {
+                "replay" => 1,
+                "execute" => 2,
+                _ => 3,
+            }
+        );
+        hub.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn drain_retains_bad_inputs_and_continues_after_retry() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let ledger = &node.node.hook_ledger;
+    let first = spool(ledger, "n-1730000000000-first")?;
+    let second = spool(ledger, "n-1730000000001-second")?;
+    age(&first, 600);
+    ledger
+        .mark_processed("n-1730000000001-second", None, None)
+        .await?;
+    let malformed = ledger.inbox.join("malformed.json");
+    fs::write(&malformed, "{")?;
+    let outside = node.home.path().join("outside.json");
+    fs::write(&outside, "private")?;
+    let link = ledger.inbox.join("symlink.json");
+    std::os::unix::fs::symlink(&outside, &link)?;
+    hub.script(
+        REPLAY,
+        vec![
+            (StatusCode::SERVICE_UNAVAILABLE, json!({"error":"retry"})),
+            (StatusCode::OK, json!({"disposition":"unlink"})),
+        ],
+    );
+    drain_once(&node.node, ledger).await?;
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].body["envelope_id"], "n-1730000000000-first");
+    assert_eq!(requests[1].body["processed"], true);
+    assert!(first.exists());
+    assert!(!second.exists());
+    assert!(malformed.exists());
+    assert!(link.is_symlink());
+    assert_eq!(fs::read_to_string(outside)?, "private");
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn drain_skips_live_and_sweeps_receipts() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::drain_once;
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let ledger = &node.node.hook_ledger;
+    let old = spool(ledger, "n-1730000000000-active")?;
+    ledger.claim("n-1730000000000-active").await?.unwrap();
+    let fresh_id = format!(
+        "n-{}-fresh",
+        OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+    );
+    let fresh = spool(ledger, &fresh_id)?;
+    age(&old, 500);
+    let ack = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&ack, serde_json::to_vec(&receipt())?)?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+        )],
+    );
+    hub.script(
+        REPLAY,
+        vec![
+            (StatusCode::OK, json!({"disposition":"retain"})),
+            (StatusCode::OK, json!({"disposition":"archived"})),
+        ],
+    );
+    drain_once(&node.node, ledger).await?;
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].path, RECEIPTS);
+    assert_eq!(requests[1].body["envelope_id"], "n-1730000000000-active");
+    assert_eq!(requests[2].body["envelope_id"], fresh_id);
+    assert_eq!(requests[1].body["live"], true);
+    assert_eq!(requests[2].body["live"], true);
+    assert!(!ack.exists());
+    assert!(old.exists());
+    assert!(
+        !fresh.exists(),
+        "live files still receive the Grok disposition"
+    );
+    assert!(ledger.is_processed(ACK_ID).await?);
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn boot_releases_dead_processing_markers() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::boot_release;
+    let (_home, ledger) = ledger();
+    ledger.claim("ours").await?.unwrap();
+    for id in ["previous", "reused-pid"] {
+        ledger.claim(id).await?.unwrap();
+        let mut marker = ledger.marker(id).await?.unwrap();
+        if id == "previous" {
+            marker["owner_pid"] = json!(u32::MAX);
+        } else {
+            marker["owner_create_time"] = json!(0.0);
+        }
+        write_marker(&ledger, id, marker);
+    }
+    ledger.mark_processed("done", None, None).await?;
+    boot_release(&ledger).await?;
+    assert!(ledger.marker("previous").await?.is_none());
+    assert!(ledger.marker("reused-pid").await?.is_none());
+    assert!(ledger.is_active("ours", None).await?);
+    assert!(ledger.is_processed("done").await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn node_registers_hook_jobs() -> anyhow::Result<()> {
+    use gobby_daemon::{heartbeat::HeartbeatHost, nodes::hooks::drain::register_jobs};
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let mut heartbeat = HeartbeatHost::new();
+    register_jobs(&mut heartbeat, node.node.clone())?;
+    for name in ["node-hook-drain", "node-hook-prune"] {
+        assert!(
+            heartbeat
+                .register(name, std::time::Duration::from_secs(1), || async { Ok(()) })
+                .is_err(),
+            "node heartbeat must already own {name}"
+        );
+    }
+    heartbeat.start()?;
+    heartbeat.stop().await?;
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prune_markers_and_temp_files() -> anyhow::Result<()> {
+    use gobby_daemon::nodes::hooks::drain::prune;
+    let (_home, ledger) = ledger();
+    ledger.mark_processed("expired", None, None).await?;
+    ledger.mark_processed("recent", None, None).await?;
+    age(&marker_path(&ledger, "expired"), 86_401);
+    for name in [
+        "abandoned.json.tmp",
+        "recent.json.tmp",
+        "ack.owner.claimed.tmp",
+        "pending.json",
+    ] {
+        fs::write(ledger.inbox.join(name), "pending")?;
+        if name != "recent.json.tmp" {
+            age(&ledger.inbox.join(name), 3601);
+        }
+    }
+    prune(&ledger).await?;
+    assert!(ledger.marker("expired").await?.is_none());
+    assert!(ledger.is_processed("recent").await?);
+    assert!(!ledger.inbox.join("abandoned.json.tmp").exists());
+    for name in ["recent.json.tmp", "ack.owner.claimed.tmp", "pending.json"] {
+        assert!(ledger.inbox.join(name).exists(), "must preserve {name}");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn ingress_body_overflow_is_rejected_before_forwarding() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
@@ -749,6 +1180,146 @@ async fn receipts_ack_forwarded_and_terminalized() -> anyhow::Result<()> {
     }));
     hub.shutdown().await;
     Ok(())
+}
+
+#[tokio::test]
+async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true,"carrying_envelope_ids":["original"]}),
+        )],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let non_file = ledger.inbox.join("000-directory.json");
+    fs::create_dir(&non_file)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        symlink("missing-receipt", ledger.inbox.join("001-dangling.json"))?;
+        let unreadable = ledger.inbox.join("002-unreadable.json");
+        // Malformed bytes are also ignored when tests run with permission bypass.
+        fs::write(&unreadable, b"unreadable receipt")?;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o0))?;
+    }
+    let valid = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&valid, serde_json::to_vec(&receipt())?)?;
+
+    sweep_receipts(&node.node, &ledger).await?;
+
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(
+        hub.requests()[0].body["receipt_id"],
+        receipt()["receipt_id"]
+    );
+    assert!(ledger.is_processed(ACK_ID).await?);
+    assert!(ledger.is_processed("original").await?);
+    assert!(!valid.exists());
+    assert!(non_file.is_dir(), "bad entries must not be removed");
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_remove_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(true).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_restore_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(false).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+async fn receipt_cleanup_failure_does_not_stop_peers(acknowledged: bool) -> anyhow::Result<Value> {
+    let hub = FakeHub::start().await?;
+    let success = (
+        StatusCode::OK,
+        json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+    );
+    hub.script(
+        RECEIPTS,
+        vec![
+            if acknowledged {
+                success.clone()
+            } else {
+                (StatusCode::SERVICE_UNAVAILABLE, json!({"error":"offline"}))
+            },
+            success,
+        ],
+    );
+    let (entered, release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let first = ledger.inbox.join("first.json");
+    let second = ledger.inbox.join("second.json");
+    for path in [&first, &second] {
+        fs::write(path, serde_json::to_vec(&receipt())?)?;
+    }
+    let interfere = async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+        let original = if first.exists() { &second } else { &first };
+        let peer = if first.exists() { &first } else { &second };
+        let claimed = fs::read_dir(&ledger.inbox)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".claimed.tmp")
+            })
+            .expect("the paused acknowledgment owns a claim")
+            .path();
+        if acknowledged {
+            // Force remove_file to fail while preserving the receipt bytes.
+            let bytes = fs::read(&claimed)?;
+            fs::remove_file(&claimed)?;
+            fs::create_dir(&claimed)?;
+            fs::write(claimed.join("retained.json"), bytes)?;
+        } else {
+            // A file cannot be restored over a directory at its original path.
+            fs::create_dir(original)?;
+        }
+        release.send(()).expect("release the paused acknowledgment");
+        Ok::<_, anyhow::Error>((original, claimed, peer))
+    };
+    let (sweep, interference) = tokio::join!(sweep_receipts(&node.node, &ledger), interfere);
+    let (original, claimed, peer) = interference?;
+    sweep?;
+    assert_eq!(
+        hub.requests().len(),
+        2,
+        "cleanup failure must not stop the peer post"
+    );
+    assert!(!peer.exists());
+    assert!(
+        ledger
+            .is_processed(peer.file_stem().unwrap().to_str().unwrap())
+            .await?
+    );
+    assert!(original.is_dir());
+    let retained = if acknowledged {
+        original.join("retained.json")
+    } else {
+        claimed
+    };
+    let retained = serde_json::from_slice::<Value>(&fs::read(retained)?)?;
+    hub.shutdown().await;
+    Ok(retained)
 }
 
 #[tokio::test]

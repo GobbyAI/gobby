@@ -19,7 +19,14 @@ from gobby.workflows.enforcement.blocking import (
     is_provider_discovery_tool,
 )
 from gobby.workflows.engine.block_batching import operator_event_is_subagent
-from gobby.workflows.engine.idle_declaration import gates_idle_write, is_idle_declaration
+from gobby.workflows.engine.idle_declaration import (
+    gates_idle_write,
+    is_idle_declaration,
+    native_variable_write_error,
+)
+from gobby.workflows.engine.idle_declaration import (
+    reserved_variable_block_guidance as _reserved_variable_block_guidance,
+)
 from gobby.workflows.engine.skill_load_guidance import (
     skill_load_block_guidance,
     skill_load_call_lead,
@@ -114,16 +121,6 @@ def _execution_wrapper_guidance(tool_name: str) -> str:
     return (
         f"\nTool '{tool_name}' is an execution wrapper. "
         "Call mcp__gobby__call_tool directly instead of the wrapper."
-    )
-
-
-def _reserved_variable_block_guidance(variable_name: str, step_name: str | None) -> str:
-    step_scope = f" in the '{step_name}' step" if step_name else ""
-    return (
-        f"\nAbandon only this write to variable '{variable_name}'{step_scope}; "
-        "set_variable remains available for other permitted variables. Continue with "
-        "an allowed operation and do not retry this variable write. Repeating an "
-        "identical denial three times ends an autonomous run in a terminal blocked state."
     )
 
 
@@ -421,29 +418,29 @@ class EnforcementCheckMixin:
         """Check agent-level tool restrictions. Returns block response or None to continue."""
         tool_name = event.data.get("tool_name", "")
         tool_input = event.data.get("tool_input") or {}
-        if isinstance(tool_input, dict):
-            mcp_tool_name = tool_input.get("tool_name")
-            variable_name = self._is_reserved_variable_write(
-                tool_name,
-                tool_input,
-                mcp_tool_name=mcp_tool_name if isinstance(mcp_tool_name, str) else None,
+        variable_input = tool_input if isinstance(tool_input, dict) else {}
+        mcp_tool_name = variable_input.get("tool_name")
+        variable_name = self._is_reserved_variable_write(
+            tool_name,
+            variable_input,
+            mcp_tool_name=mcp_tool_name if isinstance(mcp_tool_name, str) else None,
+        )
+        native_error = native_variable_write_error(
+            tool_name, tool_input, session_id, variables, getattr(self, "_session_manager", None)
+        )
+        if native_error or variable_name:
+            reason = native_error or (
+                "Rule enforced by Gobby: [workflow-runtime-variable]\n"
+                f"Variable '{variable_name}' is managed by the workflow runtime."
+                f"{_reserved_variable_block_guidance(str(variable_name), None)}"
             )
-            if variable_name:
-                reason = (
-                    "Rule enforced by Gobby: [workflow-runtime-variable]\n"
-                    f"Variable '{variable_name}' is managed by the workflow runtime."
-                    f"{_reserved_variable_block_guidance(variable_name, None)}"
-                )
-                reason = self._record_enforcement_denial(
-                    session_id=session_id,
-                    rule="agent-runtime-variable",
-                    target=f"variable:{variable_name.casefold()}",
-                    reason=reason,
-                )
-                return HookResponse(
-                    decision="block",
-                    reason=reason,
-                )
+            reason = self._record_enforcement_denial(
+                session_id=session_id,
+                rule="native-variable-authority" if native_error else "agent-runtime-variable",
+                target=self._normalized_enforcement_target(tool_name, variable_input),
+                reason=reason,
+            )
+            return HookResponse(decision="block", reason=reason)
 
         # Operator terminal channels bypass allow-lists, but a provider-native
         # subagent never drives them. A spawned Gobby agent is gated by the opt-in

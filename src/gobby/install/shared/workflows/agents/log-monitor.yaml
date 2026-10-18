@@ -36,7 +36,7 @@ prompts:
       2. Read the last ten minutes of the log families under `~/.gobby/logs/` (the active `logging.dir`): up to the last 200 lines of `errors.log` and `runtime.log`. Parse each log's own timestamp format; `runtime.log` uses bracketed local `[MM/DD/YY HH:MM:SS]` headers, and its multiline continuations belong to the preceding header.
       3. Count warnings per family. `errors.log` aggregates warnings and errors, so don't double-count entries a primary log repeats. An empty tail, or a last event before the window start, is a quiet interval. Mark possible truncation only when the tail holds all 200 lines and its oldest record is later than the window start. Report the tick incomplete when a warning, error or fatal candidate that could be inside the window can't be timestamped.
       4. For any event that may trigger an alarm, read up to 200 lines of its primary log (`daemon.log`, `hooks.log`, `llm.log`, `mcp.log`, `automation.log` or parser diagnostics). Check machine load only on a breach. Redact credentials from shared evidence.
-      5. Record the window with the top-level `set_variable(name="tick_window", value="HH:MM-HH:MM", scope="step")`, then `set_variable(name="tick_done", value=true, scope="step")`.
+      5. Send the window report to the Orchestrator. Its durable send records the timestamp and completes the tick.
     - Report. When both commands pass, health is complete and the window has no fresh `ERROR`, `CRITICAL` or `FATAL` event and no repeated warning with service impact, send the Orchestrator exactly `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped`. Otherwise send `EVENT=ALARM` with the window, the failing command or timestamped log evidence, the affected subsystem and its scope. Copy every ALARM to the Assistant. A status reply that is neither line leaves the report open.
     - Give performance verdicts only from matched time windows.
 
@@ -126,14 +126,8 @@ step_workflow:
       status_message: |
         Wait out the cadence with wait_for_coordination (reply=true,
         timeout=600) unless this is the first tick, then run the tick
-        checklist. Record the window with the top-level
-        set_variable(name="tick_window", value="HH:MM-HH:MM", scope="step"),
-        then set_variable(name="tick_done", value=true, scope="step").
-        Reload a skill after compaction through mcp__gobby__call_tool:
-        call_tool("gobby-skills", "get_skill", {"name": <name>});
-        native Skill, GitHub/app connector, and Computer Use tools bypass
-        Gobby's skill tracking.
-      # Native reads run the health commands and read the log window.
+        checklist. Send the window report to the Orchestrator. Its durable
+        completion records the timestamp and completes the tick.
       allowed_tools:
         - Bash
         - Read
@@ -144,7 +138,6 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       # send_message carries the Assistant's ALARM copy,
       # which can follow the reset that returned the seat here.
       allowed_mcp_tools:
@@ -153,10 +146,10 @@ step_workflow:
         - "gobby-sessions:get_session"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
-      transitions:
-        - to: report
-          when: "vars.tick_done"
-
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
     - name: report
       mcp_error_policy: stay
       description: "Report the window"
@@ -169,25 +162,13 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
-          when: &tick_reported >-
-            'Systems nominal' in str(tool_input.get('content'))
-            or 'EVENT=ALARM' in str(tool_input.get('content'))
-          action: set_variable
-          variable: tick_done
-          value: false
-        - server: gobby-agents
-          tool: send_message
-          when: *tick_reported
-          action: set_variable
-          variable: tick_window
-          value: null
+          action: advance_seat
       transitions:
         - to: tick
           when: "not vars.tick_done"
