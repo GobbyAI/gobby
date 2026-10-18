@@ -42,28 +42,13 @@ struct ExportView: View {
           ForEach(files, id: \.self) { file in
             VStack(alignment: .leading, spacing: 8) {
               Text(file.lastPathComponent).font(.caption.monospaced()).textSelection(.enabled)
-              HStack {
-                Button("Save", systemImage: "square.and.arrow.down") {
-                  do {
-                    document = CaptureDocument(bytes: try Data(contentsOf: file))
-                    name = file.lastPathComponent
-                    saving = true
-                  } catch { self.error = error.localizedDescription }
-                }
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minHeight: 44)
-                ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
-                  .lineLimit(1)
+              ViewThatFits(in: .horizontal) {
+                HStack { exportActions(file) }
                   .fixedSize(horizontal: true, vertical: false)
-                  .frame(minHeight: 44)
-                Button("Delete", systemImage: "trash") { pendingDelete = file }
-                  .tint(Color("Destructive"))
-                  .accessibilityLabel("Delete \(file.lastPathComponent)")
-                  .lineLimit(1)
-                  .fixedSize(horizontal: true, vertical: false)
-                  .frame(minHeight: 44)
-              }.buttonStyle(.bordered)
+                VStack(alignment: .leading) { exportActions(file) }
+              }
+              .lineLimit(1)
+              .buttonStyle(.bordered)
             }.padding(.vertical, 4)
           }
         }
@@ -86,18 +71,7 @@ struct ExportView: View {
       .navigationTitle("Gobby Annotate")
       .tint(Color.accentColor)
       .task { refresh() }
-      .safeAreaInset(edge: .bottom) {
-        if !status.isEmpty {
-          Label(status, systemImage: "checkmark.circle")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .background(.bar)
-            .accessibilityAddTraits(.isStatusElement)
-        }
-      }
+      .safeAreaInset(edge: .bottom) { statusBar }
       .confirmationDialog(
         "Delete this staged export?",
         isPresented: Binding(
@@ -150,6 +124,39 @@ struct ExportView: View {
       }
     }
     .frame(minWidth: 280, minHeight: 300)
+  }
+  @ViewBuilder private func exportActions(_ file: URL) -> some View {
+    Button("Save", systemImage: "square.and.arrow.down") {
+      do {
+        document = CaptureDocument(bytes: try Data(contentsOf: file))
+        name = file.lastPathComponent
+        saving = true
+      } catch { self.error = error.localizedDescription }
+    }
+    .frame(minHeight: 44)
+    ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
+      .frame(minHeight: 44)
+    Button("Delete", systemImage: "trash") { pendingDelete = file }
+      .tint(Color("Destructive"))
+      .accessibilityLabel("Delete \(file.lastPathComponent)")
+      .frame(minHeight: 44)
+  }
+  @ViewBuilder private var statusBar: some View {
+    VStack(spacing: 0) {
+      if !status.isEmpty {
+        Label(status, systemImage: "checkmark.circle")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal)
+          .padding(.vertical, 12)
+          .background(.bar)
+          .accessibilityAddTraits(.updatesFrequently)
+      }
+    }
+    .onChange(of: status) { _, newValue in
+      if !newValue.isEmpty { AccessibilityNotification.Announcement(newValue).post() }
+    }
   }
   private func remove(_ done: String, _ work: (ExportStore) throws -> Void) {
     do {
