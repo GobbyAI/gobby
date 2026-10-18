@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 from pydantic import ValidationError
 
 from gobby.hub.node_commands import (
@@ -87,10 +86,31 @@ def test_v4_checkout_read_round_trips() -> None:
         assert encoded == message["json"], name
 
 
+def _named(entries: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    return next(entry for entry in entries if entry["name"] == name)
+
+
+def _invalid_error(message: dict[str, Any]) -> str:
+    """Return the validation error for an invalid entry, or '' when it parses."""
+    try:
+        parse_message(message["kind"], message["json"])
+    except ValidationError as caught:
+        return str(caught)
+    return ""
+
+
 def test_invalid_messages_fail() -> None:
     invalid = _corpus_list("invalid")
     assert len(invalid) == 35
     for message in invalid:
-        with pytest.raises(ValidationError) as caught:
-            parse_message(message["kind"], message["json"])
-        assert message["expect"]["python"] in str(caught.value), message["name"]
+        assert message["expect"]["python"] in _invalid_error(message), message["name"]
+
+
+def test_invalid_expectation_detects_changed_cause() -> None:
+    invalid = _corpus_list("invalid")
+    omitted = _named(invalid, "invalid.omitted_nullable")
+    unknown = _named(invalid, "invalid.unknown_field")
+    fragment = omitted["expect"]["python"]
+    assert fragment in _invalid_error(omitted)
+    changed = {**omitted, "kind": unknown["kind"], "json": unknown["json"]}
+    assert fragment not in _invalid_error(changed)

@@ -54,6 +54,7 @@ literal_string!(CheckoutStatusName, "checkout.status");
 literal_string!(StaleReportCode, "stale_report");
 
 mod checkout_read;
+mod frame_dispatch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrueFlag;
@@ -482,7 +483,7 @@ pub struct StatusCommand {
     pub payload: StatusPayload,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum CommandFrame {
     Spawn(Box<SpawnCommand>),
@@ -650,7 +651,7 @@ pub struct ErrReply {
     pub error: ErrorBody,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ReplyFrame {
     Ok(OkReply),
