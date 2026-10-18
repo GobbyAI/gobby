@@ -287,10 +287,10 @@ dependency-ready work can proceed while Stage 1 is open (decision 21).
 Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 `S2.4` ← `S2.4a`, `S2.4b`; `S2.4a` ← `S2.3`;
 `S2.5` ← `S2.4a`, `S2.2`; `S2.4b` ← `S2.4a`, `S2.5`;
-`S2.6` ← `S2.4`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
+`S2.6` ← `S2.4a`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
 `S2.7 node` ← `S1.4`; `S2.7 hub` ← `S2.4`, `S1.4`;
 `S2.9` ← `S2.5`, `S2.7`;
-`S2.10` ← `S2.4`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
+`S2.10` ← `S2.4a`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
 `S2.11 node` ← `S1.4`; `S2.11 hub` ← `S2.5`, `S2.9`, `S2.10`;
 `S2.12` ← `S2.10`, `S2.11`. `S2.13` has no group gate: each family waits only
 on the families it uses (Josh, 2026-10-18). On `S2.4`: #21581 plans, #21584
