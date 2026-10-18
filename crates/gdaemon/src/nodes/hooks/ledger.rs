@@ -173,9 +173,80 @@ impl Ledger {
         .await
     }
 
-    /// Release only the matching owner; boot cleanup uses `clear_stale`.
+    /// Release only the matching owner.
     pub async fn release(&self, id: &str, token: &str) -> io::Result<bool> {
         self.mutate(id, token, |_| Ok(None)).await
+    }
+
+    /// Recheck the spool and the observed marker under the marker's write lock.
+    pub(super) async fn remove_spool_marker(
+        &self,
+        id: &str,
+        expected: Option<Value>,
+        processing_only: bool,
+        guard: impl FnOnce() -> io::Result<bool> + Send + 'static,
+    ) -> io::Result<()> {
+        let id = id.to_owned();
+        self.run(move |directory| {
+            let path = marker_path(&directory, &id);
+            let _lock = marker_lock(&path)?;
+            let current = read_marker(&path, &id)?;
+            if current != expected
+                || current.is_none()
+                || (processing_only
+                    && current
+                        .as_ref()
+                        .is_none_or(|value| value["status"] != "processing"))
+                || !guard()?
+            {
+                return Ok(());
+            }
+            fs::remove_file(path)
+        })
+        .await
+    }
+
+    /// Boot invalidates prior process owners even when their leases are fresh.
+    pub async fn release_previous_process(&self) -> io::Result<()> {
+        self.run(move |directory| {
+            let entries = match fs::read_dir(&directory) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let pid = std::process::id();
+            let started = process_start(pid);
+            for entry in entries {
+                let entry = entry?;
+                if !entry.file_type()?.is_file()
+                    || entry.path().extension().is_none_or(|ext| ext != "json")
+                {
+                    continue;
+                }
+                let path = entry.path();
+                let _lock = marker_lock(&path)?;
+                let Some(record) = read_marker(&path, "")? else {
+                    continue;
+                };
+                let ours = record["owner_pid"].as_u64() == Some(u64::from(pid))
+                    && started.is_none_or(|actual| {
+                        record["owner_create_time"]
+                            .as_f64()
+                            .is_some_and(|expected| {
+                                (actual - expected).abs() < OWNER_CREATE_TIME_MATCH_SECONDS
+                            })
+                    });
+                if record["status"] == "processing" && !ours {
+                    match fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub async fn is_processed(&self, id: &str) -> io::Result<bool> {
@@ -225,6 +296,27 @@ impl Ledger {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
                 Err(error) => Err(error),
             }
+        })
+        .await
+    }
+
+    /// A hub receipt acknowledgment proves delivery even if a processing lease remains.
+    pub async fn mark_acknowledged(&self, id: &str) -> io::Result<()> {
+        if id.is_empty() {
+            return Ok(());
+        }
+        let id = id.to_owned();
+        self.run(move |directory| {
+            let path = marker_path(&directory, &id);
+            let _lock = marker_lock(&path)?;
+            let existing = read_marker(&path, &id)?;
+            if existing.as_ref().is_some_and(terminal_status) {
+                return Ok(());
+            }
+            replace(
+                &path,
+                &encode(&processed_record(&id, None, None, existing.as_ref())?)?,
+            )
         })
         .await
     }
