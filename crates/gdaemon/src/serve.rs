@@ -455,15 +455,11 @@ pub async fn serve(
     auth: Arc<AuthState>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    serve_with_runtime(
-        listeners,
-        routes,
-        tls,
-        auth,
-        ListenerShared::default(),
-        shutdown,
-    )
-    .await
+    let shared = ListenerShared {
+        families: FAMILIES,
+        ..ListenerShared::default()
+    };
+    serve_with_runtime(listeners, routes, tls, auth, shared, shutdown).await
 }
 
 /// What `run` adds to every listener's [`FrontDoorState`]; `serve` adds nothing.
