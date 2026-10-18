@@ -63,7 +63,9 @@ def verified_monitor_paths() -> tuple[str, str] | None:
     Lock-free and hash-free: verify_srt_installation takes the install lock on the
     shutdown path, and a runner-changing cutover makes it raise.
     """
-    from gobby.agents.srt_runtime import srt_install_root  # srt_runtime imports this module
+    # Local import keeps srt_runtime out of this module's load. srt_runtime imports
+    # this module lazily too, so neither module's load pulls in the other.
+    from gobby.agents.srt_runtime import srt_install_root
 
     found = shutil.which("node")
     if found is None:
