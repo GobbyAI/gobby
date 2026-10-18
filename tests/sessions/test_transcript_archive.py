@@ -44,6 +44,15 @@ class TestGetArchiveDir:
         assert result == Path(custom)
         assert result.is_dir()
 
+    def test_default_resolves_under_gobby_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(home))
+        result = get_archive_dir()
+        assert result == home / "session_transcripts"
+        assert result.is_dir()
+
 
 class TestBackupTranscript:
     def test_backup_creates_valid_gzip(self, sample_jsonl: Path, archive_dir: str) -> None:

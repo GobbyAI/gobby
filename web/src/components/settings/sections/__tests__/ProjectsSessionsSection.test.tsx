@@ -79,7 +79,7 @@ function makeConfigValues(): Record<string, unknown> {
       expire_check_interval_minutes: 60,
       transcript_processing_interval_minutes: 5,
       transcript_processing_batch_size: 10,
-      transcript_archive_dir: "~/.gobby/session_transcripts",
+      transcript_archive_dir: null,
     },
     chat_history: {
       max_message_chars: 2000,
@@ -185,8 +185,11 @@ describe("ProjectsSessionsSection", () => {
     expect(
       screen.getByLabelText("Pause active sessions after (minutes)"),
     ).toHaveValue(30);
-    expect(screen.getByLabelText("Transcript archive directory")).toHaveValue(
-      "~/.gobby/session_transcripts",
+    const archiveDir = screen.getByLabelText("Transcript archive directory");
+    expect(archiveDir).toHaveValue("");
+    expect(archiveDir).toHaveAttribute(
+      "placeholder",
+      "<GOBBY_HOME>/session_transcripts (leave blank for the default)",
     );
     expect(
       screen.queryByLabelText("Default context source"),
