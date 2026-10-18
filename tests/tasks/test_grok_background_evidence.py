@@ -54,7 +54,12 @@ async def evidence_for(tmp_path: Path, events: list[dict[str, Any]]) -> Transcri
         updated_at=timestamp,
     )
     return await derive_transcript_evidence(
-        session, None, default_validation_detection_config(), set(), str(tmp_path)
+        session,
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
 
