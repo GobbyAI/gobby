@@ -19,9 +19,12 @@ import pytest
 import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.agents.runner import AgentRunner
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
@@ -1021,12 +1024,14 @@ def _reviewer_stop_event(cwd: Path) -> HookEvent:
 
 
 @pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
+@pytest.mark.parametrize("name", ["developer", "code-reviewer"])
 async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
-    temp_db: HubDatabase, tmp_path: Path, envelope: str
+    temp_db: HubDatabase, tmp_path: Path, envelope: str, name: str
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
+    run = SeatRun(temp_db, name)
     await run.load(*run.vars["required_skills"])
-    assert run.step == "await"
+    idle_step = "claim" if name == "developer" else "await"
+    assert run.step == idle_step
     handler = _reviewer_stop_handler(run)
     blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
@@ -1070,7 +1075,7 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert stopped.decision == "allow", stopped.reason
     assert SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle") is True
-    assert run.step == "await"
+    assert run.step == idle_step
 
 
 @pytest.mark.parametrize("step", ["await", "review"])
@@ -1091,6 +1096,82 @@ async def test_reviewer_registered_coordination_wait_allows_stop_with_external_s
     assert stopped.decision == "allow", stopped.reason
     assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
     assert run.step == step
+
+
+@pytest.mark.parametrize(
+    "name, step",
+    [
+        ("developer", "claim"),
+        ("developer", "implement"),
+        ("developer", "submit"),
+        ("code-reviewer", "await"),
+        ("code-reviewer", "review"),
+        ("code-reviewer", "verdict"),
+        ("plan-adversary", "review"),
+    ],
+)
+@pytest.mark.parametrize("wait_state", ["active", "replied", "cancelled"])
+async def test_standing_seat_wait_through_call_tool_controls_stop(
+    temp_db: HubDatabase, tmp_path: Path, name: str, step: str, wait_state: str
+) -> None:
+    run = SeatRun(temp_db, name)
+    await run.load(*run.vars["required_skills"])
+    if name == "developer" and step != "claim":
+        task = run.task(owner=SESSION_ID)
+        await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, {"task_id": task.id})
+        await run.call("gobby-tasks", "get_task", {"task_id": task.id})
+        if step == "submit":
+            await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
+    elif name == "code-reviewer" and step == "review":
+        await run.intake(run.task())
+    elif step == "verdict":
+        # A recovered legacy snapshot can retain verdict without a bound candidate.
+        instance = run.instances.get_for_session(SESSION_ID)
+        assert instance is not None
+        instance.current_step = "verdict"
+        run.instances.save(instance)
+    assert run.step == step
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+    arguments = {"owner_session": COORDINATOR_ID, "reply": True}
+    assert await run.admits(*WAIT, arguments)
+    registry = create_agents_registry(
+        AgentRunner(temp_db, run.sessions),
+        session_manager=run.sessions,
+        db=temp_db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(SESSION_ID):
+        wait = await registry.call(WAIT[1], arguments)
+    assert wait["outcome"] == "waiting"
+    wire = _process_tool_proxy_result(wait, *WAIT, 1.0)
+    completion = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": "ext-seat",
+                "cwd": str(tmp_path),
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": WAIT[0],
+                    "tool_name": WAIT[1],
+                    "arguments": arguments,
+                },
+                "tool_response": wire,
+            },
+        }
+    )
+    completion.metadata["_platform_session_id"] = SESSION_ID
+    await handler.evaluate_async(completion)
+    if wait_state == "replied":
+        InterSessionMessageManager(temp_db).create_message(COORDINATOR_ID, SESSION_ID, "Still held")
+    elif wait_state == "cancelled":
+        CoordinationWaitManager(temp_db).cancel(str(wait["wait_id"]), SESSION_ID)
+    assert CoordinationWaitManager(temp_db).has_active_wait(SESSION_ID) is (wait_state == "active")
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert stopped.decision == ("allow" if wait_state == "active" else "block"), stopped.reason
+    assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
 
 
 async def test_candidate_latch_survives_native_reset_and_blocks_already_implemented_close(
