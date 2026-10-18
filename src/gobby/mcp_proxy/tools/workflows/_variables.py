@@ -99,6 +99,31 @@ def set_variable(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
+    # Hook enforcement gives immediate guidance; enforce the same authority at
+    # the mutation boundary so transport paths cannot bypass it.
+    from gobby.utils.session_context import get_current_session_id
+    from gobby.workflows.engine.idle_declaration import (
+        SET_VARIABLE_TOOL,
+        native_variable_write_error,
+    )
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    caller_id = get_current_session_id()
+    authority_variables = (
+        SessionVariableManager(db).get_variable_subset(caller_id, ("_agent_type",))
+        if caller_id
+        else {}
+    )
+    authority_error = native_variable_write_error(
+        SET_VARIABLE_TOOL,
+        {"session_id": resolved_session_id},
+        caller_id,
+        authority_variables,
+        session_manager,
+    )
+    if authority_error:
+        return {"success": False, "error": authority_error}
+
     if name in SKILL_LIST_VARIABLE_NAMES and not _is_valid_skill_list(value):
         return {
             "success": False,
@@ -142,8 +167,6 @@ def set_variable(
 
     # Session-scoped: write to session_variables table
     if not session_var_manager:
-        from gobby.workflows.state_manager import SessionVariableManager
-
         session_var_manager = SessionVariableManager(db)
 
     session_var_manager.set_variable(resolved_session_id, name, value)
