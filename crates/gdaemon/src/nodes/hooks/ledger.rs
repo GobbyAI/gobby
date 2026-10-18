@@ -178,21 +178,6 @@ impl Ledger {
         self.mutate(id, token, |_| Ok(None)).await
     }
 
-    /// A hub requeue has retired this envelope, including any cached response.
-    pub async fn forget(&self, id: &str) -> io::Result<()> {
-        let id = id.to_owned();
-        self.run(move |directory| {
-            let path = marker_path(&directory, &id);
-            let _lock = marker_lock(&path)?;
-            match fs::remove_file(path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        })
-        .await
-    }
-
     /// Recheck the spool and the observed marker under the marker's write lock.
     pub(super) async fn remove_spool_marker(
         &self,
