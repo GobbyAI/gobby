@@ -411,7 +411,7 @@ fn acquire_baseline_catalog_lock(transaction: &mut Transaction<'_>) -> Result<()
 /// The auth functions are SECURITY DEFINER bodies that name hub tables
 /// explicitly, so one auth schema can serve exactly one hub. The public hub
 /// keeps the shared name; every other hub owns `<schema>_agent_auth`.
-pub(super) fn auth_schema_for(schema: &str) -> Cow<'static, str> {
+pub fn auth_schema_for(schema: &str) -> Cow<'static, str> {
     if schema == "public" {
         Cow::Borrowed(AUTH_SCHEMA)
     } else {

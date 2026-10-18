@@ -454,7 +454,7 @@ fn b64url_encode(bytes: &[u8]) -> String {
         .to_string()
 }
 
-fn b64url_decode(value: &str) -> Result<Vec<u8>, GrantError> {
+pub(super) fn b64url_decode(value: &str) -> Result<Vec<u8>, GrantError> {
     let mut padded = value.replace('-', "+").replace('_', "/");
     while !padded.len().is_multiple_of(4) {
         padded.push('=');
@@ -496,7 +496,7 @@ fn optional_principal_kind(value: &Value) -> Option<PrincipalKind> {
     }
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len()
         && left
             .iter()

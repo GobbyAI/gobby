@@ -1,6 +1,7 @@
 //! The `runtime` family's route table and native `GET /api/config/effective`.
 
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::http::{Method, Request, Response, StatusCode};
 use futures_util::FutureExt;
-use gobby_core::grant::deployment_token;
+use gobby_core::grant::{GRANT_HEADER, GrantBundle, deployment_token, encode_grant_header};
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_core::route_family::RouteFamily;
 use gobby_runtime::{Caller, NATIVE_ROUTES, RuntimeFamily};
@@ -151,8 +152,8 @@ fn document(active_values: Value) -> Value {
     })
 }
 
-/// A request as the front door forwards it for `caller`. A row with a `gate`
-/// needs this builder to satisfy it for every caller the row lists.
+/// A request as the front door forwards it for `caller`. A gated row is claimed
+/// only with a grant; see `granted_parts`.
 fn request(method: Method, path: &str, caller: Option<Caller>) -> Request<Body> {
     let builder = Request::builder().method(method).uri(path);
     let builder = match caller {
@@ -164,6 +165,25 @@ fn request(method: Method, path: &str, caller: Option<Caller>) -> Request<Body> 
 
 fn parts(method: Method, path: &str, caller: Option<Caller>) -> Parts {
     request(method, path, caller).into_parts().0
+}
+
+/// The golden grant, an interactive principal: the shape the route gate decodes.
+fn interactive_grant_header() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime_grants/golden/direct_datastores.json");
+    let raw = std::fs::read(path).expect("golden grant");
+    let grant: GrantBundle =
+        serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+    encode_grant_header(&grant).expect("encode")
+}
+
+/// `parts` for `caller`, carrying the interactive grant a gated row requires.
+fn granted_parts(method: Method, path: &str, caller: Caller) -> Parts {
+    let mut presented = parts(method, path, Some(caller));
+    presented
+        .headers
+        .insert(GRANT_HEADER, interactive_grant_header().parse().expect("header"));
+    presented
 }
 
 fn claims(family: &RuntimeFamily, parts: &Parts) -> bool {
@@ -370,12 +390,25 @@ async fn claims_follow_the_route_table() -> Result<()> {
             !claims(&family, &parts(method.clone(), &path, None)),
             "{method} {path} without a caller"
         );
+        let gated = row.gate.is_some();
         for &caller in Caller::ALL {
+            let presented = if gated {
+                granted_parts(method.clone(), &path, caller)
+            } else {
+                parts(method.clone(), &path, Some(caller))
+            };
             assert_eq!(
-                claims(&family, &parts(method.clone(), &path, Some(caller))),
+                claims(&family, &presented),
                 row.callers.contains(&caller),
                 "{method} {path} for {caller:?}"
             );
+            if gated {
+                // Without a grant the same request is forwarded to Python.
+                assert!(
+                    !claims(&family, &parts(method.clone(), &path, Some(caller))),
+                    "{method} {path} for {caller:?} without a grant"
+                );
+            }
         }
         // The router registers every row.
         let served = call(

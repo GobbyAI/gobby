@@ -8,6 +8,7 @@ mod cache;
 pub mod fixture;
 mod handshake;
 mod inspection;
+pub mod presentation;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
