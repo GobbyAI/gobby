@@ -285,11 +285,90 @@ async def test_placed_resume_returns_to_tab_when_beside_pane_is_gone(
     assert finalize.await_count == 1
 
 
+async def test_placed_resume_revives_expired_daemon_stop_seat(
+    placed: _Harness, finalize: AsyncMock
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.child_session_id is not None
+    h.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id = %s", (original.child_session_id,)
+    )
+
+    result = await _resume(h, original, _metadata(h, _tab_snapshot(h)))
+
+    assert result.success is True, result.error
+    assert result.child_session_id == original.child_session_id
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "active"
+    assert child.parent_session_id == h.parent_id
+    assert child.agent_run_id == result.run_id
+    assert _successor_status(h, result.run_id) == ("running", None)
+    assert finalize.await_count == 1
+
+
+async def test_placed_resume_creates_tab_when_recorded_split_was_swept(
+    placed: _Harness, finalize: AsyncMock
+) -> None:
+    h = placed
+    missing_tab = str(uuid.uuid4())
+    snapshot = {
+        "kind": "split",
+        "workspace_id": h.workspace.id,
+        "title": SEAT,
+        "beside_pane_id": str(uuid.uuid4()),
+        "tab_id": missing_tab,
+        "axis": "vertical",
+    }
+
+    result = await _resume(h, _parked_original(h), _metadata(h, snapshot))
+
+    assert result.success is True, result.error
+    [pane] = h.workspaces.list_panes(h.workspace.id)
+    assert pane.tab_id != missing_tab
+    assert pane.terminal_id is not None
+    assert _terminal_states(h) == {pane.terminal_id: "live"}
+    assert _successor_status(h, result.run_id) == ("running", None)
+    assert finalize.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "status,reason", [("success", "completed"), ("cancelled", "operator_cancelled")]
+)
+@pytest.mark.parametrize("session_status", ["active", "expired"])
+async def test_placed_resume_refuses_runs_that_were_not_parked_by_daemon(
+    placed: _Harness, finalize: AsyncMock, status: str, reason: str, session_status: str
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.child_session_id is not None
+    h.db.execute(
+        "UPDATE agent_runs SET status = %s, terminal_reason = %s WHERE id = %s",
+        (status, reason, original.id),
+    )
+    h.db.execute(
+        "UPDATE sessions SET status = %s WHERE id = %s", (session_status, original.child_session_id)
+    )
+    ended = h.runs.get(original.id)
+    assert ended is not None
+
+    result = await _resume(h, ended, _metadata(h, _tab_snapshot(h)))
+
+    assert result.success is False
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == session_status
+    assert child.agent_run_id == original.id
+    assert _panes(h) == {}
+    assert _terminal_states(h) == {}
+    assert finalize.await_count == 0
+
+
 @pytest.mark.parametrize(
     "case",
     [
         "missing",
-        "swept",
         "moved",
         "forbidden",
         "parent_unresolved",
@@ -312,17 +391,6 @@ async def test_placed_resume_refusals_park_successor(
     expected = f"placement_error:{case}"
     if case == "missing":
         snapshot["workspace_id"] = str(uuid.uuid4())
-        expected = "placement_error:not_found"
-    elif case == "swept":
-        # The beside pane and its whole tab were swept since the agent was placed.
-        snapshot = {
-            "kind": "split",
-            "workspace_id": h.workspace.id,
-            "title": SEAT,
-            "beside_pane_id": str(uuid.uuid4()),
-            "tab_id": str(uuid.uuid4()),
-            "axis": "vertical",
-        }
         expected = "placement_error:not_found"
     elif case == "moved":
         # The beside pane now lives in another workspace than the one recorded.
