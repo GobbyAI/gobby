@@ -505,6 +505,119 @@ async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDa
     assert run.vars["consensus"] is False
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "EVENT=CONSENSUS",
+        "EVENT=CONSENSUS ROUND=1",
+        f"Cannot send EVENT=CONSENSUS SHA={SHA}; no committed entry exists.",
+        f"EVENT=CONSENSUS_EXTRA SHA={SHA}",
+        "EVENT=CONSENSUS SHA=not-a-commit",
+        "EVENT=CONSENSUS SHA=",
+        "EVENT=CONSENSUS SHA=abcdef",
+        f"EVENT=CONSENSUS SHA={SHA}a",
+        f"EVENT=CONSENSUS\nSHA={SHA}",
+    ],
+)
+async def test_plan_adversary_rejects_malformed_consensus(
+    temp_db: HubDatabase, content: str
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(content)
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+
+
+async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    content = f"EVENT=CONSENSUS SHA={SHA}"
+    message = InterSessionMessageManager(temp_db).create_message(
+        SESSION_ID, COORDINATOR_ID, content
+    )
+    await run.call(
+        *SEND,
+        {"target": "session", "target_id": COORDINATOR_ID, "content": content},
+        {"success": False, "message_ids": [message.id]},
+    )
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+
+
+async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
+    temp_db: HubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    assert run.step == "stamp"
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    definitions = AgentDefinitionManager(temp_db)
+    definition = definitions.get_by_name("plan-adversary")
+    assert definition is not None
+    definitions.set_step_workflow_from_sync(
+        definition.id, instance.snapshot.model_dump(mode="json")
+    )
+    old_stamp = instance.snapshot.get_step("stamp")
+    assert old_stamp is not None
+    old_stamp.on_mcp_success = []
+    old_stamp.transitions = []
+    run.instances.replace_for_session(instance)
+
+    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+    retained = run.instances.get_for_session(SESSION_ID)
+    assert retained is not None
+    retained_stamp = retained.snapshot.get_step("stamp")
+    assert retained_stamp is not None
+    assert retained_stamp.transitions == []
+
+
+async def test_developer_claim_keeps_ref_when_task_card_is_offloaded(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": ref}},
+    )
+    assert run.vars["assigned_task_ref"] == ref
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert run.vars["assigned_task_ref"] == ref
+
+
+async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
+    await run.call(
+        "gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": REPLACEMENT_SHA}
+    )
+    await run.call("gobby-tasks", "unlink_commit", {"task_id": task.id, "commit_sha": SHA})
+    assert run.step == "submit"
+    assert run.vars["bounced"] is False
+    assert run.vars["implementation_complete"] is True
+
+
 @pytest.mark.parametrize("name", ["developer", "code-reviewer", "researcher", "consolidator"])
 async def test_standing_seats_never_use_native_idle_writes(temp_db: HubDatabase, name: str) -> None:
     run = SeatRun(temp_db, name)
@@ -537,7 +650,8 @@ async def test_idle_is_declared_only_by_readiness_rule(
     run = SeatRun(temp_db, "developer")
     await run.load(*run.vars["required_skills"])
     path = AGENTS_DIR.parent / "rules/stop-gates/declare-seat-idle-on-readiness.yaml"
-    rule = yaml.safe_load(path.read_text())["rules"]["declare-seat-idle-on-readiness"]
+    document = yaml.safe_load(path.read_text())
+    rule = document["rules"]["declare-seat-idle-on-readiness"]
     body = RuleDefinitionBody.model_validate(
         {
             "event": rule["event"],
@@ -550,6 +664,7 @@ async def test_idle_is_declared_only_by_readiness_rule(
         definition_json=body.model_dump_json(),
         enabled=True,
         priority=6,
+        tags=document["tags"],
     )
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
     message = InterSessionMessageManager(temp_db).create_message(
