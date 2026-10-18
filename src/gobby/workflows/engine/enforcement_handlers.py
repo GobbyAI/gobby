@@ -138,6 +138,7 @@ class EnforcementHandlerMixin:
 
             merged_vars = {**variables, **instance.variables}
             ctx = {
+                "session_id": session_id,
                 "vars": merged_vars,
                 "variables": merged_vars,
                 "tool_input": handler_tool_input,

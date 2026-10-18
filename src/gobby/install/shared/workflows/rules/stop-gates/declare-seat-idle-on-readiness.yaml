@@ -12,7 +12,7 @@ rules:
       and event.data.get('mcp_tool') == 'send_message'
       and event.data.get('tool_outcome', {}).get('status') == 'succeeded'
       and not event.metadata.get('is_failure')
-      and seat_readiness_completed(event.session_id, event.data.get('tool_output'))
+      and seat_readiness_completed(event.metadata.get('_platform_session_id', ''), event.data.get('tool_output'))
     effect:
       type: set_variable
       variable: seat_idle
