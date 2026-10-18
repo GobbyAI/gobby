@@ -104,10 +104,10 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
   - The `gcode` maintenance floor `MIN_GCODE_PRUNE_BUDGET_VERSION` is a literal in
     `src/gobby/code_index/gcode_gateway.py` (969 lines), and
     `tests/code_index/test_gcode_gateway.py` requires it to equal the `gcode` pin.
-    code-index-family 1.1 moves the three gcode floors to
-    `src/gobby/code_index/gcode_versions.py` and derives this one from the pin. If
-    the literal is still in `gcode_gateway.py` at 2.4's starting tip, 2.4 makes that
-    same move; otherwise 2.4 edits neither file.
+    #24719 (Derive the gcode prune-budget floor from the managed gcode pin) makes it
+    read `MANAGED_BIN_VERSION_PINS["gcode"]` in place, as `MIN_GCODE_GRAPH_VERSION`
+    already does. 2.4 depends on it and edits neither the floor nor its module. If
+    code-index-family 1.1 (#24670) lands first, its location applies (D24).
 - **Concurrent editors and seams.**
   - #24717 (Release signing key for node binary updates) is Josh's manual task. It
     ends with the public key committed at `crates/gdaemon/assets/release-signing.pub`.
@@ -142,13 +142,12 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
   scripts are bash and run on CI runners, never on a node. They use `jq`, `openssl`
   3 and `sha256sum`, which the Ubuntu runner provides, and
   `crates/gdaemon/tests/release_scripts.rs` tests them with the same tools.
-- **No new Python.** Josh's fleet rule (14:41 CDT) and #15977's ruling (15:11 CDT)
-  allow no new Python file. The release scripts and their tests are bash and Rust
-  (1.1, 1.3), and the docs guard is a Rust test (5.1). Two new Python files stay
-  under the rule's exception for current code. `tests/install/test_node_setup_golden.py`
-  runs the existing Python installers to prove the goldens the Rust installer
-  matches (3.4 to 3.8). `src/gobby/code_index/gcode_versions.py` is code-index-family
-  1.1's move of existing literals, which 2.4 makes only when 1.1 has not landed.
+- **No new Python.** Josh's fleet rule (14:41 CDT) and #15977's rulings (15:11 and
+  16:16 CDT) allow no new Python file. The release scripts and their tests are bash
+  and Rust (1.1, 1.3), and the docs guard is a Rust test (5.1). The one new Python
+  file is `tests/install/test_node_setup_golden.py`, a test that records the goldens
+  the Rust installer matches (3.4 to 3.8) from the existing Python installers, so it
+  pins current behavior (D24).
 - **Heavy work.** Every cargo run sets `CARGO_BUILD_JOBS=3` and scopes with `-p`.
 - **Monolith ceiling.** Every targeted production file stays under 1,000 lines,
   counting inline `#[cfg(test)]` modules. Unit tests go in `<module>/tests.rs`.
@@ -159,8 +158,9 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
 Orchestrator #15977 ordered this rework at 13:03 CDT on 2026-10-18 (Josh: "The whole
 plan needs to be reworked.") and added Josh's requirements at 13:04, 13:05 and 13:11.
 It ruled on #24717, #24604, #21571 and the hub-mode edits at 13:31, and at 15:11
-affirmed D4, D8, D15 and D22 and ruled out new Python files. The Plan Writer records
-D1 to D23; the pushbacks Josh asked for are marked.
+affirmed D4, D8, D15 and D22 and ruled out new Python files. At 16:16 it kept the
+golden test and dropped `gcode_versions.py` (D24). The Plan Writer records D1 to
+D24; the pushbacks Josh asked for are marked.
 
 - **D1, release identity.** A node release is a gdaemon release. Its version is the
   gdaemon crate version and its tag is `gdaemon-v<version>`. The gdaemon release
@@ -358,6 +358,18 @@ D1 to D23; the pushbacks Josh asked for are marked.
   Plan Adversary #16993 re-stamps hub-mode too. #15977 updates the text of #24276 (hub-mode 2.6)
   and #24372. node-halves 2.3.3 needs no change, because grok and agy hooks are
   global.
+- **D24, no new Python.** Josh's fleet rule (14:41 CDT) allows no new Python file,
+  and #15977 ruled on this plan's two at 16:16 CDT.
+  `tests/install/test_node_setup_golden.py` stays: it records goldens from the
+  existing Python installers, so it pins current behavior.
+  `src/gobby/code_index/gcode_versions.py` is dropped, conditional or not. Moving
+  existing constants into a new Python module is new Python that the Rust port
+  replaces, and neither hub-node nor current-code stability needs it. The gcode
+  floors stay where they are. #24719 (Derive the gcode prune-budget floor from the
+  managed gcode pin, 16:19 CDT) derives the prune floor from the pin in place, so
+  2.4's `gcode` bump edits no 969-line `gcode_gateway.py`, which the size-growth
+  rule would refuse without a new module. If code-index-family 1.1 (#24670) lands
+  first, its location applies.
 
 ## P1: Signed release publishing
 `kind: framing`
@@ -502,6 +514,8 @@ new Python).
   `cargo` scripts on `PATH` serving signed member archives whose binaries are shell
   scripts printing an identity and a release-info. The working directory is a
   temporary tree whose `crates/gdaemon/assets/release-signing.pub` is a test key.
+  Each returns early with a message when `jq`, `openssl` 3 or `sha256sum` is
+  missing.
 
 Research context:
 - `crates/gdaemon/tests/release_workflow.rs::release_workflow_builds_publishes_and_packages_gdaemon`
@@ -709,7 +723,7 @@ Research context:
 - 2.3.7 - Settle reports committed when the bootstrap names the key, and unresolved when the prior pin cannot be restored. test: `crates/gdaemon/src/node_setup/enroll/tests.rs::settle_decides_by_bootstrap`.
 - 2.3.8 - `gdaemon` is one patch version above the executor's starting tip in `crates/gdaemon/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 2.4 Rust remediation names `gobby node enroll` [category: code] (depends: 2.3)
+### 2.4 Rust remediation names `gobby node enroll` [category: code] (depends: 2.3, #24719)
 `kind: deliverable`
 
 Targets:
@@ -729,8 +743,6 @@ Targets:
 - `crates/gmcp/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
-- `src/gobby/code_index/gcode_gateway.py::*` — scope-reason: only when the gcode floors are still here, they move out to `gcode_versions.py` and the module imports them back (Release ownership)
-- `src/gobby/code_index/gcode_versions.py`
 
 Python surface replaced: the Python `gobby auth login` these messages send a node
 operator to.
@@ -739,13 +751,9 @@ operator to.
   `NodeServices::prepare`'s two refusals, `read_api_key_at`,
   `unauthorized_recovery`'s two texts, `AUTH_401_REMEDIATION`, and `StartupError`'s
   token message. The tests that assert them follow.
-- The gcode floor: when `MIN_GCODE_PRUNE_BUDGET_VERSION` is a literal in
-  `gcode_gateway.py`, this leaf moves `MIN_GCODE_GRAPH_VERSION`,
-  `MIN_GCODE_PRUNE_BUDGET_VERSION` and `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION` to
-  the new `gcode_versions.py`, derives the prune floor from the `gcode` pin, and
-  imports them back into `gcode_gateway.py`, as code-index-family 1.1 specifies. The
-  validator's production-size-growth rule requires that new file for any edit to the
-  969-line `gcode_gateway.py`.
+- The gcode floor: after #24719, `MIN_GCODE_PRUNE_BUDGET_VERSION` reads the `gcode`
+  pin, so this leaf's pin bump moves it and the leaf edits neither the floor nor
+  `gcode_gateway.py` (D24).
 - A guard test walks every `crates/*/src` file and fails on the literal
   `gobby auth login`.
 
@@ -758,6 +766,9 @@ Research context:
   line 871.
 - `crates/gmcp` depends on `gobby-core`, so the gcore edit bumps it once 1.2 ships it.
 - `tests/code_index/test_gcode_gateway.py` asserts `GCODE_PIN == MIN_GCODE_PRUNE_BUDGET_VERSION`.
+  `src/gobby/code_index/gcode_gateway.py` line 29 already derives
+  `MIN_GCODE_GRAPH_VERSION` from `MANAGED_BIN_VERSION_PINS["gcode"]`; #24719 does
+  the same for line 30.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -p gobby-core -p gobby-code -p gobby-hooks -p gobby-client -p gobby-mcp`; `GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_version_pins.py tests/code_index/test_gcode_gateway.py -v`.
 
 Consumers unchanged:
@@ -1788,7 +1799,7 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
 1. `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -p gobby-core -p gobby-code -p gobby-hooks -p gobby-client -p gobby-mcp`
    must pass, skew in both directions included (4.1, 4.3). The
    `release_scripts.rs` tests must run rather than return early, so this gate
-   runs where OpenSSL 3 and `sha256sum` are on `PATH`: CI's Ubuntu runner, or a
+   runs where `jq`, OpenSSL 3 and `sha256sum` are on `PATH`: CI's Ubuntu runner, or a
    Mac with Homebrew's `openssl@3/bin` and `coreutils/libexec/gnubin` first on
    `PATH`.
 2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py`
@@ -1846,6 +1857,12 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   docs guard is Rust. D22 records that every member release at gate 3, `gterm-v0.1.12`
   included, is a first publication. D4, D8, D15 and D22 carry #15977's affirmation.
   The stale M1 stays until consensus.
+- 2026-10-18: Revision by Plan Writer gobby#16767 for Plan Adversary gobby#16993's
+  round-2 gate and Orchestrator #15977's rulings (16:16 and 16:19 CDT). D24 keeps
+  `tests/install/test_node_setup_golden.py` and drops `gcode_versions.py`. 2.4 depends
+  on #24719 (Derive the gcode prune-budget floor from the managed gcode pin) and
+  edits neither the floor nor `gcode_gateway.py`. E1 gate 1 requires `jq` on `PATH` as well, and
+  1.3's tests return early without it. The stale M1 stays until consensus.
 
 ## M1 Task Manifest
 `kind: manifest`
