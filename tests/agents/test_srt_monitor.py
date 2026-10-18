@@ -612,7 +612,7 @@ async def main() -> None:
             elif drift == 'argv':
                 data['argv'][-1] = str(directory / 'elsewhere')
             elif drift == 'started':
-                data['started'] = float(data['started']) + 1.0
+                data['started'] = repr(float(data['started']) + 1.0)
             elif drift == 'listener':
                 data['pid'] = noise.pid
             record.write_text(json.dumps(data))
