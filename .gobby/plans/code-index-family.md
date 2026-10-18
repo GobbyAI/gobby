@@ -141,8 +141,13 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
   - A change confined to gruntime or gcodeindex bumps `gdaemon` only.
   - Python-only leaves and leaves that change only paths with a `tests` component
     bump nothing (`src/gobby/install/bin_release_identity.py::workspace_source_identity`).
-  - `src/gobby/code_index/gcode_gateway.py` derives `MIN_GCODE_GRAPH_VERSION` from the
-    `gcode` pin, so the gcode maintenance floor follows each bump with no edit.
+  - The gcode maintenance floor, `MIN_GCODE_PRUNE_BUDGET_VERSION`, is a literal in
+    `src/gobby/code_index/gcode_gateway.py` today, and
+    `tests/code_index/test_gcode_gateway.py` requires it to equal the `gcode` pin. 1.1
+    moves it to `src/gobby/code_index/gcode_versions.py` and derives it from the pin,
+    as `MIN_GCODE_GRAPH_VERSION` already is. Every later `gcode` bump then moves the
+    floor with no edit. `gcode_gateway.py` is 969 lines, so the move also keeps the
+    bumping leaves off a file near the ceiling.
   - Every bumping leaf edits `Cargo.lock` and `version_pins.py`, so the bumping
     leaves form one dependency chain (docs/contracts/plan-coverage.md, shared-target
     ordering). 1.10 sits after the last bumping leaf, 8.6, because it alone waits on
@@ -404,9 +409,23 @@ Targets:
 - `crates/gcode/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+- `src/gobby/code_index/gcode_gateway.py::*` — scope-reason: the three gcode version floors move out, and the module imports them back for its readers
+- `src/gobby/code_index/gcode_versions.py`
 
 Release ownership (Constraints): this leaf changes `crates/gcode` only, so it bumps
 `gcode` by 0.0.1.
+
+The gcode maintenance floor. This leaf moves `MIN_GCODE_GRAPH_VERSION`,
+`MIN_GCODE_PRUNE_BUDGET_VERSION` and `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION` from
+`src/gobby/code_index/gcode_gateway.py` (969 lines) to the new
+`src/gobby/code_index/gcode_versions.py`. `gcode_gateway.py` imports them back, so
+its `__all__` and every importer keep working. `MIN_GCODE_PRUNE_BUDGET_VERSION`
+becomes `MANAGED_BIN_VERSION_PINS["gcode"]`, as `MIN_GCODE_GRAPH_VERSION` already is.
+Today it is a literal that every `gcode` bump edits by hand, and
+`tests/code_index/test_gcode_gateway.py::test_managed_gcode_pin_matches_prune_budget_floor`
+already requires it to equal the pin. Deriving it keeps the floor in step with the
+pin, so no later leaf edits it. Its only reader is
+`GcodeGateway.prune_project_for_maintenance`.
 
 The hub routes run gcode's library for a machine other than the hub's own. Today
 every function on the three node paths reads the machine from the process with
@@ -476,11 +495,10 @@ The test-only Targets carry only the new field.
 Consumers unchanged:
 - `crates/gcode/src/index/api/file_state.rs` — no-edit-reason: its writers already take `machine_id`.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `src/gobby/install/bin_freshness_models.py` — no-edit-reason: iterates every pin, so the bumped value flows through.
 - `src/gobby/install/distribution.py` — no-edit-reason: looks a pin up by binary name.
 - `tests/cli/test_install_setup.py` — no-edit-reason: reads the `gcode` pin instead of a version literal.
-- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: reads the `gcode` pin instead of a version literal.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: imports the floors through `gcode_gateway.py`, and the derived floor equals the `gcode` pin and crate version.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -489,6 +507,7 @@ Consumers unchanged:
 - 1.1.2 - `current::run` for a foreign-machine context reports that machine's project state, and reports the project unindexed when only the local machine has indexed it. test: `crates/gcode/src/index/indexer/tests/serial_db.rs::status_reads_the_context_machine`.
 - 1.1.3 - Content search under a foreign-machine context returns chunks visible to that machine's selectors and none visible only to the local machine, and `indexed_file_exists` answers for that machine. test: `crates/gcode/src/search/fts/tests.rs::content_search_reads_the_context_machine`.
 - 1.1.4 - `gcode` is one patch version above the executor's starting tip in `crates/gcode/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 1.1.5 - `gcode_versions.py` holds the three version floors, `MIN_GCODE_PRUNE_BUDGET_VERSION` reads `MANAGED_BIN_VERSION_PINS["gcode"]`, `gcode_gateway.py` imports all three back, and the floor equals the bumped `gcode` crate version. test: `tests/code_index/test_gcode_gateway.py::test_prune_budget_version_matches_gcode_crate_version`.
 
 ### 1.2 Parent-optional overlay status and index [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -548,7 +567,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/agents/code_index.py` — no-edit-reason: the preflight already runs `index` after `status` reports unindexed, and its commands and timeouts stay the same.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -660,7 +678,6 @@ Research context:
 Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `search_content` with the same arguments, and it still prints.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -781,7 +798,6 @@ three leaves on `index_discovered_files`.
 
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -835,7 +851,6 @@ Research context:
 
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -994,7 +1009,6 @@ Consumers unchanged:
 - `crates/gcode/src/cli/tests.rs` — no-edit-reason: compares `contract()` command entries with clap, and this leaf adds no command.
 - `crates/gcode/src/cli/tests/top_level.rs` — no-edit-reason: reads the `outline` command entry, which this leaf leaves unchanged.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -1108,7 +1122,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: passes `&Context` to `resolve_path_input`, which accepts any `ProjectView`.
 - `src/gobby/agents/code_index.py` — no-edit-reason: the preflight's argv and exit-code handling are unchanged.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -1236,7 +1249,6 @@ Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: reads the `ghook` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `src/gobby/hooks/runtime_compat.py` — no-edit-reason: derives `MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA` from the `ghook` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
@@ -1546,7 +1558,6 @@ Consumers unchanged:
 - `crates/gcode/src/graph/report/loading.rs` — no-edit-reason: passes its `ctx` to `communities::read_for_context`, which keeps its signature.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -1672,7 +1683,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `ensure_project_fresh` and `ensure_file_fresh`, whose behavior is unchanged.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -1842,7 +1852,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `search`, `search_symbol` and `search_text` with the same arguments, and they still print.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -1947,7 +1956,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls `grep::run` with the same arguments.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2052,7 +2060,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls the symbol commands with the same arguments.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2127,7 +2134,6 @@ Consumers unchanged:
 - `crates/gcode/src/dispatch_navigation.rs` — no-edit-reason: calls the graph navigation commands with the same arguments.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2218,7 +2224,6 @@ payload-then-print split and the route module.
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2335,7 +2340,6 @@ the forwarding seam implementations and the hub dispatch are one wire contract.
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2501,7 +2505,6 @@ and their callers cannot compile apart.
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -2730,7 +2733,6 @@ Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: reads the `ghook` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `src/gobby/hooks/runtime_compat.py` — no-edit-reason: derives `MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA` from the `ghook` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
@@ -2930,7 +2932,6 @@ Consumers unchanged:
 - `tests/skills/test_reference_library.py` — no-edit-reason: checks that every native command has an audit entry, which this leaf adds.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -3050,7 +3051,6 @@ Consumers unchanged:
 - `crates/gdaemon/tests/heartbeat.rs` — no-edit-reason: builds its own `HeartbeatHost`, whose API does not change.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -3278,7 +3278,6 @@ Consumers unchanged:
 - `crates/gruntime/tests/config.rs` — no-edit-reason: drives `RuntimeFamily::claims`, whose behavior does not change.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -3376,7 +3375,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -3548,7 +3546,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -3659,7 +3656,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -4041,7 +4037,6 @@ Consumers unchanged:
 - `web/src/api/runtimeConfigCodecVectors.gen.ts` — no-edit-reason: the generator writes only codec vectors there, and a description is not one.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -4257,7 +4252,6 @@ Consumers unchanged:
 - `src/gobby/code_index/_storage/projection_cleanup.py` — no-edit-reason: `_reconcile_stale_selector` still records failures through it until P9.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -4569,7 +4563,6 @@ Consumers unchanged:
 - `tests/config/test_runtime_loop_consumers.py` — no-edit-reason: asserts `_repair_code_index_bm25`'s `bool` return, which stays.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -4864,7 +4857,6 @@ Consumers unchanged:
 - `src/gobby/app_context.py` — no-edit-reason: still holds `code_index_pruner` for the route.
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -5032,7 +5024,6 @@ not run on, and reconciling it is 8.2's carry-forward.
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -5179,7 +5170,6 @@ client and route tests prove what the real one does.
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -5258,8 +5248,9 @@ The run calls
    carries both roots.
 3. `index_lock::lock_project_files(ctx, files, IndexLockPolicy::brief_index_flush_try())`
    takes the locks. With every file busy it returns them all without indexing.
-4. `commands::index::run_index_locked(ctx, IndexRequest { explicit_files: <acquired>, full: false, sync_projections: false, path_filter: None, .. })`
-   indexes the acquired files. That is what
+4. `commands::index::run_index_locked(ctx, IndexRequest { project_root: ctx.project_root.clone(), path_filter: None, explicit_files: <acquired>, full: false, require_cpp_semantics: false, sync_projections: false })`
+   indexes the acquired files. `IndexRequest` derives no `Default`, so the literal names
+   every field, and `require_cpp_semantics` takes `gcode index`'s default. That is what
    `gcode index --project <root> --files=… --skip-if-locked` runs. The sync job (8.1)
    projects them.
 5. A `CliError` whose code is `checkout_required` or `checkout_mismatch` returns
@@ -5330,7 +5321,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
@@ -5372,13 +5362,17 @@ running the nightly repair.
 
 1. A call while a run is in flight returns
    `Code index nightly repair skipped: already running`, from the job's busy flag in
-   `HubJobs`.
+   `HubJobs`. The work thread owns a drop guard that clears the flag when the thread
+   ends, including by panic. Neither `run`'s return nor the caller dropping `run`'s
+   future clears it, so a dropped call never lets a second run start beside the first.
 2. It reads `JobConfig` (8.1), which gains `code_index.nightly_repair_concurrency`.
    With no published state it returns
    `Code index nightly repair skipped: no published config`. With `code_index.enabled`
    false it returns `Code index nightly repair skipped: code index disabled`.
 3. The work runs on a named `std::thread` (P8 tick model), and `run` awaits its result
-   over a `tokio::sync::oneshot` channel, so the caller's task never blocks.
+   over a `tokio::sync::oneshot` channel, so the caller's task never blocks. When the
+   sender drops without a result, `run` returns
+   `Code index nightly repair failed: worker ended without a result`.
 4. The thread takes the hub machine's rows from `job_sync::sync_rows` (8.1), the rows
    Python's `list_indexed_projects` lists. It repairs up to
    `nightly_repair_concurrency` rows at once, each on its own thread with its own
@@ -5448,7 +5442,6 @@ Research context:
 Consumers unchanged:
 - `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
 - `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
-- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
 - `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
 
 **Acceptance:**
