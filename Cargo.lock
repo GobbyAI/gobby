@@ -2570,6 +2570,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gobby-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gobby-core",
+ "serde",
+ "serde_json",
+ "temp-env",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "gobby-runtime"
 version = "0.5.0"
 dependencies = [
