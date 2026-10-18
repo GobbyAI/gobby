@@ -35,6 +35,7 @@ from gobby.agents.idle_detector import (
     composer_text,
 )
 from gobby.agents.srt_runtime import SRT_PREFLIGHT_TIMEOUT_SECONDS
+from gobby.agents.srt_socket_paths import srt_socket_directory
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.storage.terminals import AttachLocator, TerminalManager
@@ -51,6 +52,7 @@ from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    MCPTestClient,
     copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
@@ -531,27 +533,30 @@ def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     )
 
 
-def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
+def _spawn_agent(
+    client: httpx.Client, *, task_id: str | None = None, checkout_mode: str = "none"
+) -> dict[str, Any]:
     """Spawn one agent run; agent spawn is native-only."""
     backend = "native"
-    created = client.post(
-        "/api/tasks",
-        json={
-            "title": f"stack-{backend}",
-            "task_type": "task",
-            "project_id": E2E_PROJECT_ID,
-            "validation_criteria": f"{backend} agent run is live in a terminal.",
-        },
-    )
-    assert created.status_code == 201, created.text
-    task_id = str(created.json()["id"])
+    if task_id is None:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "title": f"stack-{backend}",
+                "task_type": "task",
+                "project_id": E2E_PROJECT_ID,
+                "validation_criteria": f"{backend} agent run is live in a terminal.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        task_id = str(created.json()["id"])
     spawned = client.post(
         "/api/agents/spawn",
         json={
             "task_id": task_id,
             "agent_name": "default",
             "provider": "claude",
-            "checkout_mode": "none",
+            "checkout_mode": checkout_mode,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
             # until the test cancels them.
@@ -1264,6 +1269,180 @@ async def test_terminal_client_stack_end_to_end(
             json.dumps({"before_host_crash": before_host_crash, "after_cleanup": after_cleanup})
         )
     client.close()
+
+
+_RESTART_SEAT_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+def _register_restart_seat_project(cli_events: CLIEventSimulator, repo: Path) -> str:
+    """Register a throwaway git checkout as a project in the isolated test daemon."""
+    project_id = str(uuid.uuid4())
+    marker = repo / ".gobby" / "project.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({"id": project_id, "name": repo.name}))
+    git = [
+        "git",
+        "-C",
+        str(repo),
+        "-c",
+        "user.name=e2e",
+        "-c",
+        "user.email=e2e@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], check=True, capture_output=True)
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "seat repo"], check=True, capture_output=True)
+    registered = cli_events.register_test_project(
+        project_id=project_id, name=repo.name, repo_path=str(repo)
+    )
+    assert registered["status"] == "success", registered
+    return project_id
+
+
+def _claim_for_seat(
+    cli_events: CLIEventSimulator, mcp_client: MCPTestClient, repo: Path, task_id: str
+) -> str:
+    """Claim the task for a registered owner session before the seat spawns."""
+    owner = cli_events.register_session(
+        external_id=f"seat-owner-{uuid.uuid4().hex[:8]}",
+        machine_id=_RESTART_SEAT_MACHINE_ID,
+        cwd=str(repo),
+    )
+    owner_id = str(owner["id"])
+    mcp_client.session_id = owner_id
+    claimed = mcp_client.call_tool(
+        server_name="gobby-tasks",
+        tool_name="claim_task",
+        arguments={"task_id": task_id},
+    )
+    claim: dict[str, Any] = claimed.get("result", claimed)
+    assert claim.get("task_id") == task_id, claimed
+    return owner_id
+
+
+def _restart_seat_state(client: httpx.Client, run_id: str, task_id: str) -> dict[str, Any]:
+    """Read the seat fields that a restart must not change."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    run = run_response.json()["run"]
+    task_response = client.get(f"/api/tasks/{task_id}")
+    assert task_response.status_code == 200, task_response.text
+    return {
+        "session_id": run.get("session_id"),
+        "claimed_session_id": run.get("claimed_session_id"),
+        "terminal_id": run.get("terminal_id"),
+        "worktree_id": run.get("worktree_id"),
+        "status": run.get("status"),
+        "task_claimed_by": task_response.json().get("claimed_by_session_id"),
+    }
+
+
+def _srt_owner_records(gobby_home: Path) -> dict[str, str]:
+    """Evidence only: the SRT broker owner records beside the socket."""
+    root = srt_socket_directory(gobby_home)
+    if not root.is_dir():
+        return {}
+    return {record.name: record.read_text() for record in sorted(root.glob("v-*.owner.json"))}
+
+
+def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
+    daemon_instance: DaemonInstance,
+    daemon_client: httpx.Client,
+    cli_events: CLIEventSimulator,
+    mcp_client: MCPTestClient,
+    tmp_path: Path,
+) -> None:
+    """Each sandboxed seat keeps its session, task claim, and worktree across a restart."""
+    repo = tmp_path / "seat-repo"
+    repo.mkdir()
+    project_id = _register_restart_seat_project(cli_events, repo)
+    client = _http(daemon_instance)
+    host_before = _wait_for_host(daemon_client, daemon_instance)
+    seats: list[dict[str, Any]] = []
+    try:
+        for label in ("first", "second"):
+            created = client.post(
+                "/api/tasks",
+                json={
+                    "title": f"restart-seat-{label}",
+                    "task_type": "task",
+                    "project_id": project_id,
+                    "validation_criteria": "Seat keeps its session, claim and worktree.",
+                },
+            )
+            assert created.status_code == 201, created.text
+            task_id = str(created.json()["id"])
+            owner_id = _claim_for_seat(cli_events, mcp_client, repo, task_id)
+            spawned = _spawn_agent(client, task_id=task_id, checkout_mode="worktree")
+            seats.append(
+                {
+                    "task_id": task_id,
+                    "owner_id": owner_id,
+                    "run_id": str(spawned["run_id"]),
+                    "worktree_path": spawned.get("worktree_path"),
+                }
+            )
+        run_ids = (str(seats[0]["run_id"]), str(seats[1]["run_id"]))
+        for seat in seats:
+            assert isinstance(seat["worktree_path"], str), seat
+            worktree = Path(seat["worktree_path"])
+            assert worktree.is_dir(), seat
+            # The worktree must live under the isolated home, never the operator's ~/.gobby.
+            assert worktree.resolve().is_relative_to(daemon_instance.gobby_home.resolve()), seat
+        wait_for_condition(
+            lambda: _live_native_items(client, run_ids),
+            timeout=120.0,
+            interval=0.2,
+            description=f"live native terminals for seat runs {run_ids}",
+        )
+        before = {
+            seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
+            for seat in seats
+        }
+        for seat in seats:
+            state = before[seat["run_id"]]
+            assert state["session_id"], state
+            assert state["terminal_id"], state
+            assert state["worktree_id"], state
+            assert state["task_claimed_by"] == seat["owner_id"], state
+        owners_before = _srt_owner_records(daemon_instance.gobby_home)
+
+        _restart_daemon_preserving_host(daemon_instance)
+        client.close()
+        client = _http(daemon_instance)
+        host_after = _wait_for_host(client, daemon_instance)
+        assert host_after["host_epoch"] == host_before["host_epoch"], host_after
+        wait_for_condition(
+            lambda: _live_native_items(client, run_ids),
+            timeout=120.0,
+            interval=0.2,
+            description=f"live native terminals after restart for {run_ids}",
+        )
+        after = {
+            seat["run_id"]: _restart_seat_state(client, seat["run_id"], seat["task_id"])
+            for seat in seats
+        }
+        (tmp_path / "seat-restart.json").write_text(
+            json.dumps(
+                {
+                    "before": before,
+                    "after": after,
+                    "owners_before": owners_before,
+                    "owners_after": _srt_owner_records(daemon_instance.gobby_home),
+                },
+                indent=2,
+                default=str,
+            )
+        )
+        for seat in seats:
+            assert after[seat["run_id"]] == before[seat["run_id"]], seat
+            assert Path(seat["worktree_path"]).is_dir(), seat
+    finally:
+        for seat in seats:
+            _cancel_stack_run(client, str(seat["run_id"]))
+        client.close()
 
 
 def _gclient(
