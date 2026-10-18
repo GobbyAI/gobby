@@ -28,6 +28,8 @@ class PlacedLaunch:
 
     reserver: AgentPaneReserver
     resolved: ResolvedPlacement
+    # An empty tab the resumed seat replaces; closed before the reserve takes the title.
+    replaces_tab: str | None = None
 
 
 def _refusal(code: str, message: str) -> dict[str, Any]:
@@ -46,6 +48,7 @@ async def preflight_placement(
     session_manager: Any | None = None,
     agent_name: str | None = None,
     resume_session_id: str | None = None,
+    replaces_tab: str | None = None,
 ) -> PlacedLaunch | dict[str, Any] | None:
     """Resolve a placement before any side effect; return a refusal reply or ``None``."""
     if placement is None:
@@ -87,7 +90,7 @@ async def preflight_placement(
         )
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc))
-    return PlacedLaunch(reserver=reserver, resolved=resolved)
+    return PlacedLaunch(reserver=reserver, resolved=resolved, replaces_tab=replaces_tab)
 
 
 def task_active_refusal(response: dict[str, Any]) -> dict[str, Any]:
@@ -107,6 +110,8 @@ async def run_placed_spawn(
     """Reserve the pane, launch inline, then settle on success or release on any other exit."""
     reserver = placed.reserver
     try:
+        if placed.replaces_tab is not None:
+            await reserver.close_empty_tab(placed.replaces_tab)
         reserved = await reserver.reserve(placed.resolved, worktree_id=worktree_id)
     except asyncio.CancelledError:
         await phase.fail("Agent spawn cancelled")
