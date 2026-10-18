@@ -6177,3 +6177,12 @@ closes, gates 1, 2 and 7 must hold again before P8's phase epic closes, and gate
   - Writer-found: 8.1 and 8.3 change gcore, which is in `ghook`'s release identity, so
     they bump `ghook` too. The Constraints add the gcore rule.
   - E1 adds gate 8.
+- 2026-10-18: Consensus between Plan Writer gobby#16767 and Plan Adversary
+  gobby#16993 on P1 to P9 at 6fa16bca27, with no open findings. The P9 review
+  repaired:
+  - 9.5's migration takes 470 under #15977's next-free-at-landing rule;
+  - B12: P9's acceptance items cite tests that exist, or new tests in a targeted file.
+    9.6.1's new test goes in 1.6's `test_remote_principal_grants.py`;
+  - N20: 9.3's Research context records that gcode's own prune request is unaffected;
+  - N21: 9.4 leaves gcode's HTTP clear and rebuild client in place, as a consumer
+    left unchanged.
