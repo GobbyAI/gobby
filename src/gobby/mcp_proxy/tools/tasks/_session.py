@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._authorization import (
     has_delegated_agent_run,
     require_claim_authority,
 )
+from gobby.mcp_proxy.tools.tasks._claim_release import register_release_task_claim
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import brief_task_card
@@ -32,6 +33,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="gobby-tasks-session",
         description="Task-session integration tools",
     )
+    register_release_task_claim(registry, ctx)
 
     def delegate_task(task_id: str, delegated_to_session_ref: str, reason: str) -> dict[str, Any]:
         """Let a filer or current receiver after the filer ends hand off an open finding."""

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import ast
-import builtins
 import re
 import shlex
-import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
@@ -27,12 +25,13 @@ from gobby.tasks.tdd_compacted_output import (
     _path_matches_artifact,
     has_compacted_pytest_failure,
 )
-from gobby.tasks.tdd_paths import is_implementation_edit_path
+from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
-    _executed_python_nodes,
+    _has_pytest_fail_placeholder,
     _has_python_keyword_stub,
     _has_python_module_stub,
+    _has_python_runtime_stub,
     _has_python_test_tightening,
     _has_python_unchanged_api,
     _original_test_module,
@@ -79,6 +78,11 @@ _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 _RedCacheKey = tuple[str, str, str, int, bool, int]
 
 
+_NOT_IMPLEMENTED_DETAIL_RE = re.compile(
+    r"(?m)^(?:\s*E\s+|[^\n]+\.py:\d+:\s*)NotImplementedError(?::|\s*$)"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TddEvidenceResult:
     """TDD evidence outcome for a close attempt."""
@@ -88,12 +92,14 @@ class TddEvidenceResult:
     findings: tuple[str, ...]
     red_runs: tuple[str, ...] = ()
     green_runs: tuple[str, ...] = ()
+    regression_tests: tuple[str, ...] = ()
 
     def details(self) -> dict[str, object]:
         return {
             "findings": list(self.findings),
             "red_runs": list(self.red_runs),
             "green_runs": list(self.green_runs),
+            "regression_tests": list(self.regression_tests),
         }
 
 
@@ -135,12 +141,15 @@ def evaluate_tdd_evidence(
     *,
     renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
     task_category: str | None = None,
-    implementation_paths: Iterable[str] = (),
+    implementation_paths: Iterable[str] | None = None,
 ) -> TddEvidenceResult:
-    """Require one assertion-backed cycle and later coverage of every named test.
+    """Require a cycle for changed tests and later coverage of every named test.
 
     The caller supplies implementation_paths from the task's linked patch. Only
     test-category tasks may count non-test fixture modules under tests/ as code.
+    Unchanged named tests contribute either a genuine cycle or regression runs.
+    Unchanged detection is file-granular: every named test in an edited file is
+    treated as changed. Regression listings accompany a genuine task-level cycle.
     """
     if not tests:
         return TddEvidenceResult(
@@ -152,9 +161,8 @@ def evaluate_tdd_evidence(
         for test in tests
         for path in (test.path, *(renamed_test_paths or {}).get(test.path, ()))
     )
-    infrastructure_paths = (
-        frozenset(implementation_paths) if task_category == "test" else frozenset()
-    )
+    linked_paths = frozenset(implementation_paths or ())
+    infrastructure_paths = linked_paths if task_category == "test" else frozenset()
 
     parse_cache: PythonModuleCache = {}
     binding_cache: PythonBindingCache = {}
@@ -163,7 +171,55 @@ def evaluate_tdd_evidence(
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     # Attribution limits affirmative anchors; safety checks need physical history.
     task_edits = tuple(edit for edit in evidence.edits if edit.task_attributed)
+    changed_paths = linked_paths | {edit.path for edit in task_edits}
+    changed_test_paths = {
+        path
+        for path in changed_paths
+        if (path in named_test_paths or is_test_convention_path(path))
+        and not is_implementation_edit_path(
+            path,
+            named_test_paths=named_test_paths,
+            test_infrastructure_paths=infrastructure_paths,
+        )
+    }
+    unchanged = tuple(
+        test
+        for test in tests
+        if implementation_paths is not None
+        and not changed_paths.intersection(
+            (test.path, *(renamed_test_paths or {}).get(test.path, ()))
+        )
+    )
+    first_production = min(
+        (
+            edit
+            for edit in task_edits
+            if is_implementation_edit_path(
+                edit.path,
+                named_test_paths=named_test_paths,
+                test_infrastructure_paths=infrastructure_paths,
+            )
+        ),
+        key=lambda edit: edit.order,
+        default=None,
+    )
+    unchanged_reds: dict[str, TranscriptValidationRun] = {}
+    if unchanged and first_production is None:
+        return TddEvidenceResult(
+            False, False, ("Unchanged-test evidence has no attributable production edit.",)
+        )
+    if first_production is not None:
+        for test in unchanged:
+            red, _ = _find_red_run(test, evidence, -1, first_production)
+            if (
+                red is not None
+                and _find_green_run(test, evidence, red, after_order=first_production.order)
+                is not None
+            ):
+                unchanged_reds[test.reference] = red
     for test in tests:
+        if test in unchanged:
+            continue
         test_paths = (test.path, *(renamed_test_paths or {}).get(test.path, ()))
         test_edits = sorted(
             (edit for edit in task_edits if edit.path in test_paths),
@@ -272,24 +328,39 @@ def evaluate_tdd_evidence(
                 f"{test.reference}: assertion-backed red has no later production edit and pass"
             )
 
-    if cycle is None:
+    if cycle is None and (changed_test_paths or not unchanged):
+        if not findings:
+            findings.append("TDD requires a named RED-to-GREEN cycle for the task's changed tests")
         return TddEvidenceResult(False, False, tuple(findings))
 
-    red, production_edit = cycle
+    # An existing test may expose a bug without changing. It can anchor a cycle
+    # only when this task did not add or change tests that still need their RED.
+    if cycle is None and unchanged_reds and first_production is not None:
+        cycle = (min(unchanged_reds.values(), key=lambda run: run.order), first_production)
+    red = cycle[0] if cycle is not None else None
+    after_order = (
+        cycle[1].order
+        if cycle is not None
+        else max((edit.order for edit in task_edits), default=-1)
+    )
     findings = []
+    if cycle is None:
+        findings.append("TDD requires at least one genuine RED-to-GREEN cycle for the task")
     green_commands: list[str] = []
     for test in tests:
         green = _find_green_run(
             test,
             evidence,
             red,
-            after_order=production_edit.order,
+            after_order=after_order,
         )
         if green is None:
-            findings.append(
-                f"{test.reference}: no pass after the production edit that completed "
-                "the task-level TDD cycle"
+            requirement = (
+                "the production edit that completed the task-level TDD cycle"
+                if cycle is not None
+                else "the task's latest edit (regression evidence)"
             )
+            findings.append(f"{test.reference}: no pass after {requirement}")
             continue
         green_commands.append(green.command)
 
@@ -297,8 +368,18 @@ def evaluate_tdd_evidence(
         passed=not findings,
         skipped=False,
         findings=tuple(findings),
-        red_runs=(red.command,),
+        red_runs=tuple(
+            dict.fromkeys(
+                (
+                    *((red.command,) if red is not None else ()),
+                    *(run.command for run in unchanged_reds.values()),
+                )
+            )
+        ),
         green_runs=tuple(green_commands),
+        regression_tests=tuple(
+            test.reference for test in unchanged if test.reference not in unchanged_reds
+        ),
     )
 
 
@@ -401,7 +482,8 @@ def _red_run_proof(
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
             reason = "test body is an unconditional pytest.fail placeholder"
         elif not require_not_implemented or (
-            _has_python_keyword_stub(test, evidence, run, parse_cache)
+            _has_runtime_stub(test, evidence, run, core_command, parse_cache)
+            or _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
             or _test_tightening_proof(test, evidence, run, parse_cache)
@@ -413,6 +495,36 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _has_runtime_stub(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    command: str,
+    parse_cache: PythonModuleCache | None,
+) -> bool:
+    """Bind an HTTP/helper-mediated stub failure to its named test section."""
+    nodes, same_file = _selected_pytest_nodes(command, test)
+    # Captured payload can forge even a fresh failure header. Never resume inside it.
+    output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
+        0
+    ]
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        if header is None or not _header_names_artifact(
+            header.group("name"), test, nodes, same_file
+        ):
+            continue
+        section = _failure_section(lines, index)
+        if (
+            _section_has_artifact_location(section, test)
+            and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
+            and _has_python_runtime_stub(section, evidence, run, parse_cache)
+        ):
+            return True
+    return False
 
 
 def _test_tightening_proof(
@@ -442,68 +554,6 @@ def _test_tightening_proof(
         default=None,
     )
     return _has_python_test_tightening(test, evidence, red, prior_green, parse_cache)
-
-
-def _has_pytest_fail_placeholder(
-    test: AcceptanceTest,
-    evidence: TranscriptEvidence,
-    run: TranscriptValidationRun,
-    parse_cache: PythonModuleCache | None = None,
-) -> bool:
-    """Reject fail reached before control flow or a call into application code."""
-    node = _original_test_node(test, evidence, run, parse_cache)
-    if node is None:
-        return False
-    # Builtins, stdlib and test-framework setup are not calls into code under test.
-    setup_roots = {"pytest", "unittest", "builtins"}
-    fail_calls = {"pytest.fail"}
-    module = _original_test_module(test, evidence, run, parse_cache)
-    for item in [*(module.body if module is not None else ()), *node.body]:
-        if isinstance(item, ast.Import):
-            fail_calls.update(
-                f"{alias.asname or alias.name}.fail"
-                for alias in item.names
-                if alias.name == "pytest"
-            )
-            setup_roots.update(
-                alias.asname or alias.name.split(".")[0]
-                for alias in item.names
-                if alias.name.split(".")[0] in sys.stdlib_module_names | {"pytest"}
-            )
-        elif isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in (
-            sys.stdlib_module_names | {"pytest"}
-        ):
-            setup_roots.update(alias.asname or alias.name for alias in item.names)
-            if item.module == "pytest":
-                fail_calls.update(
-                    alias.asname or alias.name for alias in item.names if alias.name == "fail"
-                )
-    for statement in node.body:
-        for item in _executed_python_nodes(statement):
-            if isinstance(
-                item,
-                ast.If
-                | ast.IfExp
-                | ast.BoolOp
-                | ast.For
-                | ast.AsyncFor
-                | ast.While
-                | ast.Try
-                | ast.TryStar
-                | ast.With
-                | ast.AsyncWith
-                | ast.Match
-                | ast.Assert
-                | ast.comprehension,
-            ) or (isinstance(item, ast.Compare) and len(item.comparators) > 1):
-                return False
-            if isinstance(item, ast.Call):
-                if ast.unparse(item.func) in fail_calls:
-                    return True
-                root = ast.unparse(item.func).split(".", 1)[0]
-                if root not in setup_roots and root not in vars(builtins):
-                    return False
-    return False
 
 
 def _has_original_source_failure(
@@ -544,7 +594,7 @@ def _has_original_source_failure(
             _path_matches_artifact(match.group("path"), test)
             and node.lineno < int(match.group("line")) <= (node.end_lineno or node.lineno)
             and _section_has_failure_detail(section)
-            and (not require_not_implemented or "NotImplementedError" in section)
+            and (not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section))
         ):
             return True
     return False
@@ -658,7 +708,7 @@ def _has_pytest_body_failure(
         ):
             has_attributable_section = True
             if _section_has_failure_detail(section) and (
-                not require_not_implemented or "NotImplementedError" in section
+                not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section)
             ):
                 return True, ""
     ordered_failure = _has_ordered_pytest_failure(
@@ -696,7 +746,7 @@ def _has_pytest_body_failure(
         has_attributable_section = True
         section = _failure_section(lines, index)
         if _section_has_failure_detail(section) and (
-            not require_not_implemented or "NotImplementedError" in section
+            not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section)
         ):
             return True, ""
     return False, _red_section_rejection(test, has_attributable_section)
@@ -744,7 +794,7 @@ def _has_ordered_pytest_failure(
             and _path_matches_artifact(path, test)
             and name.replace("::", ".").split("[", maxsplit=1)[0] == artifact
             and _section_has_failure_detail(section)
-            and (not require_not_implemented or "NotImplementedError" in section)
+            and (not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section))
         ):
             return True
     return False
@@ -873,20 +923,21 @@ def _is_test_execution_run(run: TranscriptValidationRun) -> bool:
 def _find_green_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
-    red: TranscriptValidationRun,
+    red: TranscriptValidationRun | None,
     *,
     after_order: int,
 ) -> TranscriptValidationRun | None:
-    retain_source = _test_tightening_proof(test, evidence, red)
+    retain_source = red is not None and _test_tightening_proof(test, evidence, red)
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "success"
             or not _is_test_execution_run(run)
-            or run.order <= max(red.order, after_order)
+            or run.order <= max(red.order if red is not None else -1, after_order)
         ):
             continue
         if _green_run_covers_test(run, test) and (
-            not retain_source or _retains_python_red_source(test, evidence, red, run)
+            not retain_source
+            or (red is not None and _retains_python_red_source(test, evidence, red, run))
         ):
             return run
     return None

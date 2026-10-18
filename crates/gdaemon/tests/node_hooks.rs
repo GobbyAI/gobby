@@ -527,6 +527,130 @@ async fn ingress_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Exercise hyper's real HTTP/1 response framing rather than draining Body directly.
+async fn hook_http1_connection(
+    node: std::sync::Arc<gobby_daemon::state::NodeServices>,
+    envelope: &str,
+) -> anyhow::Result<(
+    tokio::net::TcpStream,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+)> {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mut client = tokio::net::TcpStream::connect(listener.local_addr()?).await?;
+    let (stream, _) = listener.accept().await?;
+    let server = tokio::spawn(async move {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(stream),
+                hyper::service::service_fn(
+                    move |request: hyper::Request<hyper::body::Incoming>| {
+                        let node = node.clone();
+                        async move {
+                            Ok::<_, std::convert::Infallible>(
+                                call_hook(node, request.map(axum::body::Body::new)).await,
+                            )
+                        }
+                    },
+                ),
+            )
+            .await
+    });
+    let payload = serde_json::to_string(&json!({
+        "hook_type":"pre_tool_use", "response_capability":"hook-response.v1"
+    }))?;
+    let request = format!(
+        "POST /api/hooks/execute HTTP/1.1\r\nHost: localhost\r\n\
+         Authorization: Bearer {NODE_KEY}\r\nX-Gobby-Envelope-Id: {envelope}\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    client.write_all(request.as_bytes()).await?;
+    Ok((client, server))
+}
+
+#[tokio::test]
+async fn ingress_http1_delivered_content_length_preserves_receipt() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (release_entered, _release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let (mut client, server) = hook_http1_connection(node.node.clone(), "http1-delivered").await?;
+    let mut wire = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        client.read_to_end(&mut wire),
+    )
+    .await??;
+    tokio::time::timeout(std::time::Duration::from_secs(3), server).await???;
+    let split = wire
+        .windows(4)
+        .position(|part| part == b"\r\n\r\n")
+        .unwrap();
+    let headers = std::str::from_utf8(&wire[..split])?.to_ascii_lowercase();
+    let body = &wire[split + 4..];
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(headers.contains(&format!("content-length: {}", body.len())));
+    assert_eq!(serde_json::from_slice::<Value>(body)?, reply);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), release_entered)
+            .await
+            .is_err(),
+        "a delivered Content-Length response must keep its receipt"
+    );
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(
+        node.node
+            .hook_ledger
+            .marker("http1-delivered")
+            .await?
+            .unwrap()["status"],
+        "processed"
+    );
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ingress_http1_disconnect_finalizes_and_releases() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    let reply = json!({"decision":"allow", "_gobby_delivery_receipt":receipt()});
+    hub.script("/api/hooks/execute", vec![(StatusCode::OK, reply.clone())]);
+    hub.script(RECEIPTS, vec![(StatusCode::OK, json!({"released":true}))]);
+    let (receipt_entered, receipt_release) = hub.pause_next(RECEIPTS);
+    let (forward_entered, forward_release) = hub.pause_next("/api/hooks/execute");
+    let node = NodeHome::new(&hub)?;
+    let (client, server) = hook_http1_connection(node.node.clone(), "http1-disconnected").await?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), forward_entered).await??;
+    drop(client);
+    // Hyper observes the socket closing and drops the handler's receiver while
+    // the durable forwarding task is still waiting for the hub response.
+    let _closed = tokio::time::timeout(std::time::Duration::from_secs(3), server).await??;
+    forward_release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), receipt_entered).await??;
+    receipt_release.send(()).unwrap();
+    let marker = node
+        .node
+        .hook_ledger
+        .marker("http1-disconnected")
+        .await?
+        .unwrap();
+    assert_eq!(marker["status"], "processed");
+    assert_eq!(marker["response"], reply);
+    let requests = hub.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].path, RECEIPTS);
+    assert_eq!(requests[1].body["op"], "release");
+    assert_eq!(requests[1].body["receipt_id"], receipt()["receipt_id"]);
+    hub.shutdown().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn ingress_unledgered_passthrough() -> anyhow::Result<()> {
     let hub = FakeHub::start().await?;
@@ -625,6 +749,146 @@ async fn receipts_ack_forwarded_and_terminalized() -> anyhow::Result<()> {
     }));
     hub.shutdown().await;
     Ok(())
+}
+
+#[tokio::test]
+async fn receipts_skip_bad_entries_and_process_valid_receipt() -> anyhow::Result<()> {
+    let hub = FakeHub::start().await?;
+    hub.script(
+        RECEIPTS,
+        vec![(
+            StatusCode::OK,
+            json!({"acknowledged":true,"carrying_envelope_ids":["original"]}),
+        )],
+    );
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let non_file = ledger.inbox.join("000-directory.json");
+    fs::create_dir(&non_file)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        symlink("missing-receipt", ledger.inbox.join("001-dangling.json"))?;
+        let unreadable = ledger.inbox.join("002-unreadable.json");
+        // Malformed bytes are also ignored when tests run with permission bypass.
+        fs::write(&unreadable, b"unreadable receipt")?;
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o0))?;
+    }
+    let valid = ledger.inbox.join(format!("{ACK_ID}.json"));
+    fs::write(&valid, serde_json::to_vec(&receipt())?)?;
+
+    sweep_receipts(&node.node, &ledger).await?;
+
+    assert_eq!(hub.requests().len(), 1);
+    assert_eq!(
+        hub.requests()[0].body["receipt_id"],
+        receipt()["receipt_id"]
+    );
+    assert!(ledger.is_processed(ACK_ID).await?);
+    assert!(ledger.is_processed("original").await?);
+    assert!(!valid.exists());
+    assert!(non_file.is_dir(), "bad entries must not be removed");
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_remove_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(true).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipts_restore_failure_does_not_stop_peers() -> anyhow::Result<()> {
+    assert_eq!(
+        receipt_cleanup_failure_does_not_stop_peers(false).await?,
+        receipt()
+    );
+    Ok(())
+}
+
+async fn receipt_cleanup_failure_does_not_stop_peers(acknowledged: bool) -> anyhow::Result<Value> {
+    let hub = FakeHub::start().await?;
+    let success = (
+        StatusCode::OK,
+        json!({"acknowledged":true,"carrying_envelope_ids":[]}),
+    );
+    hub.script(
+        RECEIPTS,
+        vec![
+            if acknowledged {
+                success.clone()
+            } else {
+                (StatusCode::SERVICE_UNAVAILABLE, json!({"error":"offline"}))
+            },
+            success,
+        ],
+    );
+    let (entered, release) = hub.pause_next(RECEIPTS);
+    let node = NodeHome::new(&hub)?;
+    let ledger = Ledger::new(node.home.path().join("hooks/inbox"));
+    fs::create_dir_all(&ledger.inbox)?;
+    let first = ledger.inbox.join("first.json");
+    let second = ledger.inbox.join("second.json");
+    for path in [&first, &second] {
+        fs::write(path, serde_json::to_vec(&receipt())?)?;
+    }
+    let interfere = async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), entered).await??;
+        let original = if first.exists() { &second } else { &first };
+        let peer = if first.exists() { &first } else { &second };
+        let claimed = fs::read_dir(&ledger.inbox)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".claimed.tmp")
+            })
+            .expect("the paused acknowledgment owns a claim")
+            .path();
+        if acknowledged {
+            // Force remove_file to fail while preserving the receipt bytes.
+            let bytes = fs::read(&claimed)?;
+            fs::remove_file(&claimed)?;
+            fs::create_dir(&claimed)?;
+            fs::write(claimed.join("retained.json"), bytes)?;
+        } else {
+            // A file cannot be restored over a directory at its original path.
+            fs::create_dir(original)?;
+        }
+        release.send(()).expect("release the paused acknowledgment");
+        Ok::<_, anyhow::Error>((original, claimed, peer))
+    };
+    let (sweep, interference) = tokio::join!(sweep_receipts(&node.node, &ledger), interfere);
+    let (original, claimed, peer) = interference?;
+    sweep?;
+    assert_eq!(
+        hub.requests().len(),
+        2,
+        "cleanup failure must not stop the peer post"
+    );
+    assert!(!peer.exists());
+    assert!(
+        ledger
+            .is_processed(peer.file_stem().unwrap().to_str().unwrap())
+            .await?
+    );
+    assert!(original.is_dir());
+    let retained = if acknowledged {
+        original.join("retained.json")
+    } else {
+        claimed
+    };
+    let retained = serde_json::from_slice::<Value>(&fs::read(retained)?)?;
+    hub.shutdown().await;
+    Ok(retained)
 }
 
 #[tokio::test]

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 import weakref
 from collections.abc import Callable
@@ -28,7 +27,7 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
-from gobby.runner_backend import backend_bind
+from gobby.runner_backend import backend_bind, front_door_secret
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -537,7 +536,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         grant_service=presenter,
         local_machine_id=lease.machine_id,
         clock=lambda: int(time.time()),
-        front_door_secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
+        front_door_secret=front_door_secret(),
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

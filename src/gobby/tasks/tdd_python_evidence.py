@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import copy
 import re
+import sys
 import textwrap
 from collections.abc import Iterable
+from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_paths import is_production_edit_path
@@ -320,6 +323,59 @@ def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST,
                 visited.add(item.id)
                 pending.append(bindings[item.id])
     return tuple(result)
+
+
+def _has_python_runtime_stub(
+    section: str,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Bind a raising frame to the latest confirmed pre-RED source and function."""
+    latest = {
+        PurePosixPath(edit.path).parts: edit
+        for edit in sorted(evidence.edits, key=lambda item: item.order)
+        if edit.session_id == run.session_id
+        and edit.order < run.order
+        and edit.timestamp < run.started_at
+        and is_production_edit_path(edit.path)
+    }
+    rows = section.splitlines()
+    for row, source in zip(rows, rows[1:], strict=False):
+        frame = re.match(r"\s*(.+\.py):(\d+): in (\w+)\s*$", row)
+        if frame is None or not re.match(r"\s*raise NotImplementedError\b", source):
+            continue
+        reported = PurePosixPath(frame[1]).parts
+        for path, edit in latest.items():
+            if reported[-len(path) :] != path or not edit.task_attributed:
+                continue
+            if not _source_confirmed_before(edit, run):
+                continue
+            historical_source = edit.source_after
+            if historical_source is None:
+                historical_source = textwrap.dedent(edit.source_fragment or "")
+            module = parse_python_module(historical_source, parse_cache)
+            if module is None:
+                continue
+            functions = [
+                node
+                for node in ast.walk(module)
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == frame[3]
+            ]
+            if len(functions) != 1:
+                continue
+            raised = functions[0].body[0]
+            if not isinstance(raised, ast.Raise):
+                continue
+            exception = raised.exc.func if isinstance(raised.exc, ast.Call) else raised.exc
+            if (
+                isinstance(exception, ast.Name)
+                and exception.id == "NotImplementedError"
+                and (edit.source_after is None or raised.lineno == int(frame[2]))
+            ):
+                return True
+    return False
 
 
 def _has_python_keyword_stub(
@@ -639,3 +695,65 @@ def _module_dependency_matches(path: str, dependency: str) -> bool:
         or module.startswith(dependency + ".")
         or dependency.startswith(module + ".")
     )
+
+
+def _has_pytest_fail_placeholder(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Reject fail reached before control flow or a call into application code."""
+    node = _original_test_node(test, evidence, run, parse_cache)
+    if node is None:
+        return False
+    # Builtins, stdlib and test-framework setup are not calls into code under test.
+    setup_roots = {"pytest", "unittest", "builtins"}
+    fail_calls = {"pytest.fail"}
+    module = _original_test_module(test, evidence, run, parse_cache)
+    for item in [*(module.body if module is not None else ()), *node.body]:
+        if isinstance(item, ast.Import):
+            fail_calls.update(
+                f"{alias.asname or alias.name}.fail"
+                for alias in item.names
+                if alias.name == "pytest"
+            )
+            setup_roots.update(
+                alias.asname or alias.name.split(".")[0]
+                for alias in item.names
+                if alias.name.split(".")[0] in sys.stdlib_module_names | {"pytest"}
+            )
+        elif isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in (
+            sys.stdlib_module_names | {"pytest"}
+        ):
+            setup_roots.update(alias.asname or alias.name for alias in item.names)
+            if item.module == "pytest":
+                fail_calls.update(
+                    alias.asname or alias.name for alias in item.names if alias.name == "fail"
+                )
+    for statement in node.body:
+        for item in _executed_python_nodes(statement):
+            if isinstance(
+                item,
+                ast.If
+                | ast.IfExp
+                | ast.BoolOp
+                | ast.For
+                | ast.AsyncFor
+                | ast.While
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.Match
+                | ast.Assert
+                | ast.comprehension,
+            ) or (isinstance(item, ast.Compare) and len(item.comparators) > 1):
+                return False
+            if isinstance(item, ast.Call):
+                if ast.unparse(item.func) in fail_calls:
+                    return True
+                root = ast.unparse(item.func).split(".", 1)[0]
+                if root not in setup_roots and root not in vars(builtins):
+                    return False
+    return False

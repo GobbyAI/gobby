@@ -315,26 +315,23 @@ async fn resolver_error_is_503_and_missing_authority_refuses_start() {
         format!("daemon_port: {}\nwebsocket_port: {}\n", ports[0], ports[1]),
     )
     .expect("bootstrap");
-    for secret in [None, Some("")] {
-        let (reader, writer) = std::io::pipe().expect("pipe");
-        drop(writer);
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"));
-        command
-            .arg("serve")
-            .env("GOBBY_HOME", home.path())
-            .env("GOBBY_PARENT_FD", "0")
-            .env_remove("GOBBY_FRONT_DOOR_SECRET")
-            .stdin(std::process::Stdio::from(reader));
-        if let Some(secret) = secret {
-            command.env("GOBBY_FRONT_DOOR_SECRET", secret);
-        }
-        let output = command.output().expect("serve refusal");
-        assert!(!output.status.success(), "serve accepted {secret:?}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("runtime ownership requires bootstrap database_url")
-        );
-    }
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    drop(writer);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"))
+        .arg("serve")
+        .env("GOBBY_HOME", home.path())
+        .env("GOBBY_PARENT_FD", "0")
+        .stdin(std::process::Stdio::from(reader))
+        .output()
+        .expect("serve refusal");
+    assert!(
+        !output.status.success(),
+        "serve accepted a missing database_url"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("runtime ownership requires bootstrap database_url")
+    );
 }
 
 #[tokio::test]
@@ -1051,7 +1048,6 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
         .arg("serve")
         .env("GOBBY_HOME", home.path())
         .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
-        .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
         .env_remove("GOBBY_PARENT_FD")
         .stdin(Stdio::from(reader));
     if let Some(fd) = parent_fd {
@@ -1774,7 +1770,6 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
             .arg("serve")
             .env("GOBBY_HOME", home)
             .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
-            .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
             .env_remove("GOBBY_PARENT_FD")
             .stdin(Stdio::null())
             .stderr(Stdio::from(std::fs::File::create(&log).expect("log file")))
