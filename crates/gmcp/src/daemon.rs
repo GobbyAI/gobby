@@ -188,7 +188,7 @@ impl Dialer {
             &headers,
             &auth,
         );
-        if matches!(&response, Err(ureq::Error::Status(401, _))) {
+        if matches!(&response, Ok(response) if response.status() == 401) {
             auth = auth_headers()?;
             self.cached()?.auth = auth.clone();
             response = self.send(
@@ -201,10 +201,10 @@ impl Dialer {
             );
         }
         let response = match response {
-            Ok(response) | Err(ureq::Error::Status(_, response)) => response,
-            Err(ureq::Error::Transport(error)) => {
+            Ok(response) => response,
+            Err(error) => {
                 self.cached()?.last_preflight = None;
-                return Ok(if is_timeout(&error) {
+                return Ok(if is_timeout(error.as_ref()) {
                     request_timeout(path, options.timeout)
                 } else {
                     unavailable(&base, "connection failed")
@@ -220,19 +220,17 @@ impl Dialer {
         if status == 200 {
             return serde_json::from_str(&text).context("invalid daemon JSON response");
         }
-        if status == 503 {
-            if let Some(detail) = backend_unavailable(&text) {
-                return Ok(unavailable(&base, &detail));
-            }
+        if status == 503
+            && let Some(detail) = backend_unavailable(&text)
+        {
+            return Ok(unavailable(&base, &detail));
         }
-        if status == 409 {
-            if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                if value["detail"].is_object()
-                    && value["detail"]["error_code"] == "SESSION_REQUIRED"
-                {
-                    return Ok(value["detail"].clone());
-                }
-            }
+        if status == 409
+            && let Ok(value) = serde_json::from_str::<Value>(&text)
+            && value["detail"].is_object()
+            && value["detail"]["error_code"] == "SESSION_REQUIRED"
+        {
+            return Ok(value["detail"].clone());
         }
         Ok(json!({"success": false, "error": format!("HTTP {status}: {text}")}))
     }
@@ -245,7 +243,7 @@ impl Dialer {
         options: &RequestOptions<'_>,
         headers: &Headers,
         auth: &Headers,
-    ) -> Result<ureq::Response, ureq::Error> {
+    ) -> Result<ureq::Response, Box<ureq::Transport>> {
         let mut request = self.agent.request(method, url).timeout(options.timeout);
         for (name, value) in headers.iter().chain(auth) {
             request = request.set(name, value);
@@ -253,9 +251,14 @@ impl Dialer {
         for (name, value) in options.params {
             request = request.query(name, value);
         }
-        match body {
+        let response = match body {
             Some(body) => request.send_json(body),
             None => request.call(),
+        };
+        // HTTP error statuses still carry responses for the wrapper to interpret.
+        match response {
+            Ok(response) | Err(ureq::Error::Status(_, response)) => Ok(response),
+            Err(ureq::Error::Transport(error)) => Err(Box::new(error)),
         }
     }
 }
@@ -316,13 +319,13 @@ fn request_timeout(path: &str, timeout: Duration) -> Value {
 fn is_timeout(error: &(dyn Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(error) = current {
-        if let Some(error) = error.downcast_ref::<io::Error>() {
-            if matches!(
+        if let Some(error) = error.downcast_ref::<io::Error>()
+            && matches!(
                 error.kind(),
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            ) {
-                return true;
-            }
+            )
+        {
+            return true;
         }
         current = error.source();
     }
