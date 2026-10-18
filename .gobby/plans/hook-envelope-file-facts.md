@@ -585,7 +585,7 @@ Verification planned:
 Targets:
 - `crates/gdaemon/src/nodes/agents/checkout_read.rs`
 - `crates/gdaemon/src/nodes/agents/commands.rs`
-- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/mod.rs::*` — scope-reason: declares the new `checkout_read` module
 - `crates/gdaemon/tests/node_checkout_read.rs`
 - `crates/gdaemon/tests/fixtures/node_commands/checkout_read_facts.json`
 - `tests/hub/test_checkout_read_facts_golden.py`
@@ -1580,6 +1580,11 @@ Verification planned:
   Orchestrator gobby#15977 accepted the B1 refs, the N1 Target change, the
   N2 note and the N5 no-change disposition. Bare validation exits 0 with no
   warnings against a fresh code index.
+- 2026-10-18: Plan Writer gobby#16767 repairs drift for Orchestrator gobby#15977.
+  Plan Adversary gobby#16993 found that bare expansion validation refuses 1.2's
+  target `crates/gdaemon/src/nodes/agents/mod.rs`. #24370 (Durable node agent
+  state, 79de176118) gave that file symbols after M1 was applied at
+  `be32a21b17`. 1.2 now scopes it as `::*` with a scope-reason.
 
 ## V2: Verification
 `kind: verification`
