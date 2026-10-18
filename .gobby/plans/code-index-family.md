@@ -6164,6 +6164,11 @@ closes, gates 1, 2 and 7 must hold again before P8's phase epic closes, and gate
   - N20: 9.3's Research context records that gcode's own prune request is unaffected;
   - N21: 9.4 leaves gcode's HTTP clear and rebuild client in place, as a consumer
     left unchanged.
+- 2026-10-18: Under Orchestrator #15977's review of the 1803c39160 stamp, the deferred
+  section 9.8 is deleted, because plans reach Josh with no deferrals. #24659 (gdaemon
+  verifies the web UI session cookie; retire Python's code-index web UI reads) carries
+  9.8.1 to 9.8.3. The Overview, D15 and P9's references to 9.8 name #24659 instead.
+  M1 is re-derived.
 
 ## M1 Task Manifest
 `kind: manifest`
