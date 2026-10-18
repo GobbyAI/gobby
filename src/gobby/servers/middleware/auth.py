@@ -8,6 +8,7 @@ browser assets are public. Other browser routes reach the SPA login shell.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -91,10 +92,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if decision.allowed:
-            token = bind_decision(
-                decision,
-                require_hub_database(services.database),
-            )
+            try:
+                database = require_hub_database(getattr(services, "database", None))
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"error": exc.detail},
+                )
+            token = bind_decision(decision, database)
             try:
                 return await call_next(request)
             finally:

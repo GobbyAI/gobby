@@ -24,15 +24,27 @@ _RESUME_CHAIN_LIMIT = 32
 _INPUT_AXES = {"horizontal": "right", "vertical": "down", "balanced": "balanced"}
 
 
-def _paused_seat_has_live_pane_or_run(session: Session, db: Any, run_storage: Any) -> bool:
+def _paused_seat_has_live_pane_or_run(
+    session: Session, db: Any, run_storage: Any, live_host_epoch: str | None
+) -> bool:
     """Whether a paused seat is still live: a live managed pane or an active run.
 
+    A native pane is live only under the running host's epoch. A row stamped with
+    another epoch, or a pending row (which never carries an epoch), belongs to a host
+    that stopped, so it does not hold the seat. An unknown epoch keeps every native
+    row holding it. Tmux panes survive a host respawn, so they count by state alone.
     A paused seat whose pane is gone and whose run is cancelled, failed or absent
     is a dead seat, and it must stay resumable.
     """
     pane_rows = db.fetchall(
-        "SELECT 1 FROM terminals WHERE session_id = %s AND state IN ('pending', 'live') LIMIT 1",
-        (session.id,),
+        """
+        SELECT 1 FROM terminals
+        WHERE session_id = %s
+          AND state IN ('pending', 'live')
+          AND (%s::text IS NULL OR backend <> 'native' OR host_epoch = %s)
+        LIMIT 1
+        """,
+        (session.id, live_host_epoch, live_host_epoch),
     )
     if pane_rows:
         return True
@@ -50,6 +62,8 @@ def resolve_resume_target(
     run_storage: Any,
     agent_type: str,
     lane: str | None = None,
+    *,
+    live_host_epoch: str | None = None,
 ) -> Session:
     if session_manager is None or not project_id:
         raise ValueError("Resume requires a session manager and project context")
@@ -65,7 +79,9 @@ def resolve_resume_target(
         raise ValueError(f"Resume target uses {session.source}, not requested provider {provider}")
     if session.status in LIVE_SESSION_STATUSES and (
         session.status != "paused"
-        or _paused_seat_has_live_pane_or_run(session, session_manager.db, run_storage)
+        or _paused_seat_has_live_pane_or_run(
+            session, session_manager.db, run_storage, live_host_epoch
+        )
     ):
         raise ValueError(f"Resume target {ref} is still live ({session.status})")
     if session.agent_run_id:
@@ -115,6 +131,8 @@ async def resolve_seat_resume(
     run_storage: Any,
     agent_body: AgentDefinitionBody | None,
     lane: str | None,
+    *,
+    live_host_epoch: str | None = None,
 ) -> Session:
     """Resolve the stored seat a resume reference names, in the target or checkout project."""
     project_id = target_project_id
@@ -134,11 +152,12 @@ async def resolve_seat_resume(
         run_storage,
         agent_body.name if agent_body is not None else "default",
         lane,
+        live_host_epoch=live_host_epoch,
     )
 
 
 class ResumeSeatGone(LookupError):
-    """A placed seat's recorded pane and tab are both gone, so it has nowhere to return."""
+    """Raised only when a placed seat records no workspace to return to."""
 
 
 def _recorded_placement(run_storage: Any, run: AgentRun) -> dict[str, Any] | None:
@@ -155,27 +174,41 @@ def _recorded_placement(run_storage: Any, run: AgentRun) -> dict[str, Any] | Non
     return None
 
 
-def resumed_seat_placement(
-    session: Session, run_storage: Any, workspaces: WorkspaceManager
-) -> dict[str, Any] | None:
-    """The ``placement`` input that returns a resumed seat to its pane's tab.
+def _empty_tab(workspaces: WorkspaceManager, workspace_id: str, tab_id: object) -> str | None:
+    """The recorded tab's id when it sits in the workspace and holds no panes."""
+    if not isinstance(tab_id, str):
+        return None
+    if not any(tab.id == tab_id for tab in workspaces.list_tabs(workspace_id)):
+        return None
+    if any(pane.tab_id == tab_id for pane in workspaces.list_panes(workspace_id)):
+        return None
+    return tab_id
 
+
+def resumed_seat_plan(
+    session: Session, run_storage: Any, workspaces: WorkspaceManager
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The ``placement`` input for a resumed seat, and the empty tab it replaces.
+
+    A resumed seat returns to its lane tab; only a never-placed seat launches unplaced.
     The previous run's own pane comes first, even dead: the successor splits in beside
     it and inherits its slot when the sweep collapses it. Otherwise the newest placement
     recorded along the resume chain names the split target, a pane left in its tab, or
-    the tab a tab-kind seat opened. None means the seat was never placed.
+    the tab a tab-kind seat opened. None means the seat was never placed. The second
+    element names the recorded tab when it holds no panes; the launch closes it before
+    the reopened tab takes its title, so the seat never ends with two tabs of one name.
     """
     run = run_storage.get(session.agent_run_id) if session.agent_run_id else None
     if run is None:
-        return None
+        return None, None
     snapshot = _recorded_placement(run_storage, run)
     recorded_title = snapshot.get("title") if snapshot else None
     own = workspaces.get_pane_for_terminal(run.terminal_id) if run.terminal_id else None
     if own is not None:
         title = own.label or recorded_title or session.title or run.agent_name or "agent"
-        return {"split": {"pane": own.id, "axis": "down", "title": title}}
+        return {"split": {"pane": own.id, "axis": "down", "title": title}}, None
     if snapshot is None or not isinstance(recorded_title, str):
-        return None
+        return None, None
     workspace_id = snapshot.get("workspace_id")
     if snapshot.get("kind") == "tab" and isinstance(workspace_id, str):
         tab = next(
@@ -183,12 +216,16 @@ def resumed_seat_placement(
             None,
         )
         if tab is None:
-            return {"tab": {"workspace": workspace_id, "title": recorded_title}}
+            return {"tab": {"workspace": workspace_id, "title": recorded_title}}, None
         snapshot = {"workspace_id": workspace_id, "tab_id": tab.id, "axis": "vertical"}
     target = split_target(workspaces, snapshot)
+    if target is None and isinstance(workspace_id, str):
+        # The seat's pane and tab are both gone, but its workspace is known: reopen a tab.
+        empty = _empty_tab(workspaces, workspace_id, snapshot.get("tab_id"))
+        return {"tab": {"workspace": workspace_id, "title": recorded_title}}, empty
     if target is None:
         raise ResumeSeatGone(
-            f"Resume target {session.id} was seated in a pane and tab that are both gone; "
+            f"Resume target {session.id} has no recorded workspace to return to; "
             "pass placement to seat it"
         )
     axis = snapshot.get("axis")
@@ -199,7 +236,7 @@ def resumed_seat_placement(
     }
     if axis == "balanced":
         split |= {"columns": snapshot.get("columns", 80), "rows": snapshot.get("rows")}
-    return {"split": split}
+    return {"split": split}, None
 
 
 def resume_isolation(session: Session, run_storage: Any) -> tuple[str | None, str | None]:

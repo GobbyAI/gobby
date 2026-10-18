@@ -66,7 +66,7 @@ from ._resume import (
     resolve_seat_resume,
     resume_isolation,
     resumed_seat_lane,
-    resumed_seat_placement,
+    resumed_seat_plan,
 )
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import (
@@ -147,6 +147,7 @@ async def spawn_agent_impl(
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
     if resume_session_id:
+        live_host_epoch = agent_pane_reserver.live_host_epoch() if agent_pane_reserver else None
         try:
             resume_target = await resolve_seat_resume(
                 session_manager,
@@ -157,6 +158,7 @@ async def spawn_agent_impl(
                 runner.run_storage,
                 agent_body,
                 lane,
+                live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
@@ -417,11 +419,11 @@ async def spawn_agent_impl(
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
+    replaces_tab: str | None = None
     if placement is None and resume_target is not None and agent_pane_reserver is not None:
-        # A resumed seat returns to its lane tab; only a never-placed seat launches unplaced.
         try:
-            placement = await asyncio.to_thread(
-                resumed_seat_placement,
+            placement, replaces_tab = await asyncio.to_thread(
+                resumed_seat_plan,
                 resume_target,
                 runner.run_storage,
                 agent_pane_reserver.workspaces,
@@ -436,6 +438,10 @@ async def spawn_agent_impl(
         machine_id=machine_id,
         project_id=project_id,
         project_context_authoritative=project_context_authoritative,
+        session_manager=session_manager,
+        agent_name=requested_agent_name,
+        resume_session_id=resume_session_id,
+        replaces_tab=replaces_tab,
     )
     if isinstance(placed, dict):
         return placed
@@ -764,6 +770,7 @@ async def spawn_agent_impl(
                     "existing_session_id": resume_target.id,
                     "original_run_id": resume_target.agent_run_id,
                     "relaunch": True,
+                    "paused_seat_not_live": resume_target.status == "paused",
                 }
             prepared_spawn = await run_thread_to_completion(
                 prepare,

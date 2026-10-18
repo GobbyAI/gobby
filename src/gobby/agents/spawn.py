@@ -370,16 +370,19 @@ def prepare_terminal_resume(
     credential_manager: ManagedCredentialManager | None = None,
     config_snapshot: ConfigSnapshot | None = None,
     relaunch: bool = False,
+    paused_seat_not_live: bool = False,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable session.
 
     Explicit relaunch can revive an inactive seat under a new parent; daemon-stop
-    recovery retains its original parent and nonterminal-session requirements.
+    recovery retains its original parent and requires a run parked by daemon stop.
+    ``paused_seat_not_live`` lets a relaunch take a paused seat only after the caller
+    proved it has no live pane.
     """
     child_session = session_manager._storage.get(existing_session_id)
     if child_session is None:
         raise ValueError("Daemon resume child session does not exist")
-    if child_session.status == "deleted" or (child_session.status == "expired" and not relaunch):
+    if child_session.status == "deleted":
         raise ValueError("Daemon resume child session is terminal")
     if child_session.parent_session_id != parent_session_id and not relaunch:
         raise ValueError("Daemon resume child session belongs to another parent")
@@ -397,8 +400,24 @@ def prepare_terminal_resume(
             new_run_id=run_id,
             workflow_name=workflow_name,
             relaunch_parent_session_id=parent_session_id if relaunch else None,
+            paused_seat_not_live=paused_seat_not_live,
         )
         if not rebound:
+            if not relaunch and original_run_id is not None:
+                from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES, LocalAgentRunManager
+
+                ended = LocalAgentRunManager(session_manager._storage.db).get(original_run_id)
+                if (
+                    ended is not None
+                    and ended.status in TERMINAL_AGENT_RUN_STATUSES
+                    and ended.terminal_reason != "daemon_stop"
+                ):
+                    # A finished run stores "success"; the message names it "completed".
+                    label = "completed" if ended.status == "success" else ended.status
+                    raise ValueError(
+                        f"Daemon resume run {ended.id} is {label}; "
+                        "only a run stopped by daemon shutdown can be resumed"
+                    )
             raise ValueError("Daemon resume session ownership changed concurrently")
 
     from gobby.storage.hub.protocol import SessionVariableMutation

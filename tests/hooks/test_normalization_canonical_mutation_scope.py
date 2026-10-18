@@ -27,17 +27,32 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
-def test_split_file_assembly_attributes_only_the_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("command", "operands", "edits"),
+    [
+        (
+            "cat connect.head connect.body > connect.rs",
+            ["connect.head", "connect.body", "connect.rs"],
+            ["connect.rs"],
+        ),
+        ("rm old.py > receipt.log", ["old.py", "receipt.log"], ["old.py", "receipt.log"]),
+    ],
+)
+def test_redirected_command_preserves_operands_and_attributes_only_edits(
+    tmp_path: Path, command: str, operands: list[str], edits: list[str]
+) -> None:
     data = _invocation_metadata(
-        "cat crates/gterminals/src/host/connect.head "
-        "crates/gterminals/src/host/connect.body > crates/gterminals/src/host/connect.rs",
+        command,
         tool_cwd=tmp_path,
         project_path=tmp_path,
     )
 
     assert data["canonical_repo_mutation"] is True
     assert [tmp_path / path for path in data["canonical_file_paths"]] == [
-        tmp_path / "crates/gterminals/src/host/connect.rs"
+        tmp_path / path for path in operands
+    ]
+    assert [tmp_path / path for path in data["canonical_edit_file_paths"]] == [
+        tmp_path / path for path in edits
     ]
 
 
