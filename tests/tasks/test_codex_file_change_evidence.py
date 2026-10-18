@@ -1,6 +1,8 @@
 """Native Codex add receipts preserve RED-time test source for gate 12."""
 
+import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,10 +10,12 @@ import pytest
 
 from gobby.config.validation_detection import ValidationDetectionConfig
 from gobby.storage.session_models import Session
+from gobby.tasks import transcript_evidence_cache
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_compacted_output import has_compacted_pytest_failure
 from gobby.tasks.tdd_python_evidence import _original_test_module
 from gobby.tasks.transcript_evidence import _derive_transcript_path_evidence
+from gobby.tasks.transcript_evidence_snapshots import load_durable_snapshot, store_durable_snapshot
 
 pytestmark = pytest.mark.unit
 START = datetime(2026, 10, 14, 21, tzinfo=UTC)
@@ -31,23 +35,27 @@ RED = (
 
 
 @pytest.mark.parametrize(
-    ("status", "kind", "content", "record_type", "confirmed"),
+    ("status", "kind", "content", "record_type", "confirmed", "checkpoint"),
     [
-        ("completed", "add", SOURCE, "event_msg", True),
-        ("failed", "add", SOURCE, "event_msg", False),
-        ("in_progress", "add", SOURCE, "event_msg", False),
-        ("completed", "update", SOURCE, "event_msg", False),
-        ("completed", "add", None, "event_msg", False),
-        ("completed", "add", SOURCE, "response_item", False),
+        ("completed", "add", SOURCE, "event_msg", True, "none"),
+        ("failed", "add", SOURCE, "event_msg", False, "none"),
+        ("in_progress", "add", SOURCE, "event_msg", False, "none"),
+        ("completed", "update", SOURCE, "event_msg", False, "none"),
+        ("completed", "add", None, "event_msg", False, "none"),
+        ("completed", "add", SOURCE, "response_item", False, "none"),
+        ("completed", "add", SOURCE, "event_msg", True, "memory"),
+        ("completed", "add", SOURCE, "event_msg", True, "durable"),
     ],
 )
 def test_native_add_confirms_red_time_source(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     status: str,
     kind: str,
     content: str | None,
     record_type: str,
     confirmed: bool,
+    checkpoint: str,
 ) -> None:
     transcript = tmp_path / "codex.jsonl"
     records = [
@@ -82,7 +90,7 @@ def test_native_add_confirms_red_time_source(
             },
         },
     ]
-    transcript.write_text("\n".join(json.dumps(row) for row in records), encoding="utf-8")
+    transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n", encoding="utf-8")
     session = Session(
         id="author",
         external_id="synthetic-codex",
@@ -100,7 +108,7 @@ def test_native_add_confirms_red_time_source(
         updated_at=START,
     )
 
-    evidence, _ = _derive_transcript_path_evidence(
+    evidence, snapshot = _derive_transcript_path_evidence(
         session,
         str(transcript),
         START,
@@ -111,6 +119,47 @@ def test_native_add_confirms_red_time_source(
         [str(transcript)],
         resume=None,
     )
+
+    if checkpoint != "none":
+        assert snapshot is not None
+        # Freeze the pre-FileChange fingerprint and state at EOF. The old parser
+        # saw the RED but ignored the native add, so it retained no source edit.
+        old_payload = json.dumps(
+            {
+                "derivation_version": 41,
+                "session": session.id,
+                "source": session.source,
+                "window_start": START.isoformat(),
+                "repo_path": str(tmp_path),
+                "task_checkout_paths": [(str(tmp_path), TEST_PATH)],
+                "task_edited_files": [TEST_PATH],
+                "detection": ValidationDetectionConfig().model_dump(mode="json"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        old_fingerprint = hashlib.sha256(old_payload.encode("utf-8")).hexdigest()
+        resume = replace(snapshot, fingerprint=old_fingerprint, edits=())
+        if checkpoint == "durable":
+            monkeypatch.setattr(transcript_evidence_cache, "_cache_dir", lambda: tmp_path / "cache")
+            key = f"{session.id}:{old_fingerprint}"
+            store_durable_snapshot(key, resume)
+            loaded = load_durable_snapshot(key)
+            assert loaded == resume
+            resume = loaded
+        evidence, reparsed = _derive_transcript_path_evidence(
+            session,
+            str(transcript),
+            START,
+            ValidationDetectionConfig(),
+            {TEST_PATH},
+            str(tmp_path),
+            frozenset({(str(tmp_path), TEST_PATH)}),
+            [str(transcript)],
+            resume=resume,
+        )
+        assert reparsed is not None
+        assert reparsed.parsed_from_offset == 0
 
     run = evidence.validation_runs[0]
     test = AcceptanceTest(
