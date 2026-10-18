@@ -58,11 +58,11 @@ pub(super) fn py_splitlines(text: &str) -> Vec<&str> {
         }
         lines.push(&text[start..index]);
         start = index + c.len_utf8();
-        if c == '\r' {
-            if let Some(&(next, '\n')) = chars.peek() {
-                chars.next();
-                start = next + 1;
-            }
+        if c == '\r'
+            && let Some(&(next, '\n')) = chars.peek()
+        {
+            chars.next();
+            start = next + 1;
         }
     }
     if start < text.len() {

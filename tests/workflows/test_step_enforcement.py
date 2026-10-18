@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.enforcement.blocking import (
     canonical_gobby_tool_name,
@@ -944,37 +945,43 @@ async def test_agent_denials_carry_guidance_and_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
 @pytest.mark.parametrize(
     "event_data",
     [
         {
             "tool_name": "mcp__gobby__set_variable",
-            "tool_input": {"name": "tool_block_pending", "value": True},
+            "tool_input": {"name": "tool_block_pending", "value": True, "session_id": SESSION_ID},
         },
         {
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {
                 "server_name": "gobby",
                 "tool_name": "set_variable",
-                "arguments": {"name": "tool_block_pending", "value": True},
+                "arguments": {
+                    "name": "tool_block_pending",
+                    "value": True,
+                    "session_id": SESSION_ID,
+                },
             },
         },
     ],
 )
 async def test_reserved_variable_denial_is_variable_specific(
     event_data: dict[str, Any],
+    role: str,
     db: "HubDatabase",
     manager: AgentDefinitionManager,
-    engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
     """Native and MCP set_variable routes tell the agent to abandon only one variable."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
+    engine = RuleEngine(db, session_manager=SessionManager(db))
 
     response = await engine.evaluate(
         _make_event(data=event_data),
         session_id=SESSION_ID,
-        variables={},
+        variables={"_agent_type": role},
     )
 
     assert response.decision == "block"
@@ -982,6 +989,48 @@ async def test_reserved_variable_denial_is_variable_specific(
     assert "Abandon only this write to variable 'tool_block_pending'" in response.reason
     assert "set_variable remains available for other permitted variables" in response.reason
     assert "This capability is unavailable for the rest" not in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
+@pytest.mark.parametrize(
+    "tool_input, allowed",
+    [
+        ({"name": "seat_idle", "value": True, "session_id": SESSION_ID}, True),
+        (
+            {"name": "seat_idle", "value": True, "session_id": SESSION_ID, "scope": "step"},
+            False,
+        ),
+        ({"name": "seat_idle", "value": False, "session_id": SESSION_ID}, False),
+        ({"name": "candidate_sent", "value": False, "session_id": SESSION_ID}, False),
+        ({"name": "seat_idle", "value": True, "session_id": "#999999"}, False),
+    ],
+)
+async def test_allowed_roles_preserve_own_session_idle_hardening(
+    role: str,
+    tool_input: dict[str, Any],
+    allowed: bool,
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="idle",
+        workflow_data={
+            "name": role,
+            "steps": [{"name": "idle", "idle": True, "allowed_tools": []}],
+        },
+    )
+    engine = RuleEngine(db, session_manager=SessionManager(db))
+    response = await engine.evaluate(
+        _make_event(data={"tool_name": "mcp__gobby__set_variable", "tool_input": tool_input}),
+        session_id=SESSION_ID,
+        variables={"_agent_type": role},
+    )
+    assert response.decision == ("allow" if allowed else "block")
 
 
 def test_zsh_quoting_guidance_contract() -> None:
@@ -1006,27 +1055,27 @@ class TestAgentToolEnforcement:
     def test_explicit_block_overrides_infra_exempt(self) -> None:
         """Explicit blocked_tools entries should override infrastructure exemptions."""
         variables: dict[str, Any] = {
-            "_agent_blocked_tools": ["mcp__gobby__set_variable"],
+            "_agent_blocked_tools": ["mcp__gobby__get_variable"],
             "_agent_type": "backend-developer",
         }
 
-        response = _check_agent_tool("mcp__gobby__set_variable", variables)
+        response = _check_agent_tool("mcp__gobby__get_variable", variables)
 
         assert response is not None
         assert response.decision == "block"
         assert response.reason is not None
         assert "[agent-enforcement:backend-developer]" in response.reason
-        assert "Tool 'mcp__gobby__set_variable' is blocked" in response.reason
+        assert "Tool 'mcp__gobby__get_variable' is blocked" in response.reason
 
     def test_infra_exempt_default_when_no_explicit_block(self) -> None:
-        """Infrastructure tools should remain allowed unless explicitly blocked."""
+        """Read-only infrastructure tools remain allowed unless explicitly blocked."""
         variables: dict[str, Any] = {
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": ["gobby-memory:create_memory"],
             "_agent_type": "backend-developer",
         }
 
-        response = _check_agent_tool("mcp__gobby__set_variable", variables)
+        response = _check_agent_tool("mcp__gobby__get_variable", variables)
 
         assert response is None
 
@@ -1059,7 +1108,7 @@ class TestAgentToolEnforcement:
         assert f"Tool '{tool_name}' is blocked" in response.reason
 
     def test_blocked_tools_overrides_infra_exempt_for_agent(self) -> None:
-        """Agent-level blocked_tools can deny set_variable while get_variable stays usable."""
+        """Native variable authority precedes agent blocklists; reads stay usable."""
         variables: dict[str, Any] = {
             "_agent_blocked_tools": AGENT_BLOCKED_TOOLS,
             "_agent_type": "locked-down-agent",
@@ -1071,8 +1120,8 @@ class TestAgentToolEnforcement:
         assert denied is not None
         assert denied.decision == "block"
         assert denied.reason is not None
-        assert "[agent-enforcement:locked-down-agent]" in denied.reason
-        assert "Tool 'mcp__gobby__set_variable' is blocked" in denied.reason
+        assert "[native-variable-authority]" in denied.reason
+        assert "agent definition 'locked-down-agent'" in denied.reason
         assert allowed is None
 
 
@@ -2949,23 +2998,24 @@ class TestStepEnforcementAfterTransition:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
     async def test_set_variable_allowed_in_restricted_step(
         self,
+        role: str,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
-        engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
     ) -> None:
-        """set_variable should be allowed even in steps with restricted allowed_tools.
-
-        Infrastructure tools (set_variable, get_variable) must always pass step
-        enforcement so agents can satisfy stop gate conditions.
-        """
+        """Allowed roles retain own-session native writes in a restricted non-idle step."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
+        engine = RuleEngine(db, session_manager=SessionManager(db))
         event = _make_event(
-            data={"tool_name": "mcp__gobby__set_variable"},
+            data={
+                "tool_name": "mcp__gobby__set_variable",
+                "tool_input": {"name": "iteration_count", "value": 1, "session_id": SESSION_ID},
+            },
         )
-        variables: dict[str, Any] = {}
+        variables: dict[str, Any] = {"_agent_type": role}
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
