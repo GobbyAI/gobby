@@ -114,6 +114,7 @@ async def _evidence(path: Path) -> Any:
         default_validation_detection_config(),
         set(),
         str(path.parent),
+        archive_dir=str(path.parent / "archives"),
     )
 
 

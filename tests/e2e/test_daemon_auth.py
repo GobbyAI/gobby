@@ -276,6 +276,7 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
 async def test_ws_auth(daemon_instance: DaemonInstance) -> None:
     token = daemon_token(daemon_instance.gobby_home)
     await _assert_handshake_rejected(daemon_instance.ws_url, status_code=401)
+    # A resolvable bootstrap API key is admitted by the native front door.
     await _assert_websocket_frames(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {token}")],
@@ -315,6 +316,7 @@ async def test_ws_rotation(daemon_instance: DaemonInstance) -> None:
     old_token, new_token = _rotate_isolated_token(daemon_instance)
     _wait_for_old_token_rejection(daemon_instance, old_token)
 
+    # The rotated key no longer resolves, so the front door refuses it as missing_auth.
     await _assert_handshake_rejected(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {old_token}")],
