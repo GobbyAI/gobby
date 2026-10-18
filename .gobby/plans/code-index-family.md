@@ -50,7 +50,12 @@ endpoint. Its gdaemon serves `/api/embeddings` with the hub's model, dimension a
 query prefix. A node heartbeat job projects the node's own versions into the hub's
 Qdrant. A node without that endpoint keeps relaying `/api/embeddings` to the hub.
 
-This revision carries P1 to P4. Under Orchestrator #15977's 2026-10-17 16:47 ruling,
+When P7 closes, the hub's gdaemon can serve every `/api/code-index` route except
+`/prune` natively for API-key callers. The `code_index` family defaults to `proxy`
+until P9, so Python serves them until `front_door.routes.code_index` is set to
+`native` or `compare`. Cookie and agent-bearer callers always reach Python (D15).
+
+This revision carries P1 to P7. Under Orchestrator #15977's 2026-10-17 16:47 ruling,
 Plan Adversary 16993 reviews each phase while the writer drafts the remaining phases
 in this file, in the order #15977 accepted on 2026-10-17 (D14):
 
@@ -58,8 +63,10 @@ in this file, in the order #15977 accepted on 2026-10-17 (D14):
 - P3: projection sync for a given machine, over the content-hash keys already in
   place (D6, D11);
 - P4: node-local embedding (D12, D13);
-- P5 to P7: the `/api/code-index` family seam, graph read routes and mutation routes;
-- P8: heartbeat work (sync worker, trigger, maintenance, summarizer) (D10);
+- P5 to P7: the `/api/code-index` family seam, graph read routes and mutation routes
+  (D15, D16);
+- P8: heartbeat work (sync worker, trigger, maintenance, summarizer) and
+  `/api/code-index/prune` (D10, D17);
 - P9: the native default and the deletion of `src/gobby/code_index/`.
 
 The critical path for node completeness is P1, then P3 (after #23834, Vector and
@@ -71,8 +78,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
 - **Stage gate.** #21586 has no #21568 gate. P1's chain to #24380 is: #24446
   (gobby-runtime crate), then #24447 (Grant signing and presentation in gcore), then
   1.9. #24448 (Secret-store port) and #24449 (Native interactive handshake) are not on
-  it. Only 1.10 waits on #24449. It sits after the last bumping leaf, now 4.3, so no
-  P2 to P4 leaf waits on it.
+  it. Only 1.10 waits on #24449. It sits after the last bumping leaf, now 7.2, so no
+  P2 to P7 leaf waits on it.
 - **No backward compatibility.** 0.5.0 has not shipped.
 - **No Python counterpart for the node routes.** Python has no
   `/api/code-index/node/*`. The `code_index_node` family defaults to `native`.
@@ -81,8 +88,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
   - `compare` does the same. For a POST, the front door's existing compare path
     serves the proxied response (`crates/gdaemon/src/front_door/routes.rs::compare`).
   - No leaf adds code for either setting.
-- **Concurrent editors.** These open leaves of other plans edit files that P1, P3 or
-  P4 targets, without changing a seam those phases build on. Apart from 3.1's edge on
+- **Concurrent editors.** These open leaves of other plans edit files that P1, P3, P4
+  or P7 targets, without changing a seam those phases build on. Apart from 3.1's edge on
   #23834, no leaf takes a dependency edge on them. Each executor re-resolves its
   Targets against the tree it starts from.
   - workspace-index-pin:
@@ -126,7 +133,7 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
     `gcode` pin, so the gcode maintenance floor follows each bump with no edit.
   - Every bumping leaf edits `Cargo.lock` and `version_pins.py`, so the bumping
     leaves form one dependency chain (docs/contracts/plan-coverage.md, shared-target
-    ordering). 1.10 sits after the last bumping leaf drafted so far, 4.3, because it
+    ordering). 1.10 sits after the last bumping leaf drafted so far, 7.2, because it
     alone waits on #24449.
 - **Running daemon.** A crate change goes live only after `uv run gobby cutover`,
   which gets a `global` announcement and a quiet window first. A node runs the new
@@ -261,6 +268,30 @@ own answers.
   route (D4).
 - **D14, phase order.** P1 to P9 run in the order the Overview lists. P4 depends only
   on P1 and P3.
+
+#15977 ruled D15 to D17 later on 2026-10-17, on the writer's packet 5b6906f0. They
+settle who the native `/api/code-index` routes serve.
+
+- **D15, callers (ruling E6(a)).** P5 to P7's routes claim API-key callers only, as
+  gruntime's family does. Cookie, agent-bearer, break-glass and unauthenticated
+  requests reach Python. The web UI's code-graph view signs in with a session cookie
+  (`web/src/hooks/useCodeGraph.ts`), and only Python verifies that cookie.
+  - P9 deletes the Python orchestration: the sync worker, trigger, maintenance,
+    summarizer and pruner.
+  - Deleting the Python read routes the web UI uses waits on a browser cookie-verifier
+    task that #15977 files under hub-node planning. P9 carries that edge as a named
+    placeholder until the task exists.
+- **D16, Brokered projection operations (ruling E7(a)).** No grant-verified native path
+  exists for `clear_projection`, `rebuild_projection` or `invalidate_projection`,
+  because no client presents them. P9 removes them from
+  `src/gobby/runtime_grants/service.py`, from `src/gobby/servers/grant_auth.py`'s
+  grant routes and from `tests/runtime_grants/golden/brokered_datastores.json`. 1.10's
+  Rust issuer never adds them.
+- **D17, refinements (accepted).**
+  - `POST /api/code-index/prune` moves to P8 with the pruner it calls
+    (`src/gobby/code_index/prune.py::run_operator_global_prune`).
+  - The mutation routes get no lease fence. Python's `admission_required` has no
+    callers, and native HTTP admission belongs to the lifecycle cutover (S1.3).
 
 ## P1: Node code-index routes (#23276)
 `kind: framing`
@@ -1191,7 +1222,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 4.3, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 7.2, #24449)
 `kind: deliverable`
 
 Targets:
@@ -2985,15 +3016,606 @@ Consumers unchanged:
 - 4.3.3 - A run past its deadline is killed and the next root still runs, and an absent `gcode` logs once over two ticks. test: `crates/gdaemon/tests/node_vector_sync.rs::vector_sync_kills_late_runs_and_tolerates_missing_gcode`.
 - 4.3.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
+## P5: `/api/code-index` family seam
+`kind: framing`
+
+P5 to P7 port Python's `/api/code-index` routes
+(`src/gobby/servers/routes/code_index.py`) into a second gcodeindex family,
+`code_index`. P5 builds the family and its first route, P6 adds the graph reads, and
+P7 adds graph clear, graph rebuild and invalidate. `POST /api/code-index/prune` moves
+to P8 with the pruner it calls (D17).
+
+Who the family serves (D15, ruling E6(a)):
+
+- `claims` holds only for an API-key caller, whose request carries `x-gobby-key-id`.
+  The front door sets that header only for a resolved key
+  (`crates/gdaemon/src/front_door/auth.rs::AuthState::authenticate`). A node
+  machine's key counts too. The family acts as the hub machine for every caller, as
+  Python does.
+- The web UI's cookie requests (`web/src/hooks/useCodeGraph.ts`), agent bearers,
+  break-glass and unauthenticated requests are never claimed and reach Python.
+
+Backend. The family defaults to `Proxy` until P9, as every family with live Python
+routes does (1.9 has the invariant). A claimed request runs natively only under
+`front_door.routes.code_index: native` or `compare`, and `compare` serves the proxied
+response. P5 to P7 tests set `native`. Three things wait for P9's flip:
+
+- recording code_index cases in the parity corpus (`tests/contracts/http/`), as
+  gdaemon-runtime-family 6.2 recorded runtime's;
+- adding the family to `crates/gdaemon/tests/http_contracts.rs`'s static `FAMILIES`
+  list;
+- changing the parity ledger rows from `proxied`.
+
+Request order. Every route checks in Python's order, so each failure returns Python's
+status and body:
+
+1. the `code_index.enabled` gate (503);
+2. checks Python makes before `project_id`: blast radius's exactly-one check (6.1);
+3. `project_id`, absent or empty: 400 `{"detail":"project_id is required"}`;
+4. the `code_index.graph_enabled` gate, for graph reads, clear and rebuild: 503
+   `{"detail":"Code graph not available"}`;
+5. the hub machine's project row, where Python reads it: 404
+   `{"detail":"Code index project not found: <id>"}`;
+6. the argument checks Python's gateway makes (400 `Invalid <param>: …`);
+7. the library call. Any error returns 500 `{"detail":"Code graph request failed"}`
+   and is logged to gdaemon's stderr, unless a route states otherwise.
+
+Gates. 5.1's shared code reads both keys on every request from Python's published
+active state: `gobby_runtime::config::active_state(pool,
+&gobby_core::grant::deployment_token(home))`, then
+`document.active_values["code_index.enabled"]` and `["code_index.graph_enabled"]`.
+
+- A key absent from `active_values` takes its contract default, `true`
+  (`crates/gcore/assets/config/runtime_config_contract.json`).
+- `gruntime::config::machine_values` is not used. It drops both keys, which are
+  `machineExport: false`.
+- Python reads `startup_config.code_index` once at startup
+  (`src/gobby/runner_init/services.py::_init_code_indexer`). Both keys are
+  `activation: live`, so the active state holds the value Python serves after a live
+  change.
+- With no published state the route returns its `enabled` 503 body. A failed read
+  returns the route's 500.
+
+The 503 bodies differ by route:
+
+- `GET /graph/search`: 503 `{"detail":"Code indexer not available"}` when `enabled` is
+  false. It does not check `graph_enabled`.
+- The graph reads: 503 `{"detail":"Code graph not available"}` for either gate.
+- Clear and rebuild: `Code indexer not available` for `enabled` and `Code graph not
+  available` for `graph_enabled`.
+- Invalidate: 503 `{"error":"Code indexer not available"}`, with no `detail` envelope.
+  It does not check `graph_enabled`.
+
+Project row. The hub machine id comes from
+`gobby_core::machine::read_machine_id_from_home(home)`, read per request. The row is
+`code_indexed_project_states` for that machine and the request's project, read on the
+shared pool. A `project_id` that is not a UUID matches no row.
+
+Query parameters follow FastAPI's rules:
+
+- a missing required parameter returns 422 `missing`;
+- a value that is not an integer returns 422 `int_parsing`;
+- `max_depth` below 1 returns 422 `greater_than_equal`.
+
+The 422 bodies equal the Python route's byte for byte. The executor records them once
+from the Python route under `TestClient` into the test. Python passes some integers
+through to gcode or SQL, which rejects them: a negative `limit` or `depth`, or a value
+above `usize`. Those return 500.
+
+Deliberate differences from Python. The P9 corpus records none of these cases.
+
+- No subprocess. These Python outcomes have no native counterpart:
+  - 503 for a missing or old `gcode` binary;
+  - 500 for a gcode timeout, including a rebuild past the gateway's rebuild timeout;
+  - 404 `gcode exited N: <stderr>` when gcode cannot resolve the project root.
+
+  The only native 404 is the missing project row.
+- No freshness prelude. Python runs gcode without `--allow-stale`, so each read first
+  runs gcode's freshness check on the hub's checkout and may index changed files
+  inside the request (`crates/gcode/src/dispatch.rs::ensure_project_fresh`). Native
+  reads serve the current index, as `--allow-stale` does. The hub's checkout is
+  indexed by gcode runs on the hub and by the trigger path (P8).
+- A `project_id` that is not a UUID gets the 404 body. Python returns 500 from the
+  failed cast on reads, and 400 or 404 from gcode on clear.
+- Search applies visibility inside the query (5.1), so invisible hits never shorten a
+  page. Python fetches a multiple of the limit, then filters.
+- A `./`-prefixed file path resolves against the checkout root (6.1). Python's gcode
+  resolves it against the daemon's working directory.
+- Invalidate also deletes the hub machine's `code_communities` rows, as
+  `gcode invalidate` does (7.2).
+
+File layout. Each route group `<group>` adds:
+
+- `crates/gcodeindex/src/family/<group>.rs` for the handlers, declared in
+  `crates/gcodeindex/src/family.rs`, which lists the group's rows in `NATIVE_ROUTES`;
+- `crates/gcode/src/node/hub/family_<group>.rs` for any gcode entry point the group
+  needs beyond P2's, declared in `node/hub.rs`;
+- `crates/gcodeindex/tests/family_<group>.rs` for the tests.
+
+Every gcode entry point builds its context through `HubScope::context` (1.3), with
+`HubScope { machine_id: <hub machine>, overlay_project_id: None, .. }` and
+`NodeScope { root: <row root_path>, parent_root: None }`. It runs under
+`tokio::task::spawn_blocking`, as 1.9's handlers do.
+
+Release ownership (Constraints): 5.1, 6.1, 7.1 and 7.2 change gcode, so they bump
+`gcode` and `gdaemon`. 6.2 changes only gcodeindex and bumps `gdaemon`.
+
+Ordering. The P5 to P7 leaves form one chain after 4.3: 5.1, 6.1, 6.2, 7.1, 7.2. They
+share the release files, `crates/gcodeindex/src/family.rs` and `node/hub.rs`. 1.10
+depends on 7.2.
+
+### 5.1 `code_index` family and `GET /graph/search` [category: code] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/search.rs`
+- `crates/gcodeindex/tests/family_search.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/family_search.rs`
+- `crates/gruntime/src/lib.rs::*` — scope-reason: `RuntimeFamily::claims`'s row match moves into a new `pub fn claims_native`, which `claims` calls
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` builds and leaks `CodeIndexFamily` beside the runtime family
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: adds the `code_index` default and native test
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+The family (`crates/gcodeindex/src/family.rs`, re-exported from `lib.rs`):
+
+- `CodeIndexFamily::new(pool, home, database_url)`. `name()` returns `"code_index"`,
+  `prefixes()` returns `&["/api/code-index"]` and `default_backend()` returns `Proxy`.
+- `NATIVE_ROUTES: &[gobby_runtime::NativeRoute]` lists each served method and path
+  with `callers: &[Caller::Operator]`. Requests matching no row reach Python.
+- `claims(parts)` is `gobby_runtime::claims_native(NATIVE_ROUTES, parts)`.
+  `claims_native` is `RuntimeFamily::claims`'s row match, moved into a `pub fn` that
+  `RuntimeFamily::claims` now calls. It reads `Caller::of` and `path_matches` in place.
+- `router()` registers each row's handler, as gruntime's `handler` does.
+- Shared code for every route, as P5's framing states: the gates and their bodies, the
+  hub machine id, the project row, the `{"detail": …}` error body, and query parsing
+  with Python's 422 bodies.
+
+`serve::run` builds the family on the shared pool, with the home and the hub DSN,
+next to the runtime family. It leaks it once and pushes it onto the composed list.
+`RouteTable` picks the longest matching prefix
+(`crates/gdaemon/src/front_door/routes.rs::RouteTable::lookup`), so
+`/api/code-index/node/*` still reaches `code_index_node`.
+
+`GET /api/code-index/graph/search` (`crates/gcodeindex/src/family/search.rs`):
+
+- Query: `project_id`, `q` (required) and `limit` (default 25).
+- Order: the `enabled` gate (503 `Code indexer not available`), then `project_id`
+  (400). Python checks neither `graph_enabled` nor the project row.
+- A project with no row for the hub machine returns 200 `{"results": []}`. Python's
+  visibility filter finds no rows for it either.
+- Otherwise `node::hub::family_search::graph_search(&HubScope, &NodeScope, q, limit)`
+  runs under `spawn_blocking`:
+  - It builds the context with `ServiceConfigSelection::database_only()` and opens a
+    read-only connection.
+  - It calls `search::fts::search_symbols_fts_visible(conn, q, ctx, None, None, &[],
+    limit)`. An error there is logged and treated as no rows, as Python's
+    `search_symbols_fts` returns `[]` when its keyword backend fails.
+  - With no rows it calls `search_symbols_by_name_visible` with the same arguments.
+    An error there is the route's 500.
+  - It returns `Vec<SymbolHit { id, name, kind, file_path, line_start, signature }>`.
+- The body is `{"results": [...]}`. Each result has the keys `id`, `name`, `type`,
+  `kind`, `file_path`, `line_start` and `signature`, in that order, with `type` equal
+  to `kind`.
+
+Research context:
+- Python's route (`src/gobby/servers/routes/code_index.py::create_code_index_router`,
+  `graph_search`) runs `search_symbols_fts`, then `search_symbols_by_name`, both from
+  `src/gobby/code_index/_storage/symbols.py`. They filter by the hub machine's
+  `code_indexed_file_states`.
+- `src/gobby/search/keyword.py` searches `code_symbols` over `name`,
+  `qualified_name`, `signature`, `docstring` and `summary`. Those are the five columns
+  `crates/gcode/src/search/fts/symbols.rs::search_symbols_fts_visible` matches with
+  `@@@`. Its query sanitizer is gcode's `sanitize_pg_search_query`.
+- gcode's `search` module is private to the crate, so gcodeindex reaches it only
+  through a `node::hub` entry point.
+- gruntime's family (`crates/gruntime/src/lib.rs`) is the pattern: `NativeRoute` rows,
+  `Caller::Operator` for `x-gobby-key-id`, and `path_matches` for axum 0.8 placeholders.
+- `serve::run` builds the runtime family only when the hub pool exists
+  (`crates/gdaemon/src/serve.rs`), and the code_index family joins it there.
+- Planned checks:
+  - `cargo nextest run -p gobby-codeindex -p gobby-runtime`;
+  - `cargo nextest run -p gobby-daemon --test front_door`;
+  - `cargo clippy -p gobby-codeindex -p gobby-runtime`.
+
+**Granularity:** five acceptance items and more than six production files. The seam
+and its first route are one deliverable, for the same reason as 1.9: a family with no
+route cannot be tested.
+
+Consumers unchanged:
+- `crates/gruntime/tests/config.rs` — no-edit-reason: drives `RuntimeFamily::claims`, whose behavior does not change.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 5.1.1 - `claims` holds for an API-key `GET /api/code-index/graph/search`. It does not hold without `x-gobby-key-id`, for a `POST` to that path, or for an unlisted path such as `/api/code-index/prune`. test: `crates/gcodeindex/tests/family_search.rs::family_claims_api_key_callers_on_listed_routes`.
+- 5.1.2 - With `FAMILIES` and the leaked runtime, node and code-index families composed as `serve::run` composes them, and `code_index` absent from `front_door.routes`, an API-key search request reaches the backend stub. With `native` it gets the family's 500 body on an unreachable pool. An `/api/code-index/node/*` request still reaches the node family. test: `crates/gdaemon/tests/front_door.rs::code_index_defaults_to_proxy_and_honors_native`.
+- 5.1.3 - With symbols indexed for the hub machine and for a foreign machine, search returns only hub-visible symbols in Python's seven-key shape. It falls back to name search when BM25 finds none, and returns `{"results": []}` for a project with no hub-machine row. test: `crates/gcodeindex/tests/family_search.rs::search_returns_hub_visible_symbols_in_python_shape`.
+- 5.1.4 - `enabled` false returns 503 `Code indexer not available`, and `graph_enabled` false still serves. An absent or empty `project_id` returns 400. A missing `q` and a non-integer `limit` return Python's 422 bodies, and a negative `limit` returns 500 `Code graph request failed`. test: `crates/gcodeindex/tests/family_search.rs::search_follows_python_gates_and_errors`.
+- 5.1.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+## P6: Graph read routes
+`kind: framing`
+
+P6 serves Python's five graph read routes from the hub entry points P2 built for nodes:
+
+- 6.1: overview, file, neighbors and blast radius, through 2.7's
+  `node::hub::graph_views` entry points;
+- 6.2: path, through 2.6's `/nav/path` entry point.
+
+Each route returns the JSON that the matching gcode command prints with
+`--format json --allow-stale` for the hub machine's checkout. That JSON is what Python
+relays from `src/gobby/code_index/gcode_gateway.py::GcodeGateway`, minus the
+freshness prelude (P5).
+
+Python's argument checks (`src/gobby/code_index/gcode_gateway.py::_validate_user_gcode_value`)
+apply to `file_path`, `symbol_id`, `symbol_a` and `symbol_b`:
+
+- an absolute POSIX or Windows path returns 400
+  `Invalid <param>: value must not be an absolute path`;
+- a `..` part under either path syntax returns 400
+  `Invalid <param>: value must not contain '..' segments`.
+
+Release ownership (Constraints): 6.1 bumps `gcode` and `gdaemon`, and 6.2 bumps
+`gdaemon`.
+
+### 6.1 Overview, file, neighbors and blast-radius routes [category: code] (depends: 5.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/graph.rs`
+- `crates/gcodeindex/tests/family_graph.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/family_graph.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+Routes, with Python's defaults and the gcode command each matches:
+
+- `GET /api/code-index/graph`, with `limit` default 200: `gcode graph overview`.
+- `GET /api/code-index/graph/file/{*file_path}`: `gcode graph file --file=<file_path>`.
+  An empty remainder is not claimed and reaches Python.
+- `GET /api/code-index/graph/symbol/{symbol_id}/neighbors`, with `limit` default 50:
+  `gcode graph neighbors --symbol-id=<symbol_id>`.
+  - Starlette matches routes on the decoded path. A segment that decodes to a value
+    containing `/` therefore gets 404 `{"detail":"Not Found"}` from Python, and the
+    handler returns the same.
+- `GET /api/code-index/graph/blast-radius`, with `depth` default 3 and `limit` default
+  100: `gcode graph blast-radius` with `--symbol-id` or `--file`.
+  - It requires exactly one of `symbol_id` and `file_path`. A present but empty value
+    counts as absent, as Python's `bool()` test does.
+  - Otherwise it returns 400 `Provide exactly one of symbol_id or file_path`. This
+    check runs before the `project_id` check (P5's step 2).
+
+Each handler runs P5's order. Argument checks come after the project row, as in
+Python's `src/gobby/code_index/context.py::CodeIndexContext`. Then:
+
+- `node::hub::family_graph::resolve_file(&HubScope, &NodeScope, &str)` resolves a
+  `file_path` the way the CLI resolves an exact file: `commands::scope::resolve_path_input`
+  with `ScopedPathInput::ExactFile`, with the checkout root as the working directory.
+  A path that function rejects returns 500, as Python's failed gcode run does.
+- The handler calls 2.7's entry point for the route with 2.7's request type, under
+  `spawn_blocking`. The body is the returned `GraphPayload`.
+- A `RouteError` or library error returns 500 `Code graph request failed`. That
+  includes an unreachable Falkor, for which Python's gateway raises
+  `GcodeFalkorTransportError` and returns 500.
+
+Research context:
+- `crates/gcode/src/dispatch.rs::run` resolves `graph file` and `graph blast-radius
+  --file` with `resolve_exact_file`, then runs freshness and the payload command.
+  `resolve_path_input` uses the project root as the base for a relative path that does
+  not start with `./`.
+- `print_graph_payload` prints the `GraphPayload` as JSON
+  (`crates/gcode/src/commands/graph/payload.rs`), and Python's `_run_json` parses
+  that stdout.
+- An unindexed file returns an empty payload. Neither path errors.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 6.1.1 - With Python's defaults, each of the four routes returns the JSON that `gcode graph overview`, `file`, `neighbors` or `blast-radius` prints with `--format json --allow-stale` for the hub machine's checkout. test: `crates/gcodeindex/tests/family_graph.rs::graph_reads_return_the_cli_payload_for_the_hub_machine`.
+- 6.1.2 - Python's order and bodies hold:
+  - either gate false returns 503 `Code graph not available`;
+  - blast radius with both or neither target returns 400 before the `project_id` check;
+  - an absent `project_id` returns 400;
+  - an unknown project returns 404;
+  - an absolute or `..` value returns 400 with Python's messages.
+
+  test: `crates/gcodeindex/tests/family_graph.rs::graph_reads_follow_python_order_and_bodies`.
+- 6.1.3 - `a.rs` and `./a.rs` select the same file, and an encoded `/` in `symbol_id` returns 404 `Not Found`. test: `crates/gcodeindex/tests/family_graph.rs::graph_read_paths_resolve_against_the_checkout_root`.
+- 6.1.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 6.2 Path route [category: code] (depends: 6.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/path.rs`
+- `crates/gcodeindex/tests/family_path.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gdaemon` by 0.0.1.
+
+`GET /api/code-index/graph/path` takes `symbol_a` and `symbol_b` (both required) and
+`max_depth` (default 6, at least 1). It matches `gcode path <symbol_a> <symbol_b>
+--max-depth <max_depth>`. In order, after P5's steps 1 to 5:
+
+1. A `symbol_a` or `symbol_b` that starts with `-` returns 400
+   `Invalid <param>: value must not start with '-'`. Python checks this before the
+   path checks, because these values are positional gcode arguments.
+2. P6's absolute-path and `..` checks.
+3. The handler calls 2.6's `/nav/path` entry point under `spawn_blocking` and
+   returns the `GraphPathResponse` JSON that `gcode path … --format json
+   --allow-stale` prints.
+   - An unresolved endpoint gives `found: false` inside that response.
+   - A graph that is off gives the same response with its `hint`.
+   - The CLI clamps `max_depth` to `code_graph::MAX_SYMBOL_PATH_DEPTH`, and the body
+     shows the clamped value.
+   - Where the CLI exits non-zero, as on a Falkor transport error, the route returns
+     500 `Code graph request failed`.
+
+Research context:
+- `crates/gcode/src/commands/graph/reads.rs::path` resolves both endpoints, reads
+  `shortest_symbol_path` when both resolve, and prints `GraphPathResponse`. 2.6 splits
+  it into a read returning `GraphRead<GraphPathResponse>` and a render. This leaf maps
+  the read's cases to the JSON the render prints.
+- Python's route uses `Query(6, ge=1)`, so `max_depth=0` returns FastAPI's
+  `greater_than_equal` 422.
+- Planned check: `cargo nextest run -p gobby-codeindex`.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 6.2.1 - A found path, an unresolved endpoint and a graph that is off each return the JSON that `gcode path … --format json --allow-stale` prints for the hub machine's checkout. test: `crates/gcodeindex/tests/family_path.rs::path_returns_the_cli_response`.
+- 6.2.2 - A leading `-` and an absolute value return Python's 400 bodies. A missing `symbol_b` and `max_depth=0` return Python's 422 bodies. An unknown project returns 404. test: `crates/gcodeindex/tests/family_path.rs::path_follows_python_order_and_bodies`.
+- 6.2.3 - `gdaemon` is one patch version above the executor's starting tip in its `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+## P7: Graph lifecycle and invalidate routes
+`kind: framing`
+
+P7 ports Python's three remaining code-index mutations:
+
+- 7.1: `POST /api/code-index/graph/clear` and `POST /api/code-index/graph/rebuild`;
+- 7.2: `POST /api/code-index/invalidate`.
+
+No production client calls these routes today. They stay public API
+(`docs/guides/code-index.md`), and P7 ports them for API-key callers under ruling
+E6(a).
+
+- `gcode graph clear` and `gcode graph rebuild` run locally
+  (`crates/gcode/src/commands/graph/lifecycle.rs::clear` and `rebuild`).
+- gcode's HTTP lifecycle client
+  (`crates/gcode/src/graph/code_graph/lifecycle.rs::run_lifecycle_action`) has only
+  test callers.
+- `gcode invalidate` ignores its daemon URL.
+- The web UI calls only the reads.
+
+Two things P7 leaves out:
+
+- A grant-verified path (D16, ruling E7(a)). The three Brokered operations
+  `clear_projection`, `rebuild_projection` and `invalidate_projection` have no
+  presenting client, and P9 removes them. Agent-bearer callers stay on Python until
+  then.
+- A lease fence (D17). Python's `src/gobby/servers/grant_auth.py::admission_required`
+  has no callers, and native HTTP admission belongs to the lifecycle cutover (S1.3,
+  `crates/gdaemon/src/lease/standby.rs`).
+
+`project_id`. Clear and rebuild take the `project_id` query parameter. Invalidate takes
+the JSON body `{"project_id": "<id>"}`, where `project_id` is a required string. For an
+API-key caller, Python's `_scoped_project_id` reduces to `_require_project_id`, because
+agent claims exist only for agent bearers.
+
+Release ownership (Constraints): 7.1 and 7.2 bump `gcode` and `gdaemon`.
+
+### 7.1 Graph clear and rebuild routes [category: code] (depends: 6.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/graph/lifecycle.rs::clear_project_graph`
+- `crates/gcode/src/commands/graph/lifecycle.rs::rebuild_project_graph`
+- `crates/gcode/src/commands/graph.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/family_lifecycle.rs`
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/lifecycle.rs`
+- `crates/gcodeindex/tests/family_lifecycle.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+gcode:
+
+- `clear_project_graph` and `rebuild_project_graph` become `pub(crate)`, and
+  `crates/gcode/src/commands/graph.rs` re-exports them beside `clear` and `rebuild`.
+- `node::hub::family_lifecycle::clear` and `rebuild` take `(&HubScope, &NodeScope)`
+  and return `Result<serde_json::Value, RouteError>`:
+  - They build the context with the Falkor selection 2.6's routes use.
+  - They run the function under `index_lock::with_exclusive_project_lock`, as the
+    CLI's `clear` and `rebuild` do.
+  - They return `GraphLifecycleOutput.payload`, the JSON that
+    `gcode graph clear|rebuild --format json` prints and Python relays.
+
+Routes, in order:
+
+1. The `enabled` gate: 503 `Code indexer not available`.
+2. `project_id`: 400.
+3. The `graph_enabled` gate: 503 `Code graph not available`.
+4. The project row: 404.
+   - Rebuild reads the row in Python too.
+   - Python's clear passes the id to gcode and gets gcode's own 404. The native
+     context needs the row's root.
+5. The call under `spawn_blocking`.
+6. A payload with `success` false returns 400 `{"detail": <payload error>}`. Rebuild
+   reports per-file failures this way. Otherwise the route returns 200 with the
+   payload.
+
+A project lock still busy after the wait is an error, so it returns 500, as Python's
+failed gcode run does.
+
+Research context:
+- `clear_project_graph` resets the project's graph sync state and clears its Falkor
+  projection. `rebuild_project_graph` re-projects every indexed file and sets
+  `success` to `errors.is_empty()`. Both are private to
+  `crates/gcode/src/commands/graph/lifecycle.rs`,
+  and `commands` is private to the crate.
+- Python: `src/gobby/servers/routes/code_index.py::create_code_index_router`
+  (`clear_graph`, `rebuild_graph`), then `src/gobby/code_index/context.py::CodeIndexContext`
+  (`clear_graph`, `rebuild_graph`) and the gateway's `graph_clear` and
+  `graph_rebuild`.
+- #23834 (Vector and graph pin scope) and #23578 (Graph CLI honors the completion
+  compare-and-set) edit `crates/gcode/src/commands/graph/lifecycle.rs` (Constraints, concurrent
+  editors). This leaf changes only visibility there.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(graph)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 7.1.1 - Clear marks the hub machine's files pending, clears the project's projection and returns the payload `gcode graph clear --format json` prints. test: `crates/gcodeindex/tests/family_lifecycle.rs::clear_returns_the_cli_payload`.
+- 7.1.2 - Rebuild returns the CLI payload, and a rebuild with a per-file failure returns 400 with the payload's `error` as `detail`. test: `crates/gcodeindex/tests/family_lifecycle.rs::rebuild_returns_the_cli_payload_and_400_on_failure`.
+- 7.1.3 - Python's order and bodies hold:
+  - `enabled` false returns 503 `Code indexer not available`;
+  - `graph_enabled` false returns 503 `Code graph not available`;
+  - an absent `project_id` returns 400;
+  - an unknown project returns 404.
+
+  test: `crates/gcodeindex/tests/family_lifecycle.rs::lifecycle_routes_follow_python_order_and_bodies`.
+- 7.1.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 7.2 Invalidate route [category: code] (depends: 7.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/index/indexer/lifecycle.rs::invalidate`
+- `crates/gcode/src/commands/status/invalidate.rs::*` — scope-reason: `invalidate_project_locked` passes `ctx.machine_id` to `indexer::invalidate`
+- `crates/gcode/src/freshness.rs::invalidate_test_project`
+- `crates/gcode/src/communities/refresh_tests.rs::*` — scope-reason: `invalidate_removes_community_rows_with_project_state` passes the context's machine
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/src/family/invalidate.rs`
+- `crates/gcodeindex/tests/family_invalidate.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+gcode: `indexer::invalidate(conn, machine_id, project_id) -> anyhow::Result<u64>`.
+
+- It drops the unused `_daemon_url` parameter.
+- It takes the machine from its caller instead of `read_local_machine_id`.
+- It returns the number of `code_indexed_project_states` rows deleted.
+- It still deletes the machine's `code_communities`, `code_indexed_file_states` and
+  `code_indexed_project_states` rows in one transaction, and still prints its stderr
+  line.
+- Local callers pass `ctx.machine_id`, which 1.1 adds.
+
+`POST /api/code-index/invalidate`, in order:
+
+1. The `enabled` gate: 503 `{"error":"Code indexer not available"}`.
+2. The body:
+   - A missing body, invalid JSON, a missing `project_id` or a non-string value
+     returns Python's 422 bodies.
+   - An empty string returns 400 `project_id is required`.
+3. With no row for the hub machine, the route returns 200
+   `{"status":"ok","project_id":"<id>","note":"not indexed"}`.
+4. Otherwise it runs `invalidate` for the hub machine under `spawn_blocking`, on a
+   read-write connection from the hub DSN, and returns 200:
+   `{"status":"ok","project_id":"<id>","stores":{"graph":{"status":"skipped"},"vector":{"status":"skipped"},"hub":{"status":"ok","deleted":{"symbols":0,"files":0,"imports":0,"calls":0,"content_chunks":0,"projects":<n>}}},"failed_stores":[]}`.
+   Python's 207 for `partial_failure` never occurs, because its `invalidate` always
+   returns `ok`.
+5. Python's route has no `try`, so its failures reach the global handler
+   (`src/gobby/servers/exception_handlers.py::register_exception_handlers`). The
+   native route returns the same bodies:
+   - an unreachable hub database returns 503
+     `{"status":"error","message":"Hub temporarily unavailable"}`;
+   - any other failure returns 500
+     `{"status":"error","message":"Internal server error","error_logged":true}`.
+
+Why the native route deletes communities:
+
+- Python's `delete_project_index` (`src/gobby/code_index/_storage/projects.py`)
+  deletes only the project-state row. The file states go with it through
+  `code_indexed_file_states_project_state_fkey`'s cascade.
+- `code_communities` references `code_indexed_projects`, so its rows survive. The
+  project-state row holds `community_id_watermark`, so its deletion resets the
+  watermark while community ids remain, and those ids can then be reissued.
+- `gcode invalidate` deletes the communities for that reason
+  (`crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`).
+  The native route follows gcode.
+
+Research context:
+- `invalidate`'s callers are `crates/gcode/src/commands/status/invalidate.rs`
+  (`invalidate_project_locked`, which prune also calls), the
+  `crates/gcode/src/freshness.rs` test helper and the communities test.
+- #23835 (Pin-aware retention) edits `crates/gcode/src/index/indexer/lifecycle.rs` (Constraints,
+  concurrent editors). The executor applies this signature to the tree it starts
+  from.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(invalidate)'`;
+  - `cargo nextest run -p gobby-codeindex`.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 7.2.1 - Local `gcode invalidate` deletes the context machine's communities, file states and project state, and leaves another machine's rows. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
+- 7.2.2 - For an indexed project, the route deletes only the hub machine's rows and returns Python's body with `projects` equal to 1. For a project with no hub-machine row it returns the `not indexed` body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_returns_python_bodies_for_the_hub_machine`.
+- 7.2.3 - `enabled` false returns 503 `{"error":"Code indexer not available"}`. A missing `project_id` returns Python's 422 body, an empty one returns 400, and an unreachable hub database returns Python's 503 body. test: `crates/gcodeindex/tests/family_invalidate.rs::invalidate_follows_python_gates_and_errors`.
+- 7.2.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
 ## E1 End-to-end verification
 `kind: verification`
 
-These are completion gates for P1 to P4. Except for plan validation
+These are completion gates for P1 to P7. Except for plan validation
 (`uv run gobby plans validate .gobby/plans/code-index-family.md -p /Users/josh/Projects/gobby`),
 none has run yet. Each must hold on `0.5.0` with freshly built and installed binaries.
 Gates 1 to 3 must hold before #23276 closes, gates 1, 2 and 4 must hold again
 before P2's phase epic closes, gates 1 and 2 must hold again before P3's phase
-epic closes, and gates 1, 2 and 5 must hold again before P4's phase epic closes:
+epic closes, gates 1, 2 and 5 must hold again before P4's phase epic closes, and
+gates 1, 2 and 6 must hold again before each of P5's, P6's and P7's phase epics
+closes:
 
 1. `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code`, then
    `cargo nextest run -p gobby-codeindex -p gobby-runtime -p gobby-daemon -p gobby-core`,
@@ -3013,6 +3635,14 @@ epic closes, and gates 1, 2 and 5 must hold again before P4's phase epic closes:
    restarted, the node's `/api/embeddings` must reach the hub. P4 has no automated
    end-to-end test: the pair fixtures run no Qdrant or embedding endpoint, and 4.1 to
    4.3 test each half against stubs.
+6. On the live hub with `front_door.routes.code_index: compare`, an API-key request to
+   each `/api/code-index` GET route the closing phase has added, for an indexed
+   project, must record a match in the front door's compare record. The web UI's
+   code-graph view must still load, because its cookie requests reach Python. Restore
+   the setting afterwards. P7's POST routes serve the proxied response under
+   `compare`, so P7's gate 6 sets `native`. It then checks that clear and rebuild
+   return the CLI payload and that invalidate of a scratch project returns Python's
+   body.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -3044,3 +3674,14 @@ epic closes, and gates 1, 2 and 5 must hold again before P4's phase epic closes:
     the foreign machine.
   - P3's framing records that #15977 extended #23834's Targets (option a).
   - E1 adds gate 5 and `gobby-core` to gate 1.
+- 2026-10-17: Draft of P5 to P7 (5.1, 6.1, 6.2, 7.1, 7.2) by Plan Writer gobby#16767,
+  under #15977's rulings E6(a), E7(a) and the accepted refinements, recorded as D15 to
+  D17. Other edits:
+  - 1.10 now depends on 7.2, and the Constraints name 7.2 as the last bumping leaf.
+  - The concurrent-editors bullet covers P7.
+  - The Overview states the after-P7 behavior.
+  - E1 adds gate 6.
+
+  P5's framing lists the writer's deliberate differences from Python for review. The
+  main ones: native reads skip gcode's freshness prelude, and invalidate also deletes
+  the hub machine's communities, as `gcode invalidate` does.
