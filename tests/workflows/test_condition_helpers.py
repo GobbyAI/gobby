@@ -135,6 +135,10 @@ class TestShellCommandConsumesCodeReview:
             "git merge --no-ff task-123",
             "git cherry-pick abc1234",
             "git revert --no-edit abc1234",
+            "git rebase 0.5.0",
+            "git rebase --continue",
+            "git rebase --abort",
+            "git rebase --quit",
             "git -C /tmp/wt commit -m x",
             "git --git-dir=/tmp/.git commit -m x",
             "git --no-pager merge task-123",
@@ -159,7 +163,6 @@ class TestShellCommandConsumesCodeReview:
             None,
             "git log --oneline",
             "git status --short",
-            "git rebase 0.5.0",
             # Hyphenated subcommands are different commands.
             "git merge-base HEAD main",
             "git commit-graph write",
