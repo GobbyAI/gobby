@@ -78,8 +78,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
 - **Stage gate.** #21586 has no #21568 gate. P1's chain to #24380 is: #24446
   (gobby-runtime crate), then #24447 (Grant signing and presentation in gcore), then
   1.9. #24448 (Secret-store port) and #24449 (Native interactive handshake) are not on
-  it. Only 1.10 waits on #24449. It sits after the last bumping leaf, now 7.2, so no
-  P2 to P7 leaf waits on it.
+  it. Only 1.10 waits on #24449. It sits after the last bumping leaf, now 8.6, so no
+  P2 to P8 leaf waits on it.
 - **No backward compatibility.** 0.5.0 has not shipped.
 - **No Python counterpart for the node routes.** Python has no
   `/api/code-index/node/*`. The `code_index_node` family defaults to `native`.
@@ -90,8 +90,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
   - No leaf adds code for either setting.
 - **Concurrent editors.** These open leaves of other plans edit files that P1, P3, P4,
   P7 or P8 targets, without changing a seam those phases build on. Apart from 3.1's edge
-  on #23834 and 8.5's on #23835, no leaf takes a dependency edge on them. Each executor
-  re-resolves its Targets against the tree it starts from.
+  on #23834, 8.5's on #23835 and 8.6's on #24372, no leaf takes a dependency edge on
+  them. Each executor re-resolves its Targets against the tree it starts from.
   - workspace-index-pin:
     - #23833 (Scoped PostgreSQL and BM25 reads): `commands/search.rs`, `db/queries.rs`, `visibility.rs`;
     - #23834 (Vector and graph pin scope): `commands/graph/lifecycle.rs`, `commands/vector.rs`, `db/queries.rs`;
@@ -103,6 +103,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
     - #23578 (Graph CLI honors the completion compare-and-set): `commands/graph/lifecycle.rs`.
   - gdaemon-key-cutover 1.2 and 1.3, and gdaemon-node-channel 1.6:
     `src/gobby/runtime_grants/handshake.py`.
+  - node-halves: #24372 (Worktree and clone preparation, repair and removal) creates
+    `crates/gdaemon/src/nodes/agents/workspace.rs`.
 
   A leaf that lands after P1's plan/apply split (1.4, 1.5) applies its change to
   the split functions.
@@ -133,7 +135,7 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
     `gcode` pin, so the gcode maintenance floor follows each bump with no edit.
   - Every bumping leaf edits `Cargo.lock` and `version_pins.py`, so the bumping
     leaves form one dependency chain (docs/contracts/plan-coverage.md, shared-target
-    ordering). 1.10 sits after the last bumping leaf drafted so far, 7.2, because it
+    ordering). 1.10 sits after the last bumping leaf drafted so far, 8.6, because it
     alone waits on #24449.
 - **Running daemon.** A crate change goes live only after `uv run gobby cutover`,
   which gets a `global` announcement and a quiet window first. A node runs the new
@@ -1222,7 +1224,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.5, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 8.6, #24449)
 `kind: deliverable`
 
 Targets:
@@ -1307,9 +1309,10 @@ prints what a local run against the same index prints.
 
 `projects` needs no route. It reads `GET /api/projects` through the daemon, which the
 node front door relays (`commands/status/projects.rs::projects`). The write and
-maintenance commands (`init`, `repair`, `invalidate`, `retire-files`, `prune`, the
-`graph` and `vector` mutations and `embeddings doctor`) keep 1.7's refusal, whose
-recovery sends them to the hub.
+maintenance commands (`init`, `repair`, `retire-files`, `prune`, the `graph` and
+`vector` mutations and `embeddings doctor`) keep 1.7's refusal, whose recovery sends
+them to the hub. 8.6 serves `invalidate` for a node's own checkout, so a node can
+release its rows when it removes a workspace.
 
 Wire names. P2 changes no grant: the one `node_code_index` operation authorizes every
 path under `/api/code-index/node` (D3). Each leaf appends its paths to
@@ -3649,9 +3652,11 @@ P8 moves Python's code-index background work into gdaemon on the hub:
 - 8.3: symbol summaries and community labels;
 - 8.4: the hourly prune and `POST /api/code-index/prune` (D17);
 - 8.5: content GC for projects only nodes index, after #23835 (Pin-aware retention);
-- 8.6: the edit trigger, after #24151 (S2.11 hub half: hook ingress and rule engine in
+- 8.6: node workspace removal releases its rows, after #24372 (Worktree and clone
+  preparation, repair and removal);
+- 8.7: the edit trigger, after #24151 (S2.11 hub half: hook ingress and rule engine in
   Rust);
-- 8.7: nightly repair, after #21582 (Cron and scheduler route family).
+- 8.8: nightly repair, after #21582 (Cron and scheduler route family).
 
 Each leaf deletes the Python job it replaces, so the two never run together (ruling,
 2026-10-17 21:46, writer's choice 3).
@@ -3721,7 +3726,7 @@ published active state as 5.1's gates do
 Operator decision (writer's choice 1; #15977 puts it to Josh with the stamped plan):
 
 - P9 removes `code_index.nightly_repair_timeout_seconds`. Python kills a `gcode repair`
-  child that passes it, and the in-process handler (8.7) cannot be killed. The key's
+  child that passes it, and the in-process handler (8.8) cannot be killed. The key's
   last reader is `src/gobby/code_index/nightly_repair.py`, which #21582 deletes, so the
   removal waits on #21582.
 
@@ -3753,11 +3758,11 @@ Deliberate differences from Python, for every job:
 Release ownership (Constraints): every P8 leaf bumps `gdaemon`, and a leaf that changes
 gcode also bumps `gcode`.
 
-Ordering. The P8 leaves form one chain after 7.2: 8.1 to 8.7. They share the release
-files, `crates/gcodeindex/src/jobs.rs` and `node/hub.rs`. The three leaves gated on
+Ordering. The P8 leaves form one chain after 7.2: 8.1 to 8.8. They share the release
+files, `crates/gcodeindex/src/jobs.rs` and `node/hub.rs`. The four leaves gated on
 other plans come last, so 8.1 to 8.4 wait on nothing outside this plan. The release
-files force one order between them, so 8.6 also waits for 8.5's gate and 8.7 for both.
-1.10 depends on 8.7.
+files force one order between them, so each of 8.6 to 8.8 also waits for the gates
+before it. 1.10 depends on 8.8.
 
 ### 8.1 Hub job seam and sync worker [category: code] (depends: 7.2, #23576)
 `kind: deliverable`
@@ -4892,8 +4897,12 @@ step handles these projects in `sync_rows` order:
    - live: collection by age;
    - soft-deleted: `job_maintenance::reconcile_deleted` for the machines that
      `deleted_selected_projects` returns, with 8.4's outcome mapping;
-   - missing, with some row whose `root_path` hashes to the project id: a node overlay,
-     skipped with reason `skipped_overlay`, as 8.4 skips a hub overlay;
+   - missing, with some row whose `root_path` hashes to the project id: a node overlay.
+     A node agent workspace's root ends in `worktrees/<uuid>/<run_id>` or
+     `clones/<uuid>/<run_id>`, and the UUID is its parent project (node-halves 2.3).
+     When `registry_state` reports that parent soft-deleted or missing, the overlay is
+     a leftover, handled as the next bullet says. Any other overlay is skipped with
+     reason `skipped_overlay`, as 8.4 skips a hub overlay;
    - missing, with no row whose root hashes to the id: a purged project's leftover.
      `reconcile_deleted` runs for every machine whose row selects it, with 8.4's
      outcome mapping. 8.2's orphan sweep then purges the `code_indexed_projects` row,
@@ -4922,7 +4931,8 @@ The job and `POST /api/code-index/prune` call `prune_all` unchanged, so both cov
 node-only projects, and `gcode prune --global` counts them.
 
 `docs/guides/code-index.md` says the hourly prune also collects content for projects
-that only nodes index, by age, and reconciles a purged project's node rows.
+that only nodes index, by age, and reconciles a purged project's node rows and the rows
+of a node workspace whose project is gone.
 
 Deliberate differences from Python:
 
@@ -4934,11 +4944,11 @@ Deliberate differences from Python:
 - The pending check covers every machine's rows, for vectors too, although a node
   pulls its own vector work (D13). A project whose node has unsynced vectors waits for
   that node.
-- A node row outlives its checkout. The hub cannot see a node's disk, so a node row
-  whose checkout or worktree is gone is neither reconciled nor swept. 8.2's
-  `missing_root` heals a hub row. #15977 holds the decision between a node-side
-  `gcode invalidate` on worktree removal and a hub age rule. This leaf does not widen
-  the gap.
+- The hub cannot see a node's disk, so it never reconciles a node row whose checkout
+  is gone, where 8.2's `missing_root` heals a hub row. 8.6 releases a node agent
+  workspace's rows when the node removes it, and step 2 releases those of a workspace
+  whose parent project is gone. An overlay deleted on a node outside the node's own
+  removal keeps its rows, because #15977's ruling (2026-10-18 01:03) adds no age rule.
 
 Research context:
 - `crates/gcode/src/commands/status/content_gc.rs::discover_content_gc` joins
@@ -4987,9 +4997,158 @@ Consumers unchanged:
 **Acceptance:**
 
 - 8.5.1 - For a live registered project that only a foreign machine selects, at a root absent from the hub, `prune_all` deletes an unsynced version unreferenced past `retention_days`, keeps the version the foreign selector names and one inside the retention, and lists the project completed. A second such project with a graph-pending file on its machine is completed with its content left. test: `crates/gcode/src/node/hub/job_prune/tests.rs::node_only_projects_prune_content_by_age`.
-- 8.5.2 - A foreign row with no registry row whose `root_path` hashes to its project id is skipped with reason `skipped_overlay` and keeps its selector and content. A project with no registry row, selected by two foreign machines at roots that do not hash to it, fails with reason `<id>:failed` and keeps both selectors when no Falkor is configured. With the project lock held by another connection it is skipped with reason `skipped_locked`, as a soft-deleted node-only project is. test: `crates/gcode/src/node/hub/job_prune/tests.rs::unregistered_node_rows_skip_overlays_and_reconcile_purged_projects`.
+- 8.5.2 - A foreign row with no registry row whose `root_path` hashes to its project id is skipped with reason `skipped_overlay` and keeps its selector and content, and so is one at `<dir>/worktrees/<live parent>/<run_id>`. One at `<dir>/worktrees/<soft-deleted parent>/<run_id>` is a leftover: with no Falkor configured it fails with reason `<id>:failed` and keeps its selector. A project with no registry row, selected by two foreign machines at roots that do not hash to it, fails with reason `<id>:failed` and keeps both selectors when no Falkor is configured. With the project lock held by another connection it is skipped with reason `skipped_locked`, as a soft-deleted node-only project is. test: `crates/gcode/src/node/hub/job_prune/tests.rs::unregistered_node_rows_skip_overlays_and_reconcile_purged_projects`.
 - 8.5.3 - `discover_content_gc` with `check_git_history` false returns a past-retention version of a project that only a foreign machine selects and omits the version its selector names. With `true` it returns nothing for that project. test: `crates/gcode/src/commands/status/content_gc/tests.rs::discovery_without_git_history_needs_no_local_checkout`.
 - 8.5.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 8.6 Node workspace removal releases its code-index rows [category: code] (depends: 8.5, #24372)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/dispatch.rs::run`
+- `crates/gcode/src/commands/status/invalidate.rs::*` — scope-reason: the confirmation prompt moves into `confirm_invalidate`, which the node client also calls
+- `crates/gcode/src/node/mod.rs`
+- `crates/gcode/src/node/invalidate.rs`
+- `crates/gcode/src/node/hub.rs`
+- `crates/gcode/src/node/hub/invalidate.rs`
+- `crates/gcode/src/node/client.rs`
+- `crates/gcode/src/node/client/invalidate.rs`
+- `crates/gcode/src/node/invalidate_tests.rs`
+- `crates/gcodeindex/src/lib.rs`
+- `crates/gcodeindex/src/node.rs`
+- `crates/gcodeindex/src/node/invalidate.rs`
+- `crates/gcodeindex/tests/node_invalidate.rs`
+- `crates/gdaemon/src/nodes/agents/workspace.rs`
+- `crates/gdaemon/tests/node_workspace_release.rs`
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+A node row outlives its checkout, because the hub cannot see a node's disk. #15977
+ruled (2026-10-18 01:03, option (a)) that the node releases its own rows when it
+removes a checkout or agent worktree, with no hub age rule. The node's removal path is
+node-halves 2.3's `crates/gdaemon/src/nodes/agents/workspace.rs::remove` (#24372,
+Worktree and clone preparation, repair and removal, under #24148, S2.7 node half), so
+this leaf belongs to the hub-node lane. `remove` runs `gcode invalidate` in the
+workspace before it removes the path.
+
+Node `gcode invalidate`, following P2's route-leaf layout:
+
+- `dispatch.rs::run` sends `invalidate` without `--project-id` through
+  `resolve_access`. `Direct` runs today's code. `Node` calls
+  `node::client::invalidate`. `invalidate --project-id` keeps 1.7's refusal, because it
+  names no root and a node grant needs one.
+- The prompt in `commands/status/invalidate.rs` moves into
+  `pub(crate) fn confirm_invalidate(view: &impl ProjectView, force: bool) -> anyhow::Result<bool>`.
+  Local `invalidate` and the node client both call it, so a node prints the local
+  prompt and `Aborted.`.
+- `node::client::invalidate` posts `InvalidateRequest { scope: NodeScope }` to
+  `/api/code-index/node/invalidate` under 1.8's request rules, with a 10-second
+  timeout as `search-content` has. It then prints the local
+  `Invalidated local code index state for project <id>` line with the id the hub
+  returns. It runs no freshness check, as local `invalidate` runs none.
+- `node::hub::invalidate(&HubScope, InvalidateRequest) -> Result<InvalidateReport, RouteError>`
+  checks the scope's overlay shape with `HubScope::context` (1.3). It then calls 7.2's
+  `node::hub::family_invalidate::invalidate` for the principal's machine and its
+  overlay id, or its project id when it has no overlay. A busy project lock returns
+  `index_busy`. `InvalidateReport { project_id, projects }` carries that id and the
+  number of project-state rows deleted.
+- gcodeindex's handler runs 1.9's steps 1 to 7, and `ROUTE_PATHS` gains the path.
+
+Removal. Before `git worktree remove` or `remove_dir_all`, `workspace.rs::remove`
+runs `<home>/bin/gcode invalidate --project <path> --force --quiet` when the
+workspace holds `.gobby/project.json`:
+
+- `<home>` is `NodeAgents::home`, and the child gets `GOBBY_HOME=<home>`. It is a
+  `tokio::process::Command` with `kill_on_drop(true)`, as 4.3's child is. The client's
+  timeout bounds it, so it needs no deadline of its own.
+- The order is forced. gcode reads the overlay's identity from the workspace's
+  `.gobby/isolation.json` (`config/context.rs::resolve_project_identity`), which goes
+  with the path.
+- Exit 0 continues the removal. A rerun after a later step failed deletes nothing and
+  exits 0.
+- A child whose stderr JSON line has `"error":"unauthorized"` also continues. Such a
+  refusal is permanent for the workspace: the handshake refuses a project the hub no
+  longer admits ("project is not admitted"), or the hub rejected the node's key or
+  claims. Keeping the workspace would only leak its disk, and 8.5 releases the rows of
+  a workspace whose project is gone.
+- Any other failure fails the removal as a failed `git worktree remove` does. The
+  record and the path stay, and `retry_removals` tries again on the next report
+  interval.
+- No child runs in three cases, and the removal continues as 2.3 has it:
+  - without `.gobby/project.json`, because a node grant needs that id, so the
+    workspace has no hub rows;
+  - for a path already gone, which counts as removed;
+  - with no `<home>/bin/gcode`, which logs once per process as 4.3 does, because
+    nothing on the node can release the rows.
+- `serve::run` runs `retry_removals` once before `serve_doors` (2.3). The child
+  reaches the hub through the node's front door, which is not serving yet, so it fails,
+  and the first report tick's retry removes the workspace.
+
+What the hub keeps afterwards:
+
+- The workspace's `code_communities`, `code_indexed_file_states` and
+  `code_indexed_project_states` rows for the node's machine go at once.
+- The overlay's `code_indexed_projects` row, its content and its Falkor and Qdrant
+  projections go at 8.2's next orphan sweep, because no machine selects it and no
+  registry row owns it. 7.2's route leaves the stores to the same sweep.
+- The node's main checkout (node-halves 2.9, Checkout registration) keeps its rows. The
+  node never removes that checkout, and `gcode invalidate` there stays an explicit
+  command.
+- A run with `workspace.mode` `"none"` runs in `source_root` and has nothing to remove.
+  A `reused` record is never removed (`to_removals`).
+
+Research context:
+- Both workspace modes run repair's `.gobby/project.json` step, which writes
+  `.gobby/isolation.json` naming the parent
+  (`src/gobby/utils/project_context.py::ensure_project_json_for_isolation`). gcode
+  resolves each workspace as an overlay whose id is `code_index_id_for_root` of its
+  canonical root.
+- `invalidate --project-id` resolves in `dispatch.rs::dispatch_early_command`, before
+  `run`.
+- `CliError::print` writes one JSON line to stderr, with `error`, `message` and an
+  optional `recovery`. `GrantError::Unauthorized` prints `"error":"unauthorized"` and
+  exits 2 (`crates/gcode/src/cli_error.rs`). gcore maps a 403 `claims_mismatch`, and a
+  401 whose code it maps to no other error, to it
+  (`crates/gcore/src/grant/mod.rs::from_presentation_http`).
+- The handshake answers an unadmitted project with 403 `claims_mismatch` and "project
+  is not admitted" (`src/gobby/runtime_grants/handshake.py`). Node routes skip
+  revocation (1.9 step 3), so a grant cached before the project's deletion still clears
+  the rows.
+- 7.2's `family_invalidate::invalidate` takes the project lock with
+  `IndexLockPolicy::maintenance_try()` and runs `indexer::invalidate` for the machine it
+  is given, on a read-write connection.
+- Rejected alternatives:
+  - a hub age rule, which the ruling refused;
+  - a key-only route that gdaemon calls itself, which would widen ruling E5(a)'s
+    exception to a write;
+  - keeping the workspace on `unauthorized`, which would keep it forever.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(invalidate)'`;
+  - `cargo nextest run -p gobby-codeindex`;
+  - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test node_workspace_release`.
+
+**Granularity:** six acceptance items and eight new files. The command, its route and
+the removal call are one release path. The removal test runs a stub `gcode`, and the
+client and route tests prove what the real one does.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 8.6.1 - `node::hub::invalidate` for a foreign machine's overlay deletes that machine's communities, file states and project state for the overlay id, and keeps the parent's rows and the hub machine's rows for the same overlay. A scope whose overlay shape disagrees with the principal returns `claims_mismatch`. With the project lock held by another connection it returns `index_busy` and deletes nothing. test: `crates/gcode/src/node/invalidate_tests.rs::hub_invalidate_deletes_only_the_principal_machine_rows`.
+- 8.6.2 - Under the remote golden grant, against the stub hub, `gcode invalidate --force` on a node overlay deletes the node machine's rows for it and prints the local line. Without `--force`, an answer other than `y` prints `Aborted.` and posts nothing. `invalidate --project-id` fails with `brokered_unsupported`. test: `crates/gcode/src/node/invalidate_tests.rs::node_invalidate_clears_the_hub_rows`.
+- 8.6.3 - With a valid remote grant, the route deletes the principal machine's rows and returns the report, and a held project lock returns 409 `index_busy`. test: `crates/gcodeindex/tests/node_invalidate.rs::invalidate_route_serves_the_principal_machine`.
+- 8.6.4 - `remove` of a worktree record and of a clone record whose workspace holds `.gobby/project.json` runs a stub `gcode` once, with `invalidate --project <path> --force --quiet` and `GOBBY_HOME` set, while the path still exists. It then removes the path and deletes the record. A workspace without `.gobby/project.json`, a path already gone and an absent `gcode` run no stub and remove as 2.3 does. test: `crates/gdaemon/tests/node_workspace_release.rs::removal_invalidates_before_the_path_goes`.
+- 8.6.5 - A stub that exits 1 keeps the record and the path until a later retry succeeds. A stub whose stderr is an `unauthorized` JSON line lets the removal finish. test: `crates/gdaemon/tests/node_workspace_release.rs::removal_failures_keep_the_workspace_except_unauthorized`.
+- 8.6.6 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## E1 End-to-end verification
 `kind: verification`
