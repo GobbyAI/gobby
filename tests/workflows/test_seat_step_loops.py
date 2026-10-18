@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -38,6 +39,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 from tests.fixtures.isolated_checkout import (
@@ -896,6 +898,120 @@ async def test_idle_is_declared_only_by_readiness_rule(
     assert bool(run.session_vars.get("seat_idle")) == (
         content == "EVENT=SEAT_READY NOTE=idle" and not failure
     )
+
+
+def _reviewer_stop_handler(run: SeatRun) -> WorkflowHookHandler:
+    """Install the bundled gates and let hooks project the real step context."""
+    for name in ("declare-seat-idle-on-readiness", "require-step-completion"):
+        path = AGENTS_DIR.parent / f"rules/stop-gates/{name}.yaml"
+        document = yaml.safe_load(path.read_text())
+        rule = document["rules"][name]
+        body = RuleDefinitionBody.model_validate(
+            {
+                "event": rule["event"],
+                "when": rule["when"],
+                "effects": rule.get("effects", [rule.get("effect")]),
+            }
+        )
+        run.engine.rule_manager.create(
+            name=name,
+            definition_json=body.model_dump_json(),
+            enabled=True,
+            priority=rule.get("priority", 50),
+            tags=document["tags"],
+        )
+    SessionVariableManager(run.db).merge_variables(
+        SESSION_ID, {**run.session_vars, "is_spawned_agent": True}
+    )
+    return WorkflowHookHandler(
+        rule_engine=run.engine,
+        session_manager=run.sessions,
+        task_manager=LocalTaskManager(run.db),
+        session_task_manager=SessionTaskManager(run.db),
+    )
+
+
+def _reviewer_stop_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="ext-seat",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+
+@pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
+async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
+    temp_db: HubDatabase, envelope: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "await"
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event())
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+
+    content = "EVENT=SEAT_READY NOTE=idle"
+    message = InterSessionMessageManager(temp_db).create_message(
+        SESSION_ID, COORDINATOR_ID, content
+    )
+    wire = _process_tool_proxy_result(
+        {"target": "session", "message_ids": [message.id], "delivery_status": "sent"},
+        *SEND,
+        1.0,
+    )
+    output: dict[str, Any] = wire
+    if envelope == "content":
+        output = {"isError": False, "content": [{"type": "text", "text": json.dumps(wire)}]}
+    elif envelope == "structured":
+        output = {"isError": False, "structuredContent": wire}
+    completion = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": "ext-seat",
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": SEND[0],
+                    "tool_name": SEND[1],
+                    "arguments": {
+                        "target": "session",
+                        "target_id": COORDINATOR_ID,
+                        "content": content,
+                    },
+                },
+                "tool_response": output,
+            },
+        }
+    )
+    completion.metadata["_platform_session_id"] = SESSION_ID
+    await handler.evaluate_async(completion)
+    stopped = await handler.evaluate_async(_reviewer_stop_event())
+    assert stopped.decision == "allow", stopped.reason
+    assert SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle") is True
+    assert run.step == "await"
+
+
+@pytest.mark.parametrize("step", ["await", "review"])
+async def test_reviewer_registered_coordination_wait_allows_stop_with_external_session_id(
+    temp_db: HubDatabase, step: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    if step == "review":
+        await run.intake(run.task())
+    assert run.step == step
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event())
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+    wait = CoordinationWaitManager(temp_db).register(SESSION_ID, COORDINATOR_ID, reply=True)
+    assert wait["outcome"] == "waiting"
+    stopped = await handler.evaluate_async(_reviewer_stop_event())
+    assert stopped.decision == "allow", stopped.reason
+    assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
+    assert run.step == step
 
 
 async def test_candidate_latch_survives_native_reset_and_blocks_already_implemented_close(
