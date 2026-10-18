@@ -12,7 +12,9 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
@@ -290,3 +292,70 @@ def test_agent_token_hash_ref_resolves_only_to_claimed_session(
         )
     assert resp.status_code == 200
     assert mock_set.call_args.kwargs["session_id"] == _OWN_SESSION
+
+
+@pytest.mark.parametrize(
+    ("role", "identity", "foreign", "allowed"),
+    [
+        ("default", "header", False, True),
+        ("assistant", "header", True, False),
+        ("developer", "header", False, False),
+        ("default", "missing", False, False),
+        ("default", "claims", False, True),
+        ("developer", "claims", False, False),
+    ],
+)
+def test_http_setter_enforces_real_caller_authority(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    identity: str,
+    foreign: bool,
+    allowed: bool,
+) -> None:
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
+        (_PROJECT, "variable-authority"),
+    )
+    for session_id in (_OWN_SESSION, _OTHER_SESSION):
+        temp_db.execute(
+            "INSERT INTO sessions "
+            "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (session_id, session_id, "21000000-0000-4000-8000-000000000001", "codex", _PROJECT),
+        )
+    variables = SessionVariableManager(temp_db)
+    variables.set_variable(_OWN_SESSION, "_agent_type", role)
+    server = create_http_server(
+        config=DaemonConfig(),
+        database=temp_db,
+        session_manager=SessionManager(temp_db),
+    )
+    if identity == "claims":
+        claims = AgentApiTokenClaims(
+            session_id=_OWN_SESSION,
+            project_id=_PROJECT,
+            machine_id="machine-test",
+            iat=1,
+            exp=4_102_444_800,
+        )
+        monkeypatch.setattr(server.auth_service, "verified_agent_claims", lambda _request: claims)
+    headers = (
+        {"X-Gobby-Session-Id": _OWN_SESSION, "X-Gobby-Project-Id": _PROJECT}
+        if identity == "header"
+        else {}
+    )
+    target = _OTHER_SESSION if foreign else _OWN_SESSION
+    response = TestClient(server.app).post(
+        f"/api/sessions/{target}/variables/set",
+        headers=headers,
+        json={"name": "candidate_sent", "value": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["success"] is allowed
+    stored = variables.get_variables(target)
+    if allowed:
+        assert stored["candidate_sent"] is False
+    else:
+        assert "[native-variable-authority]" in response.json()["error"]
+        assert "candidate_sent" not in stored

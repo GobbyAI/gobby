@@ -1,0 +1,18 @@
+tags: [stop-gates, enforcement, lifecycle, gobby, default]
+
+rules:
+  declare-seat-idle-on-readiness:
+    description: "Declare an unassigned standing seat idle after its durable readiness send"
+    event: after_tool
+    enabled: true
+    priority: 6
+    when: >-
+      variables.get('current_step_idle') and not variables.get('task_claimed')
+      and event.data.get('mcp_server') == 'gobby-agents'
+      and event.data.get('mcp_tool') == 'send_message'
+      and event.data.get('tool_succeeded') is True
+      and seat_readiness_completed(session_id, tool_output)
+    effect:
+      type: set_variable
+      variable: seat_idle
+      value: true
