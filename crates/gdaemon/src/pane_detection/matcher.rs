@@ -86,7 +86,7 @@ struct SafeRegex {
 pub fn compile_manifest(content: &str) -> Result<CompiledManifest, ManifestError> {
     let manifest = parse_manifest(content)?;
     let mut ordered = manifest.rules;
-    ordered.sort_by(|left, right| right.priority.cmp(&left.priority));
+    ordered.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
     let mut rules = Vec::new();
     let mut issues = Vec::new();
     for rule in ordered {
