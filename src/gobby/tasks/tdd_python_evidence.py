@@ -6,6 +6,7 @@ import ast
 import builtins
 import copy
 import re
+import shlex
 import sys
 import textwrap
 from collections.abc import Iterable
@@ -325,11 +326,54 @@ def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST,
     return tuple(result)
 
 
+def _runtime_stub_frames(section: str, command: str) -> list[tuple[str, int, str]]:
+    """Read short and default pytest frames without borrowing a sibling frame's source."""
+    try:
+        options = shlex.split(command)
+    except ValueError:
+        return []
+    # A local object's repr can emit arbitrary column-zero traceback markers.
+    if any(option == "--showlocals" or re.fullmatch(r"-[^-]*l[^-]*", option) for option in options):
+        return []
+    rows = section.splitlines()
+    frames: list[tuple[str, int, str]] = []
+    function: str | None = None
+    raising = False
+    exception = False
+    for index, row in enumerate(rows):
+        short = re.fullmatch(r"(\S+\.py):(\d+): in (\w+)", row)
+        if short:
+            if index + 1 < len(rows) and re.match(
+                r"    raise NotImplementedError\b", rows[index + 1]
+            ):
+                frames.append((short[1], int(short[2]), short[3]))
+            function, raising, exception = None, False, False
+            continue
+        definition = re.match(r"    (?:async\s+)?def (\w+)\(", row)
+        if definition:
+            function, raising, exception = definition[1], False, False
+        elif row.startswith(">"):
+            raising = re.match(r">\s+raise NotImplementedError\b", row) is not None
+            exception = False
+        elif re.match(r"E\s+", row):
+            exception = re.match(r"E[ \t]+NotImplementedError\b", row) is not None
+        elif re.fullmatch(r"[_\s]+", row) and "_" in row:
+            function, raising, exception = None, False, False
+        location = re.fullmatch(r"(\S+\.py):(\d+):[ \t]*NotImplementedError(?::.*)?", row)
+        if location:
+            if function is not None and raising and exception:
+                frames.append((location[1], int(location[2]), function))
+            function, raising, exception = None, False, False
+    return frames
+
+
 def _has_python_runtime_stub(
     section: str,
     evidence: TranscriptEvidence,
     run: TranscriptValidationRun,
     parse_cache: PythonModuleCache | None = None,
+    *,
+    command: str,
 ) -> bool:
     """Bind a raising frame to the latest confirmed pre-RED source and function."""
     latest = {
@@ -340,12 +384,8 @@ def _has_python_runtime_stub(
         and edit.timestamp < run.started_at
         and is_production_edit_path(edit.path)
     }
-    rows = section.splitlines()
-    for row, source in zip(rows, rows[1:], strict=False):
-        frame = re.match(r"\s*(.+\.py):(\d+): in (\w+)\s*$", row)
-        if frame is None or not re.match(r"\s*raise NotImplementedError\b", source):
-            continue
-        reported = PurePosixPath(frame[1]).parts
+    for reported_path, line, function in _runtime_stub_frames(section, command):
+        reported = PurePosixPath(reported_path).parts
         for path, edit in latest.items():
             if reported[-len(path) :] != path or not edit.task_attributed:
                 continue
@@ -361,18 +401,23 @@ def _has_python_runtime_stub(
                 node
                 for node in ast.walk(module)
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-                and node.name == frame[3]
+                and node.name == function
             ]
             if len(functions) != 1:
                 continue
-            raised = functions[0].body[0]
+            body = functions[0].body
+            if ast.get_docstring(functions[0]) is not None:
+                body = body[1:]
+            if not body:
+                continue
+            raised = body[0]
             if not isinstance(raised, ast.Raise):
                 continue
             exception = raised.exc.func if isinstance(raised.exc, ast.Call) else raised.exc
             if (
                 isinstance(exception, ast.Name)
                 and exception.id == "NotImplementedError"
-                and (edit.source_after is None or raised.lineno == int(frame[2]))
+                and (edit.source_after is None or raised.lineno == line)
             ):
                 return True
     return False

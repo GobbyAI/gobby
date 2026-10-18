@@ -538,7 +538,7 @@ session_lifecycle:
   expire_check_interval_minutes: 60
   transcript_processing_interval_minutes: 5
   transcript_processing_batch_size: 10
-  transcript_archive_dir: ~/.gobby/session_transcripts
+  transcript_archive_dir: null  # unset uses <GOBBY_HOME>/session_transcripts
 
 context_handoff:
   warn_tokens: 200000
