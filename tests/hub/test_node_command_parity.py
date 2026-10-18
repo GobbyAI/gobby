@@ -1,4 +1,4 @@
-"""Version 3 command parity and shared refusals for the hub-node corpus."""
+"""Version 3 and 4 command parity and shared refusals for the hub-node corpus."""
 
 from __future__ import annotations
 
@@ -41,6 +41,16 @@ _V3_MESSAGES: tuple[tuple[str, type[NodeModel]], ...] = (
     ("reply.checkout.status", StatusResult),
     ("reply.checkout.status.nulls", StatusResult),
 )
+# The version 4 checkout.read command with both query forms, both replies and the three error replies.
+_V4_MESSAGES: tuple[str, ...] = (
+    "command.checkout.read.files",
+    "command.checkout.read.git",
+    "reply.checkout.read.files",
+    "reply.checkout.read.git",
+    "reply.checkout.read.error.invalid_payload",
+    "reply.checkout.read.error.no_project_root",
+    "reply.checkout.read.error.outside",
+)
 
 
 def _corpus_list(key: str) -> list[dict[str, str]]:
@@ -66,9 +76,19 @@ def test_v3_commands_round_trip() -> None:
         assert encoded == message["json"], name
 
 
+def test_v4_checkout_read_round_trips() -> None:
+    messages = {message["name"]: message for message in _corpus_list("messages")}
+    for name in _V4_MESSAGES:
+        assert name in messages, name
+        message = messages[name]
+        assert json.loads(message["json"])["v"] == CONTRACT_VERSION, name
+        encoded = round_trip_message(message["kind"], message["json"])
+        assert encoded == message["json"], name
+
+
 def test_invalid_messages_fail() -> None:
     invalid = _corpus_list("invalid")
-    assert len(invalid) == 5
+    assert len(invalid) == 15
     for message in invalid:
         with pytest.raises(ValidationError):
             parse_message(message["kind"], message["json"])
