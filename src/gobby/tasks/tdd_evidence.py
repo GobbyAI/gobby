@@ -26,7 +26,7 @@ from gobby.tasks.tdd_compacted_output import (
     has_compacted_pytest_failure,
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
-from gobby.tasks.tdd_pytest_provenance import runtime_pytest_output
+from gobby.tasks.tdd_pytest_provenance import runtime_pytest_output, terminal_runtime_frame
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
@@ -523,10 +523,11 @@ def _has_runtime_stub(
         ):
             continue
         section = _failure_section(lines, index)
+        terminal = terminal_runtime_frame(section)
         if (
             _section_has_artifact_location(section, test)
-            and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
-            and _has_python_runtime_stub(section, evidence, run, parse_cache, command=command)
+            and terminal is not None
+            and _has_python_runtime_stub(terminal, evidence, run, parse_cache, command=command)
         ):
             return True
     return False

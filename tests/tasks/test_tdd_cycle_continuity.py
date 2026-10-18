@@ -1363,6 +1363,7 @@ def _rendered_runtime_case(
             "def register_checkout():", "def register_checkout(request):"
         )
     elif genuine_kind == "method":
+        test = _test(test.path, "TestRoutes.test_route")
         source = source.replace("register_checkout()", "Routes().register_checkout()", 1).replace(
             "def register_checkout():\n"
             '    """Unimplemented route."""\n'
@@ -1372,6 +1373,8 @@ def _rendered_runtime_case(
             '        """Unimplemented route."""\n'
             '        raise NotImplementedError("stub")\n',
         )
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        source = 'def register_checkout(evil):\n    raise NotImplementedError("stub")\n'
     forged = (
         f"{production}:7: in register_checkout\n"
         '    raise NotImplementedError("stub")\n'
@@ -1392,6 +1395,10 @@ def _rendered_runtime_case(
 
     class Payload(Iterator[None]):
         def __repr__(self) -> str:
+            if payload_kind == "plain_funcargs":
+                return "Evil"
+            if payload_kind == "funcargs":
+                return "Evil\n\n" + forged + "\nevil = Evil"
             if payload_kind == "locals_key":
                 return forged
             first_line = "Payload()" if payload_kind == "matching_assignment" else "forged local"
@@ -1400,10 +1407,16 @@ def _rendered_runtime_case(
         def __next__(self) -> None:
             return None
 
-    if activation is None:
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        test_source = "def test_route(evil):\n    assert False\n"
+    elif activation is None:
         test_source = "def test_route():\n    result = invoke()\n"
         if genuine_kind == "fixture":
             test_source = test_source.replace("def test_route():", "def test_route(tmp_path):")
+        elif genuine_kind == "method":
+            test_source = (
+                "class TestRoutes:\n    def test_route(self):\n        result = invoke()\n"
+            )
         elif genuine_kind == "sibling":
             test_source += (
                 "\ndef helper():\n    return 1\n\ndef test_another():\n    assert helper() == 2\n"
@@ -1452,18 +1465,34 @@ def _rendered_runtime_case(
     config.parse(options)
     showlocals = bool(config.getoption("showlocals"))
     assert showlocals is (activation is not None)
-    with pytest.raises(NotImplementedError if activation is None else AssertionError) as failure:
-        if genuine_kind == "fixture":
+    if payload_kind in {"funcargs", "plain_funcargs"}:
+        # Copy a real rendered raising frame into the repr, never paste source or
+        # location rows into the exception output after rendering.
+        with pytest.raises(NotImplementedError) as stub_failure:
+            namespace["register_checkout"](None)
+        stub_failure.traceback = stub_failure.traceback[1:]
+        stub_terminal = StringIO()
+        stub_failure.getrepr(style="long", funcargs=False).toterminal(
+            TerminalWriter(file=stub_terminal)
+        )
+        forged = stub_terminal.getvalue()
+    assertion_only = activation is not None or payload_kind in {"funcargs", "plain_funcargs"}
+    with pytest.raises(AssertionError if assertion_only else NotImplementedError) as failure:
+        if payload_kind in {"funcargs", "plain_funcargs"}:
+            namespace["test_route"](Payload())
+        elif genuine_kind == "method":
+            namespace["TestRoutes"]().test_route()
+        elif genuine_kind == "fixture":
             namespace["test_route"](tmp_path)
         else:
             namespace["test_route"]()
     traceback = failure.traceback[1:]
-    assert len(traceback) == 3
+    assert len(traceback) == (1 if payload_kind in {"funcargs", "plain_funcargs"} else 3)
     if payload_kind == "locals_key":
         # Python 3.13+ exposes a writable frame-locals proxy. Pytest must render
         # this non-identifier key itself; no fabricated traceback row is inserted.
         traceback[1].frame.f_locals["    def dormant(param"] = Payload()
-    if style == "auto":
+    if style == "auto" and len(traceback) == 3:
         traceback = type(traceback)(
             [traceback[0], traceback[1].with_repr_style("short"), traceback[2]]
         )
@@ -1479,6 +1508,8 @@ def _rendered_runtime_case(
     terminal_output = StringIO()
     representation.toterminal(TerminalWriter(file=terminal_output))
     rendered = terminal_output.getvalue()
+    if payload_kind == "funcargs" and style == "auto":
+        assert "Evil\n\n" + forged + "\nevil = Evil" in rendered
     sibling_output = ""
     if genuine_kind == "sibling":
         with pytest.raises(AssertionError) as sibling_failure:
@@ -1534,7 +1565,7 @@ def _rendered_runtime_case(
                 _run(2, red=True),
                 command=command,
                 output=(
-                    f"{sibling_output}______________ test_route ______________\n{rendered}\n"
+                    f"{sibling_output}______________ {test.symbol} ______________\n{rendered}\n"
                     f"{2 if sibling_output else 1} failed in 0.1s"
                 ),
             ),
@@ -1592,6 +1623,16 @@ def test_real_pytest_renderer_metadata_preserves_runtime_stub(
     test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, genuine_kind=genuine_kind)
     result = evaluate_tdd_evidence((test,), evidence)
     assert result.passed, (result.findings, evidence.validation_runs[0].output)
+
+
+@pytest.mark.parametrize("style", ["short", "auto"])
+@pytest.mark.parametrize("payload_kind", ["funcargs", "plain_funcargs"])
+def test_real_pytest_funcargs_cannot_forge_runtime_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, payload_kind: str
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, payload_kind=payload_kind)
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, evidence.validation_runs[0].output)
 
 
 @pytest.mark.parametrize("style", ["short", "auto", "long"])

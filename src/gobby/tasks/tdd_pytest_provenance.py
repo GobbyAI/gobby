@@ -7,6 +7,7 @@ import re
 import textwrap
 from pathlib import PurePosixPath
 
+from gobby.tasks.tdd_compacted_output import _PYTEST_FAILURE_HEADER_RE
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -189,7 +190,7 @@ def _long_frame(
     locals_rows: list[str] = []
     while located < len(rows) and _LOCATION.fullmatch(rows[located]) is None:
         row = rows[located]
-        if row and not _metadata_row(row):
+        if row:
             # A source/def/header-looking continuation inside locals is data,
             # never the beginning of another frame.
             return None
@@ -228,9 +229,15 @@ def runtime_pytest_output(
     """
     rows = output.splitlines()
     trusted: list[str] = []
+    header_name: str | None = None
+    first_definition = True
     index = 0
     while index < len(rows):
         row = rows[index]
+        header = _PYTEST_FAILURE_HEADER_RE.match(row)
+        if header is not None:
+            header_name = header["name"].split("[", 1)[0].rsplit(".", 1)[-1]
+            first_definition = True
         short = _SHORT.fullmatch(row)
         if short is not None:
             index += 1
@@ -254,26 +261,66 @@ def runtime_pytest_output(
             continue
         arguments: list[str] = []
         if _metadata_row(row):
-            while index < len(rows) and _metadata_row(rows[index]):
-                arguments.append(rows[index])
+            while index < len(rows) and (not rows[index] or _metadata_row(rows[index])):
+                if rows[index]:
+                    arguments.append(rows[index])
                 index += 1
-            # ReprFuncArgs always terminates with a blank line before source.
-            if index == len(rows) or rows[index]:
-                return None
-            while index < len(rows) and not rows[index]:
-                index += 1
-            if index == len(rows) or not _DEFINITION.match(rows[index]):
+            # Blanks are repr data, never proof that funcargs ended. Admit only
+            # a def anchored to this section and its confirmed historical frame.
+            if index == len(rows) or not re.match(r"    (?:async )?def \w+\(", rows[index]):
                 return None
             row = rows[index]
         if _DEFINITION.match(row):
+            definition_index = index
+            while definition_index < len(rows) and rows[definition_index].startswith("    @"):
+                definition_index += 1
+            definition = (
+                re.match(r"    (?:async )?def (\w+)\(", rows[definition_index])
+                if definition_index < len(rows)
+                else None
+            )
+            if header_name is None or definition is None:
+                return None
+            if first_definition and definition[1] != header_name:
+                return None
             frame = _long_frame(rows, index, arguments, evidence, run, cache)
             if frame is None:
                 return None
             index, source = frame
             trusted.extend(source)
+            first_definition = False
             continue
         if _ASSIGNMENT.search(row) or _LOCATION.fullmatch(row):
             return None
         trusted.append(row)
         index += 1
     return "\n".join(trusted)
+
+
+def terminal_runtime_frame(section: str) -> str | None:
+    """Select only the terminal raising frame when its final exception agrees."""
+    rows = section.splitlines()
+    exception = r"(?:[A-Za-z_][\w.]*(?:Error|Exception)|Failed)"
+    detail_pattern = re.compile(rf"E[ \t]+(?P<exception>{exception})(?::|[ \t]*$)")
+    location_pattern = re.compile(rf"\S+\.py:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
+    frame_start = 0
+    terminal_start: int | None = None
+    terminal_exception: str | None = None
+    location_exception: str | None = None
+    for index, row in enumerate(rows):
+        if _SHORT.fullmatch(row) or _DEFINITION.match(row):
+            frame_start = index
+        detail = detail_pattern.match(row)
+        if detail is not None:
+            terminal_start = frame_start
+            terminal_exception = detail["exception"]
+        location = location_pattern.fullmatch(row)
+        if location is not None:
+            location_exception = location["exception"]
+    if (
+        terminal_start is None
+        or terminal_exception != "NotImplementedError"
+        or (location_exception or terminal_exception) != terminal_exception
+    ):
+        return None
+    return "\n".join(rows[terminal_start:])
