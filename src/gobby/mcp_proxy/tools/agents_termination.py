@@ -50,13 +50,18 @@ async def _cleanup_terminal_artifacts(
         if session_manager is not None:
             try:
                 session_manager.update_status(agent_session_id, "expired")
-                # An explicit termination is final: its expiry settles any drain
-                # marker, which the same-status expired rewrite above leaves in place.
-                if db is not None:
-                    clear_contested_terminal_expiry(db, agent_session_id)
-                result["session_expired"] = True
             except Exception as e:
                 result["session_expire_error"] = str(e)
+            else:
+                result["session_expired"] = True
+                # An explicit termination is final: its expiry settles any drain
+                # marker, which the same-status expired rewrite above leaves in place.
+                # A failed clear is reported apart from the expiry it follows.
+                if db is not None:
+                    try:
+                        clear_contested_terminal_expiry(db, agent_session_id)
+                    except Exception as e:
+                        result["contested_expiry_clear_error"] = str(e)
 
     if not debug and terminal_transition_owned and run_id:
         try:

@@ -425,6 +425,31 @@ class AgentPaneReserver:
             return
         await self._publish_removal(change)
 
+    async def close_empty_tab(self, tab_id: str) -> None:
+        """Close a tab a resumed seat replaces. A tab already gone counts as replaced."""
+        try:
+            with _placement_errors():
+                change = await asyncio.to_thread(
+                    self._workspaces.close_tab, tab_id, expected_panes={}
+                )
+        except AgentPlacementError as exc:
+            # not_found also covers a tab rehomed mid-close, whose row remains: only absence replaces.
+            if exc.code == "not_found" and not await self._tab_remains(tab_id):
+                return
+            raise
+        await self._publish_removal(change)
+
+    async def _tab_remains(self, tab_id: str) -> bool:
+        """Whether the tab row still exists, in whatever workspace it now holds."""
+        try:
+            with _placement_errors():
+                await asyncio.to_thread(self._workspaces.resolve_reference, tab_id)
+        except AgentPlacementError as exc:
+            if exc.code == "not_found":
+                return False
+            raise
+        return True
+
     async def _publish_removal(self, change: LayoutChange) -> None:
         """Publish a committed removal; the row is already gone, so a failed publish is dropped."""
         with suppress(Exception):
