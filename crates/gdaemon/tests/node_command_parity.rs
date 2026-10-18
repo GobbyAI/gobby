@@ -21,6 +21,17 @@ const V3_MESSAGES: &[&str] = &[
     "reply.checkout.status.nulls",
 ];
 
+/// The version 4 `checkout.read` command with both query forms, both replies and the three error replies.
+const V4_MESSAGES: &[&str] = &[
+    "command.checkout.read.files",
+    "command.checkout.read.git",
+    "reply.checkout.read.files",
+    "reply.checkout.read.git",
+    "reply.checkout.read.error.invalid_payload",
+    "reply.checkout.read.error.no_project_root",
+    "reply.checkout.read.error.outside",
+];
+
 fn corpus_list(key: &str) -> Vec<serde_json::Value> {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/node_commands/corpus.json");
@@ -33,10 +44,10 @@ fn field<'a>(message: &'a serde_json::Value, key: &str) -> &'a str {
     message[key].as_str().expect(key)
 }
 
-#[test]
-fn v3_commands_round_trip() {
+fn assert_round_trips(names: &[&str]) -> usize {
     let messages = corpus_list("messages");
-    for &name in V3_MESSAGES {
+    let mut checked = 0;
+    for &name in names {
         let message = messages
             .iter()
             .find(|message| field(message, "name") == name)
@@ -48,13 +59,25 @@ fn v3_commands_round_trip() {
             panic!("{name} failed to decode: {error}");
         });
         assert_eq!(encoded, raw, "{name}");
+        checked += 1;
     }
+    checked
+}
+
+#[test]
+fn v3_commands_round_trip() {
+    assert_eq!(assert_round_trips(V3_MESSAGES), V3_MESSAGES.len());
+}
+
+#[test]
+fn v4_checkout_read_round_trips() {
+    assert_eq!(assert_round_trips(V4_MESSAGES), V4_MESSAGES.len());
 }
 
 #[test]
 fn invalid_messages_fail() {
     let invalid = corpus_list("invalid");
-    assert_eq!(invalid.len(), 5);
+    assert_eq!(invalid.len(), 17);
     for message in &invalid {
         let name = field(message, "name");
         let decoded = round_trip_json(field(message, "kind"), field(message, "json"));

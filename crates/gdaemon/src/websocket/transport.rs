@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::StreamExt;
+use futures_util::stream::{SplitSink, SplitStream};
 use gobby_terminals::write_api::TokenSlot;
 use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
