@@ -317,12 +317,17 @@ records D1 to D23 for review; the pushbacks Josh asked for are marked.
   push, so publication is E1's gate 3 rather than a leaf. It follows the last
   bumping leaf and #24717.
 - **D23, hub-mode edits.** A separate commit edits `.gobby/plans/hub-mode.md` under
-  #15977's 13:31 authorization so grok and agy settle through hooks like the other
-  three, while pane attention stays for all five: Decision 7, the Constraints and
-  Cross-plan edges lines that cite it, 2.6 (the `NODE_HOOKLESS_PROVIDERS` paragraph
-  and acceptance item 2.6.8), 3.3, 5.1 and one V1 line. hub-mode's M1 entries for
-  2.6 (2.6.8 and its `covers` label leave), 3.3 and 5.1 change, so Plan Adversary
-  #16993 re-stamps hub-mode too. #15977 updates the text of #24276 (hub-mode 2.6)
+  #15977's 13:31 authorization so grok and agy settle through hooks, while pane
+  attention stays for all five: Decision 7 lists their attention hooks, and the
+  Constraints and Cross-plan edges lines that cite it follow. 2.6 drops the
+  `NODE_HOOKLESS_PROVIDERS` paragraph and holds every `launched: true` exit for a
+  second report (2.6.3). A grok run settles through its forwarded session end. An
+  agy run, which has no session-end hook, settles through `_dead_terminal_reason`
+  from the turn its forwarded `Stop` completed, as it does locally (#23778), which
+  now passes a node run's forwarded turns as `attested_turns`; 2.6.8 is rewritten
+  to prove it. 3.3, 5.1 (research, fake provider and 5.1.2) follow, and a new V1
+  entry records the change. hub-mode's M1 entries for 2.6, 3.3 and 5.1 change, so
+  Plan Adversary #16993 re-stamps hub-mode too. #15977 updates the text of #24276 (hub-mode 2.6)
   and #24372. node-halves 2.3.3 needs no change, because grok and agy hooks are
   global.
 
