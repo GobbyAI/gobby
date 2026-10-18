@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.spawn_agent._resume import ResumeSeatGone, resumed_se
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.workspace_layout import WorkspaceNotFoundError
 from tests.mcp_proxy.tools.spawn_agent.test_placement import (
     LOCAL_MACHINE_ID,
     SEAT,
@@ -389,3 +390,54 @@ async def test_resume_whose_empty_tab_is_gone_at_launch_still_launches(
     pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
     assert pane is not None and pane.tab_id != lane.tab_id
     assert [tab.title for tab in h.workspaces.list_tabs(h.workspace.id)] == [SEAT]
+
+
+async def test_rehome_during_close_refuses_the_resume_and_keeps_the_tab(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planned tab rehomed into another workspace while it closes refuses the resume.
+
+    The store raises not_found when the tab moves between its home read and its lock, and
+    the row remains. The resume must refuse, not launch beside the rehomed tab.
+    """
+    h = placed
+    lane = _held_seat(h, SEAT, state="exited")
+    h.db.execute("DELETE FROM workspace_panes WHERE id = %s", (lane.id,))
+    session = _seat_session(
+        h, _ended_run(h, _split_snapshot(h, beside=str(uuid.uuid4()), tab_id=lane.tab_id))
+    )
+    other, _ = h.workspaces.create(LOCAL_MACHINE_ID, "rehome-target")
+    plan = resumed_seat_plan
+    filled: list[str] = []
+
+    def plan_then_fill_tab(*args: Any) -> Any:
+        planned = plan(*args)
+        # A pane lands in the planned tab between plan and close: move one in from a scratch tab.
+        scratch = h.workspaces.create_tab(
+            h.workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id, title="scratch"
+        )
+        h.db.execute(
+            "UPDATE workspace_panes SET tab_id = %s WHERE id = %s",
+            (lane.tab_id, scratch.panes[0].id),
+        )
+        h.db.execute("DELETE FROM workspace_tabs WHERE id = %s", (scratch.tabs[0].id,))
+        filled.append(scratch.panes[0].id)
+        return planned
+
+    def close_after_rehome(tab_id: str, **_: Any) -> Any:
+        # The store's race: the tab moves between close's home read and its lock.
+        h.workspaces.move_tab(tab_id, workspace_id=other.id, position=0)
+        raise WorkspaceNotFoundError("A tab moved to another workspace concurrently; retry")
+
+    monkeypatch.setattr(impl, "resumed_seat_plan", plan_then_fill_tab)
+    monkeypatch.setattr(h.workspaces, "close_tab", close_after_rehome)
+
+    reply = await _spawn(h, None, resume_session_id=session.id)
+    await asyncio.gather(*list(impl._spawn_background_tasks.values()))
+
+    assert reply["success"] is False, reply
+    assert reply["placement_error"] == "not_found", reply
+    assert h.launches == []
+    assert _tabs(h) == set()
+    assert [tab.id for tab in h.workspaces.list_tabs(other.id)] == [lane.tab_id]
+    assert [pane.id for pane in h.workspaces.list_panes(other.id)] == filled
