@@ -1786,7 +1786,11 @@ These are completion gates for the implementation. Except for plan validation
 none has run yet. Each must hold on `0.5.0` before #24657 closes:
 
 1. `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -p gobby-core -p gobby-code -p gobby-hooks -p gobby-client -p gobby-mcp`
-   must pass, skew in both directions included (4.1, 4.3).
+   must pass, skew in both directions included (4.1, 4.3). The
+   `release_scripts.rs` tests must run rather than return early, so this gate
+   runs where OpenSSL 3 and `sha256sum` are on `PATH`: CI's Ubuntu runner, or a
+   Mac with Homebrew's `openssl@3/bin` and `coreutils/libexec/gnubin` first on
+   `PATH`.
 2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py`
    must pass. Gate 1 runs the release-script and docs tests (1.1, 1.3, 5.1).
 3. Publication (D22): after the last bumping leaf lands and #24717 closes, Josh
