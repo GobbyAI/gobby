@@ -8,21 +8,29 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby import runner_lifecycle_agents
 from gobby.agents import resume_executor, spawn_executor, spawn_in_doubt_owner
+from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
+from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.storage.agents import AgentRun
+from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY, REAPED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.runtime import TerminalSpawnRequest
+from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.config_runtime_helpers import static_runtime_capture
 from tests.mcp_proxy.tools.spawn_agent.test_placement import (
     LOCAL_MACHINE_ID,
     SEAT,
@@ -306,6 +314,231 @@ async def test_placed_resume_revives_expired_daemon_stop_seat(
     assert child.agent_run_id == result.run_id
     assert _successor_status(h, result.run_id) == ("running", None)
     assert finalize.await_count == 1
+
+
+@pytest.mark.parametrize("error_type", [OSError, ValueError, SrtRuntimeError])
+async def test_sandbox_failure_restores_expired_seat_for_retry(
+    placed: _Harness,
+    finalize: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.child_session_id is not None
+    h.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id = %s", (original.child_session_id,)
+    )
+    metadata = _metadata(h, _tab_snapshot(h))
+    monkeypatch.setattr(
+        resume_executor,
+        "prepare_sandbox_launch",
+        AsyncMock(
+            side_effect=[
+                error_type("sandbox preparation refused"),
+                SandboxLaunch(backend="srt", enforced=True),
+            ]
+        ),
+    )
+
+    failed = await _resume(h, original, metadata)
+
+    assert failed.success is False
+    assert failed.error == (
+        f"resume_sandbox_failed_closed:{error_type.__name__}:sandbox preparation refused"
+    )
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "expired"
+    assert child.agent_run_id == original.id
+    assert failed.run_id is not None
+    assert h.runs.get(failed.run_id) is None
+    finalize.assert_not_awaited()
+
+    retried = await _resume(h, original, metadata)
+
+    assert retried.success is True, retried.error
+    assert retried.child_session_id == original.child_session_id
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "active"
+    assert child.agent_run_id == retried.run_id
+    assert _successor_status(h, retried.run_id) == ("running", None)
+    finalize.assert_awaited_once()
+
+
+async def test_automatic_recovery_lists_and_revives_expired_daemon_stop_seat(
+    placed: _Harness, finalize: AsyncMock
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.task_id is None
+    assert original.child_session_id is not None
+    metadata = _metadata(h, _tab_snapshot(h))
+    assert h.runs.merge_resume_metadata(original.id, metadata) is not None
+    h.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id = %s", (original.child_session_id,)
+    )
+
+    candidates = h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID)
+
+    assert [candidate.id for candidate in candidates] == [original.id]
+    candidate = candidates[0]
+    assert candidate.resume_metadata_json is not None
+    result = await _resume(h, candidate, candidate.resume_metadata_json)
+
+    assert result.success is True, result.error
+    assert result.run_id != original.id
+    assert result.child_session_id == original.child_session_id
+    assert _successor_status(h, result.run_id) == ("running", None)
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "active"
+    assert child.parent_session_id == h.parent_id
+    assert child.agent_run_id == result.run_id
+    assert finalize.await_count == 1
+
+
+@pytest.mark.parametrize("already_dead", [True, False])
+@pytest.mark.parametrize("stop", [True, False])
+@pytest.mark.parametrize("debug", [True, False])
+async def test_kill_parked_seat_prevents_automatic_recovery(
+    placed: _Harness,
+    finalize: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    already_dead: bool,
+    stop: bool,
+    debug: bool,
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert h.runs.merge_resume_metadata(original.id, _metadata(h, _tab_snapshot(h))) is not None
+    assert [
+        run.id for run in h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID)
+    ] == [original.id]
+    h.runner.get_run.side_effect = h.runs.get
+    registry = create_agents_registry(h.runner, session_manager=h.sessions, db=h.db)
+    kill = registry._tools["kill_agent"].func
+    kill_process = AsyncMock(
+        return_value=(
+            {"success": True, "already_dead": True}
+            if already_dead
+            else {"success": False, "error_code": KILL_ERROR_NO_TARGET_PID}
+        )
+    )
+    monkeypatch.setattr("gobby.mcp_proxy.tools.agents._kill_agent_process", kill_process)
+    monkeypatch.setattr(
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope", AsyncMock()
+    )
+
+    result = await kill(run_id=original.id, stop=stop, debug=debug)
+
+    assert result.get("workflow_stopped") is stop
+    kill_process.assert_awaited_once()
+    killed = h.runs.get(original.id)
+    assert killed is not None
+    assert (killed.resume_metadata_json or {}).get(REAP_REQUESTED_AT_KEY)
+    assert h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID) == []
+    assert [
+        run.id
+        for run in h.runs.list_daemon_stop_orphans(machine_id=LOCAL_MACHINE_ID, max_age_hours=24)
+    ] == [original.id]
+    resume = AsyncMock(return_value=ResumeAgentResult(success=True))
+    monkeypatch.setattr(resume_executor, "resume_agent_run", resume)
+    runner = SimpleNamespace(
+        agent_runner=h.runner,
+        database=h.db,
+        db_executor=None,
+        session_manager=h.sessions,
+        config_runtime=SimpleNamespace(capture=static_runtime_capture(DaemonConfig())),
+        completion_registry=None,
+        websocket_server=None,
+    )
+
+    resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(cast(Any, runner))
+
+    assert resumed == 0
+    resume.assert_not_awaited()
+    current = h.runs.get(original.id)
+    assert current is not None
+    assert current.status == "cancelled"
+    assert current.child_session_id == original.child_session_id
+    assert finalize.await_count == 0
+
+
+@pytest.mark.parametrize("stop", [True, False])
+async def test_kill_parked_seat_reaps_immediately_with_lifecycle_monitor(
+    placed: _Harness,
+    finalize: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    stop: bool,
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert h.runs.merge_resume_metadata(original.id, _metadata(h, _tab_snapshot(h))) is not None
+    h.runner.get_run.side_effect = h.runs.get
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=h.runs,
+        db=h.db,
+        detection_registry=BundledDetectionRegistry(),
+        session_manager=h.sessions,
+    )
+    registry = create_agents_registry(
+        h.runner, session_manager=h.sessions, db=h.db, lifecycle_monitor=monitor
+    )
+    kill = registry._tools["kill_agent"].func
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.agents._kill_agent_process",
+        AsyncMock(return_value={"success": True, "already_dead": True}),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope", AsyncMock()
+    )
+
+    await kill(run_id=original.id, stop=stop)
+
+    killed = h.runs.get(original.id)
+    assert killed is not None
+    assert killed.status == "cancelled"
+    meta = killed.resume_metadata_json or {}
+    assert meta.get(REAP_REQUESTED_AT_KEY)
+    assert h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID) == []
+    orphans = h.runs.list_daemon_stop_orphans(machine_id=LOCAL_MACHINE_ID, max_age_hours=24)
+    if stop:
+        assert meta.get(REAPED_AT_KEY)
+        assert orphans == []
+    else:
+        assert not meta.get(REAPED_AT_KEY)
+        assert [run.id for run in orphans] == [original.id]
+    finalize.assert_not_awaited()
+
+
+async def test_refused_kill_keeps_parked_seat_recoverable(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert h.runs.merge_resume_metadata(original.id, _metadata(h, _tab_snapshot(h))) is not None
+    h.runner.get_run.side_effect = h.runs.get
+    registry = create_agents_registry(h.runner, session_manager=h.sessions, db=h.db)
+    kill = registry._tools["kill_agent"].func
+    refusal = {"success": False, "error": "PID 12345 does not match agent identity", "pid": 12345}
+    kill_process = AsyncMock(return_value=refusal)
+    monkeypatch.setattr("gobby.mcp_proxy.tools.agents._kill_agent_process", kill_process)
+    monkeypatch.setattr(
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope", AsyncMock()
+    )
+
+    result = await kill(run_id=original.id)
+
+    assert result == refusal
+    kill_process.assert_awaited_once()
+    current = h.runs.get(original.id)
+    assert current is not None
+    assert not (current.resume_metadata_json or {}).get(REAP_REQUESTED_AT_KEY)
+    assert [
+        run.id for run in h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID)
+    ] == [original.id]
 
 
 async def test_placed_resume_creates_tab_when_recorded_split_was_swept(

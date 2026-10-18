@@ -10,8 +10,10 @@ use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::value::RawValue;
 
+use checkout_read::{CheckoutReadCommand, CheckoutReadResult};
+
 /// The contract version every frame and node body carries as `v`.
-pub const CONTRACT_VERSION: u64 = 3;
+pub const CONTRACT_VERSION: u64 = 4;
 
 const LIST_LIMIT: usize = 1000;
 const EVENT_LIMIT: usize = 100;
@@ -50,6 +52,8 @@ literal_string!(WorkspaceMergeName, "workspace.merge");
 literal_string!(WorkspaceRemoveName, "workspace.remove");
 literal_string!(CheckoutStatusName, "checkout.status");
 literal_string!(StaleReportCode, "stale_report");
+
+mod checkout_read;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrueFlag;
@@ -487,6 +491,7 @@ pub enum CommandFrame {
     Merge(MergeCommand),
     Remove(RemoveCommand),
     Status(StatusCommand),
+    Read(CheckoutReadCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -563,6 +568,7 @@ pub enum ReplyResult {
     Merge(MergeResult),
     Remove(RemoveResult),
     Status(StatusResult),
+    CheckoutRead(CheckoutReadResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

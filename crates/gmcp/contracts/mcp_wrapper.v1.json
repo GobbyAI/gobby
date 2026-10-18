@@ -1,0 +1,28 @@
+{
+  "protocol_version": "1",
+  "protocol_version_header": "X-Gobby-MCP-Wrapper-Protocol-Version",
+  "stale_error_code": "GOBBY_MCP_WRAPPER_STALE",
+  "wait_tool_names": ["wait_for_output", "wait_for_pane_output"],
+  "wait_tool_timeout_seconds": 300.0,
+  "extended_timeout_tool_names": [
+    "close_task", "submit_close_review", "land_commit", "expand_task", "merge_resolve",
+    "suggest_next_task", "set_handoff", "recall_review_context", "rebuild_knowledge_graph",
+    "merge_worktree", "sync_worktree", "create_worktree", "delete_worktree", "spawn_agent",
+    "run_expansion_qa_coverage", "reindex_embeddings", "rebuild_crossrefs"
+  ],
+  "extended_tool_timeout_seconds": 300.0,
+  "http_timeout_buffer_seconds": 30.0,
+  "wrapper_grace_seconds": 5.0,
+  "heartbeat_interval_seconds": 15.0,
+  "terminal_context_keys": [
+    "parent_pid", "tmux_pane", "tmux_socket_path", "tmux_window_id", "tmux_session",
+    "tmux_server_pid", "tmux_server_start_time", "tty", "term_program", "term_session_id",
+    "gobby_terminal_id", "gobby_pane_ref"
+  ],
+  "agent_identity_env_headers": [
+    ["GOBBY_SESSION_ID", "X-Gobby-Session-Id"],
+    ["GOBBY_PROJECT_ID", "X-Gobby-Caller-Project-Id"],
+    ["GOBBY_AGENT_RUN_ID", "X-Gobby-Agent-Run-Id"],
+    ["GOBBY_MANAGED_EXECUTION_ID", "X-Gobby-Managed-Execution-Id"]
+  ]
+}

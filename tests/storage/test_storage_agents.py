@@ -982,7 +982,7 @@ class TestLocalAgentRunManager:
         sample_session: dict[str, Any],
         sample_project: dict[str, Any],
     ) -> None:
-        """Only recent unconsumed non-task originals owning live sessions list."""
+        """Recent owned parked seats include expired children but exclude deleted ones."""
         task = LocalTaskManager(temp_db).create_task(
             project_id=sample_project["id"],
             title="Parked non-task candidate filtering",
@@ -1028,7 +1028,7 @@ class TestLocalAgentRunManager:
             "UPDATE agent_runs SET completed_at = %s, updated_at = %s WHERE id = %s",
             (old_timestamp, old_timestamp, stale.id),
         )
-        _expired_run, expired_session_id = self._seed_parked_owned_run(
+        expired_run, expired_session_id = self._seed_parked_owned_run(
             agent_manager,
             session_manager,
             sample_session,
@@ -1038,6 +1038,36 @@ class TestLocalAgentRunManager:
             "UPDATE sessions SET status = 'expired' WHERE id = %s",
             (expired_session_id,),
         )
+        _deleted_run, deleted_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-deleted-session",
+        )
+        temp_db.execute(
+            "UPDATE sessions SET status = 'deleted' WHERE id = %s",
+            (deleted_session_id,),
+        )
+        for reap_key in (
+            "daemon_stop_orphan_reap_requested_at",
+            "daemon_stop_orphan_reaped_at",
+        ):
+            reaping, reaping_session_id = self._seed_parked_owned_run(
+                agent_manager,
+                session_manager,
+                sample_session,
+                f"parked-{reap_key}",
+            )
+            assert (
+                agent_manager.merge_resume_metadata(
+                    reaping.id, {reap_key: datetime.now(UTC).isoformat()}
+                )
+                is not None
+            )
+            temp_db.execute(
+                "UPDATE sessions SET status = 'expired' WHERE id = %s",
+                (reaping_session_id,),
+            )
         _unbound_run, unbound_session_id = self._seed_parked_owned_run(
             agent_manager,
             session_manager,
@@ -1053,7 +1083,7 @@ class TestLocalAgentRunManager:
             machine_id=require_machine_id(), max_age_hours=24
         )
 
-        assert [run.id for run in candidates] == [candidate.id]
+        assert [run.id for run in candidates] == [candidate.id, expired_run.id]
 
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
