@@ -38,6 +38,7 @@ from gobby.tasks.close_test_coverage import (
     drop_foreign_runs,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.tdd_pytest_provenance import terminal_runtime_frame
 from gobby.tasks.transcript_evidence import (
     _derive_transcript_evidence_sync,
     _derive_transcript_path_evidence,
@@ -1335,12 +1336,19 @@ def test_displayed_test_docstring_cannot_forge_runtime_stub(frame_style: str) ->
 
 
 @pytest.mark.parametrize(
-    "repr_suffix",
-    ["", "\n______ x ______\n", "\n" + "padding\n" * 130, None],
-    ids=["short", "boundary", "padded", "later_failure"],
+    "repr_suffix, whitespace_path, ambiguous_location",
+    [
+        ("", False, False),
+        ("\n______ x ______\n", False, False),
+        ("\n" + "padding\n" * 130, False, False),
+        (None, False, False),
+        ("", True, False),
+        ("\ntests/ambiguous.py:12: NotImplementedError or AssertionError\n", False, True),
+    ],
+    ids=["short", "boundary", "padded", "later_failure", "whitespace_path", "ambiguous_location"],
 )
 def test_real_pytest_later_funcargs_cannot_hide_final_exception(
-    tmp_path: Path, repr_suffix: str | None
+    tmp_path: Path, repr_suffix: str | None, whitespace_path: bool, ambiguous_location: bool
 ) -> None:
     """A real CLI traceback must not credit a copied stub before a locals cutoff."""
     production = "src/gobby/rendered_route.py"
@@ -1373,9 +1381,18 @@ def test_route(evil=None):
         test_route(Payload())
     assert False
 """.replace("__REPR_SUFFIX__", repr(repr_suffix or ""))
-    if repr_suffix is None:
+    if repr_suffix is None or ambiguous_location:
         test_source = test_source.replace("    assert False", "    register_checkout(evil)")
+    if repr_suffix is None:
         test_source += "\n\ndef test_later():\n    assert False\n"
+    if whitespace_path:
+        helper = tmp_path / "tests/my tests/assertion.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("def fail_assertion():\n    assert False\n")
+        test_source = "from runpy import run_path\n" + test_source.replace(
+            "    assert False",
+            '    run_path("tests/my tests/assertion.py")["fail_assertion"]()',
+        )
     for path, content in ((production, source), (test.path, test_source)):
         file = tmp_path / path
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -1397,7 +1414,10 @@ def test_route(evil=None):
     output = completed.stdout
     assert completed.returncode == 1, (output, completed.stderr)
     assert f"{2 if repr_suffix is None else 1} failed" in output, output
-    assert re.search(r"\.py:\d+: AssertionError", output), output
+    expected_exception = "NotImplementedError" if ambiguous_location else "AssertionError"
+    assert re.search(rf"\.py:\d+: {expected_exception}(?:\n|$)", output), output
+    if whitespace_path:
+        assert "tests/my tests/assertion.py:2: AssertionError" in output, output
     assert output.count("    def test_route(evil=None):") == 2, output
     assert "    def register_checkout(evil):" in output, output
     if repr_suffix is not None:
@@ -1433,6 +1453,45 @@ def test_route(evil=None):
     )
     result = evaluate_tdd_evidence((test,), evidence)
     assert not result.passed, (result.findings, output)
+
+
+@pytest.mark.parametrize("phase", ["setup", "teardown"])
+@pytest.mark.parametrize("later", [False, True], ids=["credit_frame", "later_heading"])
+def test_real_pytest_error_heading_cannot_credit_runtime_stub(
+    tmp_path: Path, phase: str, later: bool
+) -> None:
+    """Even same-type exception locations cannot attribute an ERROR section."""
+    test_file = tmp_path / "test_error.py"
+    fixture_body = (
+        '    raise NotImplementedError("stub")\n'
+        if phase == "setup"
+        else '    yield\n    raise NotImplementedError("stub")\n'
+    )
+    test_file.write_text(
+        "import pytest\n\n@pytest.fixture\ndef failing():\n"
+        + fixture_body
+        + "\ndef test_route(failing):\n    pass\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", test_file.name, "-vvv", "--tb=long", "--color=no"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout
+    assert completed.returncode == 1, (output, completed.stderr)
+    assert "1 error" in output, output
+    heading = re.search(rf"(?m)^_+ ERROR at {phase} of test_route _+$", output)
+    assert heading is not None, output
+    original_section = output[heading.start() :].split("===", 1)[0]
+    assert set(re.findall(r"\.py:\d+: (\w+)", original_section)) == {"NotImplementedError"}
+    assert 'raise NotImplementedError("stub")' in original_section
+    # A repr may copy this genuine ERROR section after an otherwise selected frame.
+    original_tail = ("______ test_route ______\n" if later else "") + original_section
+    assert terminal_runtime_frame(original_section, original_tail) is None, original_tail
 
 
 def _rendered_runtime_case(

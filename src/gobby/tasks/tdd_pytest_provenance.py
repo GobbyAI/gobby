@@ -301,7 +301,8 @@ def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
     """Reject missing, conflicting or ambiguous original exception locations."""
     exception = r"[A-Za-z_][\w.]*"
     detail_pattern = re.compile(rf"E[ \t]+(?P<exception>{exception})(?::|[ \t]*$)")
-    location_pattern = re.compile(rf"\S+:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
+    location_pattern = re.compile(rf".+:\d+:[ \t]+(?P<exception>{exception})(?::.*)?$")
+    error_header_pattern = re.compile(r"^_+[ \t]+ERROR\b.*[ \t]+_+[ \t]*$")
     original_rows = original_tail.splitlines()
     original_exceptions = {
         location["exception"]
@@ -310,9 +311,13 @@ def terminal_runtime_frame(section: str, original_tail: str) -> str | None:
     }
     # Headers are never endpoints: a repr can forge them. Any later header makes
     # attribution ambiguous, even when the later failure has the same exception.
-    if original_exceptions != {"NotImplementedError"} or any(
-        _PYTEST_FAILURE_HEADER_RE.match(row) or _RTK_FAILURE_HEADER_RE.match(row)
-        for row in original_rows[1:]
+    if (
+        original_exceptions != {"NotImplementedError"}
+        or any(error_header_pattern.match(row) for row in original_rows)
+        or any(
+            _PYTEST_FAILURE_HEADER_RE.match(row) or _RTK_FAILURE_HEADER_RE.match(row)
+            for row in original_rows[1:]
+        )
     ):
         return None
     rows = section.splitlines()
