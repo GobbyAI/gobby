@@ -84,18 +84,22 @@ Operator decisions (Josh, 2026-10-12, relayed by Orchestrator gobby#15977):
    Story B. His later "No deferrals" ruling (memory 878d0c35) requires every
    capability on all five providers, so a node agent's attention reaches the
    hub two ways, and both feed the same `AgentAttentionTracker`:
-   - Hooks. Claude and codex send `PermissionRequest` and droid sends
-     `Notification` (`src/gobby/adapters/capabilities.py`,
-     `src/gobby/adapters/droid_contract.py`). The node forwards each envelope
+   - Hooks. Claude and codex send `PermissionRequest`, droid sends
+     `Notification`, grok sends `pending_interaction`, and agy sends
+     `PreToolUse` for `ask_question` (`src/gobby/adapters/capabilities.py`,
+     `src/gobby/adapters/droid_contract.py`, `src/gobby/adapters/grok.py`,
+     `src/gobby/adapters/agy.py`). The node forwards each envelope
      to `POST /api/hooks/execute` (#24150), and the hub handles it as it
-     handles a local hook.
+     handles a local hook. Grok and agy get no per-run hook directory on a
+     node (node-halves 2.3.3); their hooks come from the global config that
+     #24657 (Rust-only node install and enrollment) installs, and their
+     forwarded hooks settle their runs as the other three's do (2.6).
    - Pane reports. node-halves 2.13 ports the pane detectors to gdaemon, 2.14
      puts a `pane` block (attention, injections, composer, idle, a 15-line
      tail) on each agent entry of the node report, and node-halves 3.3
      (`src/gobby/hub/remote_pane.py`) applies it on the hub through
-     `AgentAttentionTracker.apply` from 1.4's report route. Grok and agy have
-     no hook directory on a node (node-halves 2.3.3), so this is their path.
-     It runs for the other three providers too, as local pane detection does.
+     `AgentAttentionTracker.apply` from 1.4's report route. It runs for all
+     five providers, as local pane detection does.
 
    5.1 proves attention for each provider through its path.
 8. **Standalone and the hub's own machine** execute in-process, as today
@@ -438,8 +442,9 @@ Writer decisions:
     keeps `require_local_machine_id` and is refused (Decision 18). Examples are
     a `/clear` successor and an operator's own CLI on the node; #24151 owns
     that path.
-  - 2.6 settles a run whose agent left no session end, and a grok or agy run
-    from its exit, since neither sends hooks from a node (Decision 7).
+  - 2.6 settles a run whose agent left no session end, and an agy run, which
+    has no session-end hook, from the turn its forwarded hooks drove
+    (Decision 7).
 - **Security landing gate.** Every candidate commit for 1.2, 1.4, 1.5, 2.2,
   2.3, 2.4, 2.5, and 4.2 needs a Security Reviewer LAND before it lands. These
   leaves carry the node's command route, the key-bound node routes, caller
@@ -494,7 +499,7 @@ manifest.
 | 4.1 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 4.1 bumps the same contract to version 3 in the same files. |
 | 4.2 | node-halves 2.15 (Node sandbox reaping and records) | blocked by | 4.2 adds handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs` and edits node-halves 2.3's `workspace.rs`. node-halves 2.15 is the last node agent leaf. It depends on node-halves 3.9, 3.9 on 3.3, and 3.3 follows this plan's 1.4 (row above), so 4.2 also waits for 1.4. No P1 leaf depends on a P4 leaf, so the chain has no cycle. |
 | 4.6 | node-halves 2.15 (Node sandbox reaping and records) | blocked by | 4.6 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. It follows 1.4 through the same chain as 4.2. |
-| 5.1 | Every node-halves leaf: 1.1 to 1.6, 2.1 to 2.15 and 3.1 to 3.9 | blocked by | 5.1 runs the real node, including its hook forwarding (P1 there) and the pane attention that grok and agy depend on (node-halves 2.13, 2.14, 3.3; Decision 7). |
+| 5.1 | Every node-halves leaf: 1.1 to 1.6, 2.1 to 2.15 and 3.1 to 3.9 | blocked by | 5.1 runs the real node, including its hook forwarding (P1 there) and its pane attention (node-halves 2.13, 2.14, 3.3; Decision 7). |
 
 Relations that set no edge:
 - #24151 (S2.11 hub half: hook ingress and rule engine in Rust) as a leaf
@@ -2668,6 +2673,7 @@ Targets:
 - `src/gobby/hub/remote_reconcile.py`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.__init__`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.check_unhealthy_agents`
+- `src/gobby/agents/agent_health.py::AgentHealthMonitor._dead_terminal_reason`
 - `src/gobby/hooks/session_coordinator.py::SessionCoordinator.complete_agent_run`
 - `src/gobby/hooks/event_handlers/_session_end.py::SessionEndMixin.handle_session_end`
 - `tests/hooks/test_session_end_handlers.py::TestSessionEndHandling.test_staged_clear_end_hands_run_to_successor`
@@ -2676,8 +2682,8 @@ Targets:
 **Granularity:** nine acceptance items and four production files, one
 outcome: after a remote spawn leaves 2.5, every run and terminal row on a
 reporting machine reaches a settled state, completed or failed. Promotion
-covers 2.6.1, terminal settlement 2.6.2 to 2.6.6, the run sweep 2.6.7, a
-grok or agy exit 2.6.8, and a node run's session end 2.6.9.
+covers 2.6.1, terminal settlement 2.6.2 to 2.6.6, the run sweep 2.6.7, an
+agy exit 2.6.8, and a node run's session end 2.6.9.
 `RemoteRunReconciler` under `AgentHealthMonitor` owns every report-driven
 step, and `handle_session_end` owns the forwarded session end, as it does
 locally. 1.4 records workspace rows. None is safe alone: all of them read
@@ -2754,10 +2760,12 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
     `tests/hooks/test_session_lookup_metadata.py` asserts it is not called.
     2.2 edits other tests in both files (2.6 follows it through 2.5), and 2.6
     re-runs both.
-- Grok and agy send no hooks from a node (Decision 7; node-halves 2.3.3
-  gives them no hook directory), so the hub never sees their prompt submit,
-  stop, or session end. Their run's end reaches the hub only as the node's
-  exit (1.1): `{run_id, terminal_id, launched, exit_code, reason, workspace}`.
+- Grok and agy send their hooks from a node through the global config that
+  #24657 (Rust-only node install and enrollment) installs (Decision 7;
+  node-halves 2.3.3 gives them no per-run hook directory), so the hub sees
+  their prompt submit and stop, and grok's session end. A run's end also
+  reaches the hub as the node's exit (1.1):
+  `{run_id, terminal_id, launched, exit_code, reason, workspace}`.
   - node-halves 2.6's `watch_exits` commits `{launched: true, exit_code,
     reason}` with the host's exit code when the terminal exits, `reason`
     `cancelled` when a cancel record exists and `exited` otherwise.
@@ -2766,25 +2774,25 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
   - node-halves 2.6 launches grok with `--single` and agy with `--print`,
     and both carry the prompt on the argv, so a launched one-shot runs its
     prompt's turn and exits.
-  - `_dead_terminal_reason` fails both today. Grok's hooks include
-    `session_end` (`GROK_EVENT_MAP`, `src/gobby/adapters/capabilities.py`),
-    so `_exits_without_session_end("grok")` is false and the reason is
-    `"terminal session died unexpectedly"`. Agy has `Stop` and no
-    `SessionEnd` (`src/gobby/adapters/agy_contract.py`), so the predicate is
-    true, but no hook began a turn on the hub, so `generation` is 0 and the
-    reason is the same.
+  - Grok's hooks include `session_end` (`GROK_EVENT_MAP`,
+    `src/gobby/adapters/capabilities.py`), so its forwarded session end
+    settles its run as claude's does (2.6.9). Agy has `Stop` and no
+    `SessionEnd` (`src/gobby/adapters/agy_contract.py`), so
+    `_exits_without_session_end("agy")` is true: once its run's exit counts
+    as absent twice, `_dead_terminal_reason` reads the turn lifecycle its
+    forwarded hooks drove and completes a clean exit with
+    `await asyncio.to_thread(coordinator.complete_agent_run, session)`, as it
+    does locally (#23778), because the call blocks on the daemon loop.
   - 2.5 pre-registers a remote run's child session on the hub with the run's
-    `agent_run_id`, so a grok or agy run has a session row that no hook ever
-    binds. Locally, `_dead_terminal_reason` completes a clean hookless exit
-    with `await asyncio.to_thread(coordinator.complete_agent_run, session)`,
-    because the call blocks on the daemon loop. It reaches the coordinator and
-    session manager through `AgentHealthMonitor`'s
-    `_get_session_coordinator` and `_get_session_manager` getters.
+    `agent_run_id`, so `_dead_terminal_reason` finds the session the run
+    owns. It reaches the coordinator and session manager through
+    `AgentHealthMonitor`'s `_get_session_coordinator` and
+    `_get_session_manager` getters.
 - Rejected: reading the node's pane report (node-halves 2.14's
   `idle.turn_in_flight`, kept by node-halves 3.3's store) as proof that a
   grok or agy turn ran. The store keeps only the latest snapshot, a one-shot
   that runs and exits between two 30-second pane passes never shows it, and
-  it would add a cross-plan dependency for no signal the exit lacks.
+  it would add a cross-plan dependency for no signal the forwarded hooks lack.
   Rejected: skipping the no-activity check for every node run. A claude,
   codex, or droid node run has forwarded turn evidence, so the check still
   catches one that never began a turn.
@@ -2850,6 +2858,12 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
   resolve, `turns_used = max(turns_used, attested_turns)`, before the
   no-activity check and before `_terminate_agent_run` records the counts.
   Every caller that passes nothing behaves as before.
+- `_dead_terminal_reason`: for a run whose `machine_id` is not
+  `require_machine_id()`, it calls
+  `complete_agent_run(session, attested_turns=lifecycle.generation)`; a run on
+  the hub's own machine keeps `complete_agent_run(session)`. An agy node run's
+  forwarded hooks drove that lifecycle, so one that completed its turn
+  completes instead of failing "no activity" (2.6.8).
 - `handle_session_end`: for a session whose `machine_id` is not
   `self._get_machine_id()`, it reads the reducer as
   `getattr(self, "_turn_lifecycle", None)`, as the method already reads
@@ -2885,7 +2899,7 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
     `agents` or `accepted` listing. node-halves 2.6's `watch_exits` removes
     the run from its agent list when it commits the exit, so the newest
     snapshot never lists a run whose exit the same take carries, and the
-    rule keeps a hookless exit from being lost if one ever does.
+    rule keeps an exit from being lost if one ever does.
   - Listed in `agents` and pending: 1.4's route already recorded the
     entry's workspace row before it answered 200, so the reconciler calls
     `record_spawn_identity`.
@@ -2905,32 +2919,11 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
     launch, and the node removed what it prepared. The reconciler calls
     `fail_pending` at once, and for an active run
     `cleanup_agent(run, terminal_payload="remote spawn failed on <machine>: <reason>")`.
-  - A grok or agy row (the run's `provider` is in the module constant
-    `NODE_HOOKLESS_PROVIDERS = frozenset({"grok", "agy"})`, Decision 7) with a
-    `launched: true` exit whose `reason` is `exited` settles on that report,
-    because no session end will follow it. The reconciler exits the terminal,
-    `mark_exited` for a live or orphaned row and `fail_pending` for a pending
-    one, and re-reads the run. An ended run gets nothing more. An active run
-    settles by the exit code, without `dead_reason`:
-    - 0: the reconciler reads the child session through
-      `get_session_manager()`. When the session's `agent_run_id` is the run's
-      id, it calls
-      `await asyncio.to_thread(coordinator.complete_agent_run, session, attested_turns=1)`.
-      The prompt rides the argv, so a launched one-shot that exits 0 ran its
-      prompt's turn, and the task-close and step-workflow checks still apply.
-      When a getter returns `None` or the session is missing, the reconciler
-      does nothing more.
-    - Any other code: `cleanup_agent(run, terminal_payload="remote <provider> exited with code <n> on <machine>")`.
-    - Null (the node's reconcile found the terminal gone from its inventory):
-      `cleanup_agent(run, terminal_payload="remote <provider> terminal left the node's inventory without an exit code on <machine>")`.
-    - A run left active after any of these keeps only exited terminals, so the
-      run sweep settles it two reports later, as `_unsettled_completions`
-      gives a local completion one more pass.
   - Every other row is absent. A live row whose `host_epoch` differs from the
-    report's counts as absent too. So does a claude, codex, or droid row with a
-    `launched: true` exit, and a grok or agy row whose `launched: true` exit
-    has `reason` `cancelled`, so a forwarded session end or the cancel owner
-    (2.4) can settle the run first. The first absent report only records the row. On the second
+    report's counts as absent too. So does a row with a `launched: true` exit,
+    so a forwarded session end or the cancel owner (2.4) can settle the run
+    first, and an agy run, which has no session end, settles through
+    `dead_reason`. The first absent report only records the row. On the second
     consecutive one:
     - A live or orphaned row gets `mark_exited`, then the run settles.
     - A pending row whose `attempt_started_at` is older than
@@ -2963,7 +2956,7 @@ Consumers unchanged:
 - `src/gobby/runner_broadcasting.py` — no-edit-reason: it names `complete_agent_run` only in a comment.
 - `tests/hooks/test_session_coordinator.py` — no-edit-reason: it calls `complete_agent_run(session)` with no `attested_turns`, whose default 0 leaves every count as before; re-run as verification.
 - `tests/agents/test_lifecycle_task_completion.py` — no-edit-reason: it calls `complete_agent_run` with the session only; re-run as verification.
-- `tests/agents/watchdog/test_print_mode_exit.py` — no-edit-reason: it drives a local hookless exit through `_dead_terminal_reason`, whose call is unchanged; re-run as verification.
+- `tests/agents/watchdog/test_print_mode_exit.py` — no-edit-reason: it drives a local hookless exit through `_dead_terminal_reason`, whose local call is unchanged; re-run as verification.
 - `tests/hooks/test_clear_successor_seat.py` — no-edit-reason: it asserts `complete_agent_run` is not called; re-run as verification.
 - `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: its session row has no `agent_run_id`, so `handle_session_end` never reaches `complete_agent_run`, and its handler stub sets no `_turn_lifecycle`, which the `getattr` read tolerates; re-run as verification.
 - `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: its session-end handler stub has no session manager or coordinator, so no session is read and `complete_agent_run` is never reached; re-run as verification.
@@ -2977,12 +2970,12 @@ Verification planned:
 
 - 2.6.1 - A report listing a pending run's agent promotes its terminal live with the entry's locator and the report's `host_epoch` and records `pid` and `terminal_id` on the run; when the agent's session end arrived first, the terminal exits, the run stays ended, and no `pid` is recorded. test: `tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted`.
 - 2.6.2 - A run with a live terminal that a report omits, or a live row from an older `host_epoch`, is left on its first absent report and settled on the second through `mark_exited` and `cleanup_agent`; a run that settles in between is not failed, and its terminal still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_two_reports`.
-- 2.6.3 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and a claude, codex, or droid exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
+- 2.6.3 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and an exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
 - 2.6.4 - A pending run past the deadline and absent from two consecutive reports is sent `agent.cancel` first. `{stopped: true}` or `not_found` then fails its terminal and run, `node_timeout` or `{stopped: false}` changes nothing, and a run listed in `accepted` is never fenced. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
 - 2.6.5 - A machine with no new report gets no command and its rows stay as they are, and local rows are never reconciled. test: `tests/hub/test_remote_reconcile.py::test_unreported_and_local_rows_untouched`.
 - 2.6.6 - In this case the spawn's effect lands and its reply is lost, the agent exits between reports so none lists it, and its session start and session end both reach the hub. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a machine with no new report stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
 - 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first report and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run that completes, or gains a pending or live terminal, between the two reports is not swept, and a run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
-- 2.6.8 - A grok or agy run launched with its prompt whose report carries a `launched: true` `exited` exit settles on that report: exit code 0 exits its terminal and completes the run through `complete_agent_run` with one attested turn, a nonzero code fails it with that code, and a null code fails it as gone from the node's inventory. A `cancelled` exit waits a second report like an absent row, and an ended run gets nothing more than its terminal's exit. test: `tests/hub/test_remote_reconcile.py::test_hookless_exit_settles_from_exit_code`.
+- 2.6.8 - An agy run whose forwarded prompt submit began a turn and whose forwarded `Stop` completed it, with a `launched: true` `exited` exit, completes through `dead_reason` and `complete_agent_run` on the second consecutive report; one whose `Stop` ended the turn without completing fails with that disposition, and one with no forwarded turn fails as died. test: `tests/hub/test_remote_reconcile.py::test_agy_exit_completes_from_forwarded_stop`.
 - 2.6.9 - A forwarded session end for a node session whose forwarded prompt submit began a turn completes its run, one with no begun turn fails it "no activity", and one whose task is closed completes regardless. A session end on the hub's own machine calls `complete_agent_run(session)` exactly as before. test: `tests/hub/test_remote_reconcile.py::test_node_session_end_counts_forwarded_turns`.
 
 ## P3: Machine-aware roster and attention
@@ -3128,8 +3121,9 @@ Targets:
 - 2.3 routes the write to the owning node. The tests drive a fake node client;
   5.1 proves live delivery.
 - An entry's attention state reaches the hub from the owning machine's hooks
-  (claude and codex `PermissionRequest`, droid `Notification`) or from its
-  node's pane reports (grok and agy, node-halves 3.3) (Decision 7). The hub
+  (claude and codex `PermissionRequest`, droid `Notification`, grok
+  `pending_interaction`, agy `PreToolUse` for `ask_question`) or from its
+  node's pane reports (all five providers, node-halves 3.3) (Decision 7). The hub
   cannot capture a node's pane.
 - 1.5's `require_machine_owned` refuses a bound caller that does not own the
   machine. 2.3's write check would refuse too, but only after `respond` has
@@ -3877,15 +3871,16 @@ the runs the earlier steps create.
   `PermissionRequest`, which `handle_permission_request` turns into
   `_enter_turn_wait(event, "approval")`
   (`src/gobby/hooks/event_handlers/_misc.py`), and droid sends
-  `Notification`. Grok and agy have no hook directory (node-halves 2.3.3):
-  node-halves 2.14's pane monitor matches their pane against the bundled
+  `Notification`. The fake raises grok's and agy's attention through their
+  pane, the path all five share: node-halves 2.14's pane monitor matches
+  their pane against the bundled
   detection manifests, whose positive approval case per provider is in
   `crates/gdaemon/tests/fixtures/pane_detection/corpus.json` (node-halves
   2.12, 2.13), and node-halves 3.3 applies the report's `pane` block on the
-  hub. Claude, codex, and droid runs complete through the forwarded session
-  end, which counts the turns their forwarded prompt submits began, and grok
-  and agy runs settle through the node's exit report, completed on exit code
-  0 (2.6.8, 2.6.9). The
+  hub. Claude, codex, droid and grok runs complete through the forwarded
+  session end, which counts the turns their forwarded prompt submits began,
+  and an agy run completes through `dead_reason` from the turn its forwarded
+  `Stop` completed (2.6.8, 2.6.9). The
   node's agy gate needs version 1.1.18 (node-halves 2.6), and codex
   receives its prompt after the composer marker (node-halves 2.10).
 - The test enrolls the node with a key the hub's user mints, so one user
@@ -3909,9 +3904,9 @@ the runs the earlier steps create.
   `PATH` as `claude`, `codex`, `grok`, `droid`, and `agy`. It answers
   `--version` (agy with 1.1.18). Otherwise it runs in its pane:
   - codex prints the composer marker from the pane-detection corpus and
-    reads its prompt; claude, codex, and droid pipe a session-start
+    reads its prompt; each provider pipes a session-start
     envelope into `ghook --cli=<provider> --type=session-start` with the
-    run's `GOBBY_SESSION_ID`, then their provider's prompt-submit envelope,
+    run's `GOBBY_SESSION_ID`, then its provider's prompt-submit envelope,
     which the hub handles as `BEFORE_AGENT` and which begins the session's
     turn (2.6);
   - it reads one line from its pane and writes it to a file in its
@@ -3921,7 +3916,8 @@ the runs the earlier steps create.
     envelope into `ghook`, and grok and agy print their provider's positive
     approval pane from the detection corpus;
   - it reads the answer line, appends it to the file, commits it, sends its
-    stop and session-end hooks where it has hooks, and exits with code 0.
+    stop hook and, where its provider has one (agy has none), its
+    session-end hook, and exits with code 0.
 - Steps, each run for claude, codex, grok, droid, and agy:
   1. One `ghook` session-start from the checkout root registers the node's
      checkout (once, before the providers).
@@ -3948,7 +3944,7 @@ Verification planned:
 **Acceptance:**
 
 - 5.1.1 - The node's first hook from its checkout root registers that checkout on the hub under the node's machine. test: `tests/e2e/test_hub_node_live.py::test_node_registers_checkout`.
-- 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed: for claude, codex, and droid through the forwarded session end, whose earlier prompt submit began a turn, and for grok and agy through the exit report with exit code 0. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
+- 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed: for claude, codex, droid and grok through the forwarded session end, whose earlier prompt submit began a turn, and for agy through `dead_reason` after its exit, whose forwarded `Stop` completed the turn. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
 - 5.1.3 - For each of the five providers, a terminal write reaches the fake's pane on the node, and the fake records the written line. test: `tests/e2e/test_hub_node_live.py::test_terminal_write_reaches_each_provider`.
 - 5.1.4 - For each of the five providers, the fake's attention request raises an attention entry on the node's machine, through `PermissionRequest` for claude and codex, `Notification` for droid, and the node's pane report for grok and agy, and the respond route's answer reaches the fake. test: `tests/e2e/test_hub_node_live.py::test_attention_respond_reaches_each_provider`.
 - 5.1.5 - For each of the five providers, a cancel stops a run waiting on the node, and the run settles cancelled. test: `tests/e2e/test_hub_node_live.py::test_cancel_stops_each_provider`.
@@ -4208,6 +4204,20 @@ Verification planned:
   clears the 2.2 size-growth blocker. It found the new consumer's no-edit
   reason supported and the 1.2-before-terminal-2.6 edge decided, with no
   remaining findings. The Plan Adversary derives M1 from this commit.
+- 2026-10-18: Grok and agy hooks on a node (Plan Writer gobby#16767, under
+  Orchestrator gobby#15977's 13:31 CDT ruling). #24657 (Rust-only node install
+  and enrollment) installs grok and agy hooks in a node's global config, so
+  both send hooks from a node. Decision 7 lists their attention hooks and keeps
+  pane reports for all five providers. 2.6 drops `NODE_HOOKLESS_PROVIDERS`: a
+  grok run settles through its forwarded session end, and an agy run, which
+  has no session-end hook, through `dead_reason` from the turn its forwarded
+  `Stop` completed, as it does locally (#23778). 2.6.8 now proves the agy
+  path, `_dead_terminal_reason` passes a node run's forwarded turns as
+  `attested_turns`, and 2.6.3 holds every `launched: true` exit for a second
+  report. The
+  Constraints, the 5.1 cross-plan row, 3.3, and 5.1's research, fake provider
+  and 5.1.2 follow. The stale M1 stays until consensus, and Plan Adversary
+  gobby#16993 derives it again.
 
 ## V2: Verification
 `kind: verification`
