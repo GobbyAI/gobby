@@ -2,7 +2,7 @@
 
 ## Decision and status
 
-Activation batching and repeated validation deserve attention before increasing review concurrency. In the verified cohort, completed landing-to-activation intervals account for **2,696.42 task-minutes (44.94 task-hours)** within today's window. Recorded independent approval-to-landing-receipt latency adds **393.65 task-minutes**. Seven recovered close-review runs consume **74.74 run-minutes**. These are measured stage durations, not an estimate that all of that time was waste.
+Activation batching and repeated validation deserve attention before increasing review concurrency. In the verified cohort, 22 completed restart/cutover landing-to-activation receipt intervals account for **1,950.27 task-minutes (32.50 task-hours)** within today's window. A separate class-none landing has **746.15 task-minutes** of later receipt lag, excluded from the activation ranking and cadence recommendation. Recorded independent approval-to-landing-receipt latency adds **393.65 task-minutes**. Seven recovered close-review runs consume **74.74 run-minutes**. These are measured stage durations, not an estimate that all of that time was waste.
 
 **Evidence-bounded research artifact for #24721 Close-throughput research.** The available read surfaces do not prove a complete close-attempt census or an exclusive ranking of avoidable lost time. This report identifies 23 tasks with closure or attempt evidence, gives the observable intervals, and marks the rest unobservable. It must not be represented as a complete-day measurement. ORCH's 17:29 CDT ruling, relayed in message `2515047f-5804-40c9-b6a0-be49c8cc043e`, confirms no durable close-attempt read/export surface is known and directs shipment with this gap as a finding.
 
@@ -19,7 +19,7 @@ Snapshot: **2026-10-18 00:00–17:10 CDT**, equivalently **05:00–22:10 UTC**. 
 
 ### What an interval means
 
-READY→GO needs an accepted, same-phase READY and its single-use admission. GO→PASS ends at a durable PASS report; test duration alone is not queue time. A first-ever task CANDIDATE stamp cannot identify the latest rework candidate, so it is not used as final-candidate review latency. Independent approval→landing receipt includes approval/merge/protocol/recording delay; it is not LAND→receipt unless the LAND event itself is timestamped. Landing→activation is a receipt-based proxy: it includes retesting, batching, and receipt delay, and is not pure downtime. Close-run time is `completed_at-started_at`; GO→run-start also includes the caller and admission handoff and cannot be labeled internal FIFO queue time.
+READY→GO needs an accepted, same-phase READY and its single-use admission. GO→PASS ends at a durable PASS report; test duration alone is not queue time. A first-ever task CANDIDATE stamp cannot identify the latest rework candidate, so it is not used as final-candidate review latency. Independent approval→landing receipt includes approval/merge/protocol/recording delay; it is not LAND→receipt unless the LAND event itself is timestamped. For restart/cutover landings, landing→activation is a receipt-based proxy: it includes retesting, batching, and receipt delay, and is not pure downtime or a measured exclusive hold. A class-none landing's later activation receipt measures receipt lag only; it does not establish a runtime activation requirement. Close-run time is `completed_at-started_at`; GO→run-start also includes the caller and admission handoff and cannot be labeled internal FIFO queue time.
 
 Intervals are clipped to today's window. Task-minutes add parallel waits across tasks. They are not wall-clock minutes, and stages can overlap. Missing endpoints are **U (unobservable)**, never zero. N/A is reserved for organizational parents or a proven inapplicable stage. Right-censored holds are excluded from completed totals.
 
@@ -57,7 +57,7 @@ This table is the union of 15 observed closed tasks and eight further leaves wit
 
 All eight requested stages are represented below. Receipt stages have complete endpoint rows in the next section. The validation table separates an observed run duration from an unavailable READY/GO/PASS pair.
 
-| Task | READY→RM GO | GO→PASS | Gate 10 reruns: lower-bound evidence | CANDIDATE→reviewer LAND | LAND→land_commit receipt | Landed retest wait | Activation hold | Close queue / run |
+| Task | READY→RM GO | GO→PASS | Gate 10 reruns: lower-bound evidence | CANDIDATE→reviewer LAND | LAND→land_commit receipt | Landed retest wait | Activation interval / receipt lag | Close queue / run |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | #24582 Ledger prune fixture | U | U | ≥1 expanded 10-file set: 210 PASS, 743.10 s (M1) | U | U | U | A cycles | queue U; terminal 05:14:37 (M1) |
 | #24642 Gate 10 integration credit | U | U | ≥1 extra 13-file set: 957 PASS,137.90 s after 681 PASS/128.57 s (M2) | U | U | U | A cycles | queue/run U; terminal valid M2 |
@@ -78,72 +78,72 @@ All eight requested stages are represented below. Receipt stages have complete e
 | #24605 Native variable authority | U | U | U; Gate7 ancestor linkage blocks preview (M15) | U | U | U | A cycles | no reviewer launched by that refusal; queue/run U |
 | #24537 Gate 12 stub RED | U | U | ≥1 expanded landed12, then Gate10 refusal: stale types/tsc/integration credit (M16) | U | U | U | A cycles | deterministic refusal88.7 s (M16); queue/run U |
 | #24631 Gate 12 transcript RED | U | U; supplementary339 PASS/80.89 s (M17) | ≥1 fresh8 rerun after differing-tree preview refusal (M17) | U | U | U | A cycles | GO→start1.17; run15.61 invalid (R4) |
-| #24270 Node routes | U | U | ≥1 landed26:396 PASS/5 FAIL,353.30 s; foreign gcode failures (M18) | U | U | U | A cycles | preview recovery; queue/run U |
+| #24270 Node routes | U | U | ≥1 landed26:396 PASS/5 FAIL,353.30 s; foreign gcode failures (M18) | U | U | U | Runtime activation N/A for this class-none source; C receipt lag | preview recovery; queue/run U |
 | #24650 Seat recovery | U | U; landed2168 PASS/1975.73 s M19 | U; fixture failures and rework also present | U | U | U | A cycles; later test-only landing N/A | invalid criterion3; exact queue/run U (M19) |
 | #24558 gcode Git cost | U | U; close135 PASS qualified M21 | ≥1 eight-file set before preview (M21) | U | U | landing receipt says retest not required | A cycles | GO→start0.95; run11.91 invalid (R3) |
 | #24595 Caller machine scope | U | U | U; Gate10 pass in preview M20 | U | U | U | no completed in-window A cycle | Gate12 six missing REDs; no reviewer established (M20) |
 
 ### Receipt-based stage totals and endpoints
 
-A = landing receipt→next activation receipt, only when no intervening landing occurs. L = exact-source independent approval→landing receipt. Both endpoints are shown; dates before today are carry-in and clipped at 05:00 UTC. Approval is a recorded LAND verdict, not necessarily the time of the earlier protocol event. All composite receipt locators use the T UUID above.
+A = restart/cutover landing receipt→next activation receipt; C = the same receipt endpoints for a class-none landing, measuring administrative receipt lag only. Include either only when no intervening landing occurs. Every interval is classified by the matching landing tuple's `activation_class`, bound to its source SHA and start timestamp. Audit result: **12 restart A intervals / 911.25 minutes**, **10 cutover A intervals / 1039.02 minutes**, and **one none C interval / 746.15 minutes**; A totals **22 / 1950.27**, while all 23 receipt intervals sum to **2696.42**. L = exact-source independent approval→landing receipt. Both endpoints are shown; dates before today are carry-in and clipped at 05:00 UTC. Approval is a recorded LAND verdict, not necessarily the time of the earlier protocol event. All composite receipt locators use the T UUID above.
 
-| Stage | Task | Source SHA / activation SHA | Start UTC | End UTC | In-window minutes |
-| --- | --- | --- | --- | --- | --- |
-| A | #24642 Gate 10 integration credit | `560583d732e6087c81877acfb4060b9ada33f88e` / `6f4c051645345506bb69e2cd0b937d4ee5dde431` | 2026-10-18T05:22:43.842995+00:00 | 2026-10-18T05:57:09.795752+00:00 | 34.43 |
-| A | #24647 Daemon recovery | `45219c11e2bdb68b07dec670ce85265dca5234f9` / `93becb485d68a0d5fe2a4add0391ccd4596b8bfa` | 2026-10-18T05:50:27.437218+00:00 | 2026-10-18T05:57:13.520778+00:00 | 6.77 |
-| A | #24647 Daemon recovery | `0f9461044f316bcf35e12eff45f7920f932f8e3c` / `0f9461044f316bcf35e12eff45f7920f932f8e3c` | 2026-10-18T07:39:50.130026+00:00 | 2026-10-18T07:58:57.220240+00:00 | 19.12 |
-| A | #24520 checkout.read contract | `bc770f357217d740320a9013ec5e837bce3cd7a8` / `bc770f357217d740320a9013ec5e837bce3cd7a8` | 2026-10-18T07:09:01.322578+00:00 | 2026-10-18T07:58:59.482381+00:00 | 49.97 |
-| A | #24350 MCP dialer | `709afd53c4e410c34b62ebab5ea8756557c1efbf` / `709afd53c4e410c34b62ebab5ea8756557c1efbf` | 2026-10-18T06:45:35.710570+00:00 | 2026-10-18T07:59:01.162309+00:00 | 73.42 |
-| A | #24369 Node spool drain | `98379a262647a913f48e14f8e1ff67d7de90b644` / `07b7be6c3fefdee0745a033b421ba05631d4e15f` | 2026-10-18T16:10:50.394831+00:00 | 2026-10-18T16:46:00.329344+00:00 | 35.17 |
-| A | #24381 Detection manifest | `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` / `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` | 2026-10-18T05:59:05.012014+00:00 | 2026-10-18T07:59:03.763836+00:00 | 119.98 |
-| A | #24381 Detection manifest | `df07a73783e7caa4797ae7216e87570d4f7bbb33` / `b87113860732f435076985dce0ee1c83e696df5e` | 2026-10-18T08:44:08.135472+00:00 | 2026-10-18T16:46:07.531051+00:00 | 481.99 |
-| A | #24715 Ledger cleanup | `92580f8209619a9b66972af712a9ddde17922be9` / `92580f8209619a9b66972af712a9ddde17922be9` | 2026-10-18T18:42:26.827753+00:00 | 2026-10-18T19:15:42.767040+00:00 | 33.27 |
-| A | #24370 Durable node state | `8717e525ac96694097bcd71a8b247a50410da57a` / `6eabe8b53c1bb49db16743a1810f7024a0295583` | 2026-10-18T19:46:20.324620+00:00 | 2026-10-18T21:06:20.017657+00:00 | 79.99 |
-| A | #24645 Review-gate correction | `afca0817c9627ecab3902ca6b6eda6dcbcd1a4e4` / `8913a6a8eb59cf67581b090b2bb49a7c3eb1bf36` | 2026-10-18T17:59:02.788265+00:00 | 2026-10-18T19:15:38.410448+00:00 | 76.59 |
-| A | #24645 Review-gate correction | `8d78e102b5703f02c71c025a2eb5829ca9228780` / `6bc790a7cbad488911a13aae6d4290e6697e568c` | 2026-10-18T20:22:21.532796+00:00 | 2026-10-18T21:06:16.362354+00:00 | 43.91 |
-| A | #24569 Rust tmux | `5d39f5751aeb75869b42b017dc7cdd7633741a18` / `c24721fe9ddf6f1720e5333f7758c350dfe4903f` | 2026-10-18T20:24:10.124097+00:00 | 2026-10-18T21:06:14.304846+00:00 | 42.07 |
-| A | #24423 Gate 12 tightening | `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` / `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` | 2026-10-18T06:32:05.117429+00:00 | 2026-10-18T07:59:07.601875+00:00 | 87.04 |
-| A | #24423 Gate 12 tightening | `7755e221e771a1ce4e2e865e949703d42498b159` / `2515553f318d43b86989957f13476cdcaef4e869` | 2026-10-18T17:47:29.146872+00:00 | 2026-10-18T19:15:34.808751+00:00 | 88.09 |
-| A | #24605 Native variable authority | `1c64eccc8b33a25f070417557a0dc1e7cccbb566` / `1c64eccc8b33a25f070417557a0dc1e7cccbb566` | 2026-10-18T07:39:30.955048+00:00 | 2026-10-18T07:58:55.109611+00:00 | 19.40 |
-| A | #24605 Native variable authority | `838ea9ab82c650b6cd39cca07e83134b2beb1dc8` / `ae3397e99c7710f49ed40f2523a4ba351ffc0a80` | 2026-10-18T18:51:32.814082+00:00 | 2026-10-18T19:15:44.998277+00:00 | 24.20 |
-| A | #24537 Gate 12 stub RED | `09399cff0c0dcd441b1c09ed2a147cb51b51488f` / `207d2e102dfca1c79fc691279502c95dd1aebcd1` | 2026-10-18T17:29:31.852727+00:00 | 2026-10-18T19:15:31.853556+00:00 | 106.00 |
-| A | #24631 Gate 12 transcript RED | `09d869ea7a456131fee019edfcd33f6069823fbd` / `6ff393368a7483a63c1ee6046ab5eaba7b093f1a` | 2026-10-18T16:35:10.227241+00:00 | 2026-10-18T16:46:13.273982+00:00 | 11.05 |
-| A | #24270 Node routes | `f0a600e55c044e354181b8e699152c157319bfd9` / `f0a600e55c044e354181b8e699152c157319bfd9` | 2026-10-17T15:23:01.526808+00:00 | 2026-10-18T17:26:08.880817+00:00 | 746.15 |
-| A | #24650 Seat recovery | `9ee1ed291e4953372a18a67e5143f277213921e5` / `d60da17bde6727ef49f96b5a86e715678cbf76dc` | 2026-10-18T05:39:20.336097+00:00 | 2026-10-18T05:57:10.732004+00:00 | 17.84 |
-| A | #24650 Seat recovery | `ce2f68ccf1ad01bcfd44090a9855a6c8a537c37e` / `4bf09396887c585f0770e44908602f62b2bba1fa` | 2026-10-18T08:43:23.484291+00:00 | 2026-10-18T16:46:10.993813+00:00 | 482.79 |
-| A | #24558 gcode Git cost | `4f229f6d5626b861af3293c5aa0270201aba6674` / `4f229f6d5626b861af3293c5aa0270201aba6674` | 2026-10-18T20:49:02.435941+00:00 | 2026-10-18T21:06:12.175029+00:00 | 17.16 |
-| L | #24642 Gate 10 integration credit | `560583d732e6087c81877acfb4060b9ada33f88e` | 2026-10-18T05:11:25.873922+00:00 | 2026-10-18T05:22:43.842995+00:00 | 11.30 |
-| L | #24647 Daemon recovery | `45219c11e2bdb68b07dec670ce85265dca5234f9` | 2026-10-18T05:45:35.608447+00:00 | 2026-10-18T05:50:27.437218+00:00 | 4.86 |
-| L | #24647 Daemon recovery | `0a1f9c408e5cfb6554761bc09123601af6298926` | 2026-10-18T06:17:01.775646+00:00 | 2026-10-18T06:17:21.983070+00:00 | 0.34 |
-| L | #24647 Daemon recovery | `0f9461044f316bcf35e12eff45f7920f932f8e3c` | 2026-10-18T07:25:07.758997+00:00 | 2026-10-18T07:39:50.130026+00:00 | 14.71 |
-| L | #24520 checkout.read contract | `bc770f357217d740320a9013ec5e837bce3cd7a8` | 2026-10-18T07:05:23.987225+00:00 | 2026-10-18T07:09:01.322578+00:00 | 3.62 |
-| L | #24350 MCP dialer | `709afd53c4e410c34b62ebab5ea8756557c1efbf` | 2026-10-18T06:42:05.912572+00:00 | 2026-10-18T06:45:35.710570+00:00 | 3.50 |
-| L | #24369 Node spool drain | `98379a262647a913f48e14f8e1ff67d7de90b644` | 2026-10-18T16:06:15.014372+00:00 | 2026-10-18T16:10:50.394831+00:00 | 4.59 |
-| L | #24381 Detection manifest | `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` | 2026-10-18T05:48:36.579772+00:00 | 2026-10-18T05:59:05.012014+00:00 | 10.47 |
-| L | #24381 Detection manifest | `df07a73783e7caa4797ae7216e87570d4f7bbb33` | 2026-10-18T08:37:36.155083+00:00 | 2026-10-18T08:44:08.135472+00:00 | 6.53 |
-| L | #24715 Ledger cleanup | `92580f8209619a9b66972af712a9ddde17922be9` | 2026-10-18T18:37:30.402973+00:00 | 2026-10-18T18:42:26.827753+00:00 | 4.94 |
-| L | #24370 Durable node state | `8717e525ac96694097bcd71a8b247a50410da57a` | 2026-10-18T19:26:35.480132+00:00 | 2026-10-18T19:46:20.324620+00:00 | 19.75 |
-| L | #24645 Review-gate correction | `afca0817c9627ecab3902ca6b6eda6dcbcd1a4e4` | 2026-10-18T17:53:32.249651+00:00 | 2026-10-18T17:59:02.788265+00:00 | 5.51 |
-| L | #24645 Review-gate correction | `8d78e102b5703f02c71c025a2eb5829ca9228780` | 2026-10-18T20:17:48.327094+00:00 | 2026-10-18T20:22:21.532796+00:00 | 4.55 |
-| L | #20438 Temp-root docs | `075ff65f46d0d991b0f3d2fdd098bf8817f275fe` | 2026-10-18T21:38:11.801579+00:00 | 2026-10-18T21:38:50.252002+00:00 | 0.64 |
-| L | #24569 Rust tmux | `5d39f5751aeb75869b42b017dc7cdd7633741a18` | 2026-10-18T20:19:35.581257+00:00 | 2026-10-18T20:24:10.124097+00:00 | 4.58 |
-| L | #24423 Gate 12 tightening | `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` | 2026-10-18T06:31:20.088112+00:00 | 2026-10-18T06:32:05.117429+00:00 | 0.75 |
-| L | #24423 Gate 12 tightening | `7755e221e771a1ce4e2e865e949703d42498b159` | 2026-10-18T17:45:43.268671+00:00 | 2026-10-18T17:47:29.146872+00:00 | 1.76 |
-| L | #24605 Native variable authority | `1c64eccc8b33a25f070417557a0dc1e7cccbb566` | 2026-10-18T07:38:22.246622+00:00 | 2026-10-18T07:39:30.955048+00:00 | 1.15 |
-| L | #24605 Native variable authority | `838ea9ab82c650b6cd39cca07e83134b2beb1dc8` | 2026-10-18T18:48:10.478249+00:00 | 2026-10-18T18:51:32.814082+00:00 | 3.37 |
-| L | #24537 Gate 12 stub RED | `09399cff0c0dcd441b1c09ed2a147cb51b51488f` | 2026-10-18T17:17:34.624684+00:00 | 2026-10-18T17:29:31.852727+00:00 | 11.95 |
-| L | #24631 Gate 12 transcript RED | `09d869ea7a456131fee019edfcd33f6069823fbd` | 2026-10-18T16:32:16.786034+00:00 | 2026-10-18T16:35:10.227241+00:00 | 2.89 |
-| L | #24631 Gate 12 transcript RED | `5810ad3c13142efcc095e2df74fc970cdf288c35` | 2026-10-18T18:06:58.284326+00:00 | 2026-10-18T19:27:42.968841+00:00 | 80.74 |
-| L | #24650 Seat recovery | `9ee1ed291e4953372a18a67e5143f277213921e5` | 2026-10-18T05:37:42.345093+00:00 | 2026-10-18T05:39:20.336097+00:00 | 1.63 |
-| L | #24650 Seat recovery | `ce2f68ccf1ad01bcfd44090a9855a6c8a537c37e` | 2026-10-18T08:39:36.153890+00:00 | 2026-10-18T08:43:23.484291+00:00 | 3.79 |
-| L | #24650 Seat recovery | `7084a4aa4f8eabfe169406f97e9ab3d9ece588ad` | 2026-10-18T16:29:07.772601+00:00 | 2026-10-18T19:27:14.918904+00:00 | 178.12 |
-| L | #24558 gcode Git cost | `4f229f6d5626b861af3293c5aa0270201aba6674` | 2026-10-18T20:41:26.331840+00:00 | 2026-10-18T20:49:02.435941+00:00 | 7.60 |
+| Stage | Task | Source SHA / activation SHA | Start UTC | End UTC | In-window minutes | Landing activation_class |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | #24642 Gate 10 integration credit | `560583d732e6087c81877acfb4060b9ada33f88e` / `6f4c051645345506bb69e2cd0b937d4ee5dde431` | 2026-10-18T05:22:43.842995+00:00 | 2026-10-18T05:57:09.795752+00:00 | 34.43 | restart |
+| A | #24647 Daemon recovery | `45219c11e2bdb68b07dec670ce85265dca5234f9` / `93becb485d68a0d5fe2a4add0391ccd4596b8bfa` | 2026-10-18T05:50:27.437218+00:00 | 2026-10-18T05:57:13.520778+00:00 | 6.77 | restart |
+| A | #24647 Daemon recovery | `0f9461044f316bcf35e12eff45f7920f932f8e3c` / `0f9461044f316bcf35e12eff45f7920f932f8e3c` | 2026-10-18T07:39:50.130026+00:00 | 2026-10-18T07:58:57.220240+00:00 | 19.12 | restart |
+| A | #24520 checkout.read contract | `bc770f357217d740320a9013ec5e837bce3cd7a8` / `bc770f357217d740320a9013ec5e837bce3cd7a8` | 2026-10-18T07:09:01.322578+00:00 | 2026-10-18T07:58:59.482381+00:00 | 49.97 | cutover |
+| A | #24350 MCP dialer | `709afd53c4e410c34b62ebab5ea8756557c1efbf` / `709afd53c4e410c34b62ebab5ea8756557c1efbf` | 2026-10-18T06:45:35.710570+00:00 | 2026-10-18T07:59:01.162309+00:00 | 73.42 | cutover |
+| A | #24369 Node spool drain | `98379a262647a913f48e14f8e1ff67d7de90b644` / `07b7be6c3fefdee0745a033b421ba05631d4e15f` | 2026-10-18T16:10:50.394831+00:00 | 2026-10-18T16:46:00.329344+00:00 | 35.17 | cutover |
+| A | #24381 Detection manifest | `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` / `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` | 2026-10-18T05:59:05.012014+00:00 | 2026-10-18T07:59:03.763836+00:00 | 119.98 | cutover |
+| A | #24381 Detection manifest | `df07a73783e7caa4797ae7216e87570d4f7bbb33` / `b87113860732f435076985dce0ee1c83e696df5e` | 2026-10-18T08:44:08.135472+00:00 | 2026-10-18T16:46:07.531051+00:00 | 481.99 | cutover |
+| A | #24715 Ledger cleanup | `92580f8209619a9b66972af712a9ddde17922be9` / `92580f8209619a9b66972af712a9ddde17922be9` | 2026-10-18T18:42:26.827753+00:00 | 2026-10-18T19:15:42.767040+00:00 | 33.27 | cutover |
+| A | #24370 Durable node state | `8717e525ac96694097bcd71a8b247a50410da57a` / `6eabe8b53c1bb49db16743a1810f7024a0295583` | 2026-10-18T19:46:20.324620+00:00 | 2026-10-18T21:06:20.017657+00:00 | 79.99 | cutover |
+| A | #24645 Review-gate correction | `afca0817c9627ecab3902ca6b6eda6dcbcd1a4e4` / `8913a6a8eb59cf67581b090b2bb49a7c3eb1bf36` | 2026-10-18T17:59:02.788265+00:00 | 2026-10-18T19:15:38.410448+00:00 | 76.59 | restart |
+| A | #24645 Review-gate correction | `8d78e102b5703f02c71c025a2eb5829ca9228780` / `6bc790a7cbad488911a13aae6d4290e6697e568c` | 2026-10-18T20:22:21.532796+00:00 | 2026-10-18T21:06:16.362354+00:00 | 43.91 | restart |
+| A | #24569 Rust tmux | `5d39f5751aeb75869b42b017dc7cdd7633741a18` / `c24721fe9ddf6f1720e5333f7758c350dfe4903f` | 2026-10-18T20:24:10.124097+00:00 | 2026-10-18T21:06:14.304846+00:00 | 42.07 | cutover |
+| A | #24423 Gate 12 tightening | `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` / `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` | 2026-10-18T06:32:05.117429+00:00 | 2026-10-18T07:59:07.601875+00:00 | 87.04 | restart |
+| A | #24423 Gate 12 tightening | `7755e221e771a1ce4e2e865e949703d42498b159` / `2515553f318d43b86989957f13476cdcaef4e869` | 2026-10-18T17:47:29.146872+00:00 | 2026-10-18T19:15:34.808751+00:00 | 88.09 | restart |
+| A | #24605 Native variable authority | `1c64eccc8b33a25f070417557a0dc1e7cccbb566` / `1c64eccc8b33a25f070417557a0dc1e7cccbb566` | 2026-10-18T07:39:30.955048+00:00 | 2026-10-18T07:58:55.109611+00:00 | 19.40 | restart |
+| A | #24605 Native variable authority | `838ea9ab82c650b6cd39cca07e83134b2beb1dc8` / `ae3397e99c7710f49ed40f2523a4ba351ffc0a80` | 2026-10-18T18:51:32.814082+00:00 | 2026-10-18T19:15:44.998277+00:00 | 24.20 | restart |
+| A | #24537 Gate 12 stub RED | `09399cff0c0dcd441b1c09ed2a147cb51b51488f` / `207d2e102dfca1c79fc691279502c95dd1aebcd1` | 2026-10-18T17:29:31.852727+00:00 | 2026-10-18T19:15:31.853556+00:00 | 106.00 | cutover |
+| A | #24631 Gate 12 transcript RED | `09d869ea7a456131fee019edfcd33f6069823fbd` / `6ff393368a7483a63c1ee6046ab5eaba7b093f1a` | 2026-10-18T16:35:10.227241+00:00 | 2026-10-18T16:46:13.273982+00:00 | 11.05 | restart |
+| C | #24270 Node routes | `f0a600e55c044e354181b8e699152c157319bfd9` / `f0a600e55c044e354181b8e699152c157319bfd9` | 2026-10-17T15:23:01.526808+00:00 | 2026-10-18T17:26:08.880817+00:00 | 746.15 | none |
+| A | #24650 Seat recovery | `9ee1ed291e4953372a18a67e5143f277213921e5` / `d60da17bde6727ef49f96b5a86e715678cbf76dc` | 2026-10-18T05:39:20.336097+00:00 | 2026-10-18T05:57:10.732004+00:00 | 17.84 | restart |
+| A | #24650 Seat recovery | `ce2f68ccf1ad01bcfd44090a9855a6c8a537c37e` / `4bf09396887c585f0770e44908602f62b2bba1fa` | 2026-10-18T08:43:23.484291+00:00 | 2026-10-18T16:46:10.993813+00:00 | 482.79 | restart |
+| A | #24558 gcode Git cost | `4f229f6d5626b861af3293c5aa0270201aba6674` / `4f229f6d5626b861af3293c5aa0270201aba6674` | 2026-10-18T20:49:02.435941+00:00 | 2026-10-18T21:06:12.175029+00:00 | 17.16 | cutover |
+| L | #24642 Gate 10 integration credit | `560583d732e6087c81877acfb4060b9ada33f88e` | 2026-10-18T05:11:25.873922+00:00 | 2026-10-18T05:22:43.842995+00:00 | 11.30 | — |
+| L | #24647 Daemon recovery | `45219c11e2bdb68b07dec670ce85265dca5234f9` | 2026-10-18T05:45:35.608447+00:00 | 2026-10-18T05:50:27.437218+00:00 | 4.86 | — |
+| L | #24647 Daemon recovery | `0a1f9c408e5cfb6554761bc09123601af6298926` | 2026-10-18T06:17:01.775646+00:00 | 2026-10-18T06:17:21.983070+00:00 | 0.34 | — |
+| L | #24647 Daemon recovery | `0f9461044f316bcf35e12eff45f7920f932f8e3c` | 2026-10-18T07:25:07.758997+00:00 | 2026-10-18T07:39:50.130026+00:00 | 14.71 | — |
+| L | #24520 checkout.read contract | `bc770f357217d740320a9013ec5e837bce3cd7a8` | 2026-10-18T07:05:23.987225+00:00 | 2026-10-18T07:09:01.322578+00:00 | 3.62 | — |
+| L | #24350 MCP dialer | `709afd53c4e410c34b62ebab5ea8756557c1efbf` | 2026-10-18T06:42:05.912572+00:00 | 2026-10-18T06:45:35.710570+00:00 | 3.50 | — |
+| L | #24369 Node spool drain | `98379a262647a913f48e14f8e1ff67d7de90b644` | 2026-10-18T16:06:15.014372+00:00 | 2026-10-18T16:10:50.394831+00:00 | 4.59 | — |
+| L | #24381 Detection manifest | `073fc1dbb175b502828d8b410d4b0c4a7d58ecf7` | 2026-10-18T05:48:36.579772+00:00 | 2026-10-18T05:59:05.012014+00:00 | 10.47 | — |
+| L | #24381 Detection manifest | `df07a73783e7caa4797ae7216e87570d4f7bbb33` | 2026-10-18T08:37:36.155083+00:00 | 2026-10-18T08:44:08.135472+00:00 | 6.53 | — |
+| L | #24715 Ledger cleanup | `92580f8209619a9b66972af712a9ddde17922be9` | 2026-10-18T18:37:30.402973+00:00 | 2026-10-18T18:42:26.827753+00:00 | 4.94 | — |
+| L | #24370 Durable node state | `8717e525ac96694097bcd71a8b247a50410da57a` | 2026-10-18T19:26:35.480132+00:00 | 2026-10-18T19:46:20.324620+00:00 | 19.75 | — |
+| L | #24645 Review-gate correction | `afca0817c9627ecab3902ca6b6eda6dcbcd1a4e4` | 2026-10-18T17:53:32.249651+00:00 | 2026-10-18T17:59:02.788265+00:00 | 5.51 | — |
+| L | #24645 Review-gate correction | `8d78e102b5703f02c71c025a2eb5829ca9228780` | 2026-10-18T20:17:48.327094+00:00 | 2026-10-18T20:22:21.532796+00:00 | 4.55 | — |
+| L | #20438 Temp-root docs | `075ff65f46d0d991b0f3d2fdd098bf8817f275fe` | 2026-10-18T21:38:11.801579+00:00 | 2026-10-18T21:38:50.252002+00:00 | 0.64 | — |
+| L | #24569 Rust tmux | `5d39f5751aeb75869b42b017dc7cdd7633741a18` | 2026-10-18T20:19:35.581257+00:00 | 2026-10-18T20:24:10.124097+00:00 | 4.58 | — |
+| L | #24423 Gate 12 tightening | `03d8646e0e8a69b4e5cdbdc8f1dc532276a81b99` | 2026-10-18T06:31:20.088112+00:00 | 2026-10-18T06:32:05.117429+00:00 | 0.75 | — |
+| L | #24423 Gate 12 tightening | `7755e221e771a1ce4e2e865e949703d42498b159` | 2026-10-18T17:45:43.268671+00:00 | 2026-10-18T17:47:29.146872+00:00 | 1.76 | — |
+| L | #24605 Native variable authority | `1c64eccc8b33a25f070417557a0dc1e7cccbb566` | 2026-10-18T07:38:22.246622+00:00 | 2026-10-18T07:39:30.955048+00:00 | 1.15 | — |
+| L | #24605 Native variable authority | `838ea9ab82c650b6cd39cca07e83134b2beb1dc8` | 2026-10-18T18:48:10.478249+00:00 | 2026-10-18T18:51:32.814082+00:00 | 3.37 | — |
+| L | #24537 Gate 12 stub RED | `09399cff0c0dcd441b1c09ed2a147cb51b51488f` | 2026-10-18T17:17:34.624684+00:00 | 2026-10-18T17:29:31.852727+00:00 | 11.95 | — |
+| L | #24631 Gate 12 transcript RED | `09d869ea7a456131fee019edfcd33f6069823fbd` | 2026-10-18T16:32:16.786034+00:00 | 2026-10-18T16:35:10.227241+00:00 | 2.89 | — |
+| L | #24631 Gate 12 transcript RED | `5810ad3c13142efcc095e2df74fc970cdf288c35` | 2026-10-18T18:06:58.284326+00:00 | 2026-10-18T19:27:42.968841+00:00 | 80.74 | — |
+| L | #24650 Seat recovery | `9ee1ed291e4953372a18a67e5143f277213921e5` | 2026-10-18T05:37:42.345093+00:00 | 2026-10-18T05:39:20.336097+00:00 | 1.63 | — |
+| L | #24650 Seat recovery | `ce2f68ccf1ad01bcfd44090a9855a6c8a537c37e` | 2026-10-18T08:39:36.153890+00:00 | 2026-10-18T08:43:23.484291+00:00 | 3.79 | — |
+| L | #24650 Seat recovery | `7084a4aa4f8eabfe169406f97e9ab3d9ece588ad` | 2026-10-18T16:29:07.772601+00:00 | 2026-10-18T19:27:14.918904+00:00 | 178.12 | — |
+| L | #24558 gcode Git cost | `4f229f6d5626b861af3293c5aa0270201aba6674` | 2026-10-18T20:41:26.331840+00:00 | 2026-10-18T20:49:02.435941+00:00 | 7.60 | — |
 
 ## Ranked measured durations, and what remains unrankable
 
 | Rank among measured totals | Stage | Total minutes | Coverage / interpretation |
 | --- | --- | --- | --- |
-| 1 | Landing→activation receipt | **2696.42** | 23 completed A cycles; includes carry-in for Node routes; retest and activation are not separated |
+| 1 | Restart/cutover landing→activation receipt | **1950.27** | 22 completed A cycles: 12 restart / 911.25 minutes and 10 cutover / 1039.02 minutes; retest, batching and receipt delay remain inseparable |
 | 2 | Independent approval→landing receipt | **393.65** | 26 completed L cycles; includes long rework/receipt gaps, not just protocol overhead |
 | 3 | Close-review execution | **74.74** | Seven complete R runs only; excludes earlier invalid/timeout runs not fully recovered |
 | — | RM admission queue | **14.20** | Only Q1+Q2, two verified close READY→GO pairs; not comparable to broader totals |
@@ -152,7 +152,9 @@ A = landing receipt→next activation receipt, only when no intervening landing 
 | — | Internal close-review FIFO queue | **U total** | No queued/launching/promoted timestamps exposed by recovered runs |
 | — | Exclusive avoidable time lost | **U** | Requires complete attempt log plus mutually exclusive state intervals and counterfactual policy |
 
-The first two mechanisms dominate the available timestamp totals. This does **not** establish a fleet-wide ordering of wasted time: missing stages can change the order. Do not add the rows into one elapsed-time number. #24270 Node routes contributes 746.15 in-window A minutes; #24650 Seat recovery contributes 482.79; #24381 Detection manifest contributes 481.99 in its second A cycle. Their sum is concurrent task wait, not host downtime.
+The first two mechanisms dominate this activation/approval/run ranking. This does **not** establish a fleet-wide ordering of wasted time: missing stages can change the order. Do not add the rows into one elapsed-time number. The largest A intervals are #24650 Seat recovery's second restart cycle, 482.79 minutes; #24381 Detection manifest's second cutover cycle, 481.99; and its first cutover cycle, 119.98. These concurrent task intervals are not host downtime.
+
+**Separate receipt-lag stage C:** #24270 Node routes contributes **746.15 in-window minutes (12.44 task-hours)**, from a tests-only landing with `activation_class=none` and `retest_required=false`. Its exact landing and later activation endpoints remain in the C row above, using the same composite locators. It is excluded from the activation ranking and cadence recommendation. RM message `91612a8d-cad7-430e-afef-2591934ea234` at 17:14:35.099332 UTC requests an applicable receipt before close; that establishes a receipt prerequisite then, not a restart/cutover hold throughout this interval.
 
 ### Validation cost examples
 
@@ -214,8 +216,8 @@ Capacity policy changed during the day. RM's source summary `c2625ec9-de50-4122-
 
 | Mechanism / priority | Fix and measurable success condition | Classification | Existing work |
 | --- | --- | --- | --- |
-| Activation wait, highest measured total | Publish a bounded activation cadence and cutover budget, with class-specific admission. Keep tests/docs class-none paths off restart holds when independent approval suffices. Measure landing-ready→activation separately from landed test completion. Choose cadence from observed queue and cutover cost. | **Policy** for class handling; **operator decision** for cadence/resource tradeoff | #24605 Native variable authority; #24650 Seat recovery; #24652 SRT monitor restart |
-| Receipt and protocol latency, second measured total | Record exact candidate/SHA LAND event and receipt UUID together; return actionable missing-approval/line-parse errors before waiting for a later close. Bind releases to the candidate fingerprint, invalidate only on relevant change, and show the missing owner action in one card. Measure LAND-event→receipt, not first task-candidate→receipt. | **Code** for attestation/readback; **policy** for one canonical line and exact invalidation | #24605 Native variable authority |
+| Restart/cutover interval, highest activation/approval/run total (1950.27 minutes) | Evaluate a bounded activation cadence and cutover budget using only the 22 restart/cutover A intervals. Measure landing-ready→activation separately from landed test completion and receipt recording before choosing cadence. The class-none C lag supplies no runtime batching evidence. | **Policy** for class handling; **operator decision** for cadence/resource tradeoff | #24605 Native variable authority; #24650 Seat recovery; #24652 SRT monitor restart |
+| Receipt and protocol latency: C 746.15 minutes; L 393.65 minutes | Keep class-none receipt lag separate from runtime activation; surface a missing receipt prerequisite promptly without implying a restart requirement. Record exact candidate/SHA LAND event and receipt UUID together; return actionable missing-approval/line-parse errors before waiting for a later close. Bind releases to the candidate fingerprint, invalidate only on relevant change, and show the missing owner action in one card. Measure LAND-event→receipt, not first task-candidate→receipt. | **Code** for attestation/readback; **policy** for one canonical line and exact invalidation | #24605 Native variable authority |
 | Repeated validation and scope discovery | Freeze the required changed/related target manifest before final validation; expose Gate10 preflight without a close attempt. Reuse by changed/import/conftest/environment fingerprints; record precise invalidation cause. Run only newly uncovered targets when the unchanged set remains valid; never reuse across changed inputs by assertion alone. | **Code** | #24538 Bounded runs and Gate 10 reuse; #24642 Gate 10 integration credit |
 | RED attribution / acceptance mismatch | Surface attributable RED evidence gaps before landing and distinguish same-path archive coverage from new-main-transcript discovery. Emit which node/criterion lacks proof, not just a broad requirement to rerun. | **Code**; **policy** for precise acceptance summaries | #24631 Gate 12 transcript RED; #24423 Gate 12 tightening; #24537 Gate 12 stub RED |
 | Recovery loop after deterministic refusal | Preserve claim, evidence window, candidate and allowed repair commands through supported submit→implement recovery. A close refusal should return a supported route in the same response; no coordinator-only multi-message bounce for a scoped test repair. Measure refusal→executable recovery. | **Code** | #24605 Native variable authority; #24650 Seat recovery |
@@ -257,7 +259,7 @@ Additional validation endpoints: #24647 Daemon recovery fresh 18-file / 811-pass
 1. **Full attempt census is not provable.** Tasks/tasks-ops discovery exposed no read tool for task events or close-review rows. No direct DB fallback is permitted. A task's current status/updated_at is not a history of unsuccessful previews. #24595 Caller machine scope has a documented 16:56 UTC preview today while its returned updated_at is 02:59 UTC, outside today's inventory filter. The 23-task union is therefore a lower bound, not a completeness proof.
 2. **Requested intervals without endpoints remain U.** First candidate stamps span rework, receipt tuples omit UUIDs, agent results omit queue entry/promotion, and sampled RM occupancy cannot yield exact resource-time totals. No absence was converted to zero.
 3. **Excluded owner data remains excluded.** #24622 Native WS has no established close attempt in the permitted evidence at cutoff; source validation and reviewer assignment are not themselves close attempts. Coordinator/RM evidence alone governs inclusion.
-4. **Activation receipt lag is not pure cutover delay.** Tests, linkage repair, version collision and batching may lie in the same interval. A state-event export is needed for exclusive attribution.
+4. **Landing class governs interpretation.** The 22 restart/cutover A intervals total 1950.27 task-minutes and remain proxies containing tests, linkage repair, version collision, batching and receipt delay. The one class-none C interval totals 746.15 task-minutes and establishes receipt lag only. A state-event export is needed for exclusive attribution; later receipt recording cannot establish a runtime hold.
 5. **Approved delivery scope.** ORCH's 17:29 CDT ruling authorizes this artifact and a CANDIDATE with the missing read surface stated as a finding. It does not turn the 23-task lower bound into a complete census or remove the unobservable intervals. A future attempt export should be reconciled against this cohort before a full-day completeness claim.
 
 _Last verified: 2026-10-18_
