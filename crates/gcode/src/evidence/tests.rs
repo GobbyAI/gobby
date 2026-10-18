@@ -2287,7 +2287,7 @@ fn evidence_git_calls_do_not_grow_with_cited_paths() -> anyhow::Result<()> {
         Ok(EvidenceLibrary::new(root, binding.clone(), facts)?)
     };
     let clean_tree = || -> anyhow::Result<EvidenceLibrary> { Ok(bound()?.with_working_tree()) };
-    let explicit = cited_path_git_calls(&binding, &bound)?;
+    let explicit = cited_path_git_calls(&binding, bound)?;
     let clean = cited_path_git_calls(&binding, clean_tree)?;
 
     // Rewrite two cited files in the working tree and index the rewritten bytes.
