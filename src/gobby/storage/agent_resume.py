@@ -20,6 +20,9 @@ from gobby.storage.daemon_resume_keys import (
     FINALIZED_AT_KEY as _FINALIZED_AT_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
+    PRE_BIND_SESSION_STATUS_KEY as _PRE_BIND_SESSION_STATUS_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
     RESUME_PHASE_KEY as _RESUME_PHASE_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
@@ -338,12 +341,18 @@ def rollback_prepared_daemon_resume(
             """
             UPDATE sessions
             SET agent_run_id = %s,
+                status = COALESCE(%s, status),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
               AND agent_run_id = %s
               AND status NOT IN ('expired', 'deleted')
             """,
-            (original_run_id, child_session_id, successor_run_id),
+            (
+                original_run_id,
+                metadata.get(_PRE_BIND_SESSION_STATUS_KEY),
+                child_session_id,
+                successor_run_id,
+            ),
         )
         if not restored.rowcount:
             return False

@@ -210,6 +210,39 @@ async def test_terminal_cleanup_reap_failure_warns_once_and_preserves_result(
 
 
 @pytest.mark.asyncio
+async def test_failed_expiry_marker_clear_keeps_session_expired_and_reports_separately() -> None:
+    session_manager = MagicMock()
+    result: dict[str, Any] = {"success": True}
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
+            return_value=AgentRuntimeCleanupResult(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents_termination.clear_contested_terminal_expiry",
+            side_effect=RuntimeError("marker clear failed"),
+        ),
+    ):
+        await _cleanup_terminal_artifacts(
+            run_id=None,
+            db=MagicMock(),
+            terminal_id=None,
+            agent_session_id="22222222-2222-4222-8222-222222222222",
+            debug=False,
+            session_manager=session_manager,
+            result=result,
+            terminal_transition_owned=False,
+        )
+
+    session_manager.update_status.assert_called_once_with(
+        "22222222-2222-4222-8222-222222222222", "expired"
+    )
+    assert result["session_expired"] is True
+    assert result["contested_expiry_clear_error"] == "marker clear failed"
+    assert "session_expire_error" not in result
+
+
+@pytest.mark.asyncio
 async def test_cooperative_completion_persists_final_closed_task_details(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
