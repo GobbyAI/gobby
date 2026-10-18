@@ -458,20 +458,9 @@ asyncio.run(main())
     assert "during restart" in result.stderr
 
 
-def test_restart_reap_keeps_a_broker_started_by_a_worker_process(
-    monitor_harness: MonitorHarness,
-) -> None:
-    harness = monitor_harness
-    program = r"""
-import asyncio, json, os, signal, subprocess, sys, tempfile
-from pathlib import Path
-import psutil
-from gobby.agents import srt_monitor
-from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
-root, node, runner = map(Path, sys.argv[1:])
-temporary = tempfile.TemporaryDirectory(prefix='sw-', dir=root.parent)
-directory = Path(temporary.name)
-worker_program = r'''
+# Starts a broker from a child process, as a long-lived worker would, so the reaping
+# process never registers it in its own _children.
+_BROKER_WORKER = r"""
 import hashlib, json, os, sys
 from dataclasses import replace
 from pathlib import Path
@@ -483,7 +472,27 @@ srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib
 path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ, run_key='prod-run')
 print(json.dumps({'path': path, 'pid': srt_monitor._children[-1].pid}), flush=True)
 sys.stdin.read()
-'''
+"""
+
+
+def test_restart_reap_keeps_a_broker_started_by_a_worker_process(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    program = r"""
+import asyncio, hashlib, json, os, signal, stat, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+import psutil
+from gobby.agents import srt_monitor
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+root, node, runner = map(Path, sys.argv[1:4])
+worker_program = sys.argv[4]
+temporary = tempfile.TemporaryDirectory(prefix='sw-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 
 
 async def main() -> None:
@@ -496,9 +505,18 @@ async def main() -> None:
     started = None
     try:
         started = json.loads(await asyncio.to_thread(worker.stdout.readline))
-        # The broker is a grandchild of this runner but was registered in the worker.
+        # The daemon reaches the live broker through ensure_srt_monitor, which adopts it.
+        await asyncio.to_thread(
+            srt_monitor.ensure_srt_monitor,
+            node=node,
+            runner=runner,
+            env=os.environ,
+            run_key='prod-run',
+        )
         identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
         assert started['pid'] in identities, identities
+        record = Path(started['path'] + '.owner.json')
+        assert stat.S_IMODE(record.stat().st_mode) == 0o600
         await _reap_remaining_child_processes(
             preserve_agents=True,
             preserved_agent_pids=set(),
@@ -525,7 +543,15 @@ async def main() -> None:
 asyncio.run(main())
 """
     result = subprocess.run(
-        [sys.executable, "-c", program, str(harness.root), str(harness.node), str(harness.runner)],
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(harness.root),
+            str(harness.node),
+            str(harness.runner),
+            _BROKER_WORKER,
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -533,6 +559,100 @@ asyncio.run(main())
     )
     assert result.returncode == 0, result.stderr
     assert "restart reap kept the worker-started broker" in result.stdout
+
+
+@pytest.mark.parametrize("drift", ["exe", "argv", "started", "listener", "symlink"])
+def test_adopted_broker_refuses_each_drifted_pin(
+    monitor_harness: MonitorHarness,
+    drift: str,
+) -> None:
+    harness = monitor_harness
+    program = r"""
+import asyncio, hashlib, json, os, signal, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+from gobby.agents import srt_monitor
+root, node, runner = map(Path, sys.argv[1:4])
+worker_program, drift = sys.argv[4], sys.argv[5]
+temporary = tempfile.TemporaryDirectory(prefix='sd-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+
+
+def ensure() -> str:
+    return srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ, run_key='prod-run')
+
+
+async def main() -> None:
+    worker = subprocess.Popen(
+        [sys.executable, '-c', worker_program, str(root), str(node), str(runner), str(directory)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
+    started = None
+    try:
+        started = json.loads(await asyncio.to_thread(worker.stdout.readline))
+        record = Path(started['path'] + '.owner.json')
+        await asyncio.to_thread(ensure)
+        identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
+        assert started['pid'] in identities, identities
+        if drift == 'symlink':
+            copy = record.with_name(record.name + '.copy')
+            copy.write_bytes(record.read_bytes())
+            record.unlink()
+            record.symlink_to(copy)
+        else:
+            data = json.loads(record.read_text())
+            if drift == 'exe':
+                data['node'] = '/bin/sh'
+            elif drift == 'argv':
+                data['argv'][-1] = str(directory / 'elsewhere')
+            elif drift == 'started':
+                data['started'] = float(data['started']) + 1.0
+            elif drift == 'listener':
+                data['pid'] = noise.pid
+            record.write_text(json.dumps(data))
+        await asyncio.to_thread(ensure)
+        identities = await asyncio.to_thread(srt_monitor.live_monitor_identities)
+        assert started['pid'] not in identities, identities
+        print('drifted pin refused: ' + drift)
+    finally:
+        worker.stdin.close()
+        worker.wait(timeout=10)
+        if started is not None:
+            try:
+                os.kill(started['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        noise.kill()
+        noise.wait(timeout=5)
+        temporary.cleanup()
+
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(harness.root),
+            str(harness.node),
+            str(harness.runner),
+            _BROKER_WORKER,
+            drift,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"drifted pin refused: {drift}" in result.stdout
 
 
 def test_registration_survives_slow_identity_work(monitor_harness: MonitorHarness) -> None:
