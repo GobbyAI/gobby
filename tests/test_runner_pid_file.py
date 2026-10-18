@@ -47,7 +47,6 @@ from gobby.runner_pid_file import (
     service_nonce_path,
 )
 from gobby.runner_pid_record import decode_record, encode_record, next_generation
-from gobby.storage.schema_contract import apply_schema
 from gobby.utils import spawn
 from tests.runner_helpers import create_base_patches
 
@@ -62,15 +61,13 @@ def _isolate_daemon_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def contention_bootstrap(tmp_path: Path, postgres_database_url: str) -> Path:
-    # run_gobby verifies the schema before the lock check, so the isolated
-    # database must carry the embedded schema for contention to be reached.
-    apply_schema(postgres_database_url)
+def contention_bootstrap(tmp_path: Path) -> Path:
     bootstrap_path = tmp_path / "bootstrap.yaml"
     files_home = tmp_path / "files"
     files_home.mkdir()
     bootstrap_path.write_text(
-        f"database_url: {postgres_database_url}\nfiles_home: {files_home}\n",
+        "database_url: postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test\n"
+        f"files_home: {files_home}\n",
         encoding="utf-8",
     )
     bootstrap_path.chmod(0o600)
