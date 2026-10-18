@@ -530,15 +530,58 @@ pub enum RemoveOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "MergeResultFields")]
 pub struct MergeResult {
     pub outcome: MergeOutcome,
-    #[serde(deserialize_with = "Option::deserialize")]
     pub merge_sha: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
     pub target_head_sha: Option<String>,
     pub conflicted_files: Vec<String>,
     pub dirty_paths: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MergeResultFields {
+    outcome: MergeOutcome,
+    #[serde(deserialize_with = "Option::deserialize")]
+    merge_sha: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    target_head_sha: Option<String>,
+    conflicted_files: Vec<String>,
+    dirty_paths: Vec<String>,
+}
+
+impl TryFrom<MergeResultFields> for MergeResult {
+    type Error = &'static str;
+
+    fn try_from(fields: MergeResultFields) -> Result<Self, Self::Error> {
+        let heads = matches!(fields.outcome, MergeOutcome::Merged | MergeOutcome::AlreadyMerged);
+        if fields.outcome == MergeOutcome::Merged && fields.merge_sha.is_none() {
+            return Err("merge_sha is required with outcome merged");
+        }
+        if fields.outcome != MergeOutcome::Merged && fields.merge_sha.is_some() {
+            return Err("merge_sha is set only with outcome merged");
+        }
+        if heads && fields.target_head_sha.is_none() {
+            return Err("target_head_sha is required with outcome merged or already_merged");
+        }
+        if !heads && fields.target_head_sha.is_some() {
+            return Err("target_head_sha is set only with outcome merged or already_merged");
+        }
+        if !fields.conflicted_files.is_empty() && fields.outcome != MergeOutcome::Conflict {
+            return Err("conflicted_files is set only with outcome conflict");
+        }
+        if !fields.dirty_paths.is_empty() && fields.outcome != MergeOutcome::TargetDirty {
+            return Err("dirty_paths is set only with outcome target_dirty");
+        }
+        Ok(Self {
+            outcome: fields.outcome,
+            merge_sha: fields.merge_sha,
+            target_head_sha: fields.target_head_sha,
+            conflicted_files: fields.conflicted_files,
+            dirty_paths: fields.dirty_paths,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -890,6 +933,7 @@ enum WireMessage {
     Reply(ReplyFrame),
     Checkout(CheckoutBody),
     CheckoutResult(CheckoutResult),
+    MergeResult(MergeResult),
     Report(ReportBody),
     Stale(StaleReport),
     PromptDeliveryFailure(PromptDeliveryFailureBody),
@@ -907,6 +951,7 @@ fn decode(kind: &str, raw: &str) -> Result<WireMessage, serde_json::Error> {
         "reply" => WireMessage::Reply(serde_json::from_str(raw)?),
         "checkout" => WireMessage::Checkout(serde_json::from_str(raw)?),
         "checkout_result" => WireMessage::CheckoutResult(serde_json::from_str(raw)?),
+        "merge_result" => WireMessage::MergeResult(serde_json::from_str(raw)?),
         "report" => WireMessage::Report(serde_json::from_str(raw)?),
         "stale_report" => WireMessage::Stale(serde_json::from_str(raw)?),
         "prompt_delivery_failure" => WireMessage::PromptDeliveryFailure(serde_json::from_str(raw)?),
