@@ -287,6 +287,27 @@ impl Ledger {
         .await
     }
 
+    /// A hub receipt acknowledgment proves delivery even if a processing lease remains.
+    pub async fn mark_acknowledged(&self, id: &str) -> io::Result<()> {
+        if id.is_empty() {
+            return Ok(());
+        }
+        let id = id.to_owned();
+        self.run(move |directory| {
+            let path = marker_path(&directory, &id);
+            let _lock = marker_lock(&path)?;
+            let existing = read_marker(&path, &id)?;
+            if existing.as_ref().is_some_and(terminal_status) {
+                return Ok(());
+            }
+            replace(
+                &path,
+                &encode(&processed_record(&id, None, None, existing.as_ref())?)?,
+            )
+        })
+        .await
+    }
+
     pub async fn mark_processed(
         &self,
         id: &str,
