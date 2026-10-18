@@ -45,12 +45,13 @@ the hub: search, grep, symbol and graph navigation, `gcode graph` and evidence. 
 P4 a node's query embedding goes through `/api/embeddings`, which the node front
 door relays to the hub.
 
-This revision carries P1 and P2. Under Orchestrator #15977's 2026-10-17 16:47 ruling,
+This revision carries P1 to P3. Under Orchestrator #15977's 2026-10-17 16:47 ruling,
 Plan Adversary 16993 reviews each phase while the writer drafts the remaining phases
 in this file, in the order #15977 accepted on 2026-10-17 (D14):
 
 - P2: node read parity for the remaining database-backed commands (D7);
-- P3: content-hash-keyed graph and vector projections (D6, D11);
+- P3: projection sync for a given machine, over the content-hash keys already in
+  place (D6, D11);
 - P4: node-local embedding (D12, D13);
 - P5 to P7: the `/api/code-index` family seam, graph read routes and mutation routes;
 - P8: heartbeat work (sync worker, trigger, maintenance, summarizer) (D10);
@@ -65,7 +66,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
 - **Stage gate.** #21586 has no #21568 gate. P1's chain to #24380 is: #24446
   (gobby-runtime crate), then #24447 (Grant signing and presentation in gcore), then
   1.9. #24448 (Secret-store port) and #24449 (Native interactive handshake) are not on
-  it. Only 1.10 waits on #24449, and it sits after 2.8 so no P2 leaf waits on it.
+  it. Only 1.10 waits on #24449. It sits after the last bumping leaf, now 3.1, so no
+  P2 or P3 leaf waits on it.
 - **No backward compatibility.** 0.5.0 has not shipped.
 - **No Python counterpart for the node routes.** Python has no
   `/api/code-index/node/*`. The `code_index_node` family defaults to `native`.
@@ -74,9 +76,9 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
   - `compare` does the same. For a POST, the front door's existing compare path
     serves the proxied response (`crates/gdaemon/src/front_door/routes.rs::compare`).
   - No leaf adds code for either setting.
-- **Concurrent editors.** These open leaves of other plans edit P1 files without
-  changing a seam P1 builds on. P1 takes no dependency edge on them. Each executor
-  re-resolves its Targets against the tree it starts from.
+- **Concurrent editors.** These open leaves of other plans edit P1 or P3 files
+  without changing a seam either phase builds on. Neither phase takes a dependency
+  edge on them. Each executor re-resolves its Targets against the tree it starts from.
   - workspace-index-pin:
     - #23833 (Scoped PostgreSQL and BM25 reads): `commands/search.rs`, `db/queries.rs`, `visibility.rs`;
     - #23834 (Vector and graph pin scope): `commands/graph/lifecycle.rs`, `commands/vector.rs`, `db/queries.rs`;
@@ -84,7 +86,8 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
     - #23836 (Candidate-only reconciliation): `index/indexer/overlay.rs`, `freshness.rs`, `local_imports.rs`.
   - code-index-vector-reconciliation:
     - #23579 and #23580 (`gcode vector reconcile`): `contract.rs`, `dispatch.rs`, `commands/vector.rs`, both contract JSON copies;
-    - #23582 (Current-config eligibility): `index/indexer/pipeline.rs`, `index/indexer/overlay.rs`.
+    - #23582 (Current-config eligibility): `index/indexer/pipeline.rs`, `index/indexer/overlay.rs`;
+    - #23578 (Graph CLI honors the completion compare-and-set): `commands/graph/lifecycle.rs`.
   - gdaemon-key-cutover 1.2 and 1.3, and gdaemon-node-channel 1.6:
     `src/gobby/runtime_grants/handshake.py`.
 
@@ -117,7 +120,7 @@ graph pin scope), then P4. Josh approves the complete plan before expansion.
     `gcode` pin, so the gcode maintenance floor follows each bump with no edit.
   - Every bumping leaf edits `Cargo.lock` and `version_pins.py`, so the bumping
     leaves form one dependency chain (docs/contracts/plan-coverage.md, shared-target
-    ordering). 1.10 sits after the last bumping leaf drafted so far, 2.8, because it
+    ordering). 1.10 sits after the last bumping leaf drafted so far, 3.1, because it
     alone waits on #24449.
 - **Running daemon.** A crate change goes live only after `uv run gobby cutover`,
   which gets a `global` announcement and a quiet window first. A node runs the new
@@ -927,7 +930,7 @@ Consumers unchanged:
 
 Targets:
 - `crates/gcode/src/dispatch.rs::run`
-- `crates/gcode/src/daemon.rs::*` — scope-reason: `DaemonRequestKind` gains `NodeCodeIndex`, and it and the transport helpers `join_daemon_url`, `read_json` and `classify_transport` become `pub(crate)`
+- `crates/gcode/src/daemon.rs::*` — scope-reason: `DaemonRequestKind` gains `NodeCodeIndex`, and it and the transport helpers `join_daemon_url` and `classify_transport` become `pub(crate)`
 - `crates/gcode/src/commands/scope.rs::resolve_path_input`
 - `crates/gcode/src/commands/scope.rs::scope_roots`
 - `crates/gcode/src/commands/scope.rs::path_exists_in_current_project`
@@ -947,9 +950,13 @@ Release ownership (Constraints): bumps `gcode` by 0.0.1.
 - `node::client` posts JSON with `ureq` (already a gcode dependency), the
   `X-Gobby-Runtime-Grant` header (`gobby_core::grant::GRANT_HEADER`, encoded as
   `crates/gcode/src/graph/code_graph/lifecycle.rs` does) and the command's timeout.
-  It uses `daemon.rs`'s `join_daemon_url`, `read_json` and `classify_transport`.
-  It does not use `status_error`, which sends every 401 and 403 through gcore's
-  grant mapping.
+  It uses `daemon.rs`'s `join_daemon_url` and `classify_transport`.
+  - It decodes a 2xx body with `ureq::Response::into_json`, which reads through
+    `into_reader` with no size cap, and reads a non-2xx body with `into_string`.
+  - It does not use `read_json`, whose `into_string` refuses a body over 10 MiB. A
+    node grep or evidence reply can exceed that.
+  - It does not use `status_error`, which sends every 401 and 403 through gcore's
+    grant mapping.
 - The client classifies a non-2xx response by the JSON body's `code` first, because
   `GrantError::from_presentation_http` (`crates/gcore/src/grant/mod.rs`) maps any 409
   to `stale_epoch`:
@@ -993,6 +1000,11 @@ Research context:
 - `daemon.rs` already wraps `ureq` with typed transport and status errors
   (`classify_transport`, `status_error`, `join_daemon_url`, `read_json`). The enum and
   the helpers are private today (`daemon.rs:18`, `:207`, `:217`, `:239`, `:267`).
+- `read_json` (`daemon.rs:217`) reads the body with `into_string`. ureq 2.12.1 caps
+  that at `INTO_STRING_LIMIT`, 10 MiB (`src/response.rs:33` and `:456`). `into_json`
+  (`:532`) deserializes from `into_reader` with no cap, and gcode's `ureq` enables the
+  `json` feature (`crates/gcode/Cargo.toml`). On the request side, 1.9's
+  `DefaultBodyLimit::max(16 * 1024 * 1024)` admits the 8 MiB apply batches.
 - `status_error` (`daemon.rs:239`) sends every 401 and 403 through
   `from_presentation_http`, which maps any 409 to `stale_epoch` and 403
   `claims_mismatch` to `Unauthorized`. Node routes return 409 for `index_busy` and
@@ -1159,7 +1171,7 @@ Consumers unchanged:
 - 1.9.6 - With `FAMILIES` plus the leaked `CodeIndexNodeFamily` composed as `serve::run` composes them, and `code_index_node` absent from `front_door.routes`, a node route request with no grant header gets the native 401 body; with `proxy` it reaches the backend stub. test: `crates/gdaemon/tests/front_door.rs::code_index_node_defaults_to_native_and_honors_proxy`.
 - 1.9.7 - `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 2.8, #24449)
+### 1.10 Native handshake issues the remote grant shape [category: code] (depends: 1.6, 3.1, #24449)
 `kind: deliverable`
 
 Targets:
@@ -1521,6 +1533,13 @@ same behavior: it reads its tree on the node and writes the index through P1's r
   `IndexLockPolicy::brief_freshness_try()`, the policy local freshness uses, instead of
   1.4's 60-second wait. A busy lock still returns `index_busy`. The hub takes the
   project lock for a files-scope apply too.
+  - Local files-scope freshness locks only the files (`lock_project_files`). The hub
+    cannot, because its one apply path re-derives adoption and keeps the
+    `project_checkouts` fence under the project lock (D2).
+  - Accepted difference: while a long project index holds the lock, node `outline`,
+    `symbol-at` and `symbol` freshness report `SkippedBusy` where a local run might
+    refresh. The read then serves the existing index, as a busy local project
+    freshness does.
 - `node::client::freshness` mirrors `freshness::ensure_fresh` for a `NodeAccess`:
   - With `GCODE_FRESHNESS_INFLIGHT` set (`freshness::INFLIGHT_ENV`, made `pub(crate)`),
     it returns `Checked`.
@@ -1833,7 +1852,10 @@ Research context:
   happens only on an index that freshness did not refresh (`--allow-stale` or a busy
   lock), and the response reports `truncated`.
 - Rejected alternative: returning the chunks for the node to scan, which would send
-  up to 100,000 chunk bodies per request, past the 16 MiB route limit.
+  up to 100,000 chunk bodies in each response where the hub's scan sends only the
+  matches.
+- A broad pattern can still return a `GrepCandidates` body over 10 MiB. 1.8's client
+  decodes 2xx bodies with `into_json`, which has no size cap.
 - Planned checks:
   - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(grep)'`;
   - `cargo nextest run -p gobby-codeindex`.
@@ -1853,7 +1875,8 @@ Consumers unchanged:
 - 2.4.1 - Local `grep` output (matches, `-l`, context lines and JSON counts) is byte-identical before and after the split, including a match in a file deleted on disk after indexing. test: `crates/gcode/src/node/grep_tests.rs::grep_split_matches_the_cli_output`.
 - 2.4.2 - Under the remote golden grant, `gcode grep` prints the page of the returned matches whose files exist on the node, with `scanned_chunks` and `matched_lines` excluding files missing there. test: `crates/gcode/src/node/grep_tests.rs::node_grep_pages_and_corrects_counts`.
 - 2.4.3 - The grep route serves the principal's machine. test: `crates/gcodeindex/tests/node_grep.rs::grep_route_serves_the_principal_machine`.
-- 2.4.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 2.4.4 - Under the remote golden grant, a node `gcode grep` whose `GrepCandidates` reply exceeds 10 MiB prints the page that local paging of the same candidates prints. test: `crates/gcode/src/node/grep_tests.rs::node_grep_reads_a_reply_over_ten_mib`.
+- 2.4.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 2.5 Node symbol navigation and symbol-at [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -2098,8 +2121,13 @@ Research context:
 - `view::run` (`commands/graph/view/mod.rs:411`) routes to the five sub-runs, and every
   one builds a `ViewPayload` with `build_view_payload` and prints it with
   `print_view` (`render.rs:307`).
-- None of these reads a file on disk. 2.1 made their visibility reads take the
-  machine from the context.
+- None of these reads a file on disk.
+- `view`'s sub-runs and `report`'s community read take the machine from the context
+  after 2.1. `overview`, `file`, `neighbors` and `blast-radius` read Falkor through
+  `graph/code_graph/read/graph_payloads.rs`, and `report`'s snapshot loaders
+  (`graph/report/loading.rs`) do too. Neither filters rows by version, so both admit
+  every version Falkor retains (P3's framing has the evidence). A node prints what a
+  local run against the same index prints, including those rows.
 - Planned checks:
   - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(node) | test(graph)'`;
   - `cargo nextest run -p gobby-codeindex`.
@@ -2192,8 +2220,10 @@ that forward to one route.
     relayed to the hub.
 - `CodewikiFacts` gains `for_hub(ctx)`, whose `grep_with` calls 2.4's
   `grep_repo_with` with the accept-all predicate. `from_context` keeps the disk check.
-  The hub builds its facts with `for_hub`. The node ran project freshness first, which
-  removes deleted files from the index the node's machine sees.
+  The hub builds its facts with `for_hub`. Project freshness on the node removes
+  deleted files from the index, but it skips on a busy lock (2.2's `SkippedBusy`).
+  `NodeEvidenceFacts::grep` therefore drops each hit whose file
+  `path_exists_in_current_project` rejects over `NodeAccess`, as 2.4's node half does.
 - `FactPage` and the codewiki fact types in Targets gain `Serialize, Deserialize`.
   `SearchSelector` and `HybridIdentity` already derive both.
 
@@ -2234,7 +2264,8 @@ Consumers unchanged:
 - 2.8.2 - Under the remote golden grant, `gcode evidence` answers each request through `/evidence/facts` with the node's git binding and working tree, and prints what a local run against the same index prints. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_forwards_facts_to_the_hub`.
 - 2.8.3 - A node hybrid search whose query embedding's model or dimension differs from the hub's identity fails with the local identity-mismatch error, and a `Failed` reply surfaces as the local fact error. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_keeps_local_errors`.
 - 2.8.4 - Every `FactsCall` case round-trips through serde_json, and the route serves the principal's machine. test: `crates/gcodeindex/tests/node_evidence.rs::evidence_route_serves_every_facts_call`.
-- 2.8.5 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 2.8.5 - Under the remote golden grant, an evidence grep omits a hit whose file is missing on the node, as a local run does. test: `crates/gcode/src/node/evidence_tests.rs::node_evidence_grep_drops_files_missing_on_the_node`.
+- 2.8.6 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 2.9 E2E: node read commands through the hub routes [category: test] (depends: 2.8, 1.11)
 `kind: deliverable`
@@ -2256,14 +2287,159 @@ Research context:
 
 - 2.9.1 - On an enrolled node, `search`, `search-symbol`, `search-text`, `grep`, `outline`, `symbol`, `symbols`, `kinds`, `tree`, `repo-outline`, `symbol-at`, `callers`, `graph report` and `evidence` exit 0 with results, and a file edited on the node shows up in `search-text` without a manual `index`. test: `tests/e2e/test_hub_node_pair.py::test_node_read_commands_through_hub`.
 
+## P3: Projection sync per machine
+`kind: framing`
+
+D6 and D11 key graph and vector projections by content hash. The keys already
+include it, so P3 adds no key migration:
+
+- A Qdrant point's id is its symbol's id,
+  `uuid5(project:path:file_content_hash:name:kind:byte_start)`
+  (`crates/gcode/src/models.rs:169`). `vector/code_symbols/lifecycle.rs::sync_file_symbols`
+  only upserts.
+- Falkor `CodeSymbol` nodes carry `file_content_hash`, and every `DEFINES`, `IMPORTS`,
+  `CALLS` and inheritance edge carries `content_hash`.
+  `graph/code_graph/write/deletion.rs::delete_stale_file_graph_queries` deletes only
+  rows of the synced hash that carry an older sync token.
+- The sync flags are per version, on `code_indexed_files (project, path, content_hash)`.
+  `code_indexed_file_states` is each machine's selector.
+
+D11's deletion rule already holds, so P3 changes no deletion:
+
+- Orphan cleanup keeps every path any machine has indexed.
+  `commands/graph/lifecycle.rs::cleanup_deleted_project_graph` and
+  `commands/vector.rs::cleanup_orphans` read `db::list_all_machine_indexed_file_paths`.
+- Content GC (`status/content_gc.rs::discover_content_gc`) skips every version that
+  any machine's selector names. It reads the local machine only to find the hub
+  checkout's root for its git-history check.
+- The `CodeFile` node is one per path, and its `symbol_count` is the last writer's.
+  Nothing reads that property: `project_overview_files_query` counts `DEFINES` edges.
+
+What remains is selection. `read_graph_file_facts`, the projection `mark_*` writers
+and `fetch_symbols_where` read the process machine. P4's node vector sync and P8's
+sync worker project for other machines, so 3.1 moves that read to the caller.
+
+Read-side admission is #23834's under D11. Its acceptance B4.1 admits only versions
+named by pins or owned selectors. Its Targets omit two read paths, and its research
+says projections "hold only a source project's current per-path version":
+
+- Falkor keeps every version until content GC retires it, and two read paths filter
+  no rows by version: `graph/code_graph/read/graph_payloads.rs` (`gcode graph
+  overview`, `file`, `neighbors` and `blast-radius`) and `graph/report/loading.rs`
+  (`gcode graph report`).
+- On the hub on 2026-10-17,
+  `gcode graph file --file crates/gcode/src/daemon.rs --format json` returned 142
+  nodes, and 37 symbol names appeared more than once.
+
+The writer reported the gap to #15977 on 2026-10-17. P3 does not depend on its
+resolution.
+
+### 3.1 Machine-explicit projection selection [category: refactor] (depends: 2.8, #23834)
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/db/queries.rs::read_graph_file_facts`
+- `crates/gcode/src/db/queries.rs::mark_graph_sync_attempted`
+- `crates/gcode/src/db/queries.rs::mark_graph_synced`
+- `crates/gcode/src/db/queries.rs::mark_vector_sync_attempted`
+- `crates/gcode/src/db/queries.rs::mark_vectors_synced`
+- `crates/gcode/src/db/queries.rs::mark_project_vector_sync_attempted`
+- `crates/gcode/src/db/queries.rs::mark_project_vectors_synced`
+- `crates/gcode/src/vector/code_symbols/repository.rs::fetch_symbols_for_file`
+- `crates/gcode/src/vector/code_symbols/repository.rs::fetch_symbols_for_project`
+- `crates/gcode/src/vector/code_symbols/repository.rs::fetch_symbols_where`
+- `crates/gcode/src/projection/sync.rs::sync_graph_file`
+- `crates/gcode/src/projection/sync.rs::sync_file`
+- `crates/gcode/src/commands/graph/lifecycle.rs::sync_file_graph`
+- `crates/gcode/src/commands/graph/lifecycle.rs::rebuild_project_graph`
+- `crates/gcode/src/commands/vector.rs::sync_file`
+- `crates/gcode/src/commands/vector.rs::rebuild`
+- `crates/gcode/src/db/queries_cas_tests.rs::*` — scope-reason: the callers pass the fixture machine; adds the foreign-machine graph and project-vector tests
+- `crates/gcode/src/index/api_tests.rs::*` — scope-reason: the `mark_*` callers pass the fixture machine
+- `crates/gcode/src/projection/sync/tests.rs::*` — scope-reason: adds the two-machine vector projection test
+- `crates/gcode/Cargo.toml`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bumps this leaf's binaries in `MANAGED_BIN_VERSION_PINS` (Release ownership)
+
+Release ownership (Constraints): bumps `gcode` and `gdaemon` by 0.0.1.
+
+`Context` carries `machine_id` from 1.1, but the projection paths still read the
+process machine with `gobby_core::machine::read_local_machine_id()`. This leaf moves
+that read to the caller. Local behavior does not change.
+
+- These take a `machine_id: &str` parameter:
+  - the graph reader and writers: `read_graph_file_facts`, `mark_graph_sync_attempted`
+    and `mark_graph_synced`;
+  - the vector writers: `mark_vector_sync_attempted`, `mark_vectors_synced`,
+    `mark_project_vector_sync_attempted` and `mark_project_vectors_synced`;
+  - the symbol fetches: `fetch_symbols_for_file`, `fetch_symbols_for_project` and
+    `fetch_symbols_where`.
+- Every caller passes `ctx.machine_id`:
+  - `projection/sync.rs::sync_graph_file` and `VectorProjectionState::sync_file`;
+  - `commands/graph/lifecycle.rs::sync_file_graph` and `rebuild_project_graph`;
+  - `commands/vector.rs::sync_file` and `rebuild`.
+- #23834 lands first and adds exact-version variants of `read_graph_file_facts` and
+  `fetch_symbols_for_file`. They take a content hash and read no selector, so they
+  take no machine.
+- #23578 adds `commands/graph/lifecycle.rs::complete_graph_sync`, which calls
+  `mark_graph_synced`. Whichever of #23578 and this leaf lands second passes the
+  machine through it.
+
+Research context:
+- The process-machine reads are at `db/queries.rs:93`, `:123`, `:153`, `:247`, `:277`,
+  `:323` and `:341`, and at `vector/code_symbols/repository.rs:95`
+  (`gcode grep -n -w read_local_machine_id crates/gcode/src`).
+- Callers:
+  `gcode grep -E "\b(fetch_symbols_for_(file|project)|read_graph_file_facts|mark_(graph_sync_attempted|graph_synced|vector_sync_attempted|vectors_synced|project_vector_sync_attempted|project_vectors_synced))\(" crates/`
+  finds the six production callers above and the tests in `db/queries_cas_tests.rs`
+  and `index/api_tests.rs`. No caller exists under `crates/gcode/tests` or
+  `crates/gcode/src/cli`.
+- Each function joins `code_indexed_file_states` on the machine. `mark_graph_synced`
+  uses it in both its compare-and-set and its dirty branch (`db/queries.rs:146`). Two
+  machines that select the same hash share one `code_indexed_files` row, so one
+  projection serves both.
+- CI has no FalkorDB lane (#21045). Graph coexistence rests on
+  `delete_stale_file_graph_queries`, which scopes every delete to the synced hash.
+  `content_version_delete_is_project_path_and_hash_scoped` and
+  `plan_sync_batches_merges_inheritance_with_content_hash_and_sync_token`
+  (`graph/code_graph/tests.rs`) already cover that scoping. This leaf's graph test
+  stops at PostgreSQL selection and marking.
+- `projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert`
+  serves a fake Qdrant over a `TcpListener` (`serve_until_upsert`) and seeds versions
+  with `seed_version`. The vector test reuses both.
+- Rejected alternative: a `Context` parameter on the `db` functions. 1.1 gave the
+  `db` readers a `machine_id: &str`, and these follow it.
+- Planned checks:
+  - `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code -E 'test(cas) | test(projection) | test(api_tests)'`;
+  - `cargo clippy -p gobby-code`.
+
+**Granularity:** one outcome, the machine source for projection selection. Five
+production files and the pin file change in one commit, because the signatures
+and their callers cannot compile apart.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the `gcode` pin by key at run time, so the bumped value flows through.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the `gdaemon` pin by key at run time, so the bumped value flows through.
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: derives `MIN_GCODE_GRAPH_VERSION` from the `gcode` pin at import.
+- `tests/install/test_version_pins.py` — no-edit-reason: compares each pin to its crate manifest, which is this leaf's bump check.
+
+**Acceptance:**
+
+- 3.1.1 - With version A selected by the local machine and version B by a foreign machine at one path, `read_graph_file_facts` returns each machine's own version's facts, and `mark_graph_sync_attempted` then `mark_graph_synced` under the foreign machine set B's `graph_synced` and leave A's flag and attempt unchanged. test: `crates/gcode/src/db/queries_cas_tests.rs::graph_sync_selects_the_context_machine_version`.
+- 3.1.2 - Under the same fixture, `mark_project_vector_sync_attempted` and `mark_project_vectors_synced` under the foreign machine mark B's row and leave A's unchanged. test: `crates/gcode/src/db/queries_cas_tests.rs::project_vector_marks_select_the_context_machine`.
+- 3.1.3 - Against the fake Qdrant, the local machine's context projects A and a foreign machine's context projects B of the same path through `VectorProjectionState::sync_file`. Both rows end `vectors_synced`, the two upserts carry A's and B's symbol ids, and neither run sends a delete. test: `crates/gcode/src/projection/sync/tests.rs::vector_sync_projects_each_machine_version`.
+- 3.1.4 - `gcode` and `gdaemon` are each one patch version above the executor's starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
 ## E1 End-to-end verification
 `kind: verification`
 
-These are completion gates for P1 and P2. Except for plan validation
+These are completion gates for P1 to P3. Except for plan validation
 (`uv run gobby plans validate .gobby/plans/code-index-family.md -p /Users/josh/Projects/gobby`),
 none has run yet. Each must hold on `0.5.0` with freshly built and installed binaries.
-Gates 1 to 3 must hold before #23276 closes, and gates 1, 2 and 4 must hold again
-before P2's phase epic closes:
+Gates 1 to 3 must hold before #23276 closes, gates 1, 2 and 4 must hold again
+before P2's phase epic closes, and gates 1 and 2 must hold again before P3's phase
+epic closes:
 
 1. `GCODE_POSTGRES_TEST_DATABASE_URL=… cargo nextest run -p gobby-code`, then
    `cargo nextest run -p gobby-codeindex -p gobby-runtime -p gobby-daemon`, must pass.
@@ -2287,3 +2463,11 @@ before P2's phase epic closes:
   `claims` reads it; 1.7's recovery text names no command list; 1.8's freshness
   sentence points at 2.2; 1.10 depends on 2.8; and 1.1 and 1.8 drop consumer lines
   for files P2 targets.
+- 2026-10-17: Draft of P3 (3.1) by Plan Writer gobby#16767. The content-hash keys and
+  D11's deletion rule are already in place, so P3 is one leaf; 1.10 now depends on
+  3.1. Edits for Plan Adversary #16993's P2 review:
+  - B5: 1.8's client decodes 2xx bodies with `into_json`, and 2.4.4 is new;
+  - N7: 2.8's node grep drops files missing on the node, and 2.8.5 is new;
+  - N8: 2.2 states the project-lock difference.
+
+  2.7's research context no longer says graph payloads filter by version.
