@@ -46,13 +46,15 @@ def repository(tmp_path: Path) -> tuple[Path, Path, str]:
     return integration, close, candidate
 
 
-def _gate(close: Path, run_tree: Path, candidate: str) -> CloseGateResult:
+def _gate(
+    close: Path, run_tree: Path, candidate: str, *, from_tree: Path | None = None
+) -> CloseGateResult:
     now = datetime.now(UTC)
     runs = tuple(
         TranscriptValidationRun(
             session_id="closing-session",
             source="test",
-            command=command,
+            command=f"cd {run_tree} && {command}" if from_tree else command,
             categories=categories,
             matcher_id=matcher,
             label=matcher,
@@ -62,7 +64,7 @@ def _gate(close: Path, run_tree: Path, candidate: str) -> CloseGateResult:
             order=order,
             exit_code=0,
             output=output,
-            workdir=str(run_tree),
+            workdir=str(from_tree or run_tree),
         )
         for order, command, categories, matcher, output in (
             (
@@ -87,15 +89,41 @@ def _gate(close: Path, run_tree: Path, candidate: str) -> CloseGateResult:
 
 
 @pytest.mark.parametrize("close_at_tip", [False, True])
+@pytest.mark.parametrize("via_cd", [False, True])
 def test_landed_candidate_credits_clean_integration_tip_run(
-    repository: tuple[Path, Path, str], close_at_tip: bool
+    repository: tuple[Path, Path, str], close_at_tip: bool, via_cd: bool
 ) -> None:
     integration, close, candidate = repository
     _commit(integration, 2)
-    gate = _gate(integration if close_at_tip else close, integration, candidate)
+    gate = _gate(
+        integration if close_at_tip else close,
+        integration,
+        candidate,
+        from_tree=close if via_cd else None,
+    )
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
     assert gate.details["python_source_uncovered_tests"] == {}
+
+
+@pytest.mark.parametrize("via_cd", [False, True])
+def test_missing_related_test_does_not_report_test_file_as_checkout(
+    repository: tuple[Path, Path, str], via_cd: bool
+) -> None:
+    integration, close, candidate = repository
+    missing_test = "tests/test_other.py"
+    (integration / missing_test).write_text(
+        "from widget import VALUE\n\ndef test_other() -> None:\n    assert VALUE > 0\n"
+    )
+    _commit(integration, 2)
+
+    gate = _gate(integration, integration, candidate, from_tree=close if via_cd else None)
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == []
+    assert gate.details["python_source_uncovered_tests"] == {SOURCE: [missing_test]}
+    assert missing_test in gate.message
+    assert "Integration credit refused" not in gate.message
 
 
 @pytest.mark.parametrize(

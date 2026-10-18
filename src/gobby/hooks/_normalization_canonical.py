@@ -655,10 +655,14 @@ def _classify_shell_segment_impl(
         ):
             # A redirect names its own destination, never the opaque base write's.
             extra["_canonical_repo_mutation_scope_unknown"] = True
-        if "canonical_edit_file_paths" in extra:
-            extra["canonical_edit_file_paths"] = list(
-                dict.fromkeys([*extra["canonical_edit_file_paths"], *redirection_paths])
-            )
+        # Keep read operands for navigation, but attribute only the base command's
+        # mutations and the redirect destinations as edits.
+        base_edit_paths = extra.get(
+            "canonical_edit_file_paths", base_metadata.paths if base_metadata.repo_mutation else ()
+        )
+        extra["canonical_edit_file_paths"] = list(
+            dict.fromkeys([*base_edit_paths, *redirection_paths])
+        )
         # A shell reads its script as it runs, so output appended to it becomes code.
         if any(
             _rewrites_script(
@@ -667,8 +671,7 @@ def _classify_shell_segment_impl(
             for body in extra.get("canonical_script_bodies", ())
         ):
             extra["canonical_script_execution"] = True
-        # Redirecting a read command does not turn its input operands into edits.
-        base_paths = list(base_metadata.paths) if base_metadata.repo_mutation else []
+        base_paths = list(base_metadata.paths)
         base_write_paths = list(base_metadata.write_paths)
         return _ShellSegmentMetadata(
             "write",

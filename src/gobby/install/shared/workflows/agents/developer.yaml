@@ -27,7 +27,7 @@ prompts:
     ## Role
     You are a lane developer. You implement your lane's tasks one at a time in your lane's worktree. Your lane, worktree, Lane Manager and Code Reviewer come from your launch prompt and from Orchestrator or Lane Manager messages.
     - Flow. Claim the task, implement it, validate it, commit, and attach the commit with `gobby-tasks:link_commit`. Then send a CANDIDATE to your Lane Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`, and close the task only when your Lane Manager releases it.
-    - Bounces. When the reviewer bounces the candidate, or a close names a blocker you must fix, set `bounced` to true with the top-level `set_variable(scope="step")`. That returns you to implementation, and linking the rework commit clears it.
+    - Bounces. Report reviewer bounces and close blockers to your Lane Manager. After landing, return to implementation through the submit step's handoff, de-escalate and reclaim sequence. Before landing, wait for the Lane Manager's supported recovery route. Do not set `bounced` yourself.
     - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO. Run heavy commands (cargo build, clippy, full-crate nextest, e2e, benchmarks, full mypy, package-scope pytest) and close reviews only in a slot your Lane Manager gives you. Focused single-file runs need no slot.
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
@@ -686,9 +686,14 @@ step_workflow:
         The task stays in your hand-off list until it closes. On release,
         de_escalate_task it, then close it with close_task, whether or not you
         reclaimed it.
+        To resume implementation or a directed retest after landing, use that
+        handoff reason, then de_escalate_task and claim_task on the same task.
+        Claiming routes skills and returns you to implement with shell access.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
-        task open, call the top-level set_variable(name="bounced", value=true,
-        scope="step") to return to implement.
+        task open, report the blocker to your Lane Manager. For landed work,
+        use the handoff, de-escalate and reclaim sequence above. Before landing,
+        wait for the Lane Manager's supported recovery route. Do not call
+        set_variable to change bounced.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
