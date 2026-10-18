@@ -5773,7 +5773,7 @@ context methods behind them and their auth rows are one outcome.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/472_drop_code_index_prune_tables.sql`
+- `crates/gcore/assets/schema/migrations/470_drop_code_index_prune_tables.sql`
 - `crates/gcore/src/schema/assets.rs::MIGRATIONS`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated; its tables lose the two dropped tables and their policies
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the non-postgres `expected_schema_identity` literal `latest_version` and the `GOLDEN_LATEST_CHECKSUM` and `GOLDEN_ASSETS_ROOT_HASH` constants take the new latest migration's identity
@@ -5801,10 +5801,7 @@ Targets:
 Release ownership (Constraints): this leaf changes gcore's embedded schema assets and
 gcode's privilege manifest, so it bumps `gcode`, `gdaemon` and `ghook` by 0.0.1.
 
-Add migration `472_drop_code_index_prune_tables.sql`. 472 is the next number no open
-plan claims (gate10-test-run-reuse and gdaemon-runtime-family claim 470,
-remove-gobby-build claims 471). The executor takes the next free number at its
-starting tip and uses it in the filename and in every carrier.
+Add migration `470_drop_code_index_prune_tables.sql`.
 
 ```sql
 -- Python's pruner was their only reader and writer (9.3).
@@ -5847,6 +5844,10 @@ Research context:
   `code_index_projection_cleanup_pending`) finds only the files above, migrations 433
   and 467, `baseline.sql` and `docs/evidence/` dumps. Applied migrations and evidence
   stay.
+- Migration numbers have no reservations. They are contiguous and taken at landing
+  (#15977, 2026-10-17). The 0.5.0 tail is `469_config_active_state.sql`, so this leaf
+  drafts 470. If another migration lands first, the executor renumbers to the next
+  free number at landing, in the filename and in every carrier.
 - Python tests pick their gdaemon through `tests/fixtures/gdaemon_binary.py`, so this
   leaf's Python tests run with `GOBBY_TEST_GDAEMON=checkout` after
   `cargo build -p gobby-daemon`.
@@ -5867,7 +5868,7 @@ which must land together.
 
 **Acceptance:**
 
-- 9.5.1 - The migration drops both tables, and a migrated schema has neither. file: `crates/gcore/assets/schema/migrations/472_drop_code_index_prune_tables.sql`.
+- 9.5.1 - The migration drops both tables, and a migrated schema has neither. file: `crates/gcore/assets/schema/migrations/470_drop_code_index_prune_tables.sql`.
 - 9.5.2 - The embedded schema identity names the new migration and the checked-in catalog is fresh. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 9.5.3 - Every golden grant verifies under the new identity. test: `tests/runtime_grants/test_golden_vectors.py::test_golden_vectors_verify`.
 - 9.5.4 - The gcode privilege manifest names neither table and matches the migrated grants. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_matches_migrated_privileges`.
