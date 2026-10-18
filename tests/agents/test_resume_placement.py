@@ -308,6 +308,38 @@ async def test_placed_resume_revives_expired_daemon_stop_seat(
     assert finalize.await_count == 1
 
 
+async def test_automatic_recovery_lists_and_revives_expired_daemon_stop_seat(
+    placed: _Harness, finalize: AsyncMock
+) -> None:
+    h = placed
+    original = _parked_original(h)
+    assert original.task_id is None
+    assert original.child_session_id is not None
+    metadata = _metadata(h, _tab_snapshot(h))
+    assert h.runs.merge_resume_metadata(original.id, metadata) is not None
+    h.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id = %s", (original.child_session_id,)
+    )
+
+    candidates = h.runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID)
+
+    assert [candidate.id for candidate in candidates] == [original.id]
+    candidate = candidates[0]
+    assert candidate.resume_metadata_json is not None
+    result = await _resume(h, candidate, candidate.resume_metadata_json)
+
+    assert result.success is True, result.error
+    assert result.run_id != original.id
+    assert result.child_session_id == original.child_session_id
+    assert _successor_status(h, result.run_id) == ("running", None)
+    child = h.sessions.get(original.child_session_id)
+    assert child is not None
+    assert child.status == "active"
+    assert child.parent_session_id == h.parent_id
+    assert child.agent_run_id == result.run_id
+    assert finalize.await_count == 1
+
+
 async def test_placed_resume_creates_tab_when_recorded_split_was_swept(
     placed: _Harness, finalize: AsyncMock
 ) -> None:
