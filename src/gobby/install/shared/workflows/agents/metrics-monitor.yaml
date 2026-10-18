@@ -32,7 +32,7 @@ prompts:
   agent: &seat |
     ## Role
     You are the observe-only Metrics Monitor. Read daemon RSS, CPU and uptime from local Prometheus every ten minutes. Report each tick to both the Orchestrator and Log Monitor. Never edit code or tasks, write files, restart services, change telemetry or spawn agents. Never run ps or read process environments, credentials, Docker state or raw process data. Use only the two exact commands below; metrics-monitor-query-only blocks every other shell command.
-    - Bootstrap. The Orchestrator ref comes from the launch prompt's report target. The Log Monitor ref comes from the launch prompt or an Orchestrator reply. If missing, request its live ref with gobby-agents:send_message and wait_for_coordination(owner_session=<Orchestrator>, reply=true) before the first tick. Set orchestrator_session and log_monitor_session with the top-level set_variable(scope="step"). Report your current session ref and every SRT denial to the Orchestrator.
+    - Bootstrap. Take observer refs from the launch prompt or ask the Orchestrator. Successful reports to authenticated orchestrator/log-monitor sessions bind those observer refs automatically.
     - Cadence. The first tick after skills and recipient setup runs at once. After reporting to both recipients, wait with gobby-agents:wait_for_coordination(owner_session=<Orchestrator>, reply=true, timeout=600). Expiry starts the next tick; an Orchestrator reply starts it early. Do not sleep or poll.
     - Query current values, then raw samples from the same ten-minute window:
       /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 --get --data-urlencode 'query={job="gobby-daemon",__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}' http://127.0.0.1:9090/api/v1/query
@@ -42,7 +42,7 @@ prompts:
     - Any up=0 sample or a gap longer than 45 seconds inside the history or since the previous tick makes the watch interval incomplete. Report the gap and begin a fresh continuous baseline; do not count unobserved time toward a restart-free watch.
     - Record raw sample timestamps as the evidence window. Report current RSS in MiB, CPU percent, uptime seconds, first and last RSS and their byte delta. Retain the first valid RSS/uptime sample and previous tick in your handoff so a 90-minute or 24-hour watch survives compaction. Do not claim a watch complete before its full restart-free interval exists.
     - Alarm on RSS only when every RSS sample in a complete ten-minute window exceeds 4,000,000,000 bytes (4 GB); report the readings and interval without declaring a leak. Report the RSS byte delta as a reading only. Alarm on any uptime decrease within raw samples or versus the previous tick. Reset the watch baseline after a restart, identify the discontinuity and start a fresh interval. An empty history does not establish restart-free uptime. CPU is descriptive; do not invent a CPU or machine-load threshold.
-    - Record evidence with set_variable(name="tick_window", value="<sample timestamps>", scope="step"), then set_variable(name="tick_done", value=true, scope="step").
+    - Send the report to one observer from tick, then the same window to the other from report. Durable sends record timestamps and fixed completion flags.
     - Report. Send both recipients the same line beginning "Systems nominal |" with window timestamps, RSS MiB, CPU percent, uptime seconds and RSS byte delta when the tick is complete with no RSS or restart alarm. Otherwise send a line beginning EVENT=ALARM with the readings, interval, affected instance and RSS/restart evidence or failing query. Include incomplete evidence. The report step stays open until both sends succeed. Give performance verdicts only from matched time windows.
 
     ## Messages
@@ -123,47 +123,27 @@ step_workflow:
       mcp_error_policy: stay
       description: "Observe one ten-minute Prometheus window"
       status_message: |
-        Set orchestrator_session and log_monitor_session from live launch refs or
-        the Orchestrator reply with set_variable(scope="step"). Request a missing
-        Log Monitor ref and wait before the first tick. Use only the two exact
-        Prometheus curl commands in your definition. After both reports wait with
-        wait_for_coordination(owner_session=<Orchestrator>, reply=true, timeout=600),
-        except for the first tick. Record tick_window and tick_done with top-level
-        set_variable(scope="step"). Reload skills through mcp__gobby__call_tool:
-        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
-        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>}).
-        Fetch the get_skill_file schema first with get_tool_schema in a separate
-        outer result. Follow page.next_cursor with only cursor until null.
-        The native Skill, GitHub/app connector, and Computer Use tools bypass
-        Gobby's skill tracking.
+        Sample the ten-minute Prometheus window, then send its report to the
+        Orchestrator or Log Monitor. The durable send records this tick and
+        the observer. In report, send the same window to the other observer.
       allowed_tools:
         - "Bash"
         - "mcp__gobby__call_tool"
         - "mcp__gobby__list_mcp_servers"
         - "mcp__gobby__list_tools"
         - "mcp__gobby__get_tool_schema"
-        - "mcp__gobby__set_variable"
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
-        - server: gobby-workflows
-          tool: set_variable
-          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
-          action: set_variable
-          variable: orchestrator_reported
-          value: false
-        - server: gobby-workflows
-          tool: set_variable
-          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
-          action: set_variable
-          variable: log_monitor_reported
-          value: false
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
       transitions:
         - to: report
-          when: "vars.tick_done and vars.orchestrator_session and vars.log_monitor_session"
+          when: "vars.tick_done"
 
     - name: report
       mcp_error_policy: stay
@@ -177,43 +157,13 @@ step_workflow:
         - "mcp__gobby__list_mcp_servers"
         - "mcp__gobby__list_tools"
         - "mcp__gobby__get_tool_schema"
-        - "mcp__gobby__set_variable"
       allowed_mcp_tools:
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
-          when: >-
-            tool_input.get('target') == 'session' and vars.orchestrator_session
-            and session_refs_equal(session_id, tool_input.get('target_id'), vars.orchestrator_session)
-            and (str(tool_input.get('content') or '').startswith('Systems nominal |') or str(tool_input.get('content') or '').startswith('EVENT=ALARM'))
-          action: set_variable
-          variable: orchestrator_reported
-          value: true
-        - server: gobby-agents
-          tool: send_message
-          when: >-
-            tool_input.get('target') == 'session' and vars.log_monitor_session
-            and session_refs_equal(session_id, tool_input.get('target_id'), vars.log_monitor_session)
-            and (str(tool_input.get('content') or '').startswith('Systems nominal |') or str(tool_input.get('content') or '').startswith('EVENT=ALARM'))
-          action: set_variable
-          variable: log_monitor_reported
-          value: true
-        # on_transition actions are not executed by the step engine. Reset the
-        # completed window here, before report -> tick conditions are evaluated.
-        - server: gobby-agents
-          tool: send_message
-          when: "vars.orchestrator_reported and vars.log_monitor_reported"
-          action: set_variable
-          variable: tick_done
-          value: false
-        - server: gobby-agents
-          tool: send_message
-          when: "vars.orchestrator_reported and vars.log_monitor_reported"
-          action: set_variable
-          variable: tick_window
-          value: null
+          action: advance_seat
       transitions:
         - to: tick
           when: "vars.orchestrator_reported and vars.log_monitor_reported"

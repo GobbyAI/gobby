@@ -50,6 +50,22 @@ def _make_mocks(
 class TestSetVariableScoped:
     """Tests for set_variable with session/step scoping."""
 
+    @pytest.fixture(autouse=True)
+    def default_caller(self) -> Iterator[None]:
+        from gobby.utils.session_context import (
+            SessionContext,
+            reset_session_context,
+            set_session_context,
+        )
+
+        token = set_session_context(SessionContext(session_id="uuid-session-1"))
+        try:
+            with patch("gobby.workflows.state_manager.SessionVariableManager") as authority:
+                authority.return_value.get_variable_subset.return_value = {"_agent_type": "default"}
+                yield
+        finally:
+            reset_session_context(token)
+
     def test_set_variable_with_step_scope_writes_to_instance(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import set_variable
 
