@@ -579,7 +579,7 @@ const CONFIG_VALUES = {
     expire_check_interval_minutes: 5,
     transcript_processing_interval_minutes: 10,
     transcript_processing_batch_size: 50,
-    transcript_archive_dir: "~/.gobby/session_transcripts",
+    transcript_archive_dir: null,
   },
   session_summary: {
     profile: "feature_mid",
