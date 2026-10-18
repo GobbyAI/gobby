@@ -14,12 +14,14 @@ from unittest.mock import patch
 import psutil
 import pytest
 
+from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_types import HookSessionManager
+from gobby.mcp_proxy.tools.agents_termination import _cleanup_terminal_artifacts
 from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
@@ -953,6 +955,41 @@ def test_a_same_status_rewrite_keeps_the_drain_marker_and_the_claim(
     assert marker is not None and marker["cause"] == "terminal_drain"
     assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
     assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+async def test_an_explicit_termination_of_a_drained_seat_releases_its_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Explicit termination is final, so it settles the drained seat's guess.
+
+    The termination path writes ``expired`` to a seat that is already expired. That
+    write keeps the drain marker, so the termination path must clear it itself, or
+    the claim shield holds for the whole revival horizon.
+    """
+    sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch="host-epoch-after-drain"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
+        return_value=AgentRuntimeCleanupResult(),
+    ):
+        await _cleanup_terminal_artifacts(
+            run_id="11111111-1111-4111-8111-111111111111",
+            db=temp_db,
+            terminal_id=None,
+            agent_session_id=session_id,
+            debug=False,
+            session_manager=sessions,
+            result={},
+            terminal_transition_owned=False,
+        )
+
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 1
+    assert _claim(temp_db, task.id) is None
 
 
 @pytest.mark.usefixtures("_local_machine_identity")
