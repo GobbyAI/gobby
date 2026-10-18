@@ -77,10 +77,19 @@ fn v4_checkout_read_round_trips() {
 #[test]
 fn invalid_messages_fail() {
     let invalid = corpus_list("invalid");
-    assert_eq!(invalid.len(), 17);
+    assert_eq!(invalid.len(), 35);
+    let mut mismatches = Vec::new();
     for message in &invalid {
         let name = field(message, "name");
-        let decoded = round_trip_json(field(message, "kind"), field(message, "json"));
-        assert!(decoded.is_err(), "{name} decoded as {decoded:?}");
+        let expect = field(&message["expect"], "rust");
+        match round_trip_json(field(message, "kind"), field(message, "json")) {
+            Ok(decoded) => mismatches.push(format!("{name} decoded as {decoded}")),
+            Err(error) => {
+                if !error.to_string().contains(expect) {
+                    mismatches.push(format!("{name} error `{error}` lacks `{expect}`"));
+                }
+            }
+        }
     }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }

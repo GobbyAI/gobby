@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -53,7 +54,7 @@ _V4_MESSAGES: tuple[str, ...] = (
 )
 
 
-def _corpus_list(key: str) -> list[dict[str, str]]:
+def _corpus_list(key: str) -> list[dict[str, Any]]:
     loaded = json.loads(_CORPUS.read_text(encoding="utf-8"))
     entries = loaded[key]
     assert isinstance(entries, list)
@@ -88,7 +89,8 @@ def test_v4_checkout_read_round_trips() -> None:
 
 def test_invalid_messages_fail() -> None:
     invalid = _corpus_list("invalid")
-    assert len(invalid) == 17
+    assert len(invalid) == 35
     for message in invalid:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as caught:
             parse_message(message["kind"], message["json"])
+        assert message["expect"]["python"] in str(caught.value), message["name"]
