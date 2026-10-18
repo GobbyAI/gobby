@@ -555,7 +555,10 @@ impl TryFrom<MergeResultFields> for MergeResult {
     type Error = &'static str;
 
     fn try_from(fields: MergeResultFields) -> Result<Self, Self::Error> {
-        let heads = matches!(fields.outcome, MergeOutcome::Merged | MergeOutcome::AlreadyMerged);
+        let heads = matches!(
+            fields.outcome,
+            MergeOutcome::Merged | MergeOutcome::AlreadyMerged
+        );
         if fields.outcome == MergeOutcome::Merged && fields.merge_sha.is_none() {
             return Err("merge_sha is required with outcome merged");
         }
