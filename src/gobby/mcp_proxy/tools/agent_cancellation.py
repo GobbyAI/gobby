@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.storage.agents import TerminalAction
+from gobby.storage.daemon_resume_keys import CONSUMED_AT_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,12 @@ async def terminate_agent_run(
 
     async def kill_and_deliver() -> dict[str, Any]:
         try:
+            if run.status == "cancelled" and run.terminal_reason == "daemon_stop":
+                # An explicit kill also withdraws recovery when no process remains,
+                # including process-only and debug kills that skip terminal cleanup.
+                agent_run_manager.merge_resume_metadata(
+                    run_id, {CONSUMED_AT_KEY: datetime.now(UTC).isoformat()}
+                )
             result = cast(
                 dict[str, Any],
                 await resolved_kill_agent_process(
