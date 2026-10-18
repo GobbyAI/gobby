@@ -287,7 +287,12 @@ Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 `S2.9` ← `S2.5`, `S2.7`;
 `S2.10` ← `S2.4`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
 `S2.11 node` ← `S1.4`; `S2.11 hub` ← `S2.5`, `S2.9`, `S2.10`;
-`S2.12` ← `S2.10`, `S2.11`; `S2.13` ← `S2.4`, `S2.2`.
+`S2.12` ← `S2.10`, `S2.11`. `S2.13` has no group gate: each family waits only
+on the families it uses (Josh, 2026-10-18). On `S2.4`: #21581 plans, #21584
+source control, #21589 admin. On `S2.2`: #21580 skills, #21583 communications,
+#21585 projects and hub documents, #21588 voice, #21589 admin, #21590 web UI
+static serving, #21592 WS chat. #21582 cron, #21587 AI providers and #21591
+install and setup wait on neither.
 
 S2.8's M1 adoption/epoch work has no S2.2 transport dependency. Its D2
 #23219 terminal WS/relay waits on S2.2 #21558 native WS transport.
@@ -323,7 +328,8 @@ begin. The naming switch and the Python retirement follow it.
 
 Edges: `S4` ← `S1`; `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
 S2.8 M1 #23205, #21549 machine-scoped terminals;
-`S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`.
+`S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`;
+`S4.8` ← #21585 projects and hub documents only (Josh, 2026-10-18).
 
 **Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2's mode gate
 landed right after S1.2 (#23111), so the first hub-node pair test in S1.4 has a
