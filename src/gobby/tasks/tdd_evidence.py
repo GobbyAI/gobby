@@ -26,7 +26,7 @@ from gobby.tasks.tdd_compacted_output import (
     has_compacted_pytest_failure,
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
-from gobby.tasks.tdd_pytest_provenance import has_unverified_pytest_assignments
+from gobby.tasks.tdd_pytest_provenance import runtime_pytest_output
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
@@ -512,9 +512,10 @@ def _has_runtime_stub(
         0
     ]
     # Verify source spans before a local repr can forge fresh headers or frame markers.
-    if has_unverified_pytest_assignments(output, evidence, run, parse_cache):
+    source_output = runtime_pytest_output(output, evidence, run, parse_cache)
+    if source_output is None:
         return False
-    lines = output.splitlines()
+    lines = source_output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
         if header is None or not _header_names_artifact(

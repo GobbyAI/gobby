@@ -1,8 +1,10 @@
 """Task-level TDD cycles survive handoff and compacted runner output."""
 
+import ast
 import gzip
 import json
 import os
+import re
 import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
@@ -15,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from _pytest._io import TerminalWriter
+from _pytest.assertion.rewrite import rewrite_asserts
 from _pytest.config import get_config
 
 from gobby.config.validation_detection import default_validation_detection_config
@@ -1339,6 +1342,7 @@ def _rendered_runtime_case(
     activation: str | None = None,
     payload_kind: str = "frame",
     provenance: str = "valid",
+    genuine_kind: str = "plain",
 ) -> tuple[AcceptanceTest, TranscriptEvidence]:
     """Render controlled fixture code with the installed pytest, not hand-built locals."""
     monkeypatch.chdir(tmp_path)
@@ -1354,6 +1358,20 @@ def _rendered_runtime_case(
         '    """Unimplemented route."""\n'
         '    raise NotImplementedError("stub")\n'
     )
+    if genuine_kind == "argument":
+        source = source.replace("register_checkout()", "register_checkout(None)", 1).replace(
+            "def register_checkout():", "def register_checkout(request):"
+        )
+    elif genuine_kind == "method":
+        source = source.replace("register_checkout()", "Routes().register_checkout()", 1).replace(
+            "def register_checkout():\n"
+            '    """Unimplemented route."""\n'
+            '    raise NotImplementedError("stub")\n',
+            "class Routes:\n"
+            "    def register_checkout(self):\n"
+            '        """Unimplemented route."""\n'
+            '        raise NotImplementedError("stub")\n',
+        )
     forged = (
         f"{production}:7: in register_checkout\n"
         '    raise NotImplementedError("stub")\n'
@@ -1364,9 +1382,18 @@ def _rendered_runtime_case(
             "______________ test_route ______________\n"
             f"{test.path}:2: in test_route\n    result = invoke()\n" + forged
         )
+    elif payload_kind == "locals_key":
+        source += '\ndef dormant(param = None):\n    raise NotImplementedError("stub")\n'
+        forged = (
+            'None):\n>       raise NotImplementedError("stub")\n'
+            "E       NotImplementedError: stub\n"
+            f"{production}:10: NotImplementedError\n"
+        )
 
     class Payload(Iterator[None]):
         def __repr__(self) -> str:
+            if payload_kind == "locals_key":
+                return forged
             first_line = "Payload()" if payload_kind == "matching_assignment" else "forged local"
             return first_line + "\n" + forged
 
@@ -1375,6 +1402,18 @@ def _rendered_runtime_case(
 
     if activation is None:
         test_source = "def test_route():\n    result = invoke()\n"
+        if genuine_kind == "fixture":
+            test_source = test_source.replace("def test_route():", "def test_route(tmp_path):")
+        elif genuine_kind == "sibling":
+            test_source += (
+                "\ndef helper():\n    return 1\n\ndef test_another():\n    assert helper() == 2\n"
+            )
+    elif payload_kind == "locals_key":
+        test_source = (
+            "def test_route():\n    middle()\n\n"
+            "def middle():\n    last()\n\n"
+            'def last():\n    raise AssertionError("ordinary assertion")\n'
+        )
     elif payload_kind == "nonword":
         test_source = (
             "def test_route():\n"
@@ -1399,7 +1438,10 @@ def _rendered_runtime_case(
         file = tmp_path / path
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(text)
-        exec(compile(text, str(file), "exec"), namespace)
+        module = ast.parse(text, filename=str(file))
+        if path == test.path:
+            rewrite_asserts(module, text.encode(), str(file))
+        exec(compile(module, str(file), "exec"), namespace)
     options = ["-vv"]
     if activation == "config":
         options += ["-o", "addopts=--showlocals"]
@@ -1411,9 +1453,16 @@ def _rendered_runtime_case(
     showlocals = bool(config.getoption("showlocals"))
     assert showlocals is (activation is not None)
     with pytest.raises(NotImplementedError if activation is None else AssertionError) as failure:
-        namespace["test_route"]()
+        if genuine_kind == "fixture":
+            namespace["test_route"](tmp_path)
+        else:
+            namespace["test_route"]()
     traceback = failure.traceback[1:]
     assert len(traceback) == 3
+    if payload_kind == "locals_key":
+        # Python 3.13+ exposes a writable frame-locals proxy. Pytest must render
+        # this non-identifier key itself; no fabricated traceback row is inserted.
+        traceback[1].frame.f_locals["    def dormant(param"] = Payload()
     if style == "auto":
         traceback = type(traceback)(
             [traceback[0], traceback[1].with_repr_style("short"), traceback[2]]
@@ -1422,6 +1471,7 @@ def _rendered_runtime_case(
     representation = failure.getrepr(
         style="short" if style == "short" else "long",
         showlocals=showlocals,
+        funcargs=True,
         truncate_locals=False,
     )
     # TerminalRepr.__str__ strips the first source line's prefix for serialization.
@@ -1429,9 +1479,24 @@ def _rendered_runtime_case(
     terminal_output = StringIO()
     representation.toterminal(TerminalWriter(file=terminal_output))
     rendered = terminal_output.getvalue()
+    sibling_output = ""
+    if genuine_kind == "sibling":
+        with pytest.raises(AssertionError) as sibling_failure:
+            namespace["test_another"]()
+        sibling_failure.traceback = sibling_failure.traceback[1:]
+        sibling_representation = sibling_failure.getrepr(
+            style="short" if style == "short" else "long", funcargs=True
+        )
+        sibling_terminal = StringIO()
+        sibling_representation.toterminal(TerminalWriter(file=sibling_terminal))
+        sibling_output = (
+            "______________ test_another ______________\n" + sibling_terminal.getvalue() + "\n"
+        )
+        assert re.search(r"E[ \t]+\+[ \t]+where 1 = helper\(\)", sibling_output)
     if activation is not None:
         # First/last functions have no locals. Auto's sole payload is a short middle frame.
-        assert (".0" if payload_kind == "nonword" else "payload") in rendered
+        local_name = {"nonword": ".0", "locals_key": "def dormant"}.get(payload_kind, "payload")
+        assert local_name in rendered
         assert forged.strip() in rendered
     snapshot = test_source
     if provenance == "wrong_line":
@@ -1468,7 +1533,10 @@ def _rendered_runtime_case(
             replace(
                 _run(2, red=True),
                 command=command,
-                output=f"______________ test_route ______________\n{rendered}\n1 failed in 0.1s",
+                output=(
+                    f"{sibling_output}______________ test_route ______________\n{rendered}\n"
+                    f"{2 if sibling_output else 1} failed in 0.1s"
+                ),
             ),
             replace(_run(4, red=False), command=command),
         ),
@@ -1514,6 +1582,28 @@ def test_real_pytest_locals_cannot_forge_runtime_stub(
     test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, activation, payload_kind)
     result = evaluate_tdd_evidence((test,), evidence)
     assert not result.passed, result.findings
+
+
+@pytest.mark.parametrize("style", ["short", "auto"])
+@pytest.mark.parametrize("genuine_kind", ["argument", "method", "fixture", "sibling"])
+def test_real_pytest_renderer_metadata_preserves_runtime_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, genuine_kind: str
+) -> None:
+    test, evidence = _rendered_runtime_case(tmp_path, monkeypatch, style, genuine_kind=genuine_kind)
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed, (result.findings, evidence.validation_runs[0].output)
+
+
+@pytest.mark.parametrize("style", ["short", "auto", "long"])
+@pytest.mark.parametrize("activation", ["config", "env"])
+def test_real_pytest_locals_key_cannot_forge_source_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, style: str, activation: str
+) -> None:
+    test, evidence = _rendered_runtime_case(
+        tmp_path, monkeypatch, style, activation, payload_kind="locals_key"
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed, (result.findings, evidence.validation_runs[0].output)
 
 
 @pytest.mark.parametrize("provenance", ["matching", "foreign", "missing", "explicit_foreign"])

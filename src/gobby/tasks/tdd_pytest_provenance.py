@@ -131,49 +131,149 @@ def _long_source_matches(
     return matches == 1
 
 
-def has_unverified_pytest_assignments(
+def _metadata_row(row: str) -> bool:
+    return re.fullmatch(r"(?:\w+|\.0)[ \t]+=[ \t]+[^\r\n]*", row) is not None
+
+
+def _parameter_names(
+    rows: list[str],
+    location: re.Match[str],
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    cache: PythonModuleCache | None,
+) -> set[str] | None:
+    definition = next(
+        (match for row in rows if (match := re.match(r"    (?:async )?def (\w+)\(", row))),
+        None,
+    )
+    edit = _snapshot(location[1], evidence, run)
+    if definition is None or edit is None or edit.source_after is None:
+        return None
+    module = parse_python_module(edit.source_after, cache)
+    if module is None:
+        return None
+    functions = [node for node in _functions(module) if node.name == definition[1]]
+    if len(functions) != 1:
+        return None
+    arguments = functions[0].args
+    return {
+        node.arg
+        for node in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *([arguments.vararg] if arguments.vararg else []),
+            *([arguments.kwarg] if arguments.kwarg else []),
+        )
+    }
+
+
+def _long_frame(
+    rows: list[str],
+    start: int,
+    arguments: list[str],
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    cache: PythonModuleCache | None,
+) -> tuple[int, list[str]] | None:
+    end = start + 1
+    while end < len(rows) and rows[end].startswith(("    ", ">   ")):
+        end += 1
+    located = end
+    details: list[str] = []
+    # E-prefixed assertion explanations belong to this frame, including their
+    # renderer-generated '=' rows. They cannot introduce column-zero source.
+    while located < len(rows) and (not rows[located] or re.match(r"E[ \t]", rows[located])):
+        details.append(rows[located])
+        located += 1
+    locals_rows: list[str] = []
+    while located < len(rows) and _LOCATION.fullmatch(rows[located]) is None:
+        row = rows[located]
+        if row and not _metadata_row(row):
+            # A source/def/header-looking continuation inside locals is data,
+            # never the beginning of another frame.
+            return None
+        locals_rows.append(row)
+        located += 1
+    if located == len(rows):
+        return None
+    location = _LOCATION.fullmatch(rows[located])
+    if location is None:
+        return None
+    if arguments or locals_rows or any(_ASSIGNMENT.search(row) for row in rows[start:end]):
+        if not _long_source_matches(rows, start, end, location, evidence, run, cache):
+            return None
+    if arguments:
+        parameters = _parameter_names(rows[start:end], location, evidence, run, cache)
+        names = [match[1] for row in arguments for match in re.finditer(r"(?:^|, )(\w+) = ", row)]
+        if parameters is None or not names or not set(names) <= parameters:
+            return None
+        if len(names) != len(set(names)):
+            return None
+    # Funcargs and locals values never reach the downstream frame recognizer.
+    return located + 1, [*rows[start:end], *details, rows[located]]
+
+
+def runtime_pytest_output(
     output: str,
     evidence: TranscriptEvidence,
     run: TranscriptValidationRun,
     cache: PythonModuleCache | None = None,
-) -> bool:
-    """Reject locals before their repr can introduce headers or source/frame markers.
+) -> str | None:
+    """Keep renderer source and exception regions, excluding frame metadata.
 
     Only positioned, contiguous source spans from confirmed pre-run snapshots exempt
-    assignment separators. Read forward: a later forged block cannot exempt a prior row.
+    assignment separators. A later forged block cannot exempt a metadata continuation.
     The caller applies the first-Captured cutoff before passing the retained prefix.
     """
     rows = output.splitlines()
-    verified: set[int] = set()
-    for index, row in enumerate(rows):
-        if _ASSIGNMENT.search(row) and index not in verified and not _DEFINITION.match(row):
-            return True
+    trusted: list[str] = []
+    index = 0
+    while index < len(rows):
+        row = rows[index]
         short = _SHORT.fullmatch(row)
-        if short is not None and index + 1 < len(rows):
-            if _ASSIGNMENT.search(rows[index + 1]):
-                if not _short_source_matches(short, rows[index + 1], evidence, run, cache):
-                    return True
-                verified.add(index + 1)
+        if short is not None:
+            index += 1
+            if index == len(rows) or not rows[index].startswith("    "):
+                return None
+            if _ASSIGNMENT.search(rows[index]) and not _short_source_matches(
+                short, rows[index], evidence, run, cache
+            ):
+                return None
+            trusted.extend((row, rows[index]))
+            index += 1
+            if index < len(rows) and re.fullmatch(r"[ \t]+\^+", rows[index]):
+                index += 1
+            while index < len(rows) and (not rows[index] or re.match(r"E[ \t]", rows[index])):
+                trusted.append(rows[index])
+                index += 1
+            if index < len(rows) and rows[index].startswith("        "):
+                # Short locals have no trailing frame location. Keep the proven
+                # prefix and never resume at markers that a multiline repr can forge.
+                return "\n".join(trusted)
             continue
-        if not _DEFINITION.match(row):
+        arguments: list[str] = []
+        if _metadata_row(row):
+            while index < len(rows) and _metadata_row(rows[index]):
+                arguments.append(rows[index])
+                index += 1
+            # ReprFuncArgs always terminates with a blank line before source.
+            if index == len(rows) or rows[index]:
+                return None
+            while index < len(rows) and not rows[index]:
+                index += 1
+            if index == len(rows) or not _DEFINITION.match(rows[index]):
+                return None
+            row = rows[index]
+        if _DEFINITION.match(row):
+            frame = _long_frame(rows, index, arguments, evidence, run, cache)
+            if frame is None:
+                return None
+            index, source = frame
+            trusted.extend(source)
             continue
-        end = index + 1
-        while end < len(rows) and rows[end].startswith(("    ", ">   ")):
-            end += 1
-        assignments = {offset for offset in range(index, end) if _ASSIGNMENT.search(rows[offset])}
-        if not assignments:
-            continue
-        located = end
-        # Source ends before exception detail. Never consume locals as source or skip
-        # them while looking for the location that terminates a long frame.
-        while located < len(rows) and (not rows[located] or re.match(r"E[ \t]", rows[located])):
-            if _ASSIGNMENT.search(rows[located]):
-                return True
-            located += 1
-        location = _LOCATION.fullmatch(rows[located]) if located < len(rows) else None
-        if location is None or not _long_source_matches(
-            rows, index, end, location, evidence, run, cache
-        ):
-            return True
-        verified.update(assignments)
-    return False
+        if _ASSIGNMENT.search(row) or _LOCATION.fullmatch(row):
+            return None
+        trusted.append(row)
+        index += 1
+    return "\n".join(trusted)
