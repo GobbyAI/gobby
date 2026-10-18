@@ -1274,41 +1274,15 @@ async def test_terminal_client_stack_end_to_end(
 _RESTART_SEAT_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
 
-def _register_restart_seat_project(cli_events: CLIEventSimulator, repo: Path) -> str:
-    """Register a throwaway git checkout as a project in the isolated test daemon."""
-    project_id = str(uuid.uuid4())
-    marker = repo / ".gobby" / "project.json"
-    marker.parent.mkdir(parents=True)
-    marker.write_text(json.dumps({"id": project_id, "name": repo.name}))
-    git = [
-        "git",
-        "-C",
-        str(repo),
-        "-c",
-        "user.name=e2e",
-        "-c",
-        "user.email=e2e@example.invalid",
-        "-c",
-        "commit.gpgsign=false",
-    ]
-    subprocess.run([*git, "init", "-b", "main"], check=True, capture_output=True)
-    subprocess.run([*git, "add", "-A"], check=True, capture_output=True)
-    subprocess.run([*git, "commit", "-m", "seat repo"], check=True, capture_output=True)
-    registered = cli_events.register_test_project(
-        project_id=project_id, name=repo.name, repo_path=str(repo)
-    )
-    assert registered["status"] == "success", registered
-    return project_id
-
-
 def _claim_for_seat(
-    cli_events: CLIEventSimulator, mcp_client: MCPTestClient, repo: Path, task_id: str
+    cli_events: CLIEventSimulator, mcp_client: MCPTestClient, project_dir: Path, task_id: str
 ) -> str:
     """Claim the task for a registered owner session before the seat spawns."""
     owner = cli_events.register_session(
         external_id=f"seat-owner-{uuid.uuid4().hex[:8]}",
         machine_id=_RESTART_SEAT_MACHINE_ID,
-        cwd=str(repo),
+        project_id=E2E_PROJECT_ID,
+        cwd=str(project_dir),
     )
     owner_id = str(owner["id"])
     mcp_client.session_id = owner_id
@@ -1348,6 +1322,20 @@ def _restart_seat_state(client: httpx.Client, run_id: str, task_id: str) -> dict
     }
 
 
+def _seat_worktree_path(client: httpx.Client, run_id: str) -> str:
+    """Resolve the seat run's worktree record to its checkout path."""
+    run_response = client.get(f"/api/agents/runs/{run_id}")
+    assert run_response.status_code == 200, run_response.text
+    worktree_id = run_response.json()["run"].get("worktree_id")
+    assert worktree_id, run_response.json()
+    listed = client.get("/api/source-control/worktrees", params={"project_id": E2E_PROJECT_ID})
+    assert listed.status_code == 200, listed.text
+    for record in listed.json()["worktrees"]:
+        if record["id"] == worktree_id:
+            return str(record["worktree_path"])
+    raise AssertionError(f"worktree {worktree_id} is not listed for the E2E project")
+
+
 def _srt_owner_records(gobby_home: Path) -> dict[str, str]:
     """Evidence only: the SRT broker owner records beside the socket."""
     root = srt_socket_directory(gobby_home)
@@ -1364,12 +1352,12 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
     tmp_path: Path,
 ) -> None:
     """Each sandboxed seat keeps its session, task claim, and worktree across a restart."""
-    repo = tmp_path / "seat-repo"
-    repo.mkdir()
-    project_id = _register_restart_seat_project(cli_events, repo)
     client = _http(daemon_instance)
     host_before = _wait_for_host(daemon_client, daemon_instance)
     seats: list[dict[str, Any]] = []
+    before: dict[str, dict[str, Any]] = {}
+    owners_before: dict[str, str] = {}
+    restarts: list[dict[str, Any]] = []
     try:
         for label in ("first", "second"):
             created = client.post(
@@ -1377,25 +1365,25 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
                 json={
                     "title": f"restart-seat-{label}",
                     "task_type": "task",
-                    "project_id": project_id,
+                    "project_id": E2E_PROJECT_ID,
                     "validation_criteria": "Seat keeps its session, claim and worktree.",
                 },
             )
             assert created.status_code == 201, created.text
             task_id = str(created.json()["id"])
-            owner_id = _claim_for_seat(cli_events, mcp_client, repo, task_id)
+            owner_id = _claim_for_seat(cli_events, mcp_client, daemon_instance.project_dir, task_id)
             spawned = _spawn_agent(client, task_id=task_id, checkout_mode="worktree")
+            run_id = str(spawned["run_id"])
             seats.append(
                 {
                     "task_id": task_id,
                     "owner_id": owner_id,
-                    "run_id": str(spawned["run_id"]),
-                    "worktree_path": spawned.get("worktree_path"),
+                    "run_id": run_id,
+                    "worktree_path": _seat_worktree_path(client, run_id),
                 }
             )
         run_ids = (str(seats[0]["run_id"]), str(seats[1]["run_id"]))
         for seat in seats:
-            assert isinstance(seat["worktree_path"], str), seat
             worktree = Path(seat["worktree_path"])
             assert worktree.is_dir(), seat
             # The worktree must live under the isolated home, never the operator's ~/.gobby.
@@ -1417,7 +1405,6 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
             assert state["worktree_id"], state
             assert state["task_claimed_by"] == seat["owner_id"], state
         owners_before = _srt_owner_records(daemon_instance.gobby_home)
-        restarts: list[dict[str, Any]] = []
         # Two real restarts. The second shutdown runs in a runner that may have adopted
         # the broker the first runner started rather than started it itself.
         for restart in (1, 2):
@@ -1441,6 +1428,8 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
             for seat in seats:
                 assert after[seat["run_id"]] == before[seat["run_id"]], (restart, seat)
                 assert Path(seat["worktree_path"]).is_dir(), seat
+    finally:
+        # Evidence first, so a failed run keeps what the restarts showed.
         (tmp_path / "seat-restart.json").write_text(
             json.dumps(
                 {"before": before, "owners_before": owners_before, "restarts": restarts},
@@ -1448,7 +1437,6 @@ def test_restart_keeps_sandboxed_seat_session_claim_and_worktree(
                 default=str,
             )
         )
-    finally:
         for seat in seats:
             _cancel_stack_run(client, str(seat["run_id"]))
         client.close()
