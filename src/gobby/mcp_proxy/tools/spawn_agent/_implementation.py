@@ -147,6 +147,7 @@ async def spawn_agent_impl(
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
     if resume_session_id:
+        live_host_epoch = agent_pane_reserver.live_host_epoch() if agent_pane_reserver else None
         try:
             resume_target = await resolve_seat_resume(
                 session_manager,
@@ -157,6 +158,7 @@ async def spawn_agent_impl(
                 runner.run_storage,
                 agent_body,
                 lane,
+                live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
@@ -436,6 +438,9 @@ async def spawn_agent_impl(
         machine_id=machine_id,
         project_id=project_id,
         project_context_authoritative=project_context_authoritative,
+        session_manager=session_manager,
+        agent_name=requested_agent_name,
+        resume_session_id=resume_session_id,
     )
     if isinstance(placed, dict):
         return placed

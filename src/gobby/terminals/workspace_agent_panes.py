@@ -180,12 +180,14 @@ class AgentPaneReserver:
         registry: TerminalRuntimeRegistry,
         sessions: SessionManager,
         publish: Callable[[WorkspaceEvent], Awaitable[object]],
+        live_host_epoch: Callable[[], str | None] | None = None,
     ) -> None:
         self._workspaces = workspaces
         self._terminals = terminals
         self._registry = registry
         self._sessions = sessions
         self._publish = publish
+        self._live_host_epoch = live_host_epoch
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -193,19 +195,37 @@ class AgentPaneReserver:
         """The workspace store placements resolve against, for re-placing a resumed seat."""
         return self._workspaces
 
+    def live_host_epoch(self) -> str | None:
+        """The running terminal host's epoch, or None while it has not connected."""
+        return self._live_host_epoch() if self._live_host_epoch is not None else None
+
     async def preflight(
-        self, actor: str, project_id: str, placement: AgentPlacement
+        self,
+        actor: str,
+        project_id: str,
+        placement: AgentPlacement,
+        *,
+        own_seat_resume: bool = False,
     ) -> ResolvedPlacement:
-        """Resolve and authorize ``placement`` read-only."""
-        return await asyncio.to_thread(self._preflight, actor, project_id, placement)
+        """Resolve and authorize ``placement`` read-only.
+
+        ``own_seat_resume`` admits an autonomous caller only for its own lane's seat resume.
+        """
+        return await asyncio.to_thread(
+            self._preflight, actor, project_id, placement, own_seat_resume
+        )
 
     def _preflight(
-        self, actor: str, project_id: str, placement: AgentPlacement
+        self,
+        actor: str,
+        project_id: str,
+        placement: AgentPlacement,
+        own_seat_resume: bool,
     ) -> ResolvedPlacement:
         with _placement_errors():
             target = self._workspaces.resolve_reference(placement.ref)
             try:
-                scope = resolve_actor_scope(self._sessions, actor)
+                scope = resolve_actor_scope(self._sessions, actor, allow_autonomous=own_seat_resume)
             except ActorScopeError as exc:
                 raise AgentPlacementError("forbidden", str(exc)) from exc
             if not scope.admits(project_id=project_id):
