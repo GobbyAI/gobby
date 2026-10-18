@@ -844,6 +844,7 @@ async def test_standing_seats_never_use_native_idle_writes(temp_db: HubDatabase,
         ("EVENT=SEAT_READY NOTE=idle", "content"),
         ("EVENT=SEAT_READY NOTE=idle", "structured"),
         ("EVENT=SEAT_READY NOTE=idle", "transport"),
+        ("EVENT=SEAT_READY NOTE=idle", "identity"),
     ],
 )
 async def test_idle_is_declared_only_by_readiness_rule(
@@ -894,6 +895,8 @@ async def test_idle_is_declared_only_by_readiness_rule(
     )
     if failure == "transport":
         event.metadata["is_failure"] = True
+    if failure != "identity":
+        event.metadata["_platform_session_id"] = SESSION_ID
     await run._evaluate(event)
     assert bool(run.session_vars.get("seat_idle")) == (
         content == "EVENT=SEAT_READY NOTE=idle" and not failure
@@ -931,12 +934,13 @@ def _reviewer_stop_handler(run: SeatRun) -> WorkflowHookHandler:
     )
 
 
-def _reviewer_stop_event() -> HookEvent:
+def _reviewer_stop_event(cwd: Path) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.STOP,
         session_id="ext-seat",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
+        cwd=str(cwd),
         data={},
         metadata={"_platform_session_id": SESSION_ID},
     )
@@ -944,13 +948,13 @@ def _reviewer_stop_event() -> HookEvent:
 
 @pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
 async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
-    temp_db: HubDatabase, envelope: str
+    temp_db: HubDatabase, tmp_path: Path, envelope: str
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     assert run.step == "await"
     handler = _reviewer_stop_handler(run)
-    blocked = await handler.evaluate_async(_reviewer_stop_event())
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
 
     content = "EVENT=SEAT_READY NOTE=idle"
@@ -972,6 +976,7 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
             "hook_type": "post-tool-use",
             "input_data": {
                 "session_id": "ext-seat",
+                "cwd": str(tmp_path),
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": SEND[0],
@@ -988,7 +993,7 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     )
     completion.metadata["_platform_session_id"] = SESSION_ID
     await handler.evaluate_async(completion)
-    stopped = await handler.evaluate_async(_reviewer_stop_event())
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert stopped.decision == "allow", stopped.reason
     assert SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle") is True
     assert run.step == "await"
@@ -996,7 +1001,7 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
 
 @pytest.mark.parametrize("step", ["await", "review"])
 async def test_reviewer_registered_coordination_wait_allows_stop_with_external_session_id(
-    temp_db: HubDatabase, step: str
+    temp_db: HubDatabase, tmp_path: Path, step: str
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
@@ -1004,11 +1009,11 @@ async def test_reviewer_registered_coordination_wait_allows_stop_with_external_s
         await run.intake(run.task())
     assert run.step == step
     handler = _reviewer_stop_handler(run)
-    blocked = await handler.evaluate_async(_reviewer_stop_event())
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
     wait = CoordinationWaitManager(temp_db).register(SESSION_ID, COORDINATOR_ID, reply=True)
     assert wait["outcome"] == "waiting"
-    stopped = await handler.evaluate_async(_reviewer_stop_event())
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert stopped.decision == "allow", stopped.reason
     assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
     assert run.step == step
