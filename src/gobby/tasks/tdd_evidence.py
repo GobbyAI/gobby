@@ -26,6 +26,7 @@ from gobby.tasks.tdd_compacted_output import (
     has_compacted_pytest_failure,
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
+from gobby.tasks.tdd_pytest_provenance import runtime_pytest_output, terminal_runtime_frame
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
@@ -63,7 +64,7 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_+\s+\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"^(?:_+\s+(?![_\s]+$)\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
     r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
     r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
@@ -504,6 +505,10 @@ def _has_runtime_stub(
     output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
         0
     ]
+    # Verify source spans before a local repr can forge fresh headers or frame markers.
+    source_output = runtime_pytest_output(output, evidence, run, parse_cache)
+    if source_output is None:
+        return False
     lines = output.splitlines()
     for index, line in enumerate(lines):
         header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
@@ -511,11 +516,14 @@ def _has_runtime_stub(
             header.group("name"), test, nodes, same_file
         ):
             continue
-        section = _failure_section(lines, index)
+        section = runtime_pytest_output(_failure_section(lines, index), evidence, run, parse_cache)
+        if section is None or section not in source_output:
+            continue
+        terminal = terminal_runtime_frame(section, "\n".join(lines[index:]))
         if (
             _section_has_artifact_location(section, test)
-            and _NOT_IMPLEMENTED_DETAIL_RE.search(section)
-            and _has_python_runtime_stub(section, evidence, run, parse_cache)
+            and terminal is not None
+            and _has_python_runtime_stub(terminal, evidence, run, parse_cache, command=command)
         ):
             return True
     return False
