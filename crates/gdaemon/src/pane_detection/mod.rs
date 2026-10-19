@@ -57,20 +57,28 @@ impl RunDetectState {
         self.approval_fingerprint = Some(prompt::pane_fingerprint(pane));
     }
 
-    /// Stub (#24382 correction, RED): the dismissal getters and loop dismissal are not yet
-    /// implemented.
+    /// Whether the run's trust prompt was dismissed, as `PromptDetector.was_dismissed`.
     pub fn was_trust_dismissed(&self) -> bool {
-        false
+        self.trust_dismissed
     }
 
-    pub fn was_approval_prompt_dismissed(&self, _pane: &str) -> bool {
-        false
+    /// Whether this pane is the approval prompt already handled for this run, as
+    /// `PromptDetector.was_approval_prompt_dismissed`.
+    pub fn was_approval_prompt_dismissed(&self, pane: &str) -> bool {
+        self.approval_fingerprint == Some(prompt::pane_fingerprint(pane))
     }
 
-    pub fn mark_loop_prompt_dismissed(&mut self, _pane: &str) {}
+    /// Records a loop prompt handled for this run, as `PromptDetector.mark_loop_prompt_dismissed`.
+    pub fn mark_loop_prompt_dismissed(&mut self, pane: &str) {
+        self.loop_prompt_fingerprints
+            .insert(prompt::pane_fingerprint(pane));
+    }
 
-    pub fn was_loop_prompt_dismissed(&self, _pane: &str) -> bool {
-        false
+    /// Whether this pane's loop prompt was already handled for this run, as
+    /// `PromptDetector.was_loop_prompt_dismissed`.
+    pub fn was_loop_prompt_dismissed(&self, pane: &str) -> bool {
+        self.loop_prompt_fingerprints
+            .contains(&prompt::pane_fingerprint(pane))
     }
 }
 
