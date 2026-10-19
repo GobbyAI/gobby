@@ -201,6 +201,23 @@ pub fn run() -> Result<()> {
             else {
                 return Ok(());
             };
+            let terminal_host = match gobby_core::machine::read_machine_id_from_home(home) {
+                Ok(machine_id) => {
+                    use crate::nodes::agents::host::{NodeEpochAuthority, node_host_options};
+                    let host = gobby_terminals::host::HostSupervisor::new(
+                        node_host_options(home, machine_id),
+                        Arc::new(NodeEpochAuthority { agents: node.agents.clone() }),
+                    );
+                    if let Err(error) = host.start().await {
+                        eprintln!("gdaemon node terminal host unavailable (supervisor will retry): {error}");
+                    }
+                    Some(host)
+                }
+                Err(error) => {
+                    eprintln!("gdaemon node terminal host identity unavailable: {error}");
+                    None
+                }
+            };
             crate::nodes::hooks::drain::boot_release(&node.hook_ledger).await?;
             let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
             crate::nodes::hooks::drain::register_jobs(&mut heartbeat, node.clone())?;
@@ -227,6 +244,8 @@ pub fn run() -> Result<()> {
             .await;
             channel.abort();
             let _ = channel.await;
+            // Stop supervision only; live terminal processes survive a daemon restart.
+            drop(terminal_host);
             drop(claim);
             return result;
         };

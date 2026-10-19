@@ -1,4 +1,6 @@
 //! Durable node-local agent ownership.
+#[cfg(unix)]
+pub mod host;
 pub mod state;
 
 use anyhow::{Context, Result};
@@ -14,6 +16,8 @@ pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
+    #[cfg(unix)]
+    pub host: host::HostControl,
 }
 
 impl NodeAgents {
@@ -41,6 +45,8 @@ impl NodeAgents {
             home: home.to_owned(),
             state: Mutex::new(state),
             changed,
+            #[cfg(unix)]
+            host: host::HostControl::new(home),
         })
     }
 }
