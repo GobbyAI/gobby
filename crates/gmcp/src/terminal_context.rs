@@ -16,7 +16,14 @@ pub fn capture() -> Map<String, Value> {
     let parent = Some(std::os::unix::process::parent_id());
     #[cfg(not(unix))]
     let parent = None;
-    capture_with(&std::env::vars().collect(), parent, run_tmux)
+    capture_with(&environment(), parent, run_tmux)
+}
+
+fn environment() -> BTreeMap<String, String> {
+    // A value that is not UTF-8 cannot be carried as a JSON string, so it is skipped.
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
 }
 
 pub fn serialize(context: &Map<String, Value>) -> String {
@@ -30,7 +37,23 @@ pub fn serialize(context: &Map<String, Value>) -> String {
                 .map(|value| (key.clone(), value.clone()))
         })
         .collect();
-    Value::Object(filtered).to_string()
+    escape_non_ascii(&Value::Object(filtered).to_string())
+}
+
+// Python's json.dumps escapes non-ASCII as \uXXXX, with surrogate pairs above the BMP.
+fn escape_non_ascii(json: &str) -> String {
+    let mut escaped = String::with_capacity(json.len());
+    for character in json.chars() {
+        if character.is_ascii() {
+            escaped.push(character);
+            continue;
+        }
+        let mut units = [0_u16; 2];
+        for unit in character.encode_utf16(&mut units) {
+            escaped.push_str(&format!("\\u{unit:04x}"));
+        }
+    }
+    escaped
 }
 
 fn capture_with(
