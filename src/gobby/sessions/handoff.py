@@ -485,7 +485,7 @@ def clear_handoff_turn_end_pending(
     *,
     attempt_id: str,
 ) -> bool:
-    """Clear the turn-end bypass after its queued in-process compact settles."""
+    """Clear the turn-end bypass once this attempt's compact settles, in-process or receipted."""
     with db.transaction() as conn:
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
