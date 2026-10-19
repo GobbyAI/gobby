@@ -1,7 +1,9 @@
 """Node-origin deliveries skip hub-only effects (#24531, plan 2.8).
 
-Each guard applies to a node delivery only. Every test runs the same input as a
-local control first, so a node failure cannot come from a broken fixture.
+Each guard applies to a node delivery only. The provider-file and run-command
+tests run the same input as a local control first, so a node failure cannot come
+from a broken fixture. The worktree, rtk and found-work tests have no local
+control; they assert the node outcome alone.
 """
 
 from __future__ import annotations
