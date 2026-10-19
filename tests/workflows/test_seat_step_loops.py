@@ -661,6 +661,78 @@ async def test_developer_bounce_requires_incoming_assigned_reviewer(
     assert run.step == "submit"
 
 
+async def test_developer_submit_returns_to_implement_on_reviewer_request(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, _ = linked_developer
+    assert not await run.admits_native("Bash", {"command": "git status"})
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "implement"
+    assert run.vars["implementation_complete"] is False
+    assert await run.admits_native("Bash", {"command": "git status"})
+
+
+async def test_developer_submit_return_refused_for_unowned_task(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, unlinked_sha = linked_developer
+    foreign = run.task(owner=PEER_ID)
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={foreign.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "submit"
+    await run.incoming(
+        f"EVENT=PROOF_REQUEST TASK={task.id} SHA={unlinked_sha} NOTE=evidence", PEER_ID
+    )
+    assert run.step == "submit"
+
+
+async def test_developer_proof_return_rearms_candidate_latch(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, _ = linked_developer
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "implement"
+    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": sha})
+    assert run.step == "submit"
+    assert run.vars["candidate_sent"] is False
+    await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} SHA={sha} NOTE=proof-only")
+    assert run.vars["candidate_sent"] is True
+    assert not await run.admits(
+        "gobby-tasks",
+        "close_task",
+        {"task_id": task.id, "reason": "already_implemented"},
+    )
+
+
+async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task, SHA, "independent_review_approval", SESSION_ID)
+    assert run.step == "verdict"
+    request = f"EVENT=PROOF_REQUEST TASK={task.id} SHA={SHA} NOTE=retest"
+    assert await run.admits(
+        "gobby-agents",
+        "send_message",
+        {"target": "session", "target_id": OWNER_ID, "content": request},
+    )
+    source = (AGENTS_DIR / "code-reviewer.yaml").read_text()
+    retest = next(line for line in source.splitlines() if "- Retest." in line)
+    assert "EVENT=PROOF_REQUEST" in retest
+    assert "EVENT=PROOF_RESULT" in retest
+    assert "RETEST=UNAVAILABLE" in retest
+    assert "re-arm" in retest
+    assert "main checkout" not in retest
+
+
+def test_developer_submit_releases_only_after_reviewer_landed() -> None:
+    source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
+    assert "Once the reviewer has sent EVENT=LANDED and only activation remains" in source
+    assert "A `Landed #N` notice alone keeps you at submit" in source
+    assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
+    assert "Once the candidate has landed" not in source
+
+
 @pytest.fixture
 async def reviewer_authorities(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch

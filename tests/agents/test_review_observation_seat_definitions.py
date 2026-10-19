@@ -668,7 +668,10 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`landed_by_session_id` equals your current session ID" in prompt
     assert "equals your current session ID or is `unknown`, send" in prompt
     assert "Report an unknown lander as unknown." not in prompt
-    assert "recovery or replay of your own landing; perform the required retest" in prompt
+    assert (
+        "recovery or replay of your own landing; when retest is required, wait for the author's "
+        "`EVENT=PROOF_RESULT` before reporting it"
+    ) in prompt
     status = str(verdict.status_message)
     assert "send EVENT=ALREADY_LANDED" in status
     assert "otherwise send EVENT=LANDED" in status
@@ -874,6 +877,10 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
         in prompt
     )
     assert "your release alone admits a close" in prompt
+    assert "the reviewer has run the retest" not in prompt
+    assert "the author lane already has the reviewer's report" not in prompt
+    assert "the author's `EVENT=PROOF_RESULT` has reported the retest" in prompt
+    assert "holds its own `EVENT=PROOF_RESULT`" in prompt
 
 
 def test_review_and_observation_seats_sync_as_installed_rows(
