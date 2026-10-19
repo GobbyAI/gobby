@@ -200,7 +200,10 @@ fn grant_unavailable() -> Response<Body> {
 }
 
 fn malformed_grant() -> Response<Body> {
-    json_response(StatusCode::BAD_REQUEST, json!({"detail": "malformed grant"}))
+    json_response(
+        StatusCode::BAD_REQUEST,
+        json!({"detail": "malformed grant"}),
+    )
 }
 
 fn internal(error: impl Debug) -> Response<Body> {

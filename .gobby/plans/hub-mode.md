@@ -1307,8 +1307,6 @@ Targets:
 - `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`
 - `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`
 - `src/gobby/servers/websocket/server.py::WebSocketServer.handle_connection`
-- `src/gobby/servers/websocket/server.py::WebSocketServer._bind_connection_caller`
-- `src/gobby/servers/websocket/caller_binding.py`
 - `tests/servers/conftest.py::*` — scope-reason: `authenticate_test_server` and `authenticated_http_requests` return break-glass decisions, and the new `authenticate_as` helper and `OTHER_USER_ID` constant join them for every ownership test
 - `tests/servers/test_ws_asgi_endpoint.py::*` — scope-reason: its fake auth services (`_AuthService`, the `SimpleNamespace` services, `DelayedAuthServer.run_db`) answer `authenticate` with an `AuthDecision` in place of a bool, and `_WebSocketServer.handle_connection` takes the decision and the `database` keyword
 - `tests/hub/test_caller_scope.py`
@@ -1317,13 +1315,6 @@ Targets:
 **Granularity:** one leaf. Resolving the caller's user at authentication
 and binding it at each entry are one behavior: either half alone leaves a
 credential path unchecked, and 1.5.5 tests them together.
-
-`src/gobby/servers/websocket/server.py` is 853 lines, so this leaf moves the
-WebSocket caller binding out of it into the new
-`src/gobby/servers/websocket/caller_binding.py` (Orchestrator gobby#15977,
-2026-10-18 15:11 CDT). #24595's landed code (780fdf4ce2) holds the binding in
-`WebSocketServer._bind_connection_caller`; the move deletes that method, and
-`handle_connection` keeps only the call and the reset.
 
 **Research context:**
 - Orchestrator gobby#15977's security return (2026-10-14) asks for an
@@ -1465,16 +1456,14 @@ WebSocket caller binding out of it into the new
   signature and then acts as hub-internal work, the system principal of
   ROADMAP decision 17. The other public paths reach no guarded action.
 - `WebSocketServer.handle_connection(websocket, decision: AuthDecision | None = None, *, database: HubDatabase | None = None)`
-  is the only place that binds and resets a WebSocket caller: it calls
-  `caller_binding.py::bind_connection_caller(websocket, decision, database, terminal_services)`
+  is the only place that binds and resets a WebSocket caller: it binds
   before it runs `_handle_connection` and resets the token in `finally`.
-  `bind_connection_caller` makes the choice below and returns the token.
   The ASGI endpoint passes its decision and
   `database=require_hub_database(server.services.database)`, bound through
   `bind_decision(decision, database)`. A native server connection passes
   neither and binds `websocket.user_id`, which `AuthMixin._authenticate`
   set from the verified front-door identity, with
-  `terminal_services.manager.db` when terminal services are attached
+  `self.terminal_services.manager.db` when terminal services are attached
   and `None` otherwise, which `require_machine_owned` refuses. Messages handled off the loop
   (`_start_off_loop`) run in tasks created inside the handler, so they
   inherit the binding.
@@ -1518,7 +1507,7 @@ Consumers unchanged:
 - `tests/servers/test_auth_middleware.py` — no-edit-reason: allowed and refused decisions answer as before; the binding only adds request context; re-run as verification.
 - `tests/servers/test_http_middleware.py` — no-edit-reason: its responses are unchanged; re-run as verification.
 - `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it calls `_handle_connection` directly, so its connections run unbound and reach no guarded action.
-- `src/gobby/servers/websocket/native_bridge.py` — no-edit-reason: #24620's browser bridge already authenticates through `authenticate`, reads `AuthDecision.allowed`, and calls `handle_connection(adapter, decision, database=...)` with this leaf's signature, which the move keeps.
+- `src/gobby/servers/websocket/native_bridge.py` — no-edit-reason: #24620's browser bridge already authenticates through `authenticate`, reads `AuthDecision.allowed`, and calls `handle_connection(adapter, decision, database=...)` with this leaf's signature.
 - `tests/servers/test_native_ws_bridge.py` — no-edit-reason: it drives that bridge through the same `authenticate` answer and `handle_connection` signature; re-run as verification.
 - `tests/servers/test_terminal_ws_resize.py` — no-edit-reason: a resize is not a guarded action; re-run as verification.
 - `tests/servers/websocket/test_server.py` — no-edit-reason: `handle_connection` now binds its fake socket's `user_id`, and its messages (ping, terminal attach, input and release, workspace ops) reach no guarded action; re-run as verification.
@@ -4258,6 +4247,15 @@ Verification planned:
   and 5.1's research says grok's and agy's hook attention stays unproven on a
   node. node-halves has since created `crates/gdaemon/src/nodes/agents/mod.rs`,
   so 4.2 and 4.6 scope it with `::*`. The stale M1 stays until consensus.
+- 2026-10-18: 1.5 reverts to the text of #24595 (Callers act only on machines
+  they own), which landed at 61b7a9e478 and cannot carry new work (Orchestrator
+  gobby#15977's ruling after DAEMON BACK). Plan Writer gobby#16767 withdraws the
+  `caller_binding.py` move. Its only
+  purpose was the size-growth rule on `server.py`, and route A exempts 1.5 once
+  #24595 closes completed (#15977, 16:19 CDT), as #24272 did for 2.2. That leaves
+  the move as nothing but a new Python module, which #15977's 16:16 ruling on
+  #24657 rules out. 1.5 keeps the Consumers unchanged entries for #24620's
+  `native_bridge.py` and its test. The stale M1 stays until consensus.
 
 ## V2: Verification
 `kind: verification`

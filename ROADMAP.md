@@ -344,6 +344,42 @@ critical path. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes it
 index through hub HTTP routes owned by whichever Stage 2 family absorbs the
 code-index routes (decision 17).
 
+**Node path-scope contract — #20438 (agent-side temp roots).** The S4.1 node
+classifies hook paths on the machine that executes the agent, before forwarding
+through S2.11's node-local hook ingress. This is a planned node duty; the current
+Python helper, `src/gobby/hooks/_path_scope.py::_temp_scratchpad_roots`, reads
+the classifying process's tempdir and `/tmp` and `/private/tmp` aliases. Moving
+that helper unchanged to a hub would classify paths against the wrong filesystem.
+
+The node uses the executing agent's effective tempdir, captured from its launch
+context, together with the node's own local temp roots. The agent's context is
+per execution: the node daemon's environment is not a substitute when `TMPDIR`
+differs. For an unmanaged agent, a hook-reported root is only a hint until the
+node validates it against local temp-root policy. An arbitrary client root must
+never grant an exemption. Missing or unverified agent context permits only the
+node's known local roots; an unknown custom agent tempdir remains subject to
+ordinary path-scope rules rather than being silently exempted.
+
+Resolve paths, symlinks, temp roots, project membership, and Git worktree linkage
+on that node. Preserve the classifier's ordering: a path inside the active project
+is project-scoped even under a temp root; an external temp path needs an existing
+scratchpad marker or prefix before the scratchpad exemption applies. A temp root
+alone does not make every descendant an agent scratchpad.
+
+The forwarded classification and its provenance are bound to the authenticated
+node and originating execution. The hub applies its rules to that result without
+resolving remote paths, probing the hub filesystem, or adding the hub's tempdir.
+This extends the existing hook [machine binding](docs/contracts/hook-ingress.md#machine-binding).
+Absent or invalid node classification must not produce a scratchpad exemption.
+`standalone`, and agents running on the hub itself, use the same local duty on
+their executing machine; remote agents never inherit the hub's roots.
+
+The S4.1/S2.11 implementation verification must cover differing hub, node, and
+agent tempdirs; two agents with different tempdirs; missing/unverified agent
+context; forged machine/root metadata; temp paths without markers; project paths
+under temp roots; and symlinks and linked scratchpad worktrees. These are future
+runtime checks, not a claim that this documentation change implements them.
+
 ## Side quests
 
 Documented, allowed to run concurrently, labeled `sidequest` in the task graph,
@@ -545,6 +581,15 @@ separate planning effort before implementation.
     #21571 Operator verbs on the client: "Ok, it needs to be after stage 2 but before stage 3."
     This supersedes his earlier Stage 4 idea. S3.1 starts after #21544 Stage 2 completes and
     lands before S3.2 to S3.4 begin.
+
+25. **Scratchpad path scope belongs to the executing node** (2026-10-18;
+    #20438 agent-side temp roots). Filesystem classification runs node-side;
+    semantic hook rules remain hub-side. The agent's effective tempdir and the
+    node's validated local roots govern the exemption, including when agent and
+    node daemon environments differ. The hub's tempdir never governs a remote
+    agent. Client-supplied roots alone carry no exemption authority. The
+    [Stage 4 contract](#stage-4--hub-and-node-live-story-b-21546) records the
+    missing-context behavior, trust boundary, and implementation verification.
 
 ## References
 

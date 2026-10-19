@@ -16,8 +16,7 @@ use futures_util::FutureExt;
 use gobby_core::grant::presentation::sign_grant;
 use gobby_core::grant::{
     EXPECTED_API_CONTRACT, GRANT_HEADER, GrantBundle, PostgresCapability, PrincipalKind,
-    deployment_token,
-    encode_grant_header, expected_schema_identity,
+    deployment_token, encode_grant_header, expected_schema_identity,
 };
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_core::route_family::RouteFamily;
