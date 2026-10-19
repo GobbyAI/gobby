@@ -141,7 +141,10 @@ def test_developer_prompt_carries_the_lane_flow_and_skill_routing() -> None:
     assert "HOLD" in prompt
     assert "GO" in prompt
     assert "gobby-agents:wait_for_coordination" in prompt
-    assert "stored incoming CANDIDATE_VERDICT with get_inter_session_message" in prompt
+    assert (
+        "stored incoming CANDIDATE_VERDICT with VERDICT=BOUNCE, or its EVENT=PROOF_REQUEST, with get_inter_session_message"
+        in prompt
+    )
     assert "matching assigned reviewer/task/SHA returns submit to implementation" in prompt
     assert "never write bounced yourself" in prompt
     assert "Orchestrator" in prompt

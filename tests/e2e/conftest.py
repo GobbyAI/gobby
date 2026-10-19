@@ -762,9 +762,14 @@ def wait_for_daemon_health(
     )
 
 
-def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
-    """Probe readiness with a complete authenticated handshake and clean close."""
+def probe_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> str | None:
+    """Probe readiness with a complete authenticated handshake and clean close.
+
+    Returns None once ready. Otherwise returns the last failure, so a timeout names
+    what refused the handshake (for example an HTTP 503) instead of a bare False.
+    """
     deadline = time.monotonic() + timeout
+    last_failure = "no handshake attempt completed before the deadline"
     while time.monotonic() < deadline:
         try:
             token = daemon_token(home)
@@ -775,10 +780,45 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
                 close_timeout=1.0,
                 proxy=None,
             ):
-                return True
-        except (OSError, RuntimeError, TimeoutError, WebSocketException):
+                return None
+        except (OSError, RuntimeError, TimeoutError, WebSocketException) as error:
+            last_failure = f"{type(error).__name__}: {error}"
             time.sleep(0.1)
-    return False
+    return last_failure
+
+
+def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
+    """Probe readiness with a complete authenticated handshake and clean close."""
+    return probe_daemon_websocket(port, home, timeout=timeout) is None
+
+
+_READINESS_TAIL_LINES = 200
+
+
+def _bounded_tail(path: Path) -> str:
+    """Last lines of a diagnostic file, or a marker when the file is absent."""
+    if not path.exists():
+        return f"<absent: {path}>"
+    lines = path.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-_READINESS_TAIL_LINES:])
+
+
+def daemon_websocket_failure_report(
+    port: int, failure: str, home: Path, log_file: Path, error_log_file: Path
+) -> str:
+    """Failure message for a daemon whose WebSocket never became ready.
+
+    Names the last handshake failure and attaches the startup timings and bounded
+    tails of the daemon logs, so the evidence survives fixture teardown.
+    """
+    timings = _bounded_tail(home / "logs" / "startup-timings.jsonl")
+    logs = _bounded_tail(log_file)
+    error_logs = _bounded_tail(error_log_file)
+    return (
+        f"Daemon WebSocket port {port} did not become ready within timeout: {failure}.\n"
+        f"Startup timings:\n{timings}\n"
+        f"Logs:\n{logs}\nError logs:\n{error_logs}"
+    )
 
 
 def daemon_health_unavailable(port: int) -> bool:
@@ -1309,14 +1349,13 @@ def spawn_daemon_instance(
     # WebSocket server comes up on a separate port and can lag by a few hundred
     # ms. Tests like test_daemon_listens_on_configured_ports race against that
     # gap — probe the WS port explicitly so it's listening before yield.
-    if not wait_for_daemon_websocket(ws_port, gobby_home, timeout=10.0):
-        logs = instance.read_logs()
-        error_logs = instance.read_error_logs()
-        terminate_process_tree(process.pid)
-        pytest.fail(
-            f"Daemon WebSocket port {ws_port} did not become ready within timeout.\n"
-            f"Logs:\n{logs}\nError logs:\n{error_logs}"
+    failure = probe_daemon_websocket(ws_port, gobby_home, timeout=10.0)
+    if failure is not None:
+        report = daemon_websocket_failure_report(
+            ws_port, failure, gobby_home, instance.log_file, instance.error_log_file
         )
+        terminate_process_tree(process.pid)
+        pytest.fail(report)
 
     yield instance
 

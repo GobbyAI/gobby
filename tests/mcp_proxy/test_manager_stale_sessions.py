@@ -243,10 +243,11 @@ async def test_schema_lookup_recovers_hung_session(cleanup_times_out: bool) -> N
 
 
 @pytest.mark.asyncio
-async def test_schema_lookup_discards_hung_session_after_retry() -> None:
+@pytest.mark.parametrize("initial_times_out", [False, True])
+async def test_schema_lookup_discards_hung_session_after_retry(initial_times_out: bool) -> None:
     manager, config = make_manager()
     manager.connection_timeout = 0.01
-    stale_connection = FakeConnection(ClosedSession())
+    stale_connection = FakeConnection(HangingSession() if initial_times_out else ClosedSession())
     manager._connections[config.id] = stale_connection
     retry_connection = FakeConnection(HangingSession())
 
@@ -258,8 +259,12 @@ async def test_schema_lookup_discards_hung_session_after_retry() -> None:
         try:
             done, _ = await asyncio.wait({lookup}, timeout=0.5)
             assert lookup in done, "A hung reconnect must fail within the discovery deadline"
-            with pytest.raises(MCPError, match="reconnect retry failed: TimeoutError"):
+            with pytest.raises(MCPError) as exc_info:
                 await lookup
+            message = str(exc_info.value)
+            assert "reconnect retry failed: Tool discovery timeout after 0.01s" in message
+            if initial_times_out:
+                assert "initial listing failed: Tool discovery timeout after 0.01s" in message
         finally:
             lookup.cancel()
             with suppress(asyncio.CancelledError, MCPError):

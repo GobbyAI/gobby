@@ -48,10 +48,10 @@ _LANDING_ACTION = re.compile(
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
 _RETEST_PROCEDURE = (
-    "Retest on the landed tree: take the focused verification commands from the task's "
-    "validation evidence, run them in the main checkout, and report each command and its "
-    "result, this landing's landed_tip, the HEAD you tested and any unrelated checkout "
-    "changes to the developer and the Orchestrator."
+    "Retest on the landed tree belongs to the author: send EVENT=PROOF_REQUEST for this task "
+    "and SHA to the author session and your Lane Manager, carrying this landing's landed_tip "
+    "and the focused verification commands from the task's validation evidence. Do not run "
+    "them yourself; wait for the author's EVENT=PROOF_RESULT before your LANDED line."
 )
 
 

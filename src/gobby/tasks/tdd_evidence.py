@@ -7,6 +7,7 @@ import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from itertools import chain
 from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import (
@@ -39,7 +40,7 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
-from gobby.tasks.tdd_retained_output import delivered_proof_runs
+from gobby.tasks.tdd_retained_output import delivered_proof_runs, unauthenticated_retained_note
 from gobby.tasks.tdd_stub_revert import has_stub_revert_proof
 from gobby.tasks.transcript_background import unread_reason
 from gobby.tasks.transcript_evidence_models import (
@@ -382,7 +383,7 @@ def _find_red_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
     test_edit_order: int,
-    first_non_test_edit: TranscriptEdit | None,
+    first_non_test_edit: TranscriptEdit,
     *,
     require_not_implemented: bool = False,
     parse_cache: PythonModuleCache | None = None,
@@ -395,8 +396,8 @@ def _find_red_run(
     settled before ``first_non_test_edit``, the edit that closes this window.
     """
     rejection = None
-    production_at = first_non_test_edit.timestamp if first_non_test_edit is not None else None
-    window = first_non_test_edit.order if first_non_test_edit is not None else -1
+    production_at = first_non_test_edit.timestamp
+    window = first_non_test_edit.order
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "failure"
@@ -404,7 +405,7 @@ def _find_red_run(
             or run.order <= test_edit_order
         ):
             continue
-        if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
+        if run.order >= first_non_test_edit.order:
             continue
         core_command = run.core_command
         if core_command is None:
@@ -423,7 +424,7 @@ def _find_red_run(
             # delivery is proved alone, then the authenticated retained output.
             candidates = [] if run.background_output_path is not None else [run]
             cached = (False, None)
-            for proof_run in candidates + delivered_proof_runs(run, production_at):
+            for proof_run in chain(candidates, delivered_proof_runs(run, production_at)):
                 matched, proof_reason = _red_run_proof(
                     test,
                     evidence,
@@ -447,6 +448,7 @@ def _find_red_run(
             reason = unread_reason(run, production_at, _rust_node(test))
         if reason is None:
             continue
+        reason = f"{reason}{unauthenticated_retained_note(run, production_at)}"
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
 
