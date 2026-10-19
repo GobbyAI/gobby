@@ -133,12 +133,104 @@ def test_stable_mirror_relinks_a_package_whose_source_vanished(tmp_path: Path) -
     mirror = tmp_path / "mirror"
     reports: list[str] = []
 
-    assert materialize_zig_packages(machine_pkgs, mirror, first_zig_pkg, report=reports.append)
+    assert materialize_zig_packages(
+        machine_pkgs, mirror, first_zig_pkg, manifest=None, report=reports.append
+    )
     shutil.rmtree(first_zig_pkg)
-    assert materialize_zig_packages(machine_pkgs, mirror, second_zig_pkg, report=reports.append)
+    assert materialize_zig_packages(
+        machine_pkgs, mirror, second_zig_pkg, manifest=None, report=reports.append
+    )
 
     package = mirror / ZIG_PACKAGES / PKGID
     assert (package / "src").readlink() == second_zig_pkg / PKGID / "src"
     assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == "second-payload"
     assert [entry.name for entry in mirror.iterdir()] == [ZIG_PACKAGES]
     assert reports == []
+
+
+MISSING = "vaxis-0.6.0-BWNVXXXX"
+
+
+def test_every_pin_present_in_the_machine_cache_completes_the_mirror(tmp_path: Path) -> None:
+    machine_pkgs = tmp_path / "machine"
+    machine_pkgs.mkdir()
+    _extracted_package(machine_pkgs, "machine-payload")
+    manifest = tmp_path / "build.zig.zon"
+    manifest.write_text(
+        f'.{{ .dependencies = .{{ .dep = .{{ .hash = "{PKGID}" }} }} }}\n', encoding="utf-8"
+    )
+    reports: list[str] = []
+
+    assert materialize_zig_packages(
+        machine_pkgs, tmp_path / "mirror", None, manifest=manifest, report=reports.append
+    )
+    assert reports == []
+
+
+def test_a_lazy_pin_missing_from_the_machine_cache_still_completes_the_mirror(
+    tmp_path: Path,
+) -> None:
+    """A --system build resolves a lazy dependency only when build.zig asks
+    for it, so its absence alone does not fail the mirror."""
+    machine_pkgs = tmp_path / "machine"
+    machine_pkgs.mkdir()
+    _extracted_package(machine_pkgs, "machine-payload")
+    lazy_pkg = tmp_path / "pkg" / "lazy"
+    lazy_pkg.mkdir(parents=True)
+    (lazy_pkg / "build.zig.zon").write_text(
+        f'.{{ .dependencies = .{{ .tarball = .{{ .hash = "{MISSING}" }} }} }}\n',
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "build.zig.zon"
+    manifest.write_text(
+        ".{ .dependencies = .{ "
+        f'.dep = .{{ .hash = "{PKGID}" }}, '
+        f'.lazy_pin = .{{ .hash = "{MISSING}", .lazy = true }}, '
+        '.lazy_path = .{ .path = "./pkg/lazy", .lazy = true }, '
+        "} }\n",
+        encoding="utf-8",
+    )
+    reports: list[str] = []
+
+    assert materialize_zig_packages(
+        machine_pkgs, tmp_path / "mirror", None, manifest=manifest, report=reports.append
+    )
+    assert reports == []
+    assert (tmp_path / "mirror" / ZIG_PACKAGES / PKGID).is_dir()
+
+
+@pytest.mark.parametrize("pinned_by", ["vendored", "package"])
+def test_a_pin_missing_from_the_machine_cache_names_the_package_and_the_refresh(
+    tmp_path: Path, pinned_by: str
+) -> None:
+    """A dependency bump the machine cache lacks fails here, naming its fix,
+    instead of inside a fetch-disabled sandboxed build."""
+    machine_pkgs = tmp_path / "machine"
+    machine_pkgs.mkdir()
+    package = _extracted_package(machine_pkgs, "machine-payload")
+    vendored = tmp_path / "vendored"
+    vendored.mkdir()
+    manifest = vendored / "build.zig.zon"
+    pins = [PKGID] if pinned_by == "package" else [PKGID, MISSING]
+    manifest.write_text(
+        ".{ .dependencies = .{ "
+        + " ".join(f'.dep{index} = .{{ .hash = "{pin}" }},' for index, pin in enumerate(pins))
+        + " } }\n",
+        encoding="utf-8",
+    )
+    if pinned_by == "package":
+        (package / "build.zig.zon").write_text(
+            f'.{{ .dependencies = .{{ .nested = .{{ .hash = "{MISSING}" }} }} }}\n',
+            encoding="utf-8",
+        )
+    reports: list[str] = []
+
+    complete = materialize_zig_packages(
+        machine_pkgs, tmp_path / "mirror", None, manifest=manifest, report=reports.append
+    )
+
+    assert not complete
+    assert reports == [
+        f"zig package {MISSING} pinned by the vendored libghostty-vt is missing from "
+        f"{machine_pkgs}; refresh it with scripts/build_vendored_libghostty_vt.sh"
+    ]

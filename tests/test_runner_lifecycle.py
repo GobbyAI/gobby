@@ -51,6 +51,13 @@ def _clear_app_context_between_tests(monkeypatch: pytest.MonkeyPatch) -> Iterato
     clear_app_context()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_supervisor_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A stale GOBBY_SUPERVISOR_FD from the launching shell selects the backend
+    # ports and makes watch_supervisor read a closed descriptor.
+    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+
+
 def _runner_with_static_runtime() -> GobbyRunner:
     runner = GobbyRunner()
     runner.config_runtime._bundle = static_runtime_capture(DaemonConfig())()

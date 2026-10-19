@@ -78,6 +78,7 @@ def _compile_build_rs(tmp_path: Path) -> Path:
 def _run_build_rs(binary: Path, *, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     env = {
         "CARGO_MANIFEST_DIR": str(GTERMINAL),
+        "OUT_DIR": str(binary.parent / "out"),
         "TARGET": "aarch64-apple-darwin",
         "HOME": os.environ.get("HOME", ""),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),

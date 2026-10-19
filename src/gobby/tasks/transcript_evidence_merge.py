@@ -10,6 +10,28 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 
+def archive_before_live(
+    archive: TranscriptEvidence, live: TranscriptEvidence
+) -> TranscriptEvidence:
+    """Retain only an archive's prefix missing from the resumed live transcript."""
+    boundary = min(
+        [run.completed_at for run in (*live.validation_runs, *live.command_runs)]
+        + [edit.timestamp for edit in live.edits],
+        default=None,
+    )
+    if boundary is None:
+        return archive
+    return replace(
+        archive,
+        validation_runs=tuple(
+            run for run in archive.validation_runs if run.completed_at < boundary
+        ),
+        command_runs=tuple(run for run in archive.command_runs if run.completed_at < boundary),
+        edits=tuple(edit for edit in archive.edits if edit.timestamp < boundary),
+        task_claims=tuple(claim for claim in archive.task_claims if claim.claimed_at < boundary),
+    )
+
+
 def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptEvidence:
     """Merge session evidence into one transcript position sequence.
 

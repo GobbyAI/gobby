@@ -64,11 +64,13 @@ class _FieldUpdateMixin(
                 "UPDATE sessions SET status = %s, updated_at = %s WHERE id = %s",
                 (status, now, session_id),
             )
-        # Any status write settles the expiry a marker was describing, so the
-        # marker never outlives the one it was written for. mark_session_expired
-        # records its own after this returns, which is what keeps a stale marker
-        # from shielding a later, final expiry (#20837).
-        clear_contested_terminal_expiry(self.db, session_id)
+        # A status change settles the expiry a marker was describing, so the
+        # marker never outlives the one it was written for. A same-status rewrite
+        # of an expired seat settles nothing, so its drain marker keeps the claim
+        # shield (#24650). mark_session_expired records its own after this returns,
+        # which is what keeps a stale marker from shielding a later, final expiry (#20837).
+        if current is None or current.status != status:
+            clear_contested_terminal_expiry(self.db, session_id)
         updated = self.get(session_id)
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"
@@ -305,9 +307,10 @@ class _FieldUpdateMixin(
     ) -> Session | None:
         """Expire an unchanged paused session bound to a confirmed exited native terminal.
 
-        A pane that exited under a host epoch other than ``live_host_epoch`` was
-        ended by a host drain, not closed, so the expiry is recorded as contested
-        and the session's claims wait for its resume.
+        A pane is closed only when it exited under ``live_host_epoch``. Any other
+        epoch, or an unknown one while the host has not connected yet, may be a host
+        drain, so the expiry is recorded as contested and the session's claims wait
+        for its resume.
         """
         now = utc_now()
         with self.db.transaction():
@@ -353,7 +356,10 @@ class _FieldUpdateMixin(
             exited_host_epoch = row["exited_host_epoch"]
             # Same transaction as the expiry: a claim sweep must never see the
             # drained session expired without the marker that shields its claims.
-            if live_host_epoch and exited_host_epoch and exited_host_epoch != live_host_epoch:
+            # Only a pane that exited under the live host's epoch proves a close. An
+            # unknown live epoch, such as a restart before the host connects, may be a
+            # drain, so it is recorded as contested too.
+            if not live_host_epoch or exited_host_epoch != live_host_epoch:
                 record_contested_terminal_expiry(self.db, session_id, "terminal_drain")
         self._notify_session_change("session_expired", session_id)
         updated = self.get(session_id)

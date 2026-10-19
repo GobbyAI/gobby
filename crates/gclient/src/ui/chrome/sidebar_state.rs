@@ -5,7 +5,6 @@
 
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::SidebarSide;
-use ratatui::backend::WindowSize;
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -13,12 +12,7 @@ use std::time::Instant;
 /// The overlay's width in columns, at most the width it lies over.
 pub const OVERLAY_WIDTH: u16 = 34;
 
-/// The widest the pinned sidebar drags, in the pixels the terminal reports
-/// (Josh, 2026-10-05: "max 540px width").
-const MAX_WIDTH_PIXELS: u32 = 540;
-
-/// The width cap in columns before the terminal reports its pixels, and the
-/// floor under the pixel cap: a terminal reporting no pixels keeps it.
+/// The width cap in columns until the loop first measures the window.
 const BASE_MAX_WIDTH: u16 = 36;
 
 #[derive(Debug, Clone)]
@@ -124,18 +118,20 @@ impl SidebarState {
             SidebarSide::Left => column.saturating_sub(area.x).saturating_add(1),
             SidebarSide::Right => area.right().saturating_sub(column),
         };
-        self.width = width.clamp(self.min_width, self.max_width);
+        let (min, max) = self.width_bounds();
+        self.width = width.clamp(min, max);
     }
 
-    /// Cap the width at the columns `MAX_WIDTH_PIXELS` spans at the
-    /// window's cell width, never below `BASE_MAX_WIDTH`.
-    pub fn cap_to_window(&mut self, window: WindowSize) {
-        let columns = (u32::from(window.columns_rows.width) * MAX_WIDTH_PIXELS)
-            .checked_div(u32::from(window.pixels.width))
-            .unwrap_or(0);
-        self.max_width = u16::try_from(columns)
-            .unwrap_or(u16::MAX)
-            .max(BASE_MAX_WIDTH);
+    /// Cap the width at one third of the window's columns (Josh,
+    /// 2026-10-16: "resize the sidebar up to 1/3 the width of the screen").
+    pub fn cap_to_window(&mut self, columns: u16) {
+        self.max_width = columns / 3;
+    }
+
+    /// The drag and step bounds: a window too narrow for the minimum under
+    /// its one-third cap lowers the minimum to the cap.
+    pub fn width_bounds(&self) -> (u16, u16) {
+        (self.min_width.min(self.max_width), self.max_width)
     }
 
     /// Split `middle` into the sidebar rect and the content. Pinned, a
@@ -192,25 +188,40 @@ mod tests {
     }
 
     #[test]
-    fn the_width_cap_spans_540_pixels_and_never_drops_below_36() {
-        let window = |columns, pixels| WindowSize {
-            columns_rows: ratatui::layout::Size::new(columns, 40),
-            pixels: ratatui::layout::Size::new(pixels, 800),
-        };
+    fn the_drag_spans_the_minimum_to_one_third_of_the_window() {
         let mut sidebar = SidebarState::default();
-        // 8-pixel cells: 540 pixels span 67 whole columns.
-        sidebar.cap_to_window(window(200, 1600));
-        assert_eq!(sidebar.max_width, 67);
-        // 17-pixel cells span 31, under the floor.
-        sidebar.cap_to_window(window(100, 1700));
-        assert_eq!(sidebar.max_width, 36);
-        // A terminal reporting no pixels keeps the floor.
-        sidebar.cap_to_window(window(200, 1600));
-        sidebar.cap_to_window(window(200, 0));
-        assert_eq!(sidebar.max_width, 36);
-        // The drag clamps to the new cap.
-        sidebar.cap_to_window(window(200, 1600));
-        sidebar.set_width_from_column(Rect::new(0, 1, 26, 18), 99);
-        assert_eq!(sidebar.width, 67);
+        sidebar.cap_to_window(200);
+        assert_eq!(sidebar.width_bounds(), (18, 66));
+        let area = Rect::new(0, 1, 26, 18);
+        sidebar.set_width_from_column(area, 2);
+        assert_eq!(sidebar.width, 18, "clamped to the minimum");
+        sidebar.set_width_from_column(area, 65);
+        assert_eq!(sidebar.width, 66, "one third is reachable");
+        sidebar.set_width_from_column(area, 150);
+        assert_eq!(sidebar.width, 66, "clamped to one third");
+    }
+
+    #[test]
+    fn a_narrower_window_reclamps_the_drawn_width_and_keeps_the_preference() {
+        let mut chrome = crate::ui::Chrome::dark();
+        chrome.sidebar.pinned = true;
+        chrome.sidebar.cap_to_window(200);
+        chrome
+            .sidebar
+            .set_width_from_column(Rect::new(0, 1, 26, 18), 59);
+        assert_eq!(chrome.sidebar.width, 60);
+        chrome.sidebar.cap_to_window(90);
+        assert_eq!(chrome.sidebar_width(Rect::new(0, 1, 90, 38)), 30);
+        assert_eq!(chrome.sidebar.width, 60, "the preference survives");
+        chrome.sidebar.cap_to_window(200);
+        assert_eq!(chrome.sidebar_width(Rect::new(0, 1, 200, 38)), 60);
+        // Under 54 columns one third beats the minimum.
+        chrome.sidebar.cap_to_window(45);
+        assert_eq!(chrome.sidebar.width_bounds(), (15, 15));
+        assert_eq!(chrome.sidebar_width(Rect::new(0, 1, 45, 38)), 15);
+        chrome
+            .sidebar
+            .set_width_from_column(Rect::new(0, 1, 15, 38), 2);
+        assert_eq!(chrome.sidebar.width, 15);
     }
 }

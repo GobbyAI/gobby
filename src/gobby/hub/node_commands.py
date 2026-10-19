@@ -1,7 +1,9 @@
 """Typed hub-node command frames and node bodies.
 
-Wire JSON is compact, field order follows each model, and unknown fields fail
-validation. ``docs/contracts/node-commands.md`` is the contract.
+Wire JSON is compact, field order follows each model, unknown fields fail
+validation, and strict mode refuses coercion, so a missing nullable field and
+``"1"`` for an integer both fail. ``docs/contracts/node-commands.md`` is the
+contract.
 """
 
 from __future__ import annotations
@@ -23,9 +25,11 @@ from pydantic import (
 
 from gobby.utils.terminal_output import redact_terminal_output
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 4
 
 _LIST_LIMIT = 1000
+_READ_BUDGET = 8_388_608
+_GIT_TIMEOUT_LIMIT = 600_000
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _SRT_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _OPERATION = re.compile(r"[a-z][a-z0-9*-]*")
@@ -57,7 +61,7 @@ Version = Annotated[int, Field(ge=1)]
 
 
 class NodeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class Sandbox(NodeModel):
@@ -144,6 +148,31 @@ class WritePayload(NodeModel):
     submit: bool
 
 
+class MergePayload(NodeModel):
+    project_id: str
+    mode: Literal["worktree", "clone"]
+    path: str
+    branch_name: str
+    target_branch: str
+    source_root: str
+
+
+class RemovePayload(NodeModel):
+    project_id: str
+    mode: Literal["worktree", "clone"]
+    path: str
+    branch_name: str
+    source_root: str
+    force: bool
+    force_delete_branch: bool
+    merged_into: str | None
+
+
+class StatusPayload(NodeModel):
+    project_id: str
+    root_path: str
+
+
 class SpawnCommand(NodeModel):
     type: Literal["command"]
     v: Version
@@ -168,6 +197,30 @@ class WriteCommand(NodeModel):
     payload: WritePayload
 
 
+class MergeCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["workspace.merge"]
+    payload: MergePayload
+
+
+class RemoveCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["workspace.remove"]
+    payload: RemovePayload
+
+
+class StatusCommand(NodeModel):
+    type: Literal["command"]
+    v: Version
+    request_id: str
+    command: Literal["checkout.status"]
+    payload: StatusPayload
+
+
 class AcceptedResult(NodeModel):
     accepted: Literal[True]
 
@@ -178,6 +231,110 @@ class StoppedResult(NodeModel):
 
 class EmptyResult(NodeModel):
     pass
+
+
+class MergeResult(NodeModel):
+    outcome: Literal["merged", "already_merged", "conflict", "target_dirty", "busy"]
+    merge_sha: str | None
+    target_head_sha: str | None
+    conflicted_files: list[str]
+    dirty_paths: list[str]
+
+    @model_validator(mode="after")
+    def _outcome_consistent(self) -> MergeResult:
+        if self.outcome == "merged" and self.merge_sha is None:
+            raise ValueError("merge_sha is required with outcome merged")
+        if self.outcome != "merged" and self.merge_sha is not None:
+            raise ValueError("merge_sha is set only with outcome merged")
+        heads = ("merged", "already_merged")
+        if self.outcome in heads and self.target_head_sha is None:
+            raise ValueError("target_head_sha is required with outcome merged or already_merged")
+        if self.outcome not in heads and self.target_head_sha is not None:
+            raise ValueError("target_head_sha is set only with outcome merged or already_merged")
+        if self.conflicted_files and self.outcome != "conflict":
+            raise ValueError("conflicted_files is set only with outcome conflict")
+        if self.dirty_paths and self.outcome != "target_dirty":
+            raise ValueError("dirty_paths is set only with outcome target_dirty")
+        return self
+
+
+class RemoveResult(NodeModel):
+    outcome: Literal["removed", "dirty", "unmerged", "busy"]
+
+
+class StatusResult(NodeModel):
+    current_branch: str | None
+    branch_count: Count
+    ahead: Count | None
+    behind: Count | None
+
+
+def _contract_version_only(value: int) -> int:
+    if value != CONTRACT_VERSION:
+        raise ValueError("v must equal CONTRACT_VERSION")
+    return value
+
+
+ReadLimit = Annotated[int, Field(ge=0, le=_READ_BUDGET)]
+GitTimeout = Annotated[int, Field(ge=1, le=_GIT_TIMEOUT_LIMIT)]
+
+
+class FilesQuery(NodeModel):
+    kind: Literal["files"]
+    paths: list[str] = Field(max_length=_LIST_LIMIT)
+    read_limit: ReadLimit | None
+
+
+class GitQuery(NodeModel):
+    kind: Literal["git"]
+    args: list[str]
+    stdin: str | None
+    timeout_ms: GitTimeout
+
+
+CheckoutReadQuery = Annotated[FilesQuery | GitQuery, Field(discriminator="kind")]
+
+
+class CheckoutReadPayload(NodeModel):
+    cwd: str
+    query: CheckoutReadQuery
+
+
+class CheckoutReadCommand(NodeModel):
+    type: Literal["command"]
+    v: Annotated[int, AfterValidator(_contract_version_only)]
+    request_id: str
+    command: Literal["checkout.read"]
+    payload: CheckoutReadPayload
+
+
+class FileEntry(NodeModel):
+    path: str
+    resolved: str
+    kind: Literal["file", "dir", "other", "missing", "outside"]
+    checkout_root: str | None
+    git_common_dir: str | None
+    project_root: str | None
+    project_id: str | None
+    data: str | None
+    truncated: bool
+
+
+class GitResult(NodeModel):
+    exit_code: int | None
+    timed_out: bool
+    stdout: str
+    stderr: str
+    truncated: bool
+
+
+class CheckoutReadResult(NodeModel):
+    root: str
+    project_id: str
+    home: str
+    temp_dir: str
+    files: list[FileEntry] | None
+    git: GitResult | None
 
 
 class ErrorBody(NodeModel):
@@ -191,7 +348,15 @@ class OkReply(NodeModel):
     v: Version
     request_id: str
     ok: Literal[True]
-    result: AcceptedResult | StoppedResult | EmptyResult
+    result: (
+        AcceptedResult
+        | StoppedResult
+        | EmptyResult
+        | MergeResult
+        | RemoveResult
+        | StatusResult
+        | CheckoutReadResult
+    )
 
 
 class ErrReply(NodeModel):
@@ -391,7 +556,15 @@ class DetectionManifestsResult(NodeModel):
     manifests: list[DetectionManifestEntry]
 
 
-CommandFrame = SpawnCommand | CancelCommand | WriteCommand
+CommandFrame = (
+    SpawnCommand
+    | CancelCommand
+    | WriteCommand
+    | MergeCommand
+    | RemoveCommand
+    | StatusCommand
+    | CheckoutReadCommand
+)
 ReplyFrame = OkReply | ErrReply
 
 _PARSERS: dict[str, TypeAdapter[NodeModel]] = {
@@ -399,6 +572,7 @@ _PARSERS: dict[str, TypeAdapter[NodeModel]] = {
     "reply": TypeAdapter(ReplyFrame),
     "checkout": TypeAdapter(CheckoutBody),
     "checkout_result": TypeAdapter(CheckoutResult),
+    "merge_result": TypeAdapter(MergeResult),
     "report": TypeAdapter(ReportBody),
     "stale_report": TypeAdapter(StaleReport),
     "prompt_delivery_failure": TypeAdapter(PromptDeliveryFailureBody),

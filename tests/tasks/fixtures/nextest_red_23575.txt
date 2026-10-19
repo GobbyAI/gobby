@@ -1,0 +1,136 @@
+info: experimental features enabled: setup-scripts
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.49s
+────────────
+ Nextest run ID eebb6d31-c627-4ba9-924d-3753fc546802 with nextest profile: default
+    Starting 128 tests across 10 binaries (1118 tests skipped)
+        FAIL [   2.777s] (  4/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_same_hash_stale_attempt
+  stdout ───
+
+    running 1 test
+    test db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_same_hash_stale_attempt ... FAILED
+
+    failures:
+
+    failures:
+        db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_same_hash_stale_attempt
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 2.61s
+
+  stderr ───
+
+    thread 'db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_same_hash_stale_attempt' (126180598) panicked at crates/gcode/src/db/queries_cas_tests.rs:322:5:
+    assertion failed: !succeeded
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   5.216s] ( 12/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_completion_after_state_moves
+  stdout ───
+
+    running 1 test
+    test db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_completion_after_state_moves ... FAILED
+
+    failures:
+
+    failures:
+        db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_completion_after_state_moves
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 5.10s
+
+  stderr ───
+
+    thread 'db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_completion_after_state_moves' (126180589) panicked at crates/gcode/src/db/queries_cas_tests.rs:271:5:
+    assertion failed: !succeeded
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   5.218s] ( 13/128) gobby-code db::queries::queries_cas_tests::mark_graph_synced_cas_failure_dirties_attempted_version
+  stdout ───
+
+    running 1 test
+    test db::queries::queries_cas_tests::mark_graph_synced_cas_failure_dirties_attempted_version ... FAILED
+
+    failures:
+
+    failures:
+        db::queries::queries_cas_tests::mark_graph_synced_cas_failure_dirties_attempted_version
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 5.05s
+
+  stderr ───
+
+    thread 'db::queries::queries_cas_tests::mark_graph_synced_cas_failure_dirties_attempted_version' (126180602) panicked at crates/gcode/src/db/queries_cas_tests.rs:432:9:
+    assertion `left == right` failed: Graph h_referenced=true: hash-h must be pending with no attempt
+      left: (true, false)
+     right: (false, true)
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   5.613s] ( 15/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_failure_dirties_attempted_version
+  stdout ───
+
+    running 1 test
+    test db::queries::queries_cas_tests::mark_vectors_synced_cas_failure_dirties_attempted_version ... FAILED
+
+    failures:
+
+    failures:
+        db::queries::queries_cas_tests::mark_vectors_synced_cas_failure_dirties_attempted_version
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 5.44s
+
+  stderr ───
+
+    thread 'db::queries::queries_cas_tests::mark_vectors_synced_cas_failure_dirties_attempted_version' (126180600) panicked at crates/gcode/src/db/queries_cas_tests.rs:430:5:
+    Vectors h_referenced=true
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   5.623s] ( 16/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_marks_attempted_version
+  stdout ───
+
+    running 1 test
+    test db::queries::queries_cas_tests::mark_vectors_synced_cas_marks_attempted_version ... FAILED
+
+    failures:
+
+    failures:
+        db::queries::queries_cas_tests::mark_vectors_synced_cas_marks_attempted_version
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 5.50s
+
+  stderr ───
+
+    thread 'db::queries::queries_cas_tests::mark_vectors_synced_cas_marks_attempted_version' (126180590) panicked at crates/gcode/src/db/queries_cas_tests.rs:241:5:
+    assertion `left == right` failed: completion marks the attempted version synced and keeps its attempt time
+      left: (true, Some(SystemTime { tv_sec: 1792031798, tv_nsec: 700756000 }))
+     right: (true, Some(SystemTime { tv_sec: 1792031798, tv_nsec: 699204000 }))
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   2.556s] (120/128) gobby-code projection::sync::tests::serial_db::vector_sync_file_skips_when_state_moves_during_upsert
+  stdout ───
+
+    running 1 test
+    test projection::sync::tests::serial_db::vector_sync_file_skips_when_state_moves_during_upsert ... FAILED
+
+    failures:
+
+    failures:
+        projection::sync::tests::serial_db::vector_sync_file_skips_when_state_moves_during_upsert
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1206 filtered out; finished in 2.50s
+
+  stderr ───
+
+    thread 'projection::sync::tests::serial_db::vector_sync_file_skips_when_state_moves_during_upsert' (126250535) panicked at crates/gcode/src/projection/sync/tests.rs:388:9:
+    assertion `left == right` failed
+      left: Synced { symbols: 1 }
+     right: SkippedMissingIndexedFile
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [ 213.979s] 128 tests run: 122 passed, 6 failed, 1118 skipped
+        FAIL [   2.777s] (  4/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_same_hash_stale_attempt
+        FAIL [   5.216s] ( 12/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_rejects_completion_after_state_moves
+        FAIL [   5.218s] ( 13/128) gobby-code db::queries::queries_cas_tests::mark_graph_synced_cas_failure_dirties_attempted_version
+        FAIL [   5.613s] ( 15/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_failure_dirties_attempted_version
+        FAIL [   5.623s] ( 16/128) gobby-code db::queries::queries_cas_tests::mark_vectors_synced_cas_marks_attempted_version
+        FAIL [   2.556s] (120/128) gobby-code projection::sync::tests::serial_db::vector_sync_file_skips_when_state_moves_during_upsert
+error: test run failed
+
+[exited with code 100]

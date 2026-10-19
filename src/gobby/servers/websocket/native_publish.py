@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
-from gobby.runner_backend import supervisor_write_token
+from gobby.runner_backend import front_door_secret, supervisor_write_token
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -358,7 +358,7 @@ def native_publisher_from_environment(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> NativePublisher | None:
     """Native mode needs both the supervisor pipe and the front-door pair secret."""
-    secret = os.environ.get("GOBBY_FRONT_DOOR_SECRET")
+    secret = front_door_secret()
     if not os.environ.get("GOBBY_SUPERVISOR_FD") or not secret:
         return None
     return NativePublisher(

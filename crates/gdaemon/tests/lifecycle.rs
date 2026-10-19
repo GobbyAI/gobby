@@ -860,3 +860,49 @@ async fn shutdown_marker_is_fresh_changed_and_used_once() -> anyhow::Result<()> 
     );
     Ok(())
 }
+
+const FRONT_DOOR_SECRET: &str = "lifecycle-front-door-secret";
+
+const SECRET_BACKEND: &str = r#"import os,pathlib,json,sys
+home=pathlib.Path(os.environ['GOBBY_HOME']); value=os.environ.get('GOBBY_FRONT_DOOR_SECRET_FD'); secret=None
+if value is not None:
+    with os.fdopen(int(value),'rb') as pipe: secret=pipe.read().decode()
+(home/'secret').write_text(json.dumps({'secret':secret,'environ':dict(os.environ),'argv':sys.orig_argv}))
+os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
+"#;
+
+#[tokio::test]
+async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
+    let home = TempDir::new()?;
+    let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+        .context("fixture PID claim")?;
+    let argv = serde_json::to_string(&["uv", "run", "python", "-c", SECRET_BACKEND])?;
+    let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+    config.front_door_secret = Some(FRONT_DOOR_SECRET.into());
+    config.drain_timeout = Duration::from_millis(100);
+    let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+    let (stop, stop_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { supervisor.run(stop_rx).await });
+    let _abort = AbortOnDrop(task.abort_handle());
+    let report: serde_json::Value =
+        serde_json::from_str(&wait_for_file(&home.path().join("secret")).await?)?;
+    assert_eq!(
+        report["secret"], FRONT_DOOR_SECRET,
+        "the secret arrives on its pipe"
+    );
+    assert!(report["environ"].get("GOBBY_FRONT_DOOR_SECRET").is_none());
+    assert!(
+        !report["environ"].to_string().contains(FRONT_DOOR_SECRET),
+        "no environment value carries the secret"
+    );
+    assert!(
+        !report["argv"].to_string().contains(FRONT_DOOR_SECRET),
+        "argv never carries the secret"
+    );
+    stop.send(true)?;
+    assert_eq!(
+        timeout(Duration::from_secs(5), task).await???,
+        SupervisorExit::Stopped
+    );
+    Ok(())
+}

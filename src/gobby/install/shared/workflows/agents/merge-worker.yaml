@@ -79,8 +79,8 @@ prompts:
     2. Call merge_clone with clone_id and target_branch
     3. Record gobby-tasks-ops:record_merge_result with merge_sha on success or
        failure_reason on conflicts/failure. The workflow then transitions
-       to cleanup — clones have no worktree to delete, so set
-       worktree_cleanup_done=true via mcp__gobby__set_variable — then terminate.
+       to cleanup — clones have no worktree to delete, so
+       send EVENT=CLONE_CLEANUP_DELEGATED NOTE= to your coordinator, then terminate.
        On failure it transitions straight to terminate. Call end_agent_run only
        after the terminate transition.
 
@@ -299,8 +299,7 @@ step_workflow:
            can surface the leftover.
 
         CLONE (no worktree_id): clone cleanup is handled by the coordinator.
-        Call mcp__gobby__set_variable with variable="worktree_cleanup_done" and
-        value=true to proceed.
+        Send EVENT=CLONE_CLEANUP_DELEGATED NOTE= to your coordinator to proceed.
 
         The workflow transitions to terminate once cleanup is resolved; call
         end_agent_run only after that transition.
@@ -309,13 +308,16 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-worktrees:get_worktree"
+        - "gobby-agents:send_message"
         - "gobby-worktrees:mark_worktree_merged"
         - "gobby-worktrees:delete_worktree"
       mcp_error_policy: stay
       on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
         - server: gobby-worktrees
           tool: delete_worktree
           when: "bool(tool_output.get('success'))"

@@ -1,4 +1,4 @@
-"""Pinned CONNECT drain fix, removable when an upstream release includes it."""
+"""Pinned upstream SRT fixes, each removable when an upstream release includes it."""
 
 import hashlib
 from pathlib import Path
@@ -8,6 +8,7 @@ from gobby.utils.dependency_requirements import SRT_RELEASE
 HTTP_PROXY_PATH = Path("node_modules/@anthropic-ai/sandbox-runtime/dist/sandbox/http-proxy.js")
 MUX_PROXY_PATH = HTTP_PROXY_PATH.with_name("mux-proxy.js")
 MACOS_PROFILE_PATH = HTTP_PROXY_PATH.with_name("macos-sandbox-utils.js")
+WHICH_PATH = HTTP_PROXY_PATH.parents[1] / "utils" / "which.js"
 _MONITOR_NEEDLE = b"const logProcess = spawn('log', ["
 _MONITOR_REPLACEMENT = (
     b"const logProcess = globalThis.gobbySrtLogTransport"
@@ -38,6 +39,41 @@ _PATCHES = (
         b"return profile.join('\\n')"
         b' + \'\\n(allow sysctl-read (sysctl-name "kern.sysv.semmns"))'
         b"\\n(allow system-sched (target self))';",
+    ),
+    (
+        WHICH_PATH,
+        "150f2f55dbb6e74a22a3638732a26bb017dc2559ba6462c630b62d6b0d509076",
+        SRT_RELEASE.which_sha256,
+        b"""    const result = spawnSync('which', [bin], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 1000,
+    });
+    if (result.status === 0 && result.stdout) {
+        return result.stdout.trim();
+    }
+    return null;
+""",
+        # A spawned `which` bounded at 1s reports a present shell as missing on
+        # a loaded host, failing every wrap closed. Search PATH in-process.
+        b"""    const { accessSync, constants, statSync } = process.getBuiltinModule('node:fs');
+    const { delimiter, join } = process.getBuiltinModule('node:path');
+    const candidates = bin.includes('/')
+        ? [bin]
+        : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, bin));
+    for (const candidate of candidates) {
+        try {
+            if (statSync(candidate).isFile()) {
+                accessSync(candidate, constants.X_OK);
+                return candidate;
+            }
+        }
+        catch {
+            // Missing or not executable: keep searching, as which(1) does.
+        }
+    }
+    return null;
+""",
     ),
 )
 

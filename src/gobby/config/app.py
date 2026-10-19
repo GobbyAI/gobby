@@ -50,6 +50,7 @@ from gobby.config.features import (
 from gobby.config.hooks import HOOK_TRANSPORT_WINDOW_SECONDS, HookTimeoutConfig
 from gobby.config.indexing import IndexingConfig
 from gobby.config.logging import LoggingSettings, common_log_parent
+from gobby.config.node_reports import NodeReportsConfig
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -445,6 +446,10 @@ class DaemonConfig(BaseModel):
     indexing: IndexingConfig = Field(
         default_factory=IndexingConfig,
         description="Code indexing behavior.",
+    )
+    node_reports: NodeReportsConfig = Field(
+        default_factory=NodeReportsConfig,
+        description="Byte budgets for node run reports.",
     )
     bin_freshness: BinFreshnessConfig = Field(
         default_factory=BinFreshnessConfig,

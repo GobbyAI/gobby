@@ -159,6 +159,37 @@ def test_env_behind_other_launchers_does_not_gain_command_coverage(launcher: str
 
 
 @pytest.mark.parametrize(
+    "prefix,expected",
+    [
+        ("env -C /wt", "/wt"),
+        ("nice -n 10 env -C /wt", "/wt"),
+        ("rtk env -C /wt", "/wt"),
+        ("timeout 60 env -C /wt", None),
+        ("sudo env -C /wt", None),
+        ("uv run env -C /wt", None),
+        ("env -S", None),
+        ("nice -n 10 env -S", None),
+        ("timeout 60 env -S", None),
+        ("sudo env -S", None),
+        ("uv run env -S", None),
+        ("timeout 60 env A=1", "/repo"),
+        ("uv run env A=1", "/repo"),
+        ("uv --project env run", "/repo"),
+        ("uv --directory /wt run", "/wt"),
+        ("timeout 60", "/repo"),
+        ("", "/repo"),
+    ],
+)
+def test_env_location_guard_survives_launcher_prefixes(prefix: str, expected: str | None) -> None:
+    assert run_location(f"{prefix} uv run pytest tests/a.py", workdir="/repo") == expected
+
+
+@pytest.mark.parametrize("command", ["uv run pytest env", "timeout 60 uv run pytest env"])
+def test_env_test_target_does_not_change_run_location(command: str) -> None:
+    assert run_location(command, workdir="/repo") == "/repo"
+
+
+@pytest.mark.parametrize(
     "launcher",
     [
         "setsid -w",

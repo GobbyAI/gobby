@@ -83,6 +83,20 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "release_task_claim",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_claim_release.py",
+        "symbol": "register_release_task_claim.release_task_claim"
+      },
+      "verification": [
+        "coordinator-claim-release"
+      ],
+      "audience": "Orchestrator or owning Lane Manager; same project and machine"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "get_task",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
       "implementation": {
@@ -1670,6 +1684,13 @@
     ]
   },
   "evidence": [
+    {
+      "id": "coordinator-claim-release",
+      "kind": "isolated-tests",
+      "status": "passed",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run rtk pytest tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py tests/mcp_proxy/tools/tasks/test_legacy_tools_removed.py tests/mcp_proxy/tools/tasks/test_authorization.py tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py tests/workflows/test_task_claim_state.py tests/mcp_proxy/test_mcp_tools.py -q --no-cov --timeout=120 --session-timeout=900",
+      "result": "216 passed in 53.47s at 07d3607ba036626cde112b795ae5c3fd12a1c089 under RM-15991-24639-final7-1. test_coordinator_claim_release.py covers release and reclaim, dirty-path refusal, non-coordinator refusal, unrelated assigned-task state preservation, actor/reason audit, same-lane authorization, unavailable checkouts, and audit rollback. This correction changes documentation only."
+    },
     {
       "id": "registered-inventory",
       "kind": "live-read-only",

@@ -82,7 +82,9 @@ prompts:
     When OCR has no rule for a manifest entry, apply the code-review skill's default
     checklist. Record coverage for every manifest path before deciding. Inspect
     every named acceptance-test body, referenced evidence artifact, and cumulative
-    guard fact. You may read repository files and run focused validations. Never
+    guard fact. You may read repository files and run focused validations. Put
+    scratch files, exports, and build output under $TMPDIR, your run's private
+    temporary directory; other paths such as /tmp are outside your sandbox. Never
     edit files, create commits, or mutate task, workflow, review, agent, or service
     state.
 

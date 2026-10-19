@@ -8,6 +8,7 @@ import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.status import format_startup_summary
 
 from .daemon import _services_start
-from .daemon_lifecycle import _step, _wait_for_daemon_health
+from .daemon_lifecycle import STARTUP_READINESS_TIMEOUT_SECONDS, _step, _wait_for_daemon_health
 from .installers.service import get_service_status, service_start
 from .ui_mode import resolve_ui_mode
 from .utils import (
@@ -46,14 +47,6 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-# Readiness subsumes health: serving /api/health is one early step of subsystem
-# init, so this budget must never be smaller than DAEMON_HEALTH_TIMEOUT_SECONDS.
-# Subsystem startup is fail-soft and progress-terminal — a failed init records an
-# error and still finishes the tracker — so an unfinished poll only ever means
-# "still initializing", never "broken". Sized against measured time-to-ready,
-# which reached 168s on a loaded machine while the previous 60s budget reported
-# that healthy daemon as a failed start.
-STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
 PORT_REUSE_WAIT_SECONDS = 10.0
 
 
@@ -102,14 +95,18 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
 
 
 def _poll_startup_progress(
-    http_port: int, max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS
+    http_port: int,
+    max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS,
+    *,
+    child_exited: Callable[[], bool] | None = None,
 ) -> bool:
     """Poll the daemon's startup progress endpoint and display steps.
 
     A loaded or restarting daemon can answer slowly, with a transient error
     status, or with a partial body; all of those keep waiting until the
     deadline. Only a backend the native front door refused or holds in standby
-    fails fast.
+    fails fast. A launched child that has exited ends the poll at once: it
+    cannot finish startup.
     """
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
@@ -117,6 +114,8 @@ def _poll_startup_progress(
     shown_header = False
 
     while (remaining := deadline - time.monotonic()) > 0:
+        if child_exited is not None and child_exited():
+            return False
         try:
             resp = httpx.get(
                 f"http://localhost:{http_port}/api/admin/startup-progress",
@@ -271,7 +270,9 @@ def _launch_direct_runner(
 
             _step(f"Daemon process launched (PID: {process.pid})")
             time.sleep(2.0)
-            elapsed = _wait_for_daemon_health(http_port)
+            elapsed = _wait_for_daemon_health(
+                http_port, child_exited=lambda: process.poll() is not None
+            )
             if elapsed is not None:
                 _step(f"Health check passed ({elapsed:.1f}s)")
             else:
@@ -279,7 +280,9 @@ def _launch_direct_runner(
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
-            if not _poll_startup_progress(http_port):
+            if not _poll_startup_progress(
+                http_port, child_exited=lambda: process.poll() is not None
+            ):
                 _step("Startup readiness did not complete", error=True)
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)

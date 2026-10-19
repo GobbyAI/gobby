@@ -315,26 +315,23 @@ async fn resolver_error_is_503_and_missing_authority_refuses_start() {
         format!("daemon_port: {}\nwebsocket_port: {}\n", ports[0], ports[1]),
     )
     .expect("bootstrap");
-    for secret in [None, Some("")] {
-        let (reader, writer) = std::io::pipe().expect("pipe");
-        drop(writer);
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"));
-        command
-            .arg("serve")
-            .env("GOBBY_HOME", home.path())
-            .env("GOBBY_PARENT_FD", "0")
-            .env_remove("GOBBY_FRONT_DOOR_SECRET")
-            .stdin(std::process::Stdio::from(reader));
-        if let Some(secret) = secret {
-            command.env("GOBBY_FRONT_DOOR_SECRET", secret);
-        }
-        let output = command.output().expect("serve refusal");
-        assert!(!output.status.success(), "serve accepted {secret:?}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("runtime ownership requires bootstrap database_url")
-        );
-    }
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    drop(writer);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"))
+        .arg("serve")
+        .env("GOBBY_HOME", home.path())
+        .env("GOBBY_PARENT_FD", "0")
+        .stdin(std::process::Stdio::from(reader))
+        .output()
+        .expect("serve refusal");
+    assert!(
+        !output.status.success(),
+        "serve accepted a missing database_url"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("runtime ownership requires bootstrap database_url")
+    );
 }
 
 #[tokio::test]
@@ -431,7 +428,11 @@ async fn start_authenticated_front_door(backend: SocketAddr, auth: Arc<AuthState
     let addr = listener.local_addr().expect("front door addr");
     tokio::spawn(async move {
         gobby_daemon::serve::serve(
-            vec![gobby_daemon::serve::PublicListener { listener, backend }],
+            vec![gobby_daemon::serve::PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &BTreeMap::new(),
             None,
             auth,
@@ -496,10 +497,12 @@ async fn valid_key_forwards_identity_headers() {
     let forged = format!(
         "authorization: Bearer {TEST_API_KEY}\r\nx-gobby-user-id: forged\r\nx-gobby-machine-id: forged\r\nx-gobby-key-id: forged\r\nx-gobby-front-door: forged\r\n"
     );
-    let (response, _) =
-        tokio::time::timeout(TIMEOUT, ws_upgrade(&mut client, address, "/ws", &forged))
-            .await
-            .expect("upgrade");
+    let (response, _) = tokio::time::timeout(
+        TIMEOUT,
+        ws_upgrade(&mut client, address, "/__vite_hmr", &forged),
+    )
+    .await
+    .expect("upgrade");
     assert!(response.starts_with("HTTP/1.1 101"), "{response}");
     let capture = tokio::time::timeout(TIMEOUT, capture)
         .await
@@ -705,7 +708,7 @@ async fn ws_splice_preserves_deflate_and_close() {
 
     let (backend, captured) = ws_backend(client_frames.len(), backend_frames.clone()).await;
     let front_door = start_front_door(backend).await;
-    let (mut stream, head, mut received) = ws_client(front_door, "/ws").await;
+    let (mut stream, head, mut received) = ws_client(front_door, "/__vite_hmr").await;
 
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     assert!(
@@ -796,6 +799,7 @@ async fn unavailable_native_backend_reports_supervisor_state() {
             lease: None,
             lease_state: None,
             backend: receiver,
+            write_token: Default::default(),
         }));
         let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
         let door = FrontDoor::new(state, table);
@@ -983,7 +987,7 @@ async fn refused_upgrade_strips_connection_listed_fields() {
     });
     let front_door = start_front_door(backend).await;
 
-    let (_stream, head, _) = tokio::time::timeout(TIMEOUT, ws_client(front_door, "/ws"))
+    let (_stream, head, _) = tokio::time::timeout(TIMEOUT, ws_client(front_door, "/__vite_hmr"))
         .await
         .expect("refusal timed out");
 
@@ -1051,7 +1055,6 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
         .arg("serve")
         .env("GOBBY_HOME", home.path())
         .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
-        .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
         .env_remove("GOBBY_PARENT_FD")
         .stdin(Stdio::from(reader));
     if let Some(fd) = parent_fd {
@@ -1240,7 +1243,7 @@ async fn ws_splice_over_self_signed_tls() {
     let mut stream = tls_connect(front_door, &cert.cert_pem)
         .await
         .expect("pinned handshake");
-    let (head, mut received) = ws_upgrade(&mut stream, front_door, "/ws", "").await;
+    let (head, mut received) = ws_upgrade(&mut stream, front_door, "/__vite_hmr", "").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     stream.write_all(&client_frames).await.expect("send frames");
     tokio::time::timeout(
@@ -1407,20 +1410,22 @@ async fn concrete_bind_adds_loopback_listener() {
         );
     }
 
-    let wildcard = bind("0.0.0.0", 0, 1).await.expect("wildcard bind");
+    let wildcard = bind("0.0.0.0", 0, 1, false).await.expect("wildcard bind");
     assert_eq!(wildcard.len(), 1, "a wildcard bind gets no companion");
     let port = wildcard[0].listener.local_addr().expect("addr").port();
     TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("a wildcard listener accepts loopback");
-    let loopback = bind("127.0.0.1", 0, 1).await.expect("loopback bind");
+    let loopback = bind("127.0.0.1", 0, 1, false).await.expect("loopback bind");
     assert_eq!(loopback.len(), 1, "a loopback bind gets no companion");
 
     let Some(ip) = local_non_loopback_ipv4() else {
         eprintln!("no non-loopback IPv4 address; the live companion check is skipped");
         return;
     };
-    let listeners = bind(&ip.to_string(), 0, 1).await.expect("concrete bind");
+    let listeners = bind(&ip.to_string(), 0, 1, false)
+        .await
+        .expect("concrete bind");
     assert_eq!(listeners.len(), 2, "a concrete bind adds a companion");
     let primary = listeners[0].listener.local_addr().expect("primary addr");
     let companion = listeners[1].listener.local_addr().expect("companion addr");
@@ -1513,7 +1518,7 @@ async fn forwarding_headers_carry_only_observed_peer() {
     let (head, _) = ws_upgrade(
         &mut stream,
         front_door,
-        "/ws",
+        "/__vite_hmr",
         "forwarded: for=6.6.6.6\r\nx-forwarded-for: 6.6.6.6\r\nx-real-ip: 6.6.6.6\r\n\
          x-forwarded-proto: https\r\nx-forwarded-host: evil.example\r\n\
          connection: X-Forwarded-For, x-FORWARDED-proto\r\n",
@@ -1774,7 +1779,6 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
             .arg("serve")
             .env("GOBBY_HOME", home)
             .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
-            .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
             .env_remove("GOBBY_PARENT_FD")
             .stdin(Stdio::null())
             .stderr(Stdio::from(std::fs::File::create(&log).expect("log file")))

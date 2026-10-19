@@ -13,12 +13,14 @@ from uuid import uuid4
 from starlette.websockets import WebSocket
 
 from gobby.config.bootstrap import is_loopback_host
+from gobby.servers.routes._database import require_hub_database
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from gobby.servers.grant_auth import AuthDecision
     from gobby.servers.http import HTTPServer
     from gobby.servers.websocket.native_publish import NativePublisher
     from gobby.servers.websocket.server import WebSocketServer
@@ -153,21 +155,25 @@ def _bridge_context(websocket: WebSocket, publisher: NativePublisher) -> _Bridge
     return _BridgeContext(generation, entry == "direct", int(raw_leg), client)
 
 
-async def _admission_refusal(
+async def _admit(
     websocket_server: WebSocketServer,
     server: HTTPServer,
     adapter: NativeBridgeAdapter,
     context: _BridgeContext,
-) -> dict[str, Any] | None:
-    """Each entry mode's existing owner decides, with its existing refusal."""
+) -> tuple[dict[str, Any] | None, AuthDecision | None]:
+    """Each entry mode's existing owner decides, with its existing refusal.
+
+    A browser admission also returns its decision, which binds the caller's user.
+    """
     if context.direct:
         response = await websocket_server._authenticate(adapter, context.client)
         if response is None:
-            return None
-        return {"status": response.status_code, "body": response.body.decode()}
-    if await websocket_server.run_db(server.auth_service.is_request_authenticated, context.client):
-        return None
-    return {"close_code": 4401, "reason": "Authentication required"}
+            return None, None
+        return {"status": response.status_code, "body": response.body.decode()}, None
+    decision = await websocket_server.run_db(server.auth_service.authenticate, context.client)
+    if decision.allowed:
+        return None, decision
+    return {"close_code": 4401, "reason": "Authentication required"}, None
 
 
 def _ready(generation: str, *, admitted: bool, **fields: Any) -> str:
@@ -206,7 +212,7 @@ def mount_native_bridge(app: FastAPI, server: HTTPServer) -> None:
             remote_address=context.client.client,
         )
         await adapter.accept()
-        refusal = await _admission_refusal(websocket_server, server, adapter, context)
+        refusal, decision = await _admit(websocket_server, server, adapter, context)
         if refusal is not None:
             await adapter.send(_ready(context.generation, admitted=False, **refusal))
             await adapter.close()
@@ -217,7 +223,8 @@ def mount_native_bridge(app: FastAPI, server: HTTPServer) -> None:
             return
         try:
             await adapter.send(_ready(context.generation, admitted=True))
-            await websocket_server.handle_connection(adapter)
+            database = None if decision is None else require_hub_database(server.services.database)
+            await websocket_server.handle_connection(adapter, decision, database=database)
         except Exception:
             logger.exception("Native WS bridge handler failed")
         finally:

@@ -59,12 +59,13 @@ def binary(path: Path, version: str = "1.0.0") -> Path:
 
 
 @pytest.mark.parametrize("member", ["gcode", "ghook"])
+@pytest.mark.parametrize("test_filename", ["tests.rs", "operations_tests.rs"])
 def test_source_identity_ignores_tests_rs_but_tracks_production_source(
-    workspace: Path, member: str
+    workspace: Path, member: str, test_filename: str
 ) -> None:
     source = workspace / "crates/gcore/src/ai/daemon"
     source.mkdir(parents=True)
-    tests = source / "tests.rs"
+    tests = source / test_filename
     tests.write_text("#[test] fn original() {}\n")
     production = source / "operations.rs"
     production.write_text("pub fn original() {}\n")

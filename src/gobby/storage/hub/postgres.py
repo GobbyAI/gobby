@@ -79,6 +79,12 @@ class PostgresHubDatabase:
         # and tool transactions outlive a backend swap independently of its owner.
         prefix = "gobby-hub" if lifecycle == "runner" else "gobby-client"
         self._application_name = f"{prefix}-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
+        runtime_check = None
+        if runtime_role is not None:
+            runtime_check = partial(
+                _postgres_pool.assert_runtime_role,
+                runtime_role=runtime_role,
+            )
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
@@ -100,7 +106,7 @@ class PostgresHubDatabase:
                 _postgres_pool.configure_pool_connection,
                 runtime_role=runtime_role,
             ),
-            check=_postgres_pool.check_connection_alive,
+            check=runtime_check,
         )
         self._open_lock = threading.Lock()
         self._pool_opened = False

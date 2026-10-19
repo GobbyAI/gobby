@@ -420,7 +420,11 @@ def create_spawn_agent_registry(
         try:
             validate_network_override(network)
             caller_session_id = await enforce_spawn_caller(
-                session_manager, agent, project_id, network=network
+                session_manager,
+                agent,
+                project_id,
+                network=network,
+                resume_session_id=resume_session_id,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}

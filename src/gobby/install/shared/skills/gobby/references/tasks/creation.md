@@ -63,6 +63,30 @@ parent/child ownership transfer without `force` in either direction. Transfers
 preserve every unrelated claim. Escalate only for a genuine blocker or explicitly
 directed recovery, never to bypass validation, committing, or closing.
 
+## Release a parked claim
+
+The Orchestrator or the holder's owning Lane Manager can call
+`gobby-tasks:release_task_claim(task_id, holder_session_ref, reason)` to release
+a named seat's claim on an open task. Discover the schema first. The caller,
+holder, and task must belong to the same project, and the holder must be on the
+caller's machine. Lane Manager authority requires current running agent runs
+with the same recorded lane; an ordinary agent cannot release claims.
+
+The call checks that the named holder still owns the task and refuses dirty
+task-attributed paths, naming them. An unavailable attributed checkout also
+refuses release. Success makes the task unclaimed, records the releasing actor,
+holder and reason in a lifecycle event, and lets another seat claim it normally.
+It preserves edit attribution and unrelated task bindings.
+
+Use this for parked claims outside the holder's current assigned task. Releasing
+the assigned task is also accepted, but does not clear `assigned_task_id` or
+advance its workflow step; coordinate the holder's recovery separately. This
+call does not transfer activation-receipt authority.
+
+Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
+
+## Metadata and recovery
+
 Use `update_task` for supported metadata, not `status` or `assignee`. Add/remove
 ordinary labels through their tools. The `live-session` label has special root
 terminal authorization: load the entire live-work topic before changing it.
@@ -79,4 +103,4 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Last verified: 2026-10-06_
+_Last verified: 2026-10-17_

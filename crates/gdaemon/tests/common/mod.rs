@@ -30,7 +30,11 @@ pub async fn start_front_door(backend: SocketAddr) -> SocketAddr {
     tokio::spawn(async move {
         let routes = BTreeMap::new();
         serve(
-            vec![PublicListener { listener, backend }],
+            vec![PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &routes,
             None,
             Arc::new(
@@ -75,7 +79,11 @@ pub async fn start_front_door_on(
     let addr = listener.local_addr().expect("front door addr");
     tokio::spawn(async move {
         serve(
-            vec![PublicListener { listener, backend }],
+            vec![PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &routes,
             config,
             Arc::new(
@@ -292,9 +300,21 @@ pub fn frame(first_byte: u8, payload: &[u8], masked: bool) -> Vec<u8> {
     out
 }
 
-/// Lower-cased head, for header assertions.
+/// Whether `head` has a `name: value` line matching `line`. The name matches
+/// case-insensitively; the trimmed value must match exactly.
 pub fn head_has(head: &str, line: &str) -> bool {
-    head.to_ascii_lowercase()
-        .lines()
-        .any(|candidate| candidate.trim() == line)
+    let Some((name, value)) = line.split_once(':') else {
+        return false;
+    };
+    head.lines().any(|candidate| {
+        candidate
+            .split_once(':')
+            .is_some_and(|(candidate_name, candidate_value)| {
+                candidate_name.trim().eq_ignore_ascii_case(name.trim())
+                    && candidate_value.trim() == value.trim()
+            })
+    })
 }
+
+#[cfg(unix)]
+pub mod channel;

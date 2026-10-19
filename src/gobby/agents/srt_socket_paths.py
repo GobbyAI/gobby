@@ -10,20 +10,28 @@ from gobby.paths import get_gobby_home
 # Reserve 40 bytes for SRT's PID/sequence name, separator, and terminating NUL
 # in macOS's 104-byte sun_path. The returned directory is always canonical.
 _SOCKET_DIRECTORY_BUDGET = 63
+# Used verbatim as the socket directory in place of the shared /tmp root, so an
+# isolated daemon (tests under a seat sandbox) never touches real local state.
+# Denial stays additive: the override joins the private roots, never replaces one.
+SOCKET_DIRECTORY_ENV = "GOBBY_SRT_SOCKET_DIR"
 
 
-def private_srt_socket_roots(gobby_home: Path | None = None) -> tuple[Path, Path]:
-    """Return both private roots, including other homes' UID-scoped sockets."""
+def private_srt_socket_roots(gobby_home: Path | None = None) -> tuple[Path, ...]:
+    """Return every private root, including other homes' UID-scoped sockets."""
+    override = os.environ.get(SOCKET_DIRECTORY_ENV)
     return (
         (gobby_home if gobby_home is not None else get_gobby_home()) / "runtime" / "srt-sock",
         Path("/tmp") / f"gobby-srt-{os.getuid()}",
+        *((Path(override),) if override else ()),
     )
 
 
 def srt_socket_directory(gobby_home: Path | None = None) -> Path:
     """Select a stable bounded directory without creating policy-side state."""
     home = gobby_home if gobby_home is not None else get_gobby_home()
-    home_root, short_root = private_srt_socket_roots(home)
+    home_root, short_root, *override = private_srt_socket_roots(home)
+    if override:
+        return override[0].parent.resolve() / override[0].name
     home_root = home_root.parent.resolve() / home_root.name
     if len(os.fsencode(home_root)) <= _SOCKET_DIRECTORY_BUDGET:
         return home_root
@@ -46,9 +54,23 @@ def _ensure_private_directory(directory: Path) -> None:
 def srt_mux_tmpdir() -> Path:
     """Create the private short root used by the host runner and shared broker."""
     directory = srt_socket_directory()
-    _, short_root = private_srt_socket_roots()
+    _, short_root, *_ = private_srt_socket_roots()
     short_root = short_root.parent.resolve() / short_root.name
     if directory.is_relative_to(short_root):
         _ensure_private_directory(short_root)
     _ensure_private_directory(directory)
+    return directory
+
+
+def existing_srt_mux_tmpdir() -> Path:
+    """Return the shared root only when it already exists as this uid's directory.
+
+    Read-only: the restart reaper selects brokers through it before any child is terminated,
+    so it must not create, chmod or re-permission the root. Raises OSError when it is absent
+    or unsafe.
+    """
+    directory = srt_socket_directory()
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise PermissionError(f"Unsafe SRT socket directory: {directory}")
     return directory

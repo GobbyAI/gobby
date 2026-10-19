@@ -19,9 +19,9 @@ logger = logging.getLogger("gobby.daemon.control")
 DaemonShutdownIntent = Literal["stop", "restart"]
 DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
-# Above `gobby start`'s own health (120 s) and readiness (300 s) waits, leaving
+# Above `gobby start`'s own health (300 s) and readiness (300 s) waits, leaving
 # room for managed services and the schema apply.
-DAEMON_START_TIMEOUT_SECONDS = 600.0
+DAEMON_START_TIMEOUT_SECONDS = 900.0
 _START_OUTPUT_TAIL_CHARS = 2000
 
 
@@ -35,15 +35,15 @@ async def check_daemon_http_health(
     """Check whether the daemon is up via HTTP.
 
     Startup readiness requires HTTP 200. Proxy preflight may explicitly accept
-    a read timeout: under fleet load the daemon can be up and busy while its
-    health endpoint takes seconds to answer (#23080).
+    a read, connect or pool timeout: under fleet load the daemon can be up and busy
+    while its health endpoint takes seconds to answer or accept a connection (#23080, #23650).
     """
     url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/health"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=timeout)
             return resp.status_code == 200
-    except httpx.ReadTimeout:
+    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
         return tolerate_busy
     except Exception:
         return False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tarfile
 import tempfile
@@ -14,6 +15,11 @@ from gobby.agents.constants import agent_home_cache_root
 ZIG_PACKAGES = "p"
 _ZIG_TARBALL_SUFFIX = ".tar.gz"
 _VENDORED_LIBGHOSTTY_VT = Path("crates") / "gterminal" / "vendor" / "libghostty-vt"
+# A manifest's innermost `.{ ... }` groups are its flat per-dependency tables.
+_ZON_TABLE = re.compile(r"\.\{([^{}]*)\}")
+_ZON_LAZY = re.compile(r"\.lazy\s*=\s*true")
+_ZON_HASH = re.compile(r'\.hash\s*=\s*"([^"]+)"')
+_ZON_PATH = re.compile(r'\.path\s*=\s*"([^"]+)"')
 
 
 def vendored_libghostty_vt(checkout: Path) -> Path:
@@ -77,6 +83,34 @@ def _resolves(package: Path) -> bool:
     return package.is_dir() and all(child.exists() for child in package.iterdir())
 
 
+def _missing_pins(manifest: Path | None, packages: Path) -> list[str]:
+    """Non-lazy package ids pinned from `manifest` that `packages` cannot resolve.
+
+    Walks non-lazy path dependencies and each resolved package's own manifest,
+    so a nested pin counts too. A `--system` build resolves a lazy dependency
+    only when build.zig asks for it, so lazy pins are neither required nor
+    walked. No manifest pins nothing.
+    """
+    missing: list[str] = []
+    seen: set[Path] = set()
+    pending = [manifest] if manifest is not None else []
+    while pending:
+        zon = pending.pop()
+        if zon in seen or not zon.is_file():
+            continue
+        seen.add(zon)
+        for table in _ZON_TABLE.findall(zon.read_text(encoding="utf-8")):
+            if _ZON_LAZY.search(table):
+                continue
+            pending.extend(zon.parent / path / "build.zig.zon" for path in _ZON_PATH.findall(table))
+            for pkgid in _ZON_HASH.findall(table):
+                if _resolves(packages / pkgid):
+                    pending.append(packages / pkgid / "build.zig.zon")
+                elif pkgid not in missing:
+                    missing.append(pkgid)
+    return missing
+
+
 def _discard_package(package: Path, *, staging_parent: Path) -> None:
     """Move a stale package aside before deleting it, so no run reads it half-removed."""
     trash = Path(tempfile.mkdtemp(prefix=".zig-stale-", dir=staging_parent))
@@ -94,6 +128,7 @@ def materialize_zig_packages(
     cache_root: Path,
     vendored_zig_pkg: Path | None,
     *,
+    manifest: Path | None,
     report: Callable[[str], None],
 ) -> bool:
     """Make every machine Zig package usable as an extracted directory.
@@ -106,7 +141,9 @@ def materialize_zig_packages(
     seconds per run, and a symlinked package root breaks the relative paths Zig
     runs build tools through. The directory outlives runs, so a package whose
     mirrored source has since vanished is rebuilt rather than reused. Returns
-    True only when every source package resolved to a usable directory.
+    True only when every source package resolved to a usable directory and
+    every non-lazy package `manifest` pins, directly or nested, is in the
+    mirror; each missing pin is reported with the refresh command.
     """
     packages = cache_root / ZIG_PACKAGES
     packages.mkdir(parents=True, exist_ok=True)
@@ -138,4 +175,10 @@ def materialize_zig_packages(
         except (OSError, tarfile.TarError) as exc:
             report(f"zig package {pkgid} could not be materialized: {exc}")
             complete = False
-    return complete
+    missing = _missing_pins(manifest, packages)
+    for pkgid in missing:
+        report(
+            f"zig package {pkgid} pinned by the vendored libghostty-vt is missing from "
+            f"{source}; refresh it with scripts/build_vendored_libghostty_vt.sh"
+        )
+    return complete and not missing

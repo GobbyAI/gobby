@@ -44,7 +44,7 @@ _GIT_GLOBAL_FLAGS = frozenset(
 )
 # Git subcommands that record reviewable content. Kept in sync with the
 # command_pattern in skill-discovery/require-code-review-skill.yaml.
-_REVIEW_GATED_GIT_SUBCOMMANDS = frozenset({"commit", "merge", "cherry-pick", "revert"})
+_REVIEW_GATED_GIT_SUBCOMMANDS = frozenset({"commit", "merge", "rebase", "cherry-pick", "revert"})
 _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
     {
         "src/gobby/mcp_proxy/tools/task_commits.py",

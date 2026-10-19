@@ -15,6 +15,7 @@ use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures_util::{Sink, SinkExt};
 use serde_json::Value;
 use tokio::sync::Notify;
@@ -44,13 +45,37 @@ impl ConnectionId {
     pub fn new(id: u64) -> Self {
         Self(id)
     }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// One frame in a batch, in the form the writer sends it.
+#[derive(Debug, Clone)]
+enum Frame {
+    Text(Utf8Bytes),
+    Binary(Bytes),
+    Ping,
+    Close(CloseFrame),
+}
+
+impl Frame {
+    fn message(&self) -> Message {
+        match self {
+            Self::Text(text) => Message::Text(text.clone()),
+            Self::Binary(bytes) => Message::Binary(bytes.clone()),
+            Self::Ping => Message::Ping(Bytes::new()),
+            Self::Close(frame) => Message::Close(Some(frame.clone())),
+        }
+    }
 }
 
 /// Immutable frames delivered together, in order. Clones share the frame
 /// bytes, so every recipient of a publication holds the same copy.
 #[derive(Debug, Clone)]
 pub struct Batch {
-    frames: Arc<[Utf8Bytes]>,
+    frames: Arc<[Frame]>,
     bytes: usize,
 }
 
@@ -64,12 +89,47 @@ impl Batch {
         if bytes > MAX_QUEUED_BYTES {
             return Err(BatchTooLarge);
         }
-        let frames = frames.into_iter().map(Utf8Bytes::from).collect();
+        let frames = frames
+            .into_iter()
+            .map(|text| Frame::Text(Utf8Bytes::from(text)))
+            .collect();
         Ok(Self { frames, bytes })
+    }
+
+    /// One text frame, bounded like a whole queue.
+    pub fn text(frame: Utf8Bytes) -> Result<Self, BatchTooLarge> {
+        let bytes = frame.len();
+        if bytes > MAX_QUEUED_BYTES {
+            return Err(BatchTooLarge);
+        }
+        Ok(Self::with(Frame::Text(frame), bytes))
+    }
+
+    /// One binary frame, bounded like a whole queue.
+    pub fn binary(frame: Bytes) -> Result<Self, BatchTooLarge> {
+        let bytes = frame.len();
+        if bytes > MAX_QUEUED_BYTES {
+            return Err(BatchTooLarge);
+        }
+        Ok(Self::with(Frame::Binary(frame), bytes))
     }
 
     fn single(frame: Utf8Bytes) -> Self {
         let bytes = frame.len();
+        Self::with(Frame::Text(frame), bytes)
+    }
+
+    /// A keepalive ping, which costs no queue bytes.
+    fn ping() -> Self {
+        Self::with(Frame::Ping, 0)
+    }
+
+    /// An ordered close, which costs no queue bytes.
+    fn close(frame: CloseFrame) -> Self {
+        Self::with(Frame::Close(frame), 0)
+    }
+
+    fn with(frame: Frame, bytes: usize) -> Self {
         Self {
             frames: Arc::from([frame]),
             bytes,
@@ -104,22 +164,29 @@ impl std::fmt::Debug for Registration {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Retirement {
     Overflow,
     SendTimeout,
     Disconnected,
+    /// A close the caller chose, sent to the peer as given.
+    Closed(CloseFrame),
 }
 
 impl Retirement {
-    /// Close reason for a peer that may still read it; a disconnected peer
+    /// Close frame for a peer that may still read it; a disconnected peer
     /// gets none.
-    fn close_reason(self) -> Option<&'static str> {
-        match self {
-            Self::Overflow => Some("Broadcast queue overflow"),
-            Self::SendTimeout => Some("Broadcast send timed out"),
-            Self::Disconnected => None,
-        }
+    fn close_frame(&self) -> Option<CloseFrame> {
+        let (code, reason) = match self {
+            Self::Overflow => (CloseCode::Error, "Broadcast queue overflow"),
+            Self::SendTimeout => (CloseCode::Error, "Broadcast send timed out"),
+            Self::Disconnected => return None,
+            Self::Closed(frame) => return Some(frame.clone()),
+        };
+        Some(CloseFrame {
+            code,
+            reason: Utf8Bytes::from_static(reason),
+        })
     }
 }
 
@@ -159,8 +226,8 @@ impl Link {
 
     fn pop(&self) -> Result<Option<Batch>, Retirement> {
         let mut queue = self.lock();
-        if let Some(retirement) = queue.retirement {
-            return Err(retirement);
+        if let Some(retirement) = &queue.retirement {
+            return Err(retirement.clone());
         }
         let batch = queue.batches.pop_front();
         if let Some(batch) = &batch {
@@ -172,7 +239,7 @@ impl Link {
     /// Records the first retirement and returns it; later calls only observe.
     fn retire(&self, reason: Retirement) -> Retirement {
         let mut queue = self.lock();
-        let first = *queue.retirement.get_or_insert(reason);
+        let first = queue.retirement.get_or_insert(reason).clone();
         queue.batches.clear();
         queue.bytes = 0;
         drop(queue);
@@ -288,6 +355,47 @@ impl BroadcastBroker {
         deliver(&mut self.entries(), registration, &batch);
     }
 
+    /// Adds server-side subscriptions to one live connection. A retired
+    /// connection is ignored.
+    pub fn add_subscriptions(&self, id: ConnectionId, events: Vec<String>) {
+        if let Some(entry) = self.entries().get_mut(&id) {
+            entry.state.add_server_subscriptions(events);
+        }
+    }
+
+    /// Queues a keepalive ping behind the connection's pending frames.
+    pub fn ping(&self, registration: &Registration) {
+        deliver(&mut self.entries(), registration, &Batch::ping());
+    }
+
+    /// Retires `registration` now, with a close frame that skips the queue.
+    pub fn retire_with(&self, registration: &Registration, code: CloseCode, reason: &'static str) {
+        let frame = CloseFrame {
+            code,
+            reason: Utf8Bytes::from_static(reason),
+        };
+        self.retire_registration(registration, Retirement::Closed(frame));
+    }
+
+    /// Ends `registration` in order: its close frame is queued behind the
+    /// frames already pending, and the connection leaves the registry at once
+    /// so no publication reaches it after this call.
+    pub fn close(&self, registration: &Registration, frame: CloseFrame) {
+        let mut entries = self.entries();
+        if owned(&mut entries, registration).is_none() {
+            return;
+        }
+        entries.remove(&registration.id);
+        if !registration.link.push(&Batch::close(frame.clone())) {
+            registration.link.retire(Retirement::Closed(frame));
+        }
+    }
+
+    /// Registered connections.
+    pub fn connection_count(&self) -> usize {
+        self.entries().len()
+    }
+
     /// Retires a connection whose peer has gone; it gets no close frame.
     pub fn disconnect(&self, registration: &Registration) {
         self.retire_registration(registration, Retirement::Disconnected);
@@ -334,11 +442,7 @@ async fn write<S>(
             }
         }
     };
-    if let Some(reason) = retirement.close_reason() {
-        let frame = CloseFrame {
-            code: CloseCode::Error,
-            reason: Utf8Bytes::from_static(reason),
-        };
+    if let Some(frame) = retirement.close_frame() {
         let _ = timeout(CLOSE_TIMEOUT, sink.send(Message::Close(Some(frame)))).await;
     }
     cleanup();
@@ -357,11 +461,16 @@ where
     S: Sink<Message>,
 {
     for frame in batch.frames.iter() {
+        let message = frame.message();
         let sent = tokio::select! {
             biased;
             () = registration.link.retired.notified() => return None,
-            sent = timeout(SEND_TIMEOUT, sink.send(Message::Text(frame.clone()))) => sent,
+            sent = timeout(SEND_TIMEOUT, sink.send(message)) => sent,
         };
+        if matches!(frame, Frame::Close(_)) {
+            // An ordered close ends the connection whatever the send returned.
+            return Some(broker.retire_registration(registration, Retirement::Disconnected));
+        }
         let failure = match sent {
             Ok(Ok(())) => continue,
             Ok(Err(_)) => Retirement::Disconnected,

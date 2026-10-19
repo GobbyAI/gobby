@@ -41,7 +41,7 @@ from gobby.tasks.transcript_background import (
     pending_background_run,
     recover_background_receipt,
 )
-from gobby.tasks.transcript_evidence_merge import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     OutputDelivery,
     TranscriptEdit,
@@ -89,6 +89,7 @@ from gobby.tasks.transcript_output_retention import (
 from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    native_created_source,
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
@@ -282,7 +283,9 @@ def _derive_transcript_evidence_sync(
     snapshot_key = f"{session.id}:{fingerprint}"
     if resume is None:
         resume = load_durable_snapshot(snapshot_key)
-    paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
+    paths, attempted_paths = _resolve_transcript_paths(
+        session, archive_dir, local_machine_id, window_start
+    )
     if not paths:
         raise TranscriptEvidenceUnavailable(
             f"No transcript was found for {session.source} session {session.ref}.",
@@ -321,7 +324,13 @@ def _derive_transcript_evidence_sync(
         )
         if resume is None or updated.checkpoint() != resume.checkpoint():
             store_durable_snapshot(snapshot_key, updated)
-    return merge_transcript_evidence(*(result[0] for result in results)), updated
+    return merge_transcript_evidence(
+        results[0][0],
+        *(
+            archive_before_live(evidence, results[0][0]) if path.endswith(".gz") else evidence
+            for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)
+        ),
+    ), updated
 
 
 def _derive_transcript_path_evidence(
@@ -492,12 +501,24 @@ def _resolve_transcript_paths(
     session: Session,
     archive_dir: str | None,
     local_machine_id: str,
+    window_start: datetime | None = None,
 ) -> tuple[list[str], list[str]]:
     primary, attempted = _resolve_transcript_path(session, archive_dir, local_machine_id)
     if primary is None:
         return [], attempted
     supplemental = find_supplemental_transcripts_on_disk(session.source, primary)
-    return [primary, *supplemental], [*attempted, *supplemental]
+    # A compact or account switch can replace a live file at the same path.
+    # Read this session's archive as well; never scan other sessions' files.
+    archive = str(get_archive_dir(archive_dir) / f"{session.external_id}.jsonl.gz")
+    if Path(archive).is_file():
+        if window_start is not None and Path(archive).stat().st_mtime < window_start.timestamp():
+            if archive == primary:
+                return [], attempted
+            supplemental = [path for path in supplemental if path != archive]
+        elif archive != primary:
+            supplemental.append(archive)
+    paths = list(dict.fromkeys((primary, *supplemental)))
+    return paths, list(dict.fromkeys((*attempted, *supplemental)))
 
 
 def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
@@ -697,6 +718,13 @@ def _record_validation_run(
         native_result = result.get("tool_result", result) if isinstance(result, dict) else result
         output = native_result.get("content") if isinstance(native_result, dict) else native_result
         written_path = pending.arguments.get("file_path")
+        created_source = (
+            native_created_source(pending.arguments, result, pending.call_id)
+            if confirmed
+            and state.session.source == "grok"
+            and _tool_basename(pending.name) == "search_replace"
+            else None
+        )
         creation_receipt = (
             confirmed
             and _tool_basename(pending.name) == "write"
@@ -706,12 +734,18 @@ def _record_validation_run(
                 output == f"File created successfully at: {written_path}"
                 or output.startswith(f"File created successfully at: {written_path} ")
             )
-        )
+        ) or created_source is not None
         state.edits[:] = [
             replace(
                 edit,
                 source_confirmed=confirmed,
                 source_confirmed_at=completed_at if confirmed else None,
+                source_after=created_source
+                if created_source is not None
+                and not any(
+                    prior.path == edit.path and prior.order < edit.order for prior in state.edits
+                )
+                else edit.source_after,
                 source_created=bool(
                     creation_receipt
                     and not any(
@@ -890,7 +924,7 @@ def _record_edit(
             else None
         )
         old, new = arguments.get("old_string"), arguments.get("new_string")
-        python_edit = basename == "edit" and task_file.endswith(".py")
+        python_edit = basename in {"edit", "search_replace"} and task_file.endswith(".py")
         fragment: str | None = None
         replaced: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None

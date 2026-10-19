@@ -111,6 +111,7 @@ async def test_claude_background_description_notice_settles_original_call(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert len(evidence.validation_runs) == 1
@@ -177,6 +178,7 @@ async def test_claude_background_validation_requires_matching_terminal_receipt(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     assert len(evidence.validation_runs) == 1
     run = evidence.validation_runs[0]
@@ -725,6 +727,7 @@ async def test_tb_line_red_uses_original_transcript_source_not_later_test_lines(
         default_validation_detection_config(),
         {test_path, product_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::test_original",
@@ -913,6 +916,7 @@ async def test_python_keyword_stub_red_requires_original_test_and_unchanged_old_
         default_validation_detection_config(),
         {test_path, product_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
@@ -1117,6 +1121,7 @@ async def test_python_created_noop_module_red_requires_native_creation_and_origi
         default_validation_detection_config(),
         {test_path, product_path, wiring_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
@@ -1226,6 +1231,7 @@ async def test_python_stub_added_to_existing_module_credits_top_level_import_red
         default_validation_detection_config(),
         {test_path, product_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
@@ -1347,6 +1353,7 @@ async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case
         default_validation_detection_config(),
         {test_path, product_path, "src/gobby/query.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
@@ -1389,6 +1396,7 @@ async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) 
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
@@ -1432,6 +1440,7 @@ async def test_failed_rust_test_run_does_not_overturn_passing_python_lint(tmp_pa
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     gate = evaluate_validation_commands(
         task_category="code",
@@ -1498,6 +1507,7 @@ async def test_claude_bash_error_header_reaches_the_stop_gate(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     [run] = evidence.validation_runs
@@ -1585,6 +1595,7 @@ async def test_unexecuted_edit_is_not_credit_but_later_same_path_edit_is(
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name, edit.timestamp) for edit in evidence.edits] == [
@@ -1613,6 +1624,7 @@ async def test_executed_edit_whose_file_quotes_a_denial_is_credited(tmp_path: Pa
         default_validation_detection_config(),
         {"tests/test_denials.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
@@ -1643,6 +1655,7 @@ async def test_unflagged_droid_hook_denial_is_not_edit_credit(tmp_path: Path) ->
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.edits == ()
@@ -1677,6 +1690,7 @@ async def test_declined_tool_call_is_not_validation_evidence(tmp_path: Path, res
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.validation_runs == ()
@@ -1704,6 +1718,7 @@ async def test_executed_tool_failure_without_exit_code_is_still_failure(tmp_path
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
@@ -1760,6 +1775,7 @@ async def test_claude_subagent_transcript_satisfies_validation_close_gate(
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.attempted_paths == (str(transcript), str(subagent))
@@ -1803,6 +1819,7 @@ async def test_claim_window_excludes_earlier_validation_runs(tmp_path: Path) -> 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.command for run in evidence.validation_runs] == ["pytest tests/new.py"]
@@ -1870,6 +1887,7 @@ async def test_shell_commands_without_validation_categories_remain_review_eviden
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     merged = merge_transcript_evidence(evidence)
     # Claude records no exit code for a successful Bash call.
@@ -1907,6 +1925,7 @@ async def test_review_only_commands_do_not_retain_output(tmp_path: Path, shape: 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     merged = merge_transcript_evidence(evidence)
     assert [(run.command, run.output) for run in merged.command_runs] == [("printf filler", None)]
@@ -1959,6 +1978,7 @@ async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path:
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2060,6 +2080,7 @@ async def test_write_stdin_command_reaches_close_evidence(tmp_path: Path) -> Non
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2096,6 +2117,7 @@ async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) ->
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
@@ -2133,6 +2155,7 @@ async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2187,6 +2210,7 @@ async def test_codex_shell_runs_record_the_tool_workdir(tmp_path: Path, shape: s
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
@@ -2210,6 +2234,7 @@ async def test_claude_shell_runs_record_the_calling_entry_cwd(tmp_path: Path) ->
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
@@ -2245,6 +2270,7 @@ async def test_claude_cd_into_an_identical_export_credits_the_close(
         default_validation_detection_config(),
         set(),
         str(tmp_path / "repo"),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.command for run in evidence.validation_runs] == [command]
@@ -2330,6 +2356,7 @@ async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
@@ -2381,6 +2408,7 @@ async def test_codex_completed_cell_alone_is_not_a_command_pass(tmp_path: Path) 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2431,6 +2459,7 @@ async def test_codex_exec_stdout_cannot_forge_its_own_exit_code(tmp_path: Path) 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2517,6 +2546,7 @@ async def test_codex_inline_printed_exec_and_poll_results_credit_the_command(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -2663,6 +2693,7 @@ Failures:
         default_validation_detection_config(),
         {test_path, source_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::TestAgentRunCompletion",
@@ -2757,6 +2788,7 @@ async def test_rtk_recall_preserves_original_red_chronology_and_exact_reference(
         default_validation_detection_config(),
         {path, "src/gobby/hooks/session_coordinator.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{path}::test_original",
@@ -2830,6 +2862,7 @@ async def test_recovered_rtk_reference_remains_ambiguous_for_a_later_duplicate(
         default_validation_detection_config(),
         {path, "src/gobby/hooks/session_coordinator.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     reds = [run for run in evidence.validation_runs if run.outcome == "failure"]
     assert len(reds) == 2
@@ -2861,6 +2894,7 @@ async def test_codex_native_recall_keeps_the_failed_execution_outcome(tmp_path: 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     (red,) = evidence.validation_runs
@@ -3044,6 +3078,7 @@ async def test_red4_23194_tb_line_red_is_credited_from_its_recalled_output(
         default_validation_detection_config(),
         {test_path, source_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     test = AcceptanceTest(
         reference=f"{test_path}::{symbol}",
@@ -3130,6 +3165,7 @@ async def _derive_claude_tdd_cycle(
         default_validation_detection_config(),
         {test_path, source_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
 
@@ -3437,6 +3473,7 @@ async def _derive_claude_heredoc_tdd_cycle(
         default_validation_detection_config(),
         {test_path, source_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
 
@@ -3517,6 +3554,7 @@ async def test_shell_commands_without_attributed_write_paths_are_not_edits(
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.edits == ()
@@ -3553,6 +3591,7 @@ async def test_search_replace_target_file_remains_a_transcript_edit(
         default_validation_detection_config(),
         {"src/changed.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
@@ -3614,6 +3653,7 @@ async def test_codex_compound_timeout_preserves_completed_segment_outcomes(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [
@@ -3689,6 +3729,7 @@ async def test_codex_ingests_json_style_functions_exec_evidence(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
@@ -3734,6 +3775,7 @@ async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
@@ -3773,6 +3815,7 @@ async def test_codex_direct_exec_command_recognizes_test_after_directory_change(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.command, run.categories, run.outcome) for run in evidence.validation_runs] == [
@@ -3805,6 +3848,7 @@ async def test_codex_direct_exec_command_uses_structured_result(tmp_path: Path) 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
@@ -3837,6 +3881,7 @@ async def test_codex_actionlint_evidence_preserves_authoritative_outcome(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [
@@ -3915,6 +3960,7 @@ async def test_codex_direct_exec_command_keeps_non_authoritative_envelopes_unkno
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("unknown", None)]
@@ -3955,6 +4001,7 @@ async def test_unknown_codex_outcome_is_retained_as_degraded_evidence(tmp_path: 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.outcome for run in evidence.validation_runs] == ["unknown"]
@@ -4009,6 +4056,7 @@ async def test_droid_uses_provider_error_status(tmp_path: Path) -> None:
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", None)]
@@ -4158,6 +4206,7 @@ async def test_droid_rotated_epochs_preserve_task_close_gate_evidence(tmp_path: 
         default_validation_detection_config(),
         {test_path, source_path},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.attempted_paths == (str(current), str(oldest), str(middle))
@@ -4218,6 +4267,7 @@ async def test_grok_uses_terminal_tool_status(tmp_path: Path) -> None:
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.outcome for run in evidence.validation_runs] == ["failure"]
@@ -4266,6 +4316,7 @@ async def test_grok_search_replace_is_a_tdd_edit(tmp_path: Path) -> None:
         default_validation_detection_config(),
         {"tests/test_named.py", "tests/other_named.py"},
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
@@ -4328,6 +4379,7 @@ async def test_grok_completed_status_with_runner_failures_is_failure(tmp_path: P
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.outcome for run in evidence.validation_runs] == ["failure"]
@@ -4425,6 +4477,7 @@ async def test_unreadable_gzip_is_evidence_unavailable(tmp_path: Path) -> None:
             default_validation_detection_config(),
             set(),
             str(tmp_path),
+            archive_dir=str(tmp_path / "archives"),
         )
 
 
@@ -4843,6 +4896,7 @@ async def test_wrapper_zeroed_exit_code_still_yields_a_failure_run(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", None)]
@@ -4869,6 +4923,7 @@ async def test_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> No
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", None)]
@@ -4924,6 +4979,7 @@ async def test_passing_test_types_audit_is_recorded_as_a_successful_type_check(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.categories, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
@@ -4982,6 +5038,7 @@ async def test_codex_wrapper_zeroed_exit_code_still_yields_a_failure_run(tmp_pat
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", 0)]
@@ -5005,6 +5062,7 @@ async def test_codex_uncompounded_passing_run_is_still_a_success(tmp_path: Path)
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
@@ -5032,6 +5090,7 @@ async def test_codex_passing_test_types_suppression_ratchet_is_recorded(
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [
@@ -5113,6 +5172,7 @@ async def test_pre_window_history_does_not_change_derived_evidence(tmp_path: Pat
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.command for run in evidence.validation_runs] == [
@@ -5146,6 +5206,7 @@ async def test_compound_run_records_only_its_validation_segments(tmp_path: Path)
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [run.command for run in evidence.validation_runs] == [command]
@@ -5190,6 +5251,7 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     (run,) = evidence.validation_runs
@@ -5239,6 +5301,7 @@ async def test_compound_failure_is_attributed_to_reported_runner_segment(tmp_pat
         default_validation_detection_config(),
         set(),
         str(tmp_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     gate = evaluate_validation_commands(
         task_category="code",
@@ -5309,6 +5372,7 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
         default_validation_detection_config(),
         {"src/changed.py"},
         str(repo_path),
+        archive_dir=str(tmp_path / "archives"),
     )
     claude_evidence = await derive_transcript_evidence(
         _session("claude", claude_transcript, suffix="2"),
@@ -5316,6 +5380,7 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
         default_validation_detection_config(),
         {"src/changed.py"},
         str(repo_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.tool_name) for edit in codex_evidence.edits] == [
@@ -5373,6 +5438,7 @@ async def test_task_checkout_paths_reject_foreign_root_and_file(tmp_path: Path) 
                 (str(owned_b), "docs/other.md"),
             }
         ),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
@@ -5427,6 +5493,7 @@ async def test_relative_edits_require_call_time_checkout_proof(
         {path},
         str(owned_a),
         task_checkout_paths=frozenset({(str(owned_a), path), (str(owned_b), path)}),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert [edit.timestamp for edit in evidence.edits] == [
@@ -5466,6 +5533,7 @@ async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_pa
         default_validation_detection_config(),
         {"src/changed.py"},
         str(repo_path),
+        archive_dir=str(tmp_path / "archives"),
     )
 
     assert evidence.edits == ()
@@ -5517,7 +5585,12 @@ async def test_derivation_yields_to_event_loop_between_record_chunks(
 
     async def derive() -> TranscriptEvidence:
         return await derive_transcript_evidence(
-            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
+            session,
+            BASE_TIME,
+            default_validation_detection_config(),
+            set(),
+            str(tmp_path),
+            archive_dir=str(tmp_path / "archives"),
         )
 
     counter = asyncio.create_task(count_turns())
@@ -5643,7 +5716,12 @@ async def test_chunked_derivation_fails_closed_on_invalid_chunks(
 
     with pytest.raises(pickle.UnpicklingError):
         await derive_transcript_evidence(
-            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
+            session,
+            BASE_TIME,
+            default_validation_detection_config(),
+            set(),
+            str(tmp_path),
+            archive_dir=str(tmp_path / "archives"),
         )
 
     fingerprint = derivation_fingerprint(
@@ -5676,7 +5754,12 @@ async def test_chunked_derivation_cancelled_mid_decode_keeps_worker_checkpoint(
 
     derivation = asyncio.create_task(
         derive_transcript_evidence(
-            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
+            session,
+            BASE_TIME,
+            default_validation_detection_config(),
+            set(),
+            str(tmp_path),
+            archive_dir=str(tmp_path / "archives"),
         )
     )
     await first_chunk.wait()

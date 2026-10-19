@@ -32,6 +32,7 @@ from gobby.utils.machine_id import require_machine_id
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
 TEST_API_KEY = "server-test-api-key"
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 TEST_FRONT_DOOR_SECRET = "server-test-front-door-secret"
 TEST_FRONT_DOOR_IDENTITY = {
     "X-Gobby-Front-Door": TEST_FRONT_DOOR_SECRET,
@@ -104,7 +105,18 @@ class StubConfigRuntime(ConfigRuntime):
 def authenticate_test_server(server: HTTPServer) -> HTTPServer:
     """Mark requests authenticated for tests outside the authentication contract."""
     cast(Any, server.auth_service).is_request_authenticated = MagicMock(return_value=True)
-    cast(Any, server.auth_service).authenticate = MagicMock(return_value=AuthDecision(allowed=True))
+    cast(Any, server.auth_service).authenticate = MagicMock(
+        return_value=AuthDecision(allowed=True, break_glass=True)
+    )
+    return server
+
+
+def authenticate_as(server: HTTPServer, user_id: str) -> HTTPServer:
+    """Stub one owning user so the real middleware binds that caller."""
+    cast(Any, server.auth_service).is_request_authenticated = MagicMock(return_value=True)
+    cast(Any, server.auth_service).authenticate = MagicMock(
+        return_value=AuthDecision(allowed=True, user_id=user_id)
+    )
     return server
 
 
@@ -119,7 +131,7 @@ def authenticated_http_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         AuthService,
         "authenticate",
-        lambda _service, _request: AuthDecision(allowed=True),
+        lambda _service, _request: AuthDecision(allowed=True, break_glass=True),
     )
 
 

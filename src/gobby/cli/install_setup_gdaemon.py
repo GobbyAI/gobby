@@ -98,8 +98,12 @@ def _install_from_workspace(binary: Path) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
+    if result.returncode != 0:
+        raise GdaemonInstallError(
+            f"gdaemon cargo build failed (exit {result.returncode}):\n{result.stderr.strip()}"
+        )
     source = cargo_release_dir(manifest.parent) / _BINARY_NAME
-    if result.returncode != 0 or not source.is_file():
+    if not source.is_file():
         return False
     try:
         promote_workspace_binary_set({"gdaemon": source}, bin_dir=binary.parent)

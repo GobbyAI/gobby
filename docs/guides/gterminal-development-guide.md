@@ -52,6 +52,24 @@ exports the cache variables:
 - `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` points at its `p` subdirectory and becomes
   `zig build --system <dir>` in `crates/gterminal/build.rs`.
 
+The build script only reads the vendored tree. Zig unpacks fetched packages
+into `zig-pkg/` beside `build.zig`, so the script stages a build root under
+Cargo's `OUT_DIR`: the two manifests are copied in and every other vendored
+entry is symlinked. It runs Zig there with `--prefix`, `--cache-dir` and
+`--global-cache-dir` under `OUT_DIR` too, so fetched packages, the archive and
+both caches are Cargo-owned. A build from a read-only checkout writes nothing
+under `vendor/libghostty-vt` or `~/.cache/zig`, and an inherited
+`ZIG_GLOBAL_CACHE_DIR` does not apply to it. Cargo builds therefore never
+refresh `~/.cache/zig/p`, the materializer's source. The bump path does:
+`scripts/build_vendored_libghostty_vt.sh` runs `zig build --fetch` into the
+machine cache before it builds. The materializer checks every non-lazy package
+hash the workspace's vendored `build.zig.zon` pins, following non-lazy path
+packages and each mirrored package's own manifest. Lazy pins are skipped
+because a `--system` build resolves one only when `build.zig` asks for it.
+If the machine cache lacks a checked pin, the
+materializer reports the package and that refresh command, and leaves
+`LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` unset.
+
 The mirror is the same for every run because the build script reruns whenever
 `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` changes; a per-run path rebuilt libghostty-vt on
 every guard run. It sits beside `~/.gobby/cache/sandbox`, never inside it. A run

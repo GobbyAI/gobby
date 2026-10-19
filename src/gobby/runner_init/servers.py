@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 import weakref
 from collections.abc import Callable
@@ -28,12 +27,13 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
-from gobby.runner_backend import backend_bind
+from gobby.runner_backend import backend_bind, front_door_secret
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
+from gobby.servers.websocket.native_publish import native_publisher_from_environment
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.model_metadata import ModelMetadataStore
 
@@ -314,6 +314,10 @@ def init_servers(runner: GobbyRunner) -> None:
             completion_registry=runner.completion_registry,
             shutdown_in_progress=lambda: services.shutdown_in_progress,
         )
+        # Native mode is decided by the environment the supervisor sets (decision 5).
+        runner.websocket_server.native_publisher = native_publisher_from_environment(
+            websocket_config, runner.bootstrap_config
+        )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         attention_manager = services.attention_manager
         if attention_manager is not None:
@@ -537,7 +541,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         grant_service=presenter,
         local_machine_id=lease.machine_id,
         clock=lambda: int(time.time()),
-        front_door_secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
+        front_door_secret=front_door_secret(),
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

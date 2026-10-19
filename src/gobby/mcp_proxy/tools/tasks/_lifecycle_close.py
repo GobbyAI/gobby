@@ -392,16 +392,28 @@ async def _evaluate_close(
         commit_shas=commit_shas,
         cwd=repo_path,
         project_name=ctx.get_current_project_name(),
+        candidate_commit_sha=evaluation.candidate_commit_sha,
     )
     if tagged_error:
         return evaluation.fail(
             7, "linked_commits", str(tagged_error["error"]), str(tagged_error["message"])
         ).block_remaining()
     tagged_details = (
-        {"other_ref_tagged_commit_shas": tagged_elsewhere} if tagged_elsewhere else None
+        {
+            "other_ref_tagged_commit_shas": tagged_elsewhere,
+            "excluded_unreachable_tagged_commit_shas": tagged_elsewhere,
+        }
+        if tagged_elsewhere
+        else None
     )
     if tagged_details:
         evaluation.extra.update(tagged_details)
+    excluded_message = (
+        f" Tagged commits excluded-unreachable from candidate and integration: "
+        f"{', '.join(tagged_elsewhere)}."
+        if tagged_elsewhere
+        else ""
+    )
     commits_linked = True
     if unlinked_on_head:
         commits_linked = False
@@ -410,7 +422,7 @@ async def _evaluate_close(
             "linked_commits",
             "unlinked_tagged_commits",
             f"Commits tagged for this task are not linked: {', '.join(unlinked_on_head)}. "
-            "The criteria review would judge an incomplete diff.",
+            "The criteria review would judge an incomplete diff." + excluded_message,
             action=(
                 "Link each listed commit with link_commit(task_id, commit_sha), or run "
                 f"auto_link_commits(task_id, since={format_git_since(task.created_at)!r}) "
@@ -472,9 +484,12 @@ async def _evaluate_close(
         evaluation.pass_gate(
             7,
             "linked_commits",
-            "Attributed edits have a linked commit."
-            if evaluation.had_attributed_edits
-            else "No attributed committable edits require a commit.",
+            (
+                "Attributed edits have a linked commit."
+                if evaluation.had_attributed_edits
+                else "No attributed committable edits require a commit."
+            )
+            + excluded_message,
             details=tagged_details,
             skipped=not evaluation.had_attributed_edits,
         )

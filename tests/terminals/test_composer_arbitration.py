@@ -99,6 +99,10 @@ class _ComposerRuntime(FakeRuntime):
                 if _PHASE.get() == self.hold_phase:
                     self.staged.set()
                     await self.release_staged.wait()
+                if payload.endswith("\n") and self.buffer:
+                    self.submitted.append(self.buffer)
+                    self.buffer = ""
+                    self.ledger.record_submit(self.terminal_id)
             elif kind == "key" and payload == "enter":
                 if self.buffer:
                     self.submitted.append(self.buffer)
@@ -455,6 +459,128 @@ async def test_compaction_holds_the_lock_across_its_whole_ladder(
     )
 
     assert lock_held and all(lock_held), lock_held
+
+
+async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    composer_ledger: ComposerLedger,
+) -> None:
+    """Exercise Gobby's real input path; the fake editor cannot prove a native UI fix."""
+    from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+    from gobby.sessions.compact_continuation import (
+        arm_compact_boundary_waiter,
+        notify_compact_boundary,
+        register_compact_boundary_waiter,
+        unregister_compact_boundary_waiter,
+    )
+    from gobby.sessions.handoff import clear_handoff_turn_end_pending, stage_handoff_attempt
+    from gobby.sessions.handoff_records import build_handoff_payload
+    from gobby.sessions.mailbox import MailboxService
+    from gobby.utils.session_context import session_context_for_test
+
+    dispatcher, messages, runtime, session_id, pane = _editor_seat(
+        temp_db, session_manager, sample_project["id"], "grok", monkeypatch, composer_ledger
+    )
+    # The helper's unrelated notification must not stand in for this test's wake.
+    pending = messages.get_undelivered_messages(session_id)
+    messages.mark_delivered_batch([message.id for message in pending], session_id)
+    store = dispatcher._terminal_manager
+    coordinator = composer_lock_module._coordinator
+    assert store is not None
+    assert coordinator is not None
+    registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=temp_db,
+        terminal_manager=store,
+        write_coordinator=coordinator,
+    )
+    sender = session_manager.register(
+        external_id="grok-compact-observer",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    try:
+        for cycle in (1, 2):
+            attempt_id = str(cycle) * 32
+            payload = build_handoff_payload(
+                current_state=f"Grok compact cycle {cycle}",
+                next_steps=["Consume this handoff and resume the assigned task."],
+            )
+            attempt = stage_handoff_attempt(
+                temp_db, session_id, attempt_id=attempt_id, handoff=payload, clear_session=False
+            )
+            with session_context_for_test(session_id):
+                before = await registry.call("get_handoff", {})
+            assert before["found"] is False
+            assert before["delivery_pending"] is True
+            session = session_manager.get(session_id)
+            assert session is not None
+            waiter = register_compact_boundary_waiter(
+                session_id, attempt_id, attempt.handoff_record_id, session.terminal_context
+            )
+            try:
+                arm_compact_boundary_waiter(session_id, attempt_id)
+                compact = await _send_command(pane, "/compact", session_id, "grok")
+                assert compact[0] is True, compact
+                notify_compact_boundary(temp_db, session_id, session.terminal_context)
+                await asyncio.wait_for(waiter.event.wait(), timeout=2)
+            finally:
+                unregister_compact_boundary_waiter(session_id, attempt_id)
+            assert not clear_handoff_turn_end_pending(
+                temp_db, session_id, attempt_id="wrong-attempt"
+            )
+            assert clear_handoff_turn_end_pending(temp_db, session_id, attempt_id=attempt_id)
+
+            resume = f"Resume compact cycle {cycle}"
+            with session_context_for_test(sender.id):
+                keys = await registry.call(
+                    "send_keys",
+                    {"session_id": session_id, "keys": resume + "\n"},
+                )
+            assert keys["success"] is True, keys
+            assert runtime.submitted[-2:] == ["/compact", resume]
+            with session_context_for_test(session_id):
+                delivered = await registry.call("get_handoff", {})
+                duplicate = await registry.call("get_handoff", {})
+            assert delivered["found"] is True
+            assert delivered["handoff"] == payload.rendered_markdown
+            assert duplicate["found"] is False
+
+            session_manager.update(session_id, status="paused")
+            wake = await MailboxService(
+                db=temp_db,
+                message_manager=messages,
+                session_manager=session_manager,
+                wake_dispatcher=dispatcher,
+            ).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=session_id,
+                content=f"compact-cycle-{cycle}-wake",
+                wake=True,
+            )
+            assert wake.success is True
+            assert len(wake.wake_results) == 1
+            assert wake.wake_results[0]["delivered"] is True, wake.wake_results
+            assert runtime.submitted[-1] == CONTINUE_WAKE_MESSAGE
+            unread = messages.get_undelivered_messages(session_id)
+            assert [message.content for message in unread] == [f"compact-cycle-{cycle}-wake"]
+            messages.mark_delivered_batch([message.id for message in unread], session_id)
+            assert runtime.buffer == ""
+        assert runtime.submitted == [
+            "/compact",
+            "Resume compact cycle 1",
+            CONTINUE_WAKE_MESSAGE,
+            "/compact",
+            "Resume compact cycle 2",
+            CONTINUE_WAKE_MESSAGE,
+        ]
+    finally:
+        await _cancel_retries(dispatcher)
 
 
 async def _no_sleep(_seconds: float) -> None:

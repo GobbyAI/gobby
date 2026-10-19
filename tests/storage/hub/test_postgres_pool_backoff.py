@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -16,7 +14,7 @@ from psycopg.pq import TransactionStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.config.postgres_pool import PostgresPoolConfig, postgres_pool_config_from_mapping
-from gobby.storage.hub import postgres_pool
+from gobby.storage.hub import operation_deadline, postgres_pool
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.operation_deadline import database_operation_deadline
 
@@ -146,39 +144,22 @@ def test_pool_connection_checks_pool_before_each_retry(
 def test_pool_connection_honors_operation_deadline_without_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The deadline reads a clock that never advances, so the 30 ms budget cannot
+    # expire while the test is descheduled under parallel load (#23359).
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: 0.0))
     pool = _FakePool(failures=1)
-    release_check = threading.Event()
 
-    def blocking_check() -> None:
-        pool.check_calls += 1
-        release_check.wait(timeout=5.0)
-
-    monkeypatch.setattr(pool, "check", blocking_check)
-
-    # The budget only has to outlast scheduling the worker under parallel test
-    # load; the fake pool times out at once and the asserts below prove no retry.
-    def acquire() -> None:
-        with database_operation_deadline(timeout_seconds=1.0):
-            with postgres_pool.pool_connection(
-                cast(ConnectionPool[Any], pool),
-                _pool_stats,
-            ):
+    with database_operation_deadline(timeout_seconds=0.03):
+        with pytest.raises(PoolTimeout):
+            with postgres_pool.pool_connection(cast(ConnectionPool[Any], pool), _pool_stats):
                 pass
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        pending = executor.submit(acquire)
-        try:
-            with pytest.raises(PoolTimeout):
-                pending.result(timeout=3.0)
-        finally:
-            release_check.set()
 
     assert pool.connection_calls == 1
     assert pool.check_calls == 0
     assert len(pool.connection_timeouts) == 1
     timeout = pool.connection_timeouts[0]
     assert timeout is not None
-    assert 0 < timeout <= 1.0
+    assert 0 < timeout <= 0.03
 
 
 class _TransactionConnection:

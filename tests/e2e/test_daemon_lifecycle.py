@@ -19,7 +19,6 @@ import ssl
 import subprocess
 import sys
 from collections.abc import Generator
-from functools import partial
 from pathlib import Path
 
 import httpx
@@ -52,6 +51,7 @@ from tests.e2e.conftest import (
     terminate_process_tree,
     wait_for_daemon_health,
 )
+from tests.e2e.lifecycle_processes import LifecycleProcesses, wait_for_retiring_backend
 
 pytestmark = pytest.mark.e2e
 
@@ -549,6 +549,7 @@ class TestFrontDoor:
     def test_backend_sigkill_and_repeated_restart_preserve_native_authority(
         self,
         daemon_instance: DaemonInstance,
+        tmp_path: Path,
     ) -> None:
         owner = psutil.Process(daemon_instance.pid)
         backend = _backend_child(owner.pid)
@@ -570,10 +571,10 @@ class TestFrontDoor:
             )
             assert response.status_code == 200, response.text
             assert response.json()["backend_pid"] == previous.pid
-            wait_for_condition(
-                partial(_gone, previous),
-                timeout=30.0,
-                description="retiring backend reaped",
+            wait_for_retiring_backend(
+                previous,
+                log_files=(daemon_instance.log_file, daemon_instance.error_log_file),
+                artifact_path=tmp_path / f"retiring-backend-{_round}.log",
             )
             wait_for_daemon_health(daemon_instance.http_port, log_file=daemon_instance.log_file)
             assert _backend_child(owner.pid).pid != previous.pid
@@ -604,22 +605,23 @@ class TestFrontDoor:
         pid_file = gobby_home / "gobby.pid"
         env = _real_cli_env(config_path)
 
-        def gobby(*args: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                [sys.executable, "-c", _CLI_WITHOUT_MANAGED_SERVICES, *args],
-                env=env,
-                cwd=str(e2e_project_dir),
-                capture_output=True,
-                text=True,
-                timeout=240,
-            )
+        with LifecycleProcesses(pid_file) as owned:
 
-        runner = _spawn_runner(e2e_project_dir, config_path)
-        runners: list[psutil.Process] = [psutil.Process(runner.pid)]
-        children: list[psutil.Process] = []
-        try:
+            def gobby(*args: str) -> subprocess.CompletedProcess[str]:
+                return owned.run(
+                    [sys.executable, "-c", _CLI_WITHOUT_MANAGED_SERVICES, *args],
+                    env=env,
+                    cwd=e2e_project_dir,
+                    timeout=240,
+                )
+
+            runner = _spawn_runner(e2e_project_dir, config_path)
+            owned.track(runner.pid)
+            runners: list[psutil.Process] = [psutil.Process(runner.pid)]
+            children: list[psutil.Process] = []
             wait_for_daemon_health(http_port, log_file=gobby_home / "logs" / "daemon.log")
             children.append(_backend_child(runner.pid))
+            owned.track(runner.pid)
             for _round in range(2):
                 restarted = gobby("restart", "--full")
                 assert restarted.returncode == 0, restarted.stdout + restarted.stderr
@@ -633,12 +635,6 @@ class TestFrontDoor:
             # `gobby stop` returns with the pair stopped, not eventually after.
             assert _gone(runners[-1]) and _gone(children[-1])
             assert _ports_free(http_port, ws_port, http_port + 100, ws_port + 100)
-        finally:
-            if runner.poll() is None:
-                terminate_process_tree(runner.pid)
-            for process in [*runners, *children]:
-                if not _gone(process):
-                    process.kill()
 
     def test_native_sigkill_drains_backend_and_frees_public_ports(
         self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
@@ -703,22 +699,17 @@ class TestBridgeAutoStart:
         env.pop("GOBBY_DAEMON_URL", None)
         assert daemon_health_unavailable(http_port)
 
-        try:
-            bridge = subprocess.run(
+        with LifecycleProcesses(pid_file) as owned:
+            bridge = owned.run(
                 [sys.executable, "-c", _BRIDGE_AUTO_START, _CLI_WITHOUT_MANAGED_SERVICES],
                 env=env,
-                cwd=str(e2e_project_dir),
-                capture_output=True,
-                text=True,
+                cwd=e2e_project_dir,
                 timeout=300,
             )
             output = bridge.stdout + bridge.stderr
             assert bridge.returncode == 0, output
             health = httpx.get(f"http://localhost:{http_port}/api/health")
             assert health.status_code == 200, output
-        finally:
-            if pid_file.exists():
-                terminate_process_tree(int(pid_file.read_text().strip()))
 
 
 def _is_terminal_host(process: psutil.Process) -> bool:

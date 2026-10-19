@@ -236,6 +236,7 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     ),
     "merge_resolution": _route("merge resolution", "operation ConfigRuntime.capture"),
     "metrics": _route("metrics cleanup", "iteration ConfigRuntime.capture"),
+    "node_reports": _route("node report admission", "request ConfigRuntime.capture"),
     "pipelines": _route("pipeline execution", "operation ConfigRuntime.capture"),
     "postgres_pool": _route("database acquisition", "operation ConfigRuntime.capture"),
     "project_verification_synthesis": _route(

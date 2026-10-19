@@ -477,16 +477,18 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
 ) -> None:
     assert (native_publish.TOKEN_WAIT, native_publish.TOKEN_POLL_INTERVAL) == (2.0, 0.05)
     bootstrap = BootstrapConfig(daemon_port=60887, bind_host="127.0.0.1")
+    # A stale environment copy of the secret never counts: only the pipe-fed seam does.
+    monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", SECRET)
     for fd, secret in [(None, None), ("9", None), (None, SECRET), ("", SECRET), ("9", "")]:
-        for name, value in (("GOBBY_SUPERVISOR_FD", fd), ("GOBBY_FRONT_DOOR_SECRET", secret)):
-            if value is None:
-                monkeypatch.delenv(name, raising=False)
-            else:
-                monkeypatch.setenv(name, value)
+        if fd is None:
+            monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+        else:
+            monkeypatch.setenv("GOBBY_SUPERVISOR_FD", fd)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", secret)
         assert native_publisher_from_environment(CONFIG, bootstrap) is None, (fd, secret)
 
     monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "9")
-    monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", SECRET)
+    monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
     runner_backend._token.reset()
     polls = _count_token_polls(monkeypatch)
     monkeypatch.setattr(native_publish, "TOKEN_POLL_INTERVAL", 0)
@@ -604,7 +606,7 @@ async def test_production_client_ignores_proxy_environment(
         for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
             monkeypatch.setenv(name, f"http://127.0.0.1:{proxy_port}")
         monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "9")
-        monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", SECRET)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
         publisher = native_publisher_from_environment(
             CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
         )

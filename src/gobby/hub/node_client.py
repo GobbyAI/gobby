@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import quote
@@ -12,6 +11,7 @@ from pydantic import ValidationError
 
 from gobby.config.bootstrap import load_bootstrap
 from gobby.hub.node_commands import ErrReply, NodeModel, OkReply, parse_message
+from gobby.runner_backend import front_door_secret
 
 type DeliveryStage = Literal["none", "partial"] | None
 
@@ -45,9 +45,7 @@ class NodeCommandClient:
 
     @classmethod
     def from_environment(cls) -> NodeCommandClient:
-        return cls(
-            port=load_bootstrap().daemon_port, secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET")
-        )
+        return cls(port=load_bootstrap().daemon_port, secret=front_door_secret())
 
     def _http_client(self, read_timeout: float) -> httpx.AsyncClient:
         if not self.secret:

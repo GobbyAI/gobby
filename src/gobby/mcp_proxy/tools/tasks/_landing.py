@@ -12,11 +12,11 @@ from gobby.mcp_proxy.tools.tasks._context import (
     RegistryContext,
     checkout_unresolved_error,
 )
-from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.hub.protocol import MainCheckoutLanding
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import freeze_path, write_freeze
+from gobby.tasks.lifecycle_access import resolve_lifecycle_task
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.session_context import get_current_session_id
 
@@ -92,10 +92,14 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"landed": False, "error": "session_required"}
         try:
             project_id = ctx.resolve_project_from_session(session_id)
-            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id, project_id)
-            task = ctx.task_manager.get_task(resolved_id)
-            if task.project_id != project_id:
-                return {"landed": False, "error": "task_project_mismatch"}
+            task = await asyncio.to_thread(
+                resolve_lifecycle_task,
+                ctx.task_manager,
+                task_id,
+                project_id=project_id,
+                caller_session_id=ctx.resolve_session_id(session_id),
+                sessions=ctx.session_manager,
+            )
             return dict(
                 await land_candidate(
                     ctx.task_manager.db,
@@ -118,7 +122,10 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_schema={
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task reference or UUID"},
+                "task_id": {
+                    "type": "string",
+                    "description": "Task reference, <project>#N, or UUID; foreign tasks require authority",
+                },
                 "commit_sha": {"type": "string", "description": "Full 40-character candidate SHA"},
             },
             "required": ["task_id", "commit_sha"],

@@ -165,10 +165,12 @@ async def test_connected_machine_ids(failure: str | None) -> None:
         assert len(requests) == (0 if failure == "no_secret" else 1)
 
 
-def test_environment_and_cached_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_front_door_secret_and_cached_client(monkeypatch: pytest.MonkeyPatch) -> None:
     import gobby.hub.node_client as module
 
-    monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", "env-secret")
+    # A stale environment copy must lose to the pipe-fed secret.
+    monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", "stale-env")
+    monkeypatch.setattr("gobby.runner_backend._front_door_secret", "env-secret")
     monkeypatch.setattr(module, "load_bootstrap", lambda: SimpleNamespace(daemon_port=61234))
     module.node_command_client.cache_clear()
     try:

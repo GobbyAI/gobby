@@ -45,6 +45,7 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
+from gobby.sessions.transcripts.codex_file_changes import file_change_events
 from gobby.sessions.transcripts.codex_items import mcp_item_failure, normalize_command_execution
 from gobby.sessions.transcripts.tool_activity import event_activity_by_user_index
 
@@ -762,10 +763,14 @@ class CodexTranscriptParser(BaseTranscriptParser):
             if data is None:
                 continue
             record, outcomes, mcp_calls = self._parse_record_with_outcomes(data, current_index)
-            if record is None and not outcomes and not mcp_calls:
+            file_changes = file_change_events(data, self._cwd)
+            if record is None and not outcomes and not mcp_calls and not file_changes:
                 continue
+            parsed_records: list[ParsedMessage | ParsedToolEvent] = list(file_changes)
+            if record is not None:
+                parsed_records.insert(0, record)
             records = annotate_record_source(
-                [record] if record is not None else [],
+                parsed_records,
                 source=self.cli_name,
                 raw_line_no=raw.raw_line_no,
             )

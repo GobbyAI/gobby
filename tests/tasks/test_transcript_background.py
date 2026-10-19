@@ -349,6 +349,12 @@ def _bash(command: str) -> PendingTool:
         "grep -E 'passed.*s' /tmp/job-1.output",
         'grep -E "[0-9]+ passed" /tmp/job-1.output',
         "cat /tmp/job-1.output\n",
+        "grep -n passed /tmp/job-1.output",
+        "grep -n -A3 passed /tmp/job-1.output",
+        "grep -n -A 3 passed /tmp/job-1.output",
+        "grep -A3 -E 'passed|failed' /tmp/job-1.output",
+        "grep -E -n -A 3 'passed|failed' /tmp/job-1.output",
+        "grep -F -A1 passed /tmp/job-1.output",
     ],
 )
 @pytest.mark.parametrize("prefix", ["", "rtk ", "rtk -- ", "rtk proxy ", "rtk bypass -- "])
@@ -480,6 +486,14 @@ def test_shell_read_is_not_the_rtk_read_subcommand(prefix: str) -> None:
         # An option in the pattern slot makes the output the pattern or pattern file.
         "grep -E -r /tmp/job-1.output",
         "grep -F -f /tmp/job-1.output",
+        # Only -n, -A and -E/-F are read; a combined, context-before or pattern-file form is not.
+        "grep -nA3 passed /tmp/job-1.output",
+        "grep -B3 passed /tmp/job-1.output",
+        "grep -C3 passed /tmp/job-1.output",
+        "grep -e passed /tmp/job-1.output",
+        "grep -r passed /tmp/job-1.output",
+        "grep -n -A x passed /tmp/job-1.output",
+        "grep -n passed /tmp/job-1.output /tmp/job-2.output",
     ],
 )
 @pytest.mark.parametrize("prefix", ["", "rtk ", "rtk -- ", "rtk proxy ", "rtk bypass -- "])
@@ -487,3 +501,23 @@ def test_following_multi_file_operator_and_comment_reads_name_no_file(
     command: str, prefix: str
 ) -> None:
     assert _read_path(_bash(prefix + command)) is None
+
+
+def test_grep_context_read_delivers_each_group_separately() -> None:
+    runs = [_pending_run()]
+    output = (
+        "3:Pytest: 1 passed in 0.01s\n4-detail a\n--\n10:Pytest: 2 passed in 0.02s\n11-detail b"
+    )
+    receipt = replace(
+        _message(""),
+        content_type="tool_result",
+        tool_result={"content": output, "is_error": False},
+    )
+
+    recover_background_receipt(runs, receipt, _bash("grep -n -A1 passed /tmp/job-1.out"), order=2)
+
+    recovered = [delivery.text for delivery in runs[0].output_deliveries if delivery.source]
+    assert recovered == [
+        "Pytest: 1 passed in 0.01s\ndetail a",
+        "Pytest: 2 passed in 0.02s\ndetail b",
+    ]

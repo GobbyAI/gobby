@@ -56,6 +56,8 @@ pub struct BackendConfig {
     pub home: PathBuf,
     pub command: Vec<OsString>,
     pub environment: BTreeMap<OsString, OsString>,
+    /// Handed to each backend on its own inherited pipe, never in argv or env.
+    pub front_door_secret: Option<String>,
     pub drain_timeout: Duration,
     pub heartbeat_interval: Duration,
     /// Holds the running child's write token; each spawn installs a fresh one.
@@ -86,6 +88,7 @@ impl BackendConfig {
             home: home.into(),
             command: argv.into_iter().map(OsString::from).collect(),
             environment: BTreeMap::new(),
+            front_door_secret: None,
             // Python runner_lifecycle_shutdown's overall settlement budget.
             drain_timeout: Duration::from_secs(17),
             heartbeat_interval: Duration::from_secs(1),
@@ -314,6 +317,17 @@ impl BackendChild {
     fn spawn(config: &BackendConfig) -> Result<Self> {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
+        // The secret rides its own pipe, filled and closed before spawn so the
+        // child reads it to EOF. The parent drops its read end after spawn.
+        let secret = match config.front_door_secret.as_deref() {
+            Some(secret) => {
+                let (secret_reader, mut secret_writer) = std::io::pipe()?;
+                secret_writer.write_all(secret.as_bytes())?;
+                Some(secret_reader)
+            }
+            None => None,
+        };
+        let secret_fd = secret.as_ref().map(AsRawFd::as_raw_fd);
         let executable = config.command.first().context("backend command is empty")?;
         let mut command = Command::new(executable);
         command
@@ -328,15 +342,20 @@ impl BackendChild {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         command.process_group(0);
+        if let Some(fd) = secret_fd {
+            command.env("GOBBY_FRONT_DOOR_SECRET_FD", fd.to_string());
+        }
         // SAFETY: this closure runs only in the child after fork. It calls only
-        // async-signal-safe fcntl and reads a captured integer. Every owned FD
-        // (PID lock, lease sockets, write end) stays CLOEXEC; only this read end
-        // intentionally survives exec, never made inheritable in the parent.
+        // async-signal-safe fcntl and reads captured integers. Every owned FD
+        // (PID lock, lease sockets, write ends) stays CLOEXEC; only the liveness
+        // read end and the secret read end intentionally survive exec.
         unsafe {
             command.pre_exec(move || {
-                let flags = libc::fcntl(read_fd, libc::F_GETFD);
-                if flags < 0 || libc::fcntl(read_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
-                    return Err(io::Error::last_os_error());
+                for fd in std::iter::once(read_fd).chain(secret_fd) {
+                    let flags = libc::fcntl(fd, libc::F_GETFD);
+                    if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
                 }
                 Ok(())
             });
@@ -356,6 +375,7 @@ impl BackendChild {
             }
             _ => {}
         }
+        drop(secret);
         let mut stderr = child.stderr.take().context("backend stderr pipe missing")?;
         let (last, last_line) = watch::channel(String::new());
         let stderr = tokio::spawn(async move {

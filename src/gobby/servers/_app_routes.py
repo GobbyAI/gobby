@@ -60,6 +60,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     from gobby.servers.routes.api_keys import create_api_keys_router
     from gobby.servers.routes.auth import LoginRateLimiter, create_auth_router
     from gobby.servers.routes.node_hooks import create_node_hooks_router
+    from gobby.servers.routes.nodes import create_nodes_router
 
     login_rate_limiter = LoginRateLimiter()
     app.include_router(create_auth_router(server, login_rate_limiter))
@@ -83,6 +84,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_mcp_router())
     app.include_router(create_hooks_router(server))
     app.include_router(create_node_hooks_router(server))
+    app.include_router(create_nodes_router(server))
     app.include_router(create_webhooks_router())
     # Mount definition CRUD before GET /api/pipelines/{execution_id}.
     app.include_router(create_pipeline_definitions_router(server))

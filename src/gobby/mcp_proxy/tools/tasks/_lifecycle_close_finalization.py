@@ -341,6 +341,7 @@ async def commit_close(
             commit_shas=commit_shas,
             cwd=evaluation.repo_path,
             project_name=ctx.get_current_project_name(),
+            candidate_commit_sha=candidate_commit_sha,
         )
         if tagged_error or unlinked_on_head:
             return stale_close_response(

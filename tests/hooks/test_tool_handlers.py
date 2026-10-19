@@ -703,8 +703,16 @@ class TestToolHandlerEdgeCases:
             },
             {"tool_name": "Read", "tool_input": {"file_path": ".gitattributes"}},
             {"tool_name": "Read", "tool_input": {"file_path": "db/schema.sql"}},
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "cat crates/gterminals/src/host/connect.head "
+                    "crates/gterminals/src/host/connect.body"
+                },
+            },
+            {"tool_name": "Bash", "tool_input": {"command": "git rebase --continue"}},
         ],
-        ids=["search-pattern-and-directory", "dotfile", "sql-file"],
+        ids=["search-pattern-and-directory", "dotfile", "sql-file", "split-inputs", "rebase"],
     )
     def test_read_only_path_like_arguments_skip_tracking(
         self,

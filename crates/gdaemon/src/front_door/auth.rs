@@ -97,13 +97,23 @@ pub struct AuthState {
 }
 
 impl AuthState {
+    pub(crate) fn backend_secret_matches(&self, candidate: &[u8]) -> bool {
+        let secret = self.secret.as_bytes();
+        candidate.len() == secret.len()
+            && candidate
+                .iter()
+                .zip(secret)
+                .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+                == 0
+    }
+
     pub fn new(
         secret: String,
         resolver: Option<Arc<dyn KeyResolver>>,
         bootstrap_path: PathBuf,
     ) -> Result<Self> {
         if secret.is_empty() || HeaderValue::from_str(&secret).is_err() {
-            anyhow::bail!("GOBBY_FRONT_DOOR_SECRET must be nonempty and a valid header value");
+            anyhow::bail!("front-door secret must be nonempty and a valid header value");
         }
         Ok(Self {
             secret,

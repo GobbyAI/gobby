@@ -286,6 +286,28 @@ def test_independently_resolved_mutations_still_attribute(
     assert reason == "", reason
 
 
+def test_split_assembly_attributes_only_the_output(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    prefix = "crates/gterminals/src/host/connect"
+    (checkout.repo / "crates/gterminals/src/host").mkdir(parents=True)
+    for part in ("head", "body"):
+        checkout.write(f"{prefix}.{part}", f"{part}\n")
+
+    def assemble() -> None:
+        checkout.write(f"{prefix}.rs", "head\nbody\n")
+
+    checkout.run(
+        _handlers(mock_dependencies, checkout.db),
+        f"cat {prefix}.head {prefix}.body > {prefix}.rs",
+        assemble,
+    )
+
+    expected = {f"{prefix}.rs"}
+    assert checkout.task_ledger() == expected
+    assert checkout.ledger() == {"owned.txt"} | expected
+
+
 @pytest.mark.parametrize("switches", ["-0pi -e", "-i.bak -pe"])
 def test_perl_in_place_edit_attributes_to_its_author(
     mock_dependencies: dict[str, Any], checkout: Checkout, switches: str

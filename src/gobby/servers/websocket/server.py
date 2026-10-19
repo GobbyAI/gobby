@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -24,6 +24,7 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.config._loading import bootstrap_overlaid_config
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.hub.caller_scope import bind_caller, bind_decision, reset_caller
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.auth import AuthMixin
@@ -147,6 +148,7 @@ if TYPE_CHECKING:
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
+    from gobby.servers.websocket.native_publish import NativePublisher
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -260,6 +262,8 @@ class WebSocketServer(
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
+        # Set in native mode (init_servers); the websockets listener is not served then.
+        self.native_publisher: NativePublisher | None = None
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
         self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
         self._off_loop_durable_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
@@ -355,6 +359,7 @@ class WebSocketServer(
                 registry=runtime_registry,
                 sessions=sessions,
                 publish=self.broadcast_workspace_event,
+                live_host_epoch=lambda: getattr(self.terminal_host_manager, "host_epoch", None),
             )
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
@@ -503,9 +508,33 @@ class WebSocketServer(
                 "Client %s cleaned up. Remaining clients: %s", client_id, len(self.clients)
             )
 
-    async def handle_connection(self, websocket: Any) -> None:
+    async def handle_connection(
+        self,
+        websocket: Any,
+        decision: Any = None,
+        *,
+        database: Any = None,
+    ) -> None:
         """Run the public WebSocket connection lifecycle entry point."""
-        await self._handle_connection(websocket)
+        token = self._bind_connection_caller(websocket, decision, database)
+        try:
+            await self._handle_connection(websocket)
+        finally:
+            reset_caller(token)
+
+    def _bind_connection_caller(
+        self,
+        websocket: Any,
+        decision: Any,
+        database: Any,
+    ) -> Token[Any] | None:
+        """Bind the ASGI decision, or the native front-door user."""
+        if decision is not None:
+            return bind_decision(decision, database)
+        manager = getattr(self.terminal_services, "manager", None)
+        bound_db = database if database is not None else getattr(manager, "db", None)
+        user_id = getattr(websocket, "user_id", None)
+        return bind_caller(user_id if isinstance(user_id, str) else None, bound_db)
 
     async def _handle_message(
         self, websocket: Any, message: str, *, blocks_connection: bool = True
@@ -708,17 +737,22 @@ class WebSocketServer(
 
         self.lease_registry.start_lifecycle_publication()
         try:
-            self._server = await serve(
-                self.handle_connection,
-                host=self.config.host,
-                port=self.config.port,
-                process_request=self._authenticate,
-                ping_interval=self.config.ping_interval,
-                ping_timeout=self.config.ping_timeout,
-                max_size=self.config.max_message_size,
-                compression="deflate",
-                logger=websockets_logger,
-            )
+            if self.native_publisher is not None:
+                # Native mode serves no websockets listener. The bind is the readiness
+                # signal, so a failed bind raises here and reaches the subsystem failure path.
+                await self.native_publisher.bind()
+            else:
+                self._server = await serve(
+                    self.handle_connection,
+                    host=self.config.host,
+                    port=self.config.port,
+                    process_request=self._authenticate,
+                    ping_interval=self.config.ping_interval,
+                    ping_timeout=self.config.ping_timeout,
+                    max_size=self.config.max_message_size,
+                    compression="deflate",
+                    logger=websockets_logger,
+                )
         except BaseException:
             await self.lease_registry.shutdown_lifecycle_publication()
             raise
@@ -765,6 +799,8 @@ class WebSocketServer(
             if server is not None:
                 server.close()
                 await server.wait_closed()
+            if self.native_publisher is not None:
+                await self.native_publisher.stop()
 
             # Close remaining client connections with timeout
             for websocket in list(self.clients.keys()):

@@ -166,9 +166,12 @@ class SessionLifecycleConfig(BaseModel):
         default=7,
         description="Days to retain workflow audit rows before maintenance prunes them",
     )
-    transcript_archive_dir: str = Field(
-        default="~/.gobby/session_transcripts",
-        description="Directory for gzip-compressed transcript backups",
+    transcript_archive_dir: str | None = Field(
+        default=None,
+        description=(
+            "Directory for gzip-compressed transcript backups; "
+            "unset uses <GOBBY_HOME>/session_transcripts"
+        ),
     )
 
     @field_validator(

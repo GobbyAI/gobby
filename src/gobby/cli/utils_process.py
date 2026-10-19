@@ -7,6 +7,7 @@ import os
 import signal
 import socket
 import time
+from typing import Any
 
 import click
 import psutil
@@ -20,6 +21,24 @@ from gobby.config.bootstrap import (
 )
 from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.logging import silence_http_client_loggers
+
+
+class ProcessConnectionsUnavailable(Exception):
+    """The OS refused to list a process's sockets."""
+
+
+def process_connections(proc: psutil.Process, **kwargs: Any) -> list[Any]:
+    """Return ``proc.net_connections(**kwargs)``, or raise ProcessConnectionsUnavailable.
+
+    On macOS a sandbox that denies socket inspection surfaces as a RuntimeError
+    from proc_pidinfo, not as AccessDenied, so every caller that lists sockets
+    goes through this guard (#23650).
+    """
+    try:
+        connections: list[Any] = proc.net_connections(**kwargs)
+    except RuntimeError as exc:
+        raise ProcessConnectionsUnavailable(str(exc)) from exc
+    return connections
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -66,13 +85,19 @@ def is_port_available(port: int, host: str = "localhost") -> bool:
 
 
 def get_port_listener_pid(port: int) -> int | None:
-    """Return the PID owning a TCP listener on ``port``, if observable."""
+    """Return the PID owning a TCP listener on ``port``, if observable.
+
+    Scans every process before giving up. Raises ProcessConnectionsUnavailable
+    only when no listener is found and the OS refused a socket listing, since
+    the refused process may be the listener (#23650).
+    """
+    refusal: ProcessConnectionsUnavailable | None = None
     try:
         for proc in psutil.process_iter(["pid"]):
             try:
                 if proc.status() in (psutil.STATUS_DEAD, psutil.STATUS_ZOMBIE):
                     continue
-                for conn in proc.net_connections(kind="tcp"):
+                for conn in process_connections(proc, kind="tcp"):
                     if (
                         conn.status == psutil.CONN_LISTEN
                         and getattr(conn.laddr, "port", None) == port
@@ -80,8 +105,12 @@ def get_port_listener_pid(port: int) -> int | None:
                         return int(proc.pid)
             except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
+            except ProcessConnectionsUnavailable as exc:
+                refusal = exc
     except (OSError, psutil.Error):
         return None
+    if refusal is not None:
+        raise refusal
     return None
 
 
@@ -149,7 +178,7 @@ def kill_all_gobby_daemons() -> int:
             )
             owns_daemon_port = False
             try:
-                connections = proc.net_connections()
+                connections = process_connections(proc)
                 for conn in connections:
                     if hasattr(conn, "laddr") and conn.laddr:
                         if conn.laddr.port in [http_port, ws_port]:
@@ -157,6 +186,8 @@ def kill_all_gobby_daemons() -> int:
                             break
             except (psutil.AccessDenied, psutil.NoSuchProcess):
                 pass
+            except ProcessConnectionsUnavailable:
+                continue
 
             has_pid_file_identity = pid_file_pid == proc.pid and owns_daemon_port
 
@@ -235,7 +266,11 @@ def _kill_port_holder(port: int) -> None:
             if not has_gobby_daemon_marker:
                 continue
 
-            for conn in proc.net_connections():
+            try:
+                connections = process_connections(proc)
+            except ProcessConnectionsUnavailable:
+                continue
+            for conn in connections:
                 if (
                     hasattr(conn, "laddr")
                     and conn.laddr

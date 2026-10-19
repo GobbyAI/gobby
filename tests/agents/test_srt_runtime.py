@@ -136,7 +136,7 @@ def test_windowserver_lookup_is_exact_and_grok_only(provider: str | None, tmp_pa
     expected = baseline | {
         "network": baseline["network"] | {"allowMachLookup": ["com.apple.windowserver.active"]}
     }
-    assert "allowMachLookup" not in baseline
+    assert "allowMachLookup" not in baseline["network"]
 
     # Exercise the pinned generator: the setting must grant precisely this
     # global-name, while every other Seatbelt rule stays byte-for-byte equal.

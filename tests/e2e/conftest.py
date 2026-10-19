@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -443,6 +444,8 @@ def prepare_daemon_env(
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
+    # A supervised seat inherits the gdaemon liveness fd; a spawned daemon must not watch it.
+    env.pop("GOBBY_SUPERVISOR_FD", None)
     for name in (
         *ALL_TERMINAL_ENV_VARS,
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
@@ -759,9 +762,14 @@ def wait_for_daemon_health(
     )
 
 
-def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
-    """Probe readiness with a complete authenticated handshake and clean close."""
+def probe_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> str | None:
+    """Probe readiness with a complete authenticated handshake and clean close.
+
+    Returns None once ready. Otherwise returns the last failure, so a timeout names
+    what refused the handshake (for example an HTTP 503) instead of a bare False.
+    """
     deadline = time.monotonic() + timeout
+    last_failure = "no handshake attempt completed before the deadline"
     while time.monotonic() < deadline:
         try:
             token = daemon_token(home)
@@ -772,10 +780,45 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
                 close_timeout=1.0,
                 proxy=None,
             ):
-                return True
-        except (OSError, RuntimeError, TimeoutError, WebSocketException):
+                return None
+        except (OSError, RuntimeError, TimeoutError, WebSocketException) as error:
+            last_failure = f"{type(error).__name__}: {error}"
             time.sleep(0.1)
-    return False
+    return last_failure
+
+
+def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
+    """Probe readiness with a complete authenticated handshake and clean close."""
+    return probe_daemon_websocket(port, home, timeout=timeout) is None
+
+
+_READINESS_TAIL_LINES = 200
+
+
+def _bounded_tail(path: Path) -> str:
+    """Last lines of a diagnostic file, or a marker when the file is absent."""
+    if not path.exists():
+        return f"<absent: {path}>"
+    lines = path.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-_READINESS_TAIL_LINES:])
+
+
+def daemon_websocket_failure_report(
+    port: int, failure: str, home: Path, log_file: Path, error_log_file: Path
+) -> str:
+    """Failure message for a daemon whose WebSocket never became ready.
+
+    Names the last handshake failure and attaches the startup timings and bounded
+    tails of the daemon logs, so the evidence survives fixture teardown.
+    """
+    timings = _bounded_tail(home / "logs" / "startup-timings.jsonl")
+    logs = _bounded_tail(log_file)
+    error_logs = _bounded_tail(error_log_file)
+    return (
+        f"Daemon WebSocket port {port} did not become ready within timeout: {failure}.\n"
+        f"Startup timings:\n{timings}\n"
+        f"Logs:\n{logs}\nError logs:\n{error_logs}"
+    )
 
 
 def daemon_health_unavailable(port: int) -> bool:
@@ -855,9 +898,25 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
-def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
+def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
+    """Create a fresh directory named ``prefix`` plus three hex digits.
+
+    An AF_UNIX path must fit ``sun_path`` (104 bytes on macOS), and sandbox temp
+    bases leave little room, so e2e socket directories keep their names short.
+    """
+    base = root if root is not None else Path(tempfile.gettempdir())
+    while True:
+        path = base / f"{prefix}{secrets.randbelow(0x1000):03x}"
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        return path.resolve()
+
+
+def create_host_socket_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a gterm host socket directory owned by this pytest process."""
-    socket_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=root)).resolve()
+    socket_dir = create_short_dir(root, prefix)
     (socket_dir / E2E_HOST_OWNER_FILE).write_text(str(os.getpid()))
     return socket_dir
 
@@ -1290,14 +1349,13 @@ def spawn_daemon_instance(
     # WebSocket server comes up on a separate port and can lag by a few hundred
     # ms. Tests like test_daemon_listens_on_configured_ports race against that
     # gap — probe the WS port explicitly so it's listening before yield.
-    if not wait_for_daemon_websocket(ws_port, gobby_home, timeout=10.0):
-        logs = instance.read_logs()
-        error_logs = instance.read_error_logs()
-        terminate_process_tree(process.pid)
-        pytest.fail(
-            f"Daemon WebSocket port {ws_port} did not become ready within timeout.\n"
-            f"Logs:\n{logs}\nError logs:\n{error_logs}"
+    failure = probe_daemon_websocket(ws_port, gobby_home, timeout=10.0)
+    if failure is not None:
+        report = daemon_websocket_failure_report(
+            ws_port, failure, gobby_home, instance.log_file, instance.error_log_file
         )
+        terminate_process_tree(process.pid)
+        pytest.fail(report)
 
     yield instance
 

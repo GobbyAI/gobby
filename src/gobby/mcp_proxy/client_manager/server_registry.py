@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Protocol, cast
 
+from gobby.mcp_proxy.connection_cleanup import discard_connection
 from gobby.mcp_proxy.models import (
     ConnectionState,
     MCPAuthorizationRequired,
@@ -270,8 +271,10 @@ async def _discover_and_cache_tools(
     if session is None:
         return []
 
+    used = manager._connections.get(config.id)
     try:
-        tools_result = await session.list_tools()
+        async with asyncio.timeout(manager.connection_timeout):
+            tools_result = await session.list_tools()
         tool_schemas = [
             {
                 "name": tool.name,
@@ -281,7 +284,22 @@ async def _discover_and_cache_tools(
             for tool in tools_result.tools
         ]
     except Exception as exc:
-        LOGGER.warning("Failed to list tools for %s: %s", config.name, exc)
+        detail = (
+            f"TimeoutError after {manager.connection_timeout:.1f}s"
+            if isinstance(exc, TimeoutError)
+            else str(exc)
+        )
+        LOGGER.warning("Failed to list tools for %s: %s", config.name, detail)
+        if used is not None and used.session is session:
+            await discard_connection(
+                config.id,
+                manager._connections,
+                manager.health,
+                manager._lazy_connector,
+                LOGGER,
+                tool_schema_cache=manager._tool_schema_cache,
+                expected=used,
+            )
         return []
 
     if tool_schemas:

@@ -377,7 +377,7 @@ fn url_host(daemon_url: &str) -> Result<String, GrantError> {
     Ok(url_host_port(daemon_url)?.0)
 }
 
-fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
+pub(super) fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
     let trimmed = normalize_endpoint(daemon_url);
     let rest = trimmed
         .strip_prefix("http://")
@@ -385,7 +385,7 @@ fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
         .ok_or(GrantError::RemoteEndpoint)?;
     let (hostport, _) = rest.split_once('/').unwrap_or((rest, ""));
     if let Some(host) = hostport.strip_prefix('[') {
-        let (host, port) = host.split_once("]:").ok_or(GrantError::BootstrapConfig(
+        let (host, suffix) = host.split_once(']').ok_or(GrantError::BootstrapConfig(
             "invalid daemon url".to_string(),
         ))?;
         if host.is_empty() {
@@ -393,9 +393,17 @@ fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
                 "invalid daemon url".to_string(),
             ));
         }
-        let port = port
-            .parse::<u16>()
-            .map_err(|_| GrantError::BootstrapConfig("invalid daemon url".to_string()))?;
+        let port = match suffix.strip_prefix(':') {
+            Some(port) => port
+                .parse::<u16>()
+                .map_err(|_| GrantError::BootstrapConfig("invalid daemon url".to_string()))?,
+            None if suffix.is_empty() => crate::bootstrap::DEFAULT_DAEMON_PORT,
+            None => {
+                return Err(GrantError::BootstrapConfig(
+                    "invalid daemon url".to_string(),
+                ));
+            }
+        };
         return Ok((host.to_string(), port));
     }
     let (host, port) = match hostport.rsplit_once(':') {
@@ -406,7 +414,9 @@ fn url_host_port(daemon_url: &str) -> Result<(String, u16), GrantError> {
         ),
         None => (hostport.to_string(), crate::bootstrap::DEFAULT_DAEMON_PORT),
     };
-    if host.is_empty() {
+    // A colon left in the host is an unbracketed IPv6 literal, whose port
+    // cannot be told apart from the address.
+    if host.is_empty() || host.contains(':') {
         return Err(GrantError::BootstrapConfig(
             "invalid daemon url".to_string(),
         ));
@@ -454,7 +464,7 @@ fn b64url_encode(bytes: &[u8]) -> String {
         .to_string()
 }
 
-fn b64url_decode(value: &str) -> Result<Vec<u8>, GrantError> {
+pub(super) fn b64url_decode(value: &str) -> Result<Vec<u8>, GrantError> {
     let mut padded = value.replace('-', "+").replace('_', "/");
     while !padded.len().is_multiple_of(4) {
         padded.push('=');
@@ -496,7 +506,7 @@ fn optional_principal_kind(value: &Value) -> Option<PrincipalKind> {
     }
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len()
         && left
             .iter()

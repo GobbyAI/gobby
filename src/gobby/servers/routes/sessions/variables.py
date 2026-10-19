@@ -70,7 +70,21 @@ def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> N
         if server.session_manager is None:
             raise HTTPException(status_code=503, detail="Session manager not available")
         bound_session_id = _bound_session_id(server, request, session_id)
+        from gobby.servers.routes.mcp.endpoints import request_context
+
+        # Resolve the authenticated caller separately from the path's target.
+        # The native stdio adapter carries the same identity headers as MCP.
+        tokens = await request_context._set_context_for_request(server, {}, request)
         try:
+            if tokens.resolved_session_id is None:
+                claims = server.auth_service.verified_agent_claims(request)
+                if claims is not None:
+                    from gobby.utils.session_context import SessionContext, set_session_context
+
+                    tokens.session_token = set_session_context(
+                        SessionContext(session_id=bound_session_id)
+                    )
+                    tokens.resolved_session_id = bound_session_id
             from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
             from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -97,6 +111,8 @@ def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> N
         except Exception as e:
             logger.exception("Error setting variable: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
+        finally:
+            request_context._reset_context(tokens)
 
     @router.post("/{session_id}/variables/get")
     async def get_variable(

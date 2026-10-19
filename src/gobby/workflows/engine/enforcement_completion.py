@@ -17,10 +17,12 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.step_binding import release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
     StaleStepInstanceWriteError,
 )
+from gobby.workflows.task_claim_state import active_task_id_for_edit
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -347,7 +349,33 @@ class EnforcementCompletionMixin:
                 )
                 if not handler_matches:
                     continue
-            if handler.get("action") == "set_variable":
+            if handler.get("action") == "advance_seat":
+                from gobby.workflows.engine.seat_transitions import advance_seat
+
+                changes = await offload(
+                    advance_seat,
+                    self.db,
+                    session_id,
+                    instance,
+                    mcp_tool,
+                    variables,
+                    tool_input,
+                    tool_output,
+                )
+                for changed_name, changed_value in changes.items():
+                    instance.variables[changed_name] = changed_value
+                    variables[changed_name] = changed_value
+                    vars_changed = True
+                    await offload(
+                        self._audit_step_set_variable,
+                        session_id,
+                        instance.agent_name,
+                        step_name,
+                        mcp_key,
+                        changed_name,
+                        changed_value,
+                    )
+            elif handler.get("action") == "set_variable":
                 var_name = handler.get("variable")
                 ctx = {
                     # Instance variables last so workflow-local state wins
@@ -446,6 +474,27 @@ class EnforcementCompletionMixin:
         # report failure. Success handlers require both layers to succeed.
         if tool_output is not None and classify_raw_tool_result(tool_output).succeeded is False:
             tool_failed = True
+        claim_result = (
+            tool_output.get("result") or tool_output if isinstance(tool_output, dict) else None
+        )
+        if (
+            not tool_failed
+            and (mcp_server, mcp_tool_name) == ("gobby-tasks", "claim_task")
+            and isinstance(claim_result, dict)
+            and claim_result.get("task_id") == active_task_id_for_edit(variables)
+        ):
+            # A permissive implementation step can claim a different task. Rewind
+            # before handling that completion, so its claim effects bind the new
+            # selection rather than being lost until the next BEFORE_TOOL read.
+            rebound = await offload(release_lost_binding, self.db, instance, variables)
+            if rebound.current_step != instance.current_step:
+                instance = rebound
+                definition = instance.workflow
+                rebound_step = definition.get_step(instance.current_step or "")
+                if rebound_step is None:
+                    return None
+                step = rebound_step
+                cas_token = (str(instance.id), instance.updated_at)
         if not tool_failed:
             await offload(
                 self._audit_step_tool_call,

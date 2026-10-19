@@ -68,6 +68,20 @@ fn main() {
         .trim()
         .to_string();
 
+    // Every Zig output and cache lives in OUT_DIR, fetched packages included:
+    // Zig unpacks them beside build.zig, so it runs from a staged build root.
+    // The vendored tree is only read, so a build from a read-only checkout or
+    // sandbox writes nothing there or in the user's ~/.cache/zig.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let zig_prefix = out_dir.join("zig-out");
+    let build_root = out_dir.join("libghostty-vt");
+    if let Err(err) = build_zig::stage_build_root(&vendored_dir, &build_root) {
+        panic!(
+            "failed to stage {} as a Zig build root in {}: {err}",
+            vendored_dir.display(),
+            build_root.display()
+        );
+    }
     let zig = build_zig::machine_zig().unwrap_or_else(|message| panic!("{message}"));
     let mut command = Command::new(&zig);
     command
@@ -77,12 +91,18 @@ fn main() {
         .arg(format!("-Dsimd={simd}"))
         .arg(format!("-Dtarget={zig_target}"))
         .arg(format!("-Dversion-string={version_string}"))
-        .arg("-Demit-xcframework=false");
+        .arg("-Demit-xcframework=false")
+        .arg("--prefix")
+        .arg(&zig_prefix)
+        .arg("--cache-dir")
+        .arg(out_dir.join("zig-cache"))
+        .arg("--global-cache-dir")
+        .arg(out_dir.join("zig-global-cache"));
     if let Ok(system_dir) = env::var("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
         command.arg("--system").arg(system_dir);
     }
 
-    let status = match command.current_dir(&vendored_dir).status() {
+    let status = match command.current_dir(&build_root).status() {
         Ok(status) => status,
         Err(err) if err.kind() == ErrorKind::NotFound => {
             panic!(
@@ -97,24 +117,16 @@ fn main() {
         "zig build for vendored libghostty-vt failed: {status}"
     );
 
-    // Link against a copy in OUT_DIR so cached build-script output names only
-    // Cargo-owned artifacts, never a source checkout that may be deleted.
+    // The installed archive is a Cargo-owned artifact, so cached build-script
+    // output never names a source checkout that may be deleted.
     let archive_name = if target.contains("windows-msvc") {
         "ghostty-vt-static.lib"
     } else {
         "libghostty-vt.a"
     };
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let static_lib = out_dir.join(archive_name);
-    let built_lib = vendored_dir.join("zig-out/lib").join(archive_name);
-    if let Err(err) = fs::copy(&built_lib, &static_lib) {
-        panic!(
-            "failed to copy {} into {}: {err}",
-            built_lib.display(),
-            out_dir.display()
-        );
-    }
-    println!("cargo:rustc-link-search=native={}", out_dir.display());
+    let lib_dir = zig_prefix.join("lib");
+    let static_lib = lib_dir.join(archive_name);
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     if target.contains("apple-darwin") {
         println!("cargo:rustc-link-arg={}", static_lib.display());
     } else if target.contains("windows-msvc") {

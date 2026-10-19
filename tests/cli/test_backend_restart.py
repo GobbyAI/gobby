@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import daemon_lifecycle as lifecycle
-from gobby.cli.daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS
+from gobby.cli.daemon_lifecycle import STARTUP_READINESS_TIMEOUT_SECONDS
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked

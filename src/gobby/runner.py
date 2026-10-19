@@ -615,8 +615,11 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
 
+    from gobby.runner_backend import take_front_door_secret
     from gobby.utils.spawn import seal_inherited_descriptors
 
+    # Read and close the secret's pipe before any child can inherit it.
+    take_front_door_secret()
     seal_inherited_descriptors()
 
     # Refuse a linked-worktree source tree before any subsystem touches the

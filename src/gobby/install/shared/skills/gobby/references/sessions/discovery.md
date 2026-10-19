@@ -37,6 +37,13 @@ web-chat rows, resolve terminal context, rename, expire, update status, or bulk
 move sessions. These are lifecycle operations, not ways to repair task claims or
 handoff receipts. Inspect the target and returned errors before proceeding.
 
+The operator can authorize a session to edit specific dirty paths that have no
+live owner with `gobby sessions approve-dirty-paths SESSION_REF --checkout ROOT
+PATHS...`. Agent sessions cannot run this command. Approval applies to that
+checkout and the paths' current content; a new approval replaces the session's
+previous approval for that checkout. Source:
+`src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`.
+
 Guide: [Finding your session](../../../../../../../../docs/guides/sessions.md#finding-your-own-session).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-17_

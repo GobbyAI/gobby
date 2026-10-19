@@ -61,6 +61,10 @@ _ASSERTION_FAILURE_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|\bFAILED\b",
     re.IGNORECASE,
 )
+_PANIC_HEADER_RE = re.compile(r"\s*thread '[^']*'(?: \(\d+\))? panicked at\b(?P<inline>.*)")
+_BACKTRACE_NOTE_RE = re.compile(r"note:")
+# A message printed after the header's file:line location, on the same line.
+_INLINE_MESSAGE_RE = re.compile(r"\S+:\d+(?::\d+)?:\s+\S")
 _NON_ASSERTION_FAILURE_RE = re.compile(
     r"ImportError|ModuleNotFoundError|collection error|error collecting|"
     r"failed to collect|configuration error|usage error",
@@ -346,6 +350,29 @@ def is_assertion_failure(output: str | None) -> bool:
     if not output or _NON_ASSERTION_FAILURE_RE.search(output):
         return False
     return _ASSERTION_FAILURE_RE.search(output) is not None
+
+
+def panic_has_message(section: str) -> bool:
+    """Whether every ``thread '…' panicked at`` header in ``section`` carries its message.
+
+    The message follows the header on the next line, before nextest's ``note:`` line,
+    or sits on the header line itself, quoted or after the location. A bare header
+    names a panic without the failure it carries, so it proves nothing by itself.
+    """
+    lines = section.splitlines()
+    for index, line in enumerate(lines):
+        header = _PANIC_HEADER_RE.fullmatch(line)
+        if header is None:
+            continue
+        inline = header["inline"].lstrip()
+        if inline.startswith("'") or _INLINE_MESSAGE_RE.match(inline):
+            continue
+        following = next((item.strip() for item in lines[index + 1 :] if item.strip()), "")
+        if not following or _BACKTRACE_NOTE_RE.match(following):
+            return False
+        if _PANIC_HEADER_RE.fullmatch(following):
+            return False
+    return True
 
 
 def validation_run_names_test(

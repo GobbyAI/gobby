@@ -1546,6 +1546,74 @@ class TestFeature:
         ),
         (
             """
+            from unittest.mock import patch
+
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                with patch.dict(globals(), {"_assert_ok": lambda receipt: None}):
+                    _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(_assert_ok=lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update([("_assert_ok", lambda receipt: None)])
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update(zip(["_assert_ok"], [lambda receipt: None]))
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature():
+                globals().update({name: lambda receipt: None for name in ["_assert_ok"]})
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
+            def _assert_ok(receipt):
+                assert receipt == "ok"
+
+            def test_feature(monkeypatch):
+                monkeypatch.setattr("test_feature-extra._assert_ok", lambda receipt: None)
+                _assert_ok("bad")
+            """,
+            {},
+        ),
+        (
+            """
             class Meta(type):
                 def __new__(mcs, name, bases, namespace):
                     namespace["_assert_ok"] = lambda self, receipt: None
@@ -1625,6 +1693,12 @@ class TestFeature:
         "patch_object",
         "patch_dotted_path",
         "globals_subscript",
+        "patch_dict_literal_key",
+        "update_keyword_name",
+        "globals_update_pairs",
+        "globals_update_zip",
+        "globals_update_comprehension",
+        "monkeypatch_hyphenated_module_target",
         "metaclass_namespace",
         "module_staticmethod_rebinding",
         "imported_staticmethod_alias",
@@ -1640,6 +1714,24 @@ def test_assert_helper_string_named_or_shadowed_binding_is_flagged(
 
     assert result.passed is False
     assert result.findings == (NO_ASSERTION,)
+
+
+def test_assert_helper_named_in_non_identifier_literal_stays_credited(tmp_path: Path) -> None:
+    result = _committed_python_result(
+        tmp_path,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            message = "_assert_ok failed"
+            _assert_ok("ok")
+        """,
+        {},
+    )
+
+    assert result.passed is True
+    assert result.findings == ()
 
 
 @pytest.mark.parametrize(
@@ -2596,7 +2688,7 @@ def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
     assert result.green_runs
 
 
-def test_tdd_evidence_rejects_unproven_later_repair_cycle() -> None:
+def test_tdd_evidence_accepts_later_repair_cycle() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
@@ -2631,9 +2723,9 @@ def test_tdd_evidence_rejects_unproven_later_repair_cycle() -> None:
 
     result = evaluate_tdd_evidence((test,), repaired)
 
-    assert result.passed is False
-    assert not result.red_runs
-    assert not result.green_runs
+    assert result.passed is True
+    assert result.red_runs
+    assert result.green_runs
 
     post_implementation_red = TranscriptEvidence(
         edits=repaired.edits[:2],
@@ -2664,6 +2756,21 @@ def test_tdd_evidence_rejects_unproven_later_repair_cycle() -> None:
         ),
     )
     assert evaluate_tdd_evidence((test,), test_only_green).passed is False
+
+
+@pytest.mark.parametrize(
+    "selection",
+    ["-m unit tests/test_feature.py", "tests/test_feature.py -k 'a and not b'"],
+)
+def test_tdd_evidence_accepts_filtered_green_path_credit(selection: str) -> None:
+    test, evidence = _fixture_tdd_cycle("src/feature.py", "tests/test_feature.py")
+    green = replace(evidence.validation_runs[-1], command=f"pytest {selection} -q")
+    evidence = replace(evidence, validation_runs=(*evidence.validation_runs[:-1], green))
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.green_runs == (green.command,)
 
 
 def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:

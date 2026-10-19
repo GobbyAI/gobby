@@ -42,19 +42,14 @@ struct ExportView: View {
           ForEach(files, id: \.self) { file in
             VStack(alignment: .leading, spacing: 8) {
               Text(file.lastPathComponent).font(.caption.monospaced()).textSelection(.enabled)
-              HStack {
-                Button("Save", systemImage: "square.and.arrow.down") {
-                  do {
-                    document = CaptureDocument(bytes: try Data(contentsOf: file))
-                    name = file.lastPathComponent
-                    saving = true
-                  } catch { self.error = error.localizedDescription }
-                }
-                ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
-                Button("Delete", systemImage: "trash") { pendingDelete = file }
-                  .tint(Color("Destructive"))
-                  .accessibilityLabel("Delete \(file.lastPathComponent)")
-              }.buttonStyle(.bordered)
+              ViewThatFits(in: .horizontal) {
+                HStack { exportActions(file) }
+                  .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading) { exportActions(file) }
+              }
+              .lineLimit(1)
+              .buttonStyle(.bordered)
+              .controlSize(.large)
             }.padding(.vertical, 4)
           }
         }
@@ -69,15 +64,15 @@ struct ExportView: View {
           Button("Clear interrupted transfers") {
             do {
               try ExportStore.shared().clearInterrupted()
-              status = "Interrupted transfers cleared. Completed exports retained."
+              report("Interrupted transfers cleared. Completed exports retained.")
             } catch { self.error = error.localizedDescription }
           }
-          if !status.isEmpty { Text(status).accessibilityAddTraits(.updatesFrequently) }
         }
       }
       .navigationTitle("Gobby Annotate")
       .tint(Color.accentColor)
       .task { refresh() }
+      .safeAreaInset(edge: .bottom) { statusBar }
       .confirmationDialog(
         "Delete this staged export?",
         isPresented: Binding(
@@ -94,7 +89,8 @@ struct ExportView: View {
         )
       }
       .confirmationDialog(
-        files.count == 1 ? "Delete the staged export?" : "Delete all \(files.count) staged exports?",
+        files.count == 1
+          ? "Delete the staged export?" : "Delete all \(files.count) staged exports?",
         isPresented: $confirmingDeleteAll, titleVisibility: .visible
       ) {
         Button(
@@ -115,7 +111,7 @@ struct ExportView: View {
         isPresented: $saving, document: document, contentType: .zip, defaultFilename: name
       ) { result in
         switch result {
-        case .success: status = "Export saved. Staged copy retained."
+        case .success: report("Export saved. Staged copy retained.")
         case .failure(let failure): error = failure.localizedDescription
         }
       }
@@ -130,10 +126,44 @@ struct ExportView: View {
     }
     .frame(minWidth: 280, minHeight: 300)
   }
+  @ViewBuilder private func exportActions(_ file: URL) -> some View {
+    Button("Save", systemImage: "square.and.arrow.down") {
+      do {
+        document = CaptureDocument(bytes: try Data(contentsOf: file))
+        name = file.lastPathComponent
+        saving = true
+      } catch { self.error = error.localizedDescription }
+    }
+    .frame(minHeight: 44)
+    ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
+      .frame(minHeight: 44)
+    Button("Delete", systemImage: "trash") { pendingDelete = file }
+      .tint(Color("Destructive"))
+      .accessibilityLabel("Delete \(file.lastPathComponent)")
+      .frame(minHeight: 44)
+  }
+  @ViewBuilder private var statusBar: some View {
+    VStack(spacing: 0) {
+      if !status.isEmpty {
+        Label(status, systemImage: "checkmark.circle")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal)
+          .padding(.vertical, 12)
+          .background(.bar)
+          .accessibilityAddTraits(.updatesFrequently)
+      }
+    }
+  }
+  private func report(_ message: String) {
+    status = message
+    AccessibilityNotification.Announcement(message).post()
+  }
   private func remove(_ done: String, _ work: (ExportStore) throws -> Void) {
     do {
       try work(ExportStore.shared())
-      status = done
+      report(done)
     } catch { self.error = error.localizedDescription }
     refresh()
   }

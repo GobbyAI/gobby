@@ -539,6 +539,10 @@
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
   },
+  "MCP gobby-tasks:release_task_claim": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`; Rust blocker: #21560 Tasks family and #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
+  },
   "MCP gobby-tasks:remove_dependency": {
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `remove_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:116`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
