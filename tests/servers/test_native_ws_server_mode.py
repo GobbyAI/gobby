@@ -19,7 +19,16 @@ def publisher() -> MagicMock:
 
 
 @pytest.fixture
-def server(publisher: MagicMock) -> WebSocketServer:
+def shutdown_lifecycle_publication() -> AsyncMock:
+    return AsyncMock()
+
+
+@pytest.fixture
+def server(
+    publisher: MagicMock,
+    shutdown_lifecycle_publication: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> WebSocketServer:
     mock_config = MagicMock()
     mock_config.host = "127.0.0.1"
     mock_config.port = 0
@@ -30,8 +39,8 @@ def server(publisher: MagicMock) -> WebSocketServer:
     websocket_server.native_publisher = publisher
     # configure_terminals attaches the lease registry at composition time.
     websocket_server.lease_registry = MagicMock()
-    websocket_server.lease_registry.shutdown_lifecycle_publication = AsyncMock()
-    websocket_server._cleanup_idle_sessions = AsyncMock()
+    websocket_server.lease_registry.shutdown_lifecycle_publication = shutdown_lifecycle_publication
+    monkeypatch.setattr(websocket_server, "_cleanup_idle_sessions", AsyncMock())
     return websocket_server
 
 
@@ -54,9 +63,9 @@ async def test_native_broadcast_hands_frames_to_publisher_without_clients(
 
 @pytest.mark.asyncio
 async def test_native_session_event_reaches_publisher_with_no_clients(
-    server: WebSocketServer, publisher: MagicMock
+    server: WebSocketServer, publisher: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    server._session_event_project_id = AsyncMock(return_value=None)
+    monkeypatch.setattr(server, "_session_event_project_id", AsyncMock(return_value=None))
 
     await server.broadcast_session_event("created", "sess-1")
 
@@ -82,23 +91,27 @@ async def test_native_start_binds_through_publisher_and_serves_no_listener(
 
 @pytest.mark.asyncio
 async def test_native_start_raises_on_bind_failure(
-    server: WebSocketServer, publisher: MagicMock
+    server: WebSocketServer,
+    publisher: MagicMock,
+    shutdown_lifecycle_publication: AsyncMock,
 ) -> None:
     publisher.bind.side_effect = RuntimeError("bind refused")
 
     with pytest.raises(RuntimeError, match="bind refused"):
         await server.start()
 
-    server.lease_registry.shutdown_lifecycle_publication.assert_awaited_once()
+    shutdown_lifecycle_publication.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_native_stop_stops_the_publisher(
-    server: WebSocketServer, publisher: MagicMock
+    server: WebSocketServer, publisher: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order: list[str] = []
-    server._cleanup_terminals = AsyncMock(side_effect=lambda: order.append("terminals"))
-    server.cleanup_voice = AsyncMock()
+    cleanup_terminals = AsyncMock(side_effect=lambda: order.append("terminals"))
+    cleanup_voice = AsyncMock()
+    monkeypatch.setattr(server, "_cleanup_terminals", cleanup_terminals)
+    monkeypatch.setattr(server, "cleanup_voice", cleanup_voice)
     publisher.stop.side_effect = lambda: order.append("publisher")
     await server.start()
 
@@ -106,4 +119,7 @@ async def test_native_stop_stops_the_publisher(
 
     # Terminals drain before the publisher stops, so no fanout starts after the stop.
     assert order == ["terminals", "publisher"]
+    cleanup_terminals.assert_awaited_once()
+    cleanup_voice.assert_awaited_once()
     publisher.stop.assert_awaited_once()
+    assert server._server is None
