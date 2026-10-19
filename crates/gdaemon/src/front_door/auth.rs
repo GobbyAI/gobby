@@ -97,6 +97,16 @@ pub struct AuthState {
 }
 
 impl AuthState {
+    pub(crate) fn backend_secret_matches(&self, candidate: &[u8]) -> bool {
+        let secret = self.secret.as_bytes();
+        candidate.len() == secret.len()
+            && candidate
+                .iter()
+                .zip(secret)
+                .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+                == 0
+    }
+
     pub fn new(
         secret: String,
         resolver: Option<Arc<dyn KeyResolver>>,
