@@ -84,6 +84,34 @@ async def test_node_ledger_recount_batches(node: FakeNode) -> None:
 
 
 @pytest.mark.asyncio
+async def test_budget_cut_entries_are_reread(node: FakeNode) -> None:
+    root = _NODE_ONLY_ROOT
+    # 100 lines of 64 KiB each: two of these overrun the 8 MiB reply budget.
+    wide = ("x" * 65_535 + "\n") * 100
+    relatives = [
+        "src/gobby/wide.py",
+        "src/gobby/wider.py",
+        "src/gobby/small.py",
+        "src/gobby/big.py",
+    ]
+    contents = [wide, wide, _lines(10), _lines(1_000)]
+    for relative, content in zip(relatives, contents, strict=True):
+        node.add_file(NODE_MACHINE, f"{root}/{relative}", content.encode())
+    variables = {"task_edited_files": {"task-a": relatives}}
+    loop = asyncio.get_running_loop()
+
+    with delivery_scope(NODE_MACHINE, loop, root):
+        outstanding = await asyncio.to_thread(outstanding_monolith_paths, variables, root)
+
+    assert outstanding == ["src/gobby/big.py"]
+    absolutes = [f"{root}/{relative}" for relative in relatives]
+    assert [request[2]["query"]["paths"] for request in node.requests] == [
+        absolutes,
+        absolutes[1:],
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unanswered_node_lists_diagnostic(node: FakeNode) -> None:
     root = _NODE_ONLY_ROOT
     loop = asyncio.get_running_loop()

@@ -21,10 +21,27 @@ NODE_MACHINE = "machine-b"
 _PROJECT_ID = "project-b"
 _HOME = "/home/node"
 _TEMP_DIR = "/tmp"
+_REPLY_BUDGET = 8 * 1024 * 1024
 
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
+
+
+def _fill_budget(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cut `data` in request order at the 8 MiB reply budget, as the node does."""
+    remaining = _REPLY_BUDGET
+    filled = []
+    for entry in entries:
+        if entry["data"] is None:
+            filled.append(entry)
+            continue
+        data = base64.b64decode(entry["data"])
+        kept = data[:remaining]
+        remaining -= len(kept)
+        cut = entry["truncated"] or len(kept) < len(data)
+        filled.append({**entry, "data": _b64(kept), "truncated": cut})
+    return filled
 
 
 @dataclass
@@ -93,7 +110,7 @@ class FakeNode:
         git = None
         if query["kind"] == "files":
             machine_files = self.files[machine_id]
-            files = [machine_files[path] for path in query["paths"]]
+            files = _fill_budget([machine_files[path] for path in query["paths"]])
         else:
             git = self.git[machine_id]
         root, project_id = self.checkouts.get(
