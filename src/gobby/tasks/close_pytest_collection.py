@@ -1,4 +1,4 @@
-"""Narrow collection proof for files declaring operator environment admission."""
+"""Narrow collection proof for files declaring operator execution constraints."""
 
 from __future__ import annotations
 
@@ -72,7 +72,14 @@ def _isolated_binding(
 
 
 def declares_operator_guard(source: str) -> bool:
-    """Recognize a module-wide pytestmark environment-grant skip condition.
+    """Recognize declared module-wide operator execution constraints.
+
+    ``pytestmark = pytest.mark.seat_refusal`` (alone or in a list/tuple)
+    declares SRT-spawning fixtures that use ``link_spawning_operator_srt``:
+    they refuse execution inside a seat because nested Seatbelt is unavailable.
+    Keep this declaration in step with that fixture use. It admits collection
+    proof only; real execution requires the operator host harness. Neither
+    observed failures nor skips establish this declaration.
 
     The declaration is ``pytestmark = [..., pytest.mark.skipif(
     os.environ.get("ENV_NAME") != GRANT, ...)]``, or that skipif alone.
@@ -101,6 +108,8 @@ def declares_operator_guard(source: str) -> bool:
     marker = declaration.value
     values = marker.elts if isinstance(marker, (ast.List, ast.Tuple)) else [marker]
     for value in values:
+        if isinstance(value, ast.Attribute) and ast.unparse(value) == "pytest.mark.seat_refusal":
+            return True
         if not isinstance(value, ast.Call) or ast.unparse(value.func) != "pytest.mark.skipif":
             continue
         condition = (

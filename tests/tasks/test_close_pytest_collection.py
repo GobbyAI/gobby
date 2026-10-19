@@ -83,6 +83,55 @@ def test_guarded_collection_credits_changed_file(root: Path) -> None:
     assert gate.details["pytest_uncovered_paths"] == []
 
 
+@pytest.mark.parametrize(
+    "marker", ["pytest.mark.seat_refusal", "[pytest.mark.e2e, pytest.mark.seat_refusal]"]
+)
+@pytest.mark.parametrize(
+    ("prefix", "output"),
+    [("uv run", "1 test collected in 0.01s"), ("rtk proxy uv run", "Pytest: 1 collected")],
+)
+def test_seat_refusal_marker_earns_collection_credit(
+    root: Path, marker: str, prefix: str, output: str
+) -> None:
+    source = f"import pytest\npytestmark = {marker}\ndef test_live():\n    assert True\n"
+    gate = _gate(root, _run(f"{prefix} pytest {TEST} --collect-only -q", output), source)
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_collection_credited_paths"] == [TEST]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import pytest\npytestmark = pytest.mark.e2e\n",
+        "import pytest\n@pytest.mark.seat_refusal\ndef test_live():\n    assert True\n",
+        "import pytest\npytestmark = pytest.mark.seat_refusal()\n",
+        "import pytest\npytestmark = pytest.mark.seat_refusal\npytestmark = pytest.mark.e2e\n",
+        "import pytest\npytestmark = pytest.mark.seat_refusal\npytestmark.append(1)\n",
+        "import pytest\npytestmark = pytest.mark.e2e\npytest.fail('nested Seatbelt')\n",
+    ],
+)
+def test_seat_refusal_requires_unambiguous_module_declaration(root: Path, source: str) -> None:
+    gate = _gate(root, _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected"), source)
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+
+
+@pytest.mark.parametrize(
+    ("output", "exit_code"),
+    [("no tests collected", 0), ("1 test collected\n1 error", 1), ("1 failed", 1)],
+)
+def test_seat_refusal_requires_successful_positive_collection(
+    root: Path, output: str, exit_code: int
+) -> None:
+    gate = _gate(
+        root,
+        _run(f"uv run pytest {TEST} --collect-only -q", output, exit_code=exit_code),
+        "import pytest\npytestmark = pytest.mark.seat_refusal\n",
+    )
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
+
+
 def test_composer_live_proof_guard_earns_collection_credit(root: Path) -> None:
     # #24411's file reads _GRANT in composer_fixture and the child env.
     real = Path(__file__).resolve().parents[2] / "tests/e2e/test_composer_live_proof.py"

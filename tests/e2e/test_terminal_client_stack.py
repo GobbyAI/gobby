@@ -77,7 +77,8 @@ from tests.e2e.test_external_terminal_attach import (
 )
 from tests.terminals.test_runtime_contract import _restart_daemon_preserving_host
 
-pytestmark = pytest.mark.e2e
+# SRT-spawning fixtures below use link_spawning_operator_srt, which refuses seats.
+pytestmark = [pytest.mark.e2e, pytest.mark.seat_refusal]
 
 READY = "STACK-READY"
 HEARTBEAT = "HEARTBEAT"
