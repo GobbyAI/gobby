@@ -198,7 +198,7 @@ async def _evaluate_named_test_close(
     )
 
     with (
-        patch.object(lifecycle, "_TEMPORARILY_SKIP_TDD_EVIDENCE", False, create=True)
+        patch.object(lifecycle, "_TEMPORARILY_SKIP_TDD_EVIDENCE", False)
         if enforce_tdd
         else nullcontext(),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
