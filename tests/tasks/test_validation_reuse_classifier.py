@@ -270,3 +270,44 @@ def test_correction_literal_repository_import_can_be_bounded() -> None:
         )
         == ()
     )
+
+
+@pytest.mark.parametrize("loader", ["importlib.import_module", "__import__"])
+@pytest.mark.parametrize("helper_source", ["outside = __file__", "def work(): return 1"])
+def test_revision_keyword_import_scans_helper(loader: str, helper_source: str) -> None:
+    reasons = _classify(
+        f"import importlib\ndef test_it(): {loader}(name='tests.helper')",
+        **{"tests/helper.py": helper_source},
+    )
+    if "__file__" in helper_source:
+        assert any("tests/helper.py" in reason and "__file__" in reason for reason in reasons), (
+            reasons
+        )
+    else:
+        assert reasons == ()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "p = __import__('pathlib'); p.Path.home()",
+        "r = importlib.import_module('importlib.resources'); r.files('x')",
+        "p = __import__('pathlib'); q = p; q.Path.home()",
+        "p: object = __import__('pathlib'); p.Path.home()",
+        "p = q = __import__('pathlib'); q.Path.home()",
+    ],
+)
+def test_revision_stored_dynamic_namespace_refuses(body: str) -> None:
+    reasons = _classify(f"import importlib\ndef test_it():\n    {body}\n")
+    assert any("unbounded_input:" in reason for reason in reasons), reasons
+
+
+def test_revision_stored_repository_namespace_can_be_bounded() -> None:
+    assert (
+        _classify(
+            "import importlib\ndef test_it():\n"
+            "    helper = importlib.import_module(name='tests.helper'); helper.work()",
+            **{"tests/helper.py": "def work(): return 1"},
+        )
+        == ()
+    )

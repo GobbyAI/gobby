@@ -97,6 +97,15 @@ def _text(sources: Sources, path: str) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
+def _literal_import_name(node: ast.Call) -> str | None:
+    name = (
+        node.args[0]
+        if node.args
+        else next((keyword.value for keyword in node.keywords if keyword.arg == "name"), None)
+    )
+    return name.value if isinstance(name, ast.Constant) and isinstance(name.value, str) else None
+
+
 def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str:
     if isinstance(node, ast.Name):
         return aliases.get(node.id, node.id)
@@ -105,14 +114,8 @@ def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str:
     if isinstance(node, ast.Call):
         loader = _dotted(node.func, aliases)
         if loader in {"__import__", "importlib.import_module"}:
-            name = (
-                node.args[0]
-                if node.args
-                else next(
-                    (keyword.value for keyword in node.keywords if keyword.arg == "name"), None
-                )
-            )
-            if isinstance(name, ast.Constant) and isinstance(name.value, str):
+            name = _literal_import_name(node)
+            if name is not None:
                 # __import__ returns the top-level package unless fromlist is
                 # supplied; retain either namespace without executing the call.
                 if loader == "__import__":
@@ -130,10 +133,10 @@ def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str:
                     )
                     try:
                         if not ast.literal_eval(fromlist):
-                            return name.value.split(".")[0]
+                            return name.split(".")[0]
                     except (ValueError, TypeError):
                         return _AMBIGUOUS_IMPORT
-                return name.value
+                return name
     return ""
 
 
@@ -172,10 +175,9 @@ def _repo_imports(
             "importlib.import_module",
             "__import__",
         }:
-            if child.args and isinstance(child.args[0], ast.Constant):
-                value = child.args[0].value
-                if isinstance(value, str):
-                    names.add(value)
+            name = _literal_import_name(child)
+            if name is not None:
+                names.add(name)
     for name in names:
         parts = name.split(".")
         for end in range(1, len(parts) + 1):
@@ -205,6 +207,34 @@ def _aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 bind(alias.asname or alias.name, f"{node.module}.{alias.name}")
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+    ]
+    # Follow stored namespaces and their aliases. Bindings only become known or
+    # ambiguous, so this bounded fixed point also covers forward lexical order.
+    for _ in range(len(assignments) + 1):
+        previous = aliases.copy()
+        for assignment in assignments:
+            value = assignment.value
+            root = value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if root is None or isinstance(root, ast.Name) and root.id not in aliases:
+                continue
+            target = _dotted(value, aliases) if value is not None else ""
+            if target:
+                targets = (
+                    assignment.targets
+                    if isinstance(assignment, ast.Assign)
+                    else [assignment.target]
+                )
+                for name in targets:
+                    if isinstance(name, ast.Name):
+                        bind(name.id, target)
+        if aliases == previous:
+            break
     return aliases
 
 
