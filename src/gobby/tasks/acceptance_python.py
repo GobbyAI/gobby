@@ -516,9 +516,10 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
     """Nodes a scope can run: ``_scope_nodes`` minus code no run reaches.
 
     Skipped: statements after a block-ending statement, branches a constant test rules out,
-    short-circuit operands after the operand that decides the result, and loop bodies over a
-    statically empty iterable. Comprehension bodies are declined outright; only the first
-    iterable is kept, so an unconsumed generator body never counts as executed.
+    short-circuit operands after the operand that decides the result, loop bodies over a
+    statically empty iterable, and handlers of a try whose body returns a literal. Comprehension
+    bodies are declined outright; only the first iterable is kept, so an unconsumed generator
+    body never counts as executed.
     """
     queue: deque[ast.AST] = deque(_live_block(body))
     while queue:
@@ -558,7 +559,9 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
             # The else clause runs only when the body completes normally.
             if not _block_ends(node.body):
                 queue.extend(_live_block(node.orelse))
-            queue.extend(node.handlers)
+            # A literal return cannot raise, so no handler runs.
+            if not _returns_literal(node.body):
+                queue.extend(node.handlers)
             queue.extend(_live_block(node.finalbody))
             continue
         elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
@@ -584,7 +587,9 @@ def _ends_block(node: ast.AST) -> bool:
     continue ends only one iteration. A for over a literal zero-step range is the exception:
     its iterator raises before any item, so the block ends as it does at raise. A with statement
     ends it when its body ends by return, since a return itself is never suppressed. A body
-    ending in raise does not, because a context manager can suppress that raise.
+    ending in raise does not, because a context manager can suppress that raise. A try whose body
+    returns a literal, after only pass statements, ends the block too: nothing in that body can
+    raise, so no handler runs.
     """
     if isinstance(node, _TERMINATORS):
         return True
@@ -599,6 +604,9 @@ def _ends_block(node: ast.AST) -> bool:
         return _block_ends(node.body if truth else node.orelse)
     if isinstance(node, (ast.Try, ast.TryStar)):
         if _block_ends(node.finalbody):
+            return True
+        # A literal return cannot raise, so no handler runs and control leaves the block.
+        if _returns_literal(node.body):
             return True
         normal_ends = _block_ends(node.body) or _block_ends(node.orelse)
         return normal_ends and all(_block_ends(handler.body) for handler in node.handlers)
@@ -626,6 +634,27 @@ def _returns_statement(node: ast.AST) -> bool:
     if isinstance(node, (ast.With, ast.AsyncWith)):
         return _returns_block(node.body)
     return False
+
+
+def _returns_literal(statements: Iterable[ast.AST]) -> bool:
+    """Whether a block is only pass statements ending in a return of a literal: nothing raises."""
+    live = _live_block(statements)
+    last = live[-1] if live else None
+    if not isinstance(last, ast.Return):
+        return False
+    only_passes = all(isinstance(statement, ast.Pass) for statement in live[:-1])
+    return only_passes and _is_literal(last.value)
+
+
+def _is_literal(node: ast.expr | None) -> bool:
+    """Whether a return value is a literal that builds without raising; bare return is None."""
+    if node is None:
+        return True
+    try:
+        ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _live_operands(node: ast.BoolOp) -> list[ast.expr]:

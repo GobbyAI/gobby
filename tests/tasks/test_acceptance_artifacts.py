@@ -2475,6 +2475,137 @@ def test_zero_step_range_never_credits_loop_body_or_else_keeps_reachable_asserti
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                pass
+            _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                _assert_ok(make_receipt())
+        """,
+        """
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                pass
+            finally:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                _assert_ok(make_receipt())
+            finally:
+                pass
+        """,
+    ],
+    ids=[
+        "after_try_assert",
+        "after_try_helper",
+        "handler_assert",
+        "handler_helper",
+        "after_try_finally_pass",
+        "handler_helper_finally_pass",
+    ],
+)
+def test_literal_return_does_not_credit_unreachable_handler_or_following_assertion(
+    tmp_path: Path, source: str
+) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature():
+            try:
+                return None
+            except ValueError:
+                pass
+            finally:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                return maybe_value()
+            except ValueError:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                return maybe_value()
+            except ValueError:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                make_receipt()
+                return None
+            except ValueError:
+                pass
+            assert make_receipt() == "ok"
+        """,
+    ],
+    ids=[
+        "finally_assert_after_literal_return",
+        "assert_after_call_return_falls_through",
+        "handler_assert_after_call_return",
+        "assert_after_preceding_work_falls_through",
+    ],
+)
+def test_literal_return_keeps_reachable_assertions(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
     "expression",
     [
         "[_assert_ok(value) for value in []]",
