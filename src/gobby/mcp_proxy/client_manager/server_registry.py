@@ -284,7 +284,12 @@ async def _discover_and_cache_tools(
             for tool in tools_result.tools
         ]
     except Exception as exc:
-        LOGGER.warning("Failed to list tools for %s: %s", config.name, exc)
+        detail = (
+            f"TimeoutError after {manager.connection_timeout:.1f}s"
+            if isinstance(exc, TimeoutError)
+            else str(exc)
+        )
+        LOGGER.warning("Failed to list tools for %s: %s", config.name, detail)
         if used is not None and used.session is session:
             await discard_connection(
                 config.id,
