@@ -66,7 +66,7 @@ async def test_list_tools_sends_the_server_name_as_one_segment() -> None:
 
     await _proxy(daemon).list_tools(server_name="a/../b")
 
-    assert daemon.targets == ["GET /api/mcp/a%2F..%2Fb/tools"]
+    assert daemon.targets == ["GET /api/mcp/servers", "GET /api/mcp/a%2F..%2Fb/tools"]
 
 
 async def test_list_all_skips_empty_and_dot_only_status_names() -> None:
@@ -74,7 +74,11 @@ async def test_list_all_skips_empty_and_dot_only_status_names() -> None:
 
     await _proxy(daemon).list_tools()
 
-    assert daemon.targets == ["GET /api/admin/status", "GET /api/mcp/tasks/tools"]
+    assert daemon.targets == [
+        "GET /api/admin/status",
+        "GET /api/mcp/servers",
+        "GET /api/mcp/tasks/tools",
+    ]
 
 
 async def test_call_tool_sends_both_names_as_one_segment() -> None:
