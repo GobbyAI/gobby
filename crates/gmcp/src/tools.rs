@@ -137,6 +137,12 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
         }
         "set_variable" => {
             let target = str_arg(arguments, "session_id")?;
+            if target.is_empty() || is_dot_segment(target) {
+                return Err(ErrorData::invalid_params(
+                    "session_id must name one session",
+                    None,
+                ));
+            }
             let name = str_arg(arguments, "name")?;
             let body = json!({
                 "name": name,
@@ -148,6 +154,12 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
         }
         "get_variable" => {
             let target = str_arg(arguments, "session_id")?;
+            if target.is_empty() || is_dot_segment(target) {
+                return Err(ErrorData::invalid_params(
+                    "session_id must name one session",
+                    None,
+                ));
+            }
             let body = json!({"name": value_arg(arguments, "name"), "scope": "session"});
             let path = format!("/api/sessions/{}/variables/get", quote(target));
             Ok(dialer.request("POST", &path, Some(&body), scoped(Some(target))))

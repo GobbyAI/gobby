@@ -597,6 +597,8 @@ class DaemonProxy:
         scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
         """Set a session or step variable."""
+        if session_id in {"", ".", ".."}:
+            return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/set",
@@ -611,6 +613,8 @@ class DaemonProxy:
         session_id: str,
     ) -> dict[str, Any]:
         """Get session-scoped variable(s)."""
+        if session_id in {"", ".", ".."}:
+            return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/get",
