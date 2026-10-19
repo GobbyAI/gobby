@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
 import pytest
 
+from gobby.mcp_proxy.client_manager.server_registry import _discover_and_cache_tools
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
@@ -269,3 +270,114 @@ async def test_schema_lookup_discards_hung_session_after_retry() -> None:
     assert retry_connection.disconnect_calls == 1
     assert config.id not in manager._connections
     assert not manager._lazy_connector.is_connected(config.id)
+
+
+@pytest.mark.asyncio
+async def test_registry_discovery_discards_hung_sibling_session() -> None:
+    manager, config = make_manager()
+    manager.connection_timeout = 0.01
+    stale_connection = FakeConnection(HangingSession())
+    manager._connections[config.id] = stale_connection
+    lock = manager._lazy_connector.get_connection_lock(config.id)
+
+    async with lock:
+        discovery = asyncio.create_task(
+            _discover_and_cache_tools(manager, config, stale_connection._fake_session)
+        )
+        try:
+            done, _ = await asyncio.wait({discovery}, timeout=0.5)
+            assert discovery in done, "Lifecycle discovery must bound a hung session under its lock"
+            assert await discovery == []
+        finally:
+            discovery.cancel()
+            with suppress(asyncio.CancelledError):
+                await discovery
+
+    assert stale_connection.disconnect_calls == 1
+    assert config.id not in manager._connections
+    assert config.id not in manager._tool_schema_cache
+    assert not manager._lazy_connector.is_connected(config.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["list", "refresh"])
+async def test_http_discovery_recovers_hung_sibling_session(endpoint: str) -> None:
+    from gobby.servers.routes.mcp.endpoints.execution import list_mcp_tools
+    from gobby.servers.routes.mcp.endpoints.registry import refresh_mcp_tools
+
+    manager, config = make_manager()
+    manager.connection_timeout = 0.01
+    stale_connection = FakeConnection(HangingSession())
+    manager._connections[config.id] = stale_connection
+    fresh_connection = FakeConnection(
+        FakeSession(
+            [
+                SimpleNamespace(
+                    name="fresh_tool", description="Fresh", input_schema={"type": "object"}
+                )
+            ]
+        )
+    )
+    server = MagicMock()
+    server.mcp_manager = manager
+    server._internal_manager = None
+    server._tools_handler = None
+    server.tool_proxy = None
+    server._mcp_db_manager.get_cached_tools.return_value = []
+    request = MagicMock()
+    request.json = AsyncMock(return_value={"server_id": config.id})
+
+    with (
+        patch("gobby.mcp_proxy.manager.create_transport_connection", return_value=fresh_connection),
+        patch.object(manager, "refresh_server", new=AsyncMock()),
+        patch(
+            "gobby.servers.routes.mcp.endpoints.request_context._set_context_for_request",
+            new=AsyncMock(return_value=SimpleNamespace(resolved_session_id=None)),
+        ),
+        patch("gobby.servers.routes.mcp.endpoints.request_context._reset_context"),
+        patch(
+            "gobby.servers.routes.mcp.endpoints.execution._enforce_workflow_for_request",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "gobby.servers.routes.mcp.endpoints.execution._http_request_scope",
+            return_value=config.project_id,
+        ),
+        patch(
+            "gobby.servers.routes.mcp.endpoints.request_context.request_mcp_scope",
+            return_value=config.project_id,
+        ),
+        patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as hash_manager,
+    ):
+        hash_manager.return_value.check_tools_for_changes.return_value = {
+            "new": ["fresh_tool"],
+            "changed": [],
+            "unchanged": [],
+        }
+        hash_manager.return_value.cleanup_stale_hashes.return_value = 0
+        if endpoint == "list":
+            operation = list_mcp_tools(config.name, request, server, None, manager)
+        else:
+            operation = refresh_mcp_tools(request, server)
+        discovery = asyncio.create_task(operation)
+        try:
+            done, _ = await asyncio.wait({discovery}, timeout=0.5)
+            assert discovery in done, (
+                "HTTP discovery must recover instead of retaining a hung session"
+            )
+            result = await discovery
+        finally:
+            discovery.cancel()
+            with suppress(asyncio.CancelledError):
+                await discovery
+
+    assert result["success"] is True
+    if endpoint == "list":
+        assert result["tools"] == [
+            {"name": "fresh_tool", "description": "Fresh", "inputSchema": {"type": "object"}}
+        ]
+    else:
+        assert result["stats"]["servers_processed"] == 1
+        assert result["stats"]["tools_new"] == 1
+    assert stale_connection.disconnect_calls == 1
+    assert manager._connections[config.id] is fresh_connection

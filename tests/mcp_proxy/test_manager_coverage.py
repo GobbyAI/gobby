@@ -2052,6 +2052,7 @@ class TestMCPClientManagerReconnect:
         ensure_waiting = asyncio.Event()
         release_connect = asyncio.Event()
         session = MagicMock()
+        session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
         connect_calls = 0
         acquire_calls = 0
         original_acquire_lock = connections._acquire_connection_lock
@@ -2108,6 +2109,7 @@ class TestMCPClientManagerReconnect:
         release_teardown = asyncio.Event()
         old_session = MagicMock()
         new_session = MagicMock()
+        new_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
         old_connection = MagicMock()
         old_connection.is_connected = True
         old_connection.session = old_session
