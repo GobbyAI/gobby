@@ -12,6 +12,9 @@ use wait_timeout::ChildExt;
 
 const MAX_BOUND_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+// Path bytes per `git ls-tree` argv. The OS argv limit also counts the environment,
+// so this stays far below it while still resolving many paths per call.
+const MAX_LS_TREE_PATH_BYTES: usize = 64 * 1024;
 
 #[cfg(test)]
 thread_local! {
@@ -67,26 +70,23 @@ pub(super) fn read_bound_blobs(
 type BlobRead = std::result::Result<Vec<u8>, String>;
 
 fn read_listed_blobs(repo_root: &Path, commit_oid: &str, paths: &[&str]) -> Vec<BlobRead> {
-    let mut args = vec!["ls-tree", "-z", "-l", commit_oid, "--"];
-    args.extend_from_slice(paths);
-    let listing = match git(repo_root, &args, None) {
-        Ok(listing) => listing,
-        Err(error) => return vec![Err(error.to_string()); paths.len()],
-    };
-    let mut listed = std::collections::BTreeMap::new();
-    for record in listing
-        .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-    {
-        let Some(separator) = record.iter().position(|byte| *byte == b'\t') else {
-            return vec![Err("invalid Git tree entry".into()); paths.len()];
-        };
-        listed.insert(&record[separator + 1..], &record[..separator]);
+    // Resolve paths in argv-bounded groups so the ls-tree call never outgrows the OS limit.
+    let mut located = Vec::with_capacity(paths.len());
+    let mut start = 0;
+    while start < paths.len() {
+        let mut end = start;
+        let mut path_bytes = 0;
+        while end < paths.len() {
+            let next = paths[end].len() + 1;
+            if end > start && path_bytes + next > MAX_LS_TREE_PATH_BYTES {
+                break;
+            }
+            path_bytes += next;
+            end += 1;
+        }
+        located.extend(locate_blobs(repo_root, commit_oid, &paths[start..end]));
+        start = end;
     }
-    let located = paths
-        .iter()
-        .map(|path| listed_blob(listed.get(path.as_bytes()).copied()))
-        .collect::<Vec<_>>();
     let mut blobs = located
         .iter()
         .map(|blob| match blob {
@@ -97,7 +97,11 @@ fn read_listed_blobs(repo_root: &Path, commit_oid: &str, paths: &[&str]) -> Vec<
     let wanted = located
         .iter()
         .enumerate()
-        .filter_map(|(index, blob)| blob.as_ref().ok().map(|(oid, size)| (index, *oid, *size)))
+        .filter_map(|(index, blob)| {
+            blob.as_ref()
+                .ok()
+                .map(|(oid, size)| (index, oid.as_str(), *size))
+        })
         .collect::<Vec<_>>();
     // Split the reads so each batch's output stays under the Git output bound.
     let mut start = 0;
@@ -120,6 +124,37 @@ fn read_listed_blobs(repo_root: &Path, commit_oid: &str, paths: &[&str]) -> Vec<
         start = end;
     }
     blobs
+}
+
+/// Resolves each path to its blob id and size with one `git ls-tree` over `paths`.
+fn locate_blobs(
+    repo_root: &Path,
+    commit_oid: &str,
+    paths: &[&str],
+) -> Vec<std::result::Result<(String, usize), String>> {
+    let mut args = vec!["ls-tree", "-z", "-l", commit_oid, "--"];
+    args.extend_from_slice(paths);
+    let listing = match git(repo_root, &args, None) {
+        Ok(listing) => listing,
+        Err(error) => return vec![Err(error.to_string()); paths.len()],
+    };
+    let mut listed = std::collections::BTreeMap::new();
+    for record in listing
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let Some(separator) = record.iter().position(|byte| *byte == b'\t') else {
+            return vec![Err("invalid Git tree entry".into()); paths.len()];
+        };
+        listed.insert(&record[separator + 1..], &record[..separator]);
+    }
+    paths
+        .iter()
+        .map(|path| {
+            listed_blob(listed.get(path.as_bytes()).copied())
+                .map(|(oid, size)| (oid.to_string(), size))
+        })
+        .collect()
 }
 
 /// Object id and size of a listed regular-file blob within the read bound.
