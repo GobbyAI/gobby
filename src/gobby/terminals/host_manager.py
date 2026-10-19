@@ -742,11 +742,10 @@ class TerminalHostManager(HostShutdown):
         env = os.environ.copy()
         # Agents inherit the host env; a daemon started inside tmux must not
         # hand them its own pane as their terminal context, and the supervisor
-        # fd and front-door secret belong to the daemon, not to seat shells.
+        # fd belongs to the daemon, not to seat shells.
         env.pop("TMUX", None)
         env.pop("TMUX_PANE", None)
         env.pop("GOBBY_SUPERVISOR_FD", None)
-        env.pop("GOBBY_FRONT_DOOR_SECRET", None)
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
             return __import__("subprocess").Popen(  # nosec B603
