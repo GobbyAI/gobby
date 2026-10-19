@@ -113,7 +113,7 @@ async def test_gate7_tagged_commit_reachability(
             if after_preview == "land":
                 _git(repo, "merge", "--ff-only", "bounced")
             else:
-                _git(repo, "checkout", "--detach")
+                _git(repo, "checkout", "--detach", bounced)
             result = await finalization.commit_close(
                 ctx,
                 evaluation,
@@ -139,6 +139,56 @@ async def test_gate7_tagged_commit_reachability(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("detached", [False, True])
+@pytest.mark.parametrize("unlinked_ancestor", [False, True])
+async def test_gate7_foreign_root_checkout(
+    tmp_path: Path, detached: bool, unlinked_ancestor: bool
+) -> None:
+    repo = tmp_path / "foreign-project"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "commit", "--allow-empty", "-m", "seed")
+    seed = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-b", "candidate")
+    missing: list[str] = []
+    if unlinked_ancestor:
+        _git(repo, "commit", "--allow-empty", "-m", "[foreign-project-#42] predecessor")
+        missing.append(_git(repo, "rev-parse", "--short", "HEAD"))
+    _git(repo, "commit", "--allow-empty", "-m", "[foreign-project-#42] approved candidate")
+    candidate = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _git(repo, "commit", "--allow-empty", "-m", "main advanced independently")
+    _git(repo, "checkout", "-b", "discarded", seed)
+    _git(repo, "commit", "--allow-empty", "-m", "[foreign-project-#42] discarded draft")
+    discarded = _git(repo, "rev-parse", "--short", "HEAD")
+    _git(
+        repo,
+        "checkout",
+        "--detach" if detached else "candidate",
+        *([candidate] if detached else []),
+    )
+    task = _task()
+    task.seq_num = 42
+    task.project_id = "foreign-project-id"
+    task.commits = [candidate]
+
+    divergence, error = await preview.unlinked_tagged_commits(
+        _ctx(task).task_manager,
+        task=task,
+        task_id=task.id,
+        commit_shas=[candidate],
+        cwd=str(repo),
+        project_name="foreign-project",
+        candidate_commit_sha=candidate,
+    )
+
+    assert error is None, error
+    assert divergence == (missing, [discarded])
+    assert _git(repo, "rev-parse", "HEAD") == candidate
+    assert _git(repo, "rev-parse", "main") != candidate
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["repository", "integration", "candidate", "history"])
 async def test_gate7_git_failure_refuses_exclusions(tmp_path: Path, failure: str) -> None:
     repo = tmp_path / "main"
@@ -149,7 +199,7 @@ async def test_gate7_git_failure_refuses_exclusions(tmp_path: Path, failure: str
     task = _task()
     task.seq_num = 42
     if failure == "integration":
-        _git(repo, "checkout", "--detach")
+        _git(repo, "symbolic-ref", "HEAD", "refs/heads/missing-integration")
     if failure == "candidate":
         candidate = "f" * 40
     with patch(
