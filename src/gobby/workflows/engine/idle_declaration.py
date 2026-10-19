@@ -10,6 +10,7 @@ writes; other seats declare idleness through a readiness-message rule effect.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name
@@ -86,7 +87,10 @@ def readiness_message_completed(
     from gobby.workflows.engine.seat_messages import completion_messages
 
     return any(
-        message.content.partition("\n")[0] == "EVENT=SEAT_READY NOTE=idle"
+        re.fullmatch(
+            r"(?:LANE=\S+ )?EVENT=SEAT_READY (?:RUN=\S+ )?NOTE=idle",
+            message.content.partition("\n")[0],
+        )
         for message in completion_messages(sessions.db, caller_id, "send_message", {}, tool_output)
     )
 
