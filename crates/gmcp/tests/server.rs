@@ -388,6 +388,28 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
 }
 
 #[test]
+fn bridge_ready_posts_once_across_tools_lists() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+    let daemon = StubDaemon::start((0..4).map(|_| ok()).collect())?;
+    let home = tempfile::tempdir()?;
+    let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+    gmcp.initialize()?;
+
+    for _ in 0..3 {
+        gmcp.call("tools/list", json!({}))?;
+    }
+    daemon.wait_for_requests(1);
+    gmcp.call_tool("list_mcp_servers", json!({}))?;
+    let readiness = daemon
+        .requests()
+        .iter()
+        .filter(|request| request.path.starts_with("/api/mcp/bridge/ready"))
+        .count();
+    assert_eq!(readiness, 1, "repeated tools/list must post readiness once");
+    Ok(())
+}
+
+#[test]
 fn session_ids_stay_one_path_segment() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true}));
 

@@ -113,7 +113,7 @@ fn schedule_and_codes_match_the_wire_fixture() -> Result<()> {
 }
 
 #[test]
-fn readiness_is_claimed_by_the_first_tools_list_only() {
+fn claim_readiness_grants_only_the_first_claim() {
     let started = AtomicBool::new(false);
     let claims: Vec<bool> = (0..3).map(|_| claim_readiness(&started)).collect();
     assert_eq!(claims, [true, false, false]);
