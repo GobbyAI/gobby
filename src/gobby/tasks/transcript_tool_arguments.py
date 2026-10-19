@@ -27,7 +27,7 @@ def edited_source(tool_name: str, arguments: dict[str, Any], previous: str | Non
     if tool_name == "write":
         content = arguments.get("content")
         return content if isinstance(content, str) else None
-    if previous is None or tool_name not in {"edit", "multiedit"}:
+    if previous is None or tool_name not in {"edit", "multiedit", "search_replace"}:
         return None
     changes = arguments.get("edits") if tool_name == "multiedit" else [arguments]
     if not isinstance(changes, list):
@@ -43,6 +43,58 @@ def edited_source(tool_name: str, arguments: dict[str, Any], previous: str | Non
             return None
         previous = previous.replace(old, new, -1 if change.get("replace_all") else 1)
     return previous
+
+
+def native_created_source(
+    arguments: dict[str, Any], result: Any, call_id: str | None
+) -> str | None:
+    """Authenticate Grok's full-file creation against both native receipt copies.
+
+    An empty search anchor alone may append to an existing file. Neither a
+    fragment diff nor an unexecuted input can establish a complete snapshot.
+    """
+    native = result.get("tool_result") if isinstance(result, dict) else None
+    raw = native.get("raw") if isinstance(native, dict) else None
+    path, supplied = arguments.get("file_path"), arguments.get("new_string")
+    if (
+        not isinstance(raw, dict)
+        or raw.get("sessionUpdate") != "tool_call_update"
+        or not call_id
+        or raw.get("toolCallId") != call_id
+        or raw.get("status") != "completed"
+        or raw.get("error") is not None
+        or arguments.get("old_string") != ""
+        or not isinstance(path, str)
+        or not os.path.isabs(path)
+        or not isinstance(supplied, str)
+    ):
+        return None
+    output = raw.get("rawOutput")
+    applied = output.get("EditsApplied") if isinstance(output, dict) else None
+    diffs = raw.get("content")
+    if (
+        not isinstance(output, dict)
+        or output.get("type") != "SearchReplace"
+        or not isinstance(applied, dict)
+        or applied.get("absolute_path") != path
+        or applied.get("old_string") != ""
+        or applied.get("new_string") != supplied
+        or applied.get("tool_output_for_prompt")
+        != f"The file {path} has been created successfully."
+        or not isinstance(diffs, list)
+        or len(diffs) != 1
+    ):
+        return None
+    diff = diffs[0]
+    if (
+        not isinstance(diff, dict)
+        or diff.get("type") != "diff"
+        or diff.get("path") != path
+        or diff.get("oldText") != ""
+        or diff.get("newText") != supplied
+    ):
+        return None
+    return supplied
 
 
 def python_edit_tokens(text: str) -> list[tuple[int, str]] | None:

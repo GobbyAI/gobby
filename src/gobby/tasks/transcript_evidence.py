@@ -89,6 +89,7 @@ from gobby.tasks.transcript_output_retention import (
 from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    native_created_source,
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
@@ -717,6 +718,13 @@ def _record_validation_run(
         native_result = result.get("tool_result", result) if isinstance(result, dict) else result
         output = native_result.get("content") if isinstance(native_result, dict) else native_result
         written_path = pending.arguments.get("file_path")
+        created_source = (
+            native_created_source(pending.arguments, result, pending.call_id)
+            if confirmed
+            and state.session.source == "grok"
+            and _tool_basename(pending.name) == "search_replace"
+            else None
+        )
         creation_receipt = (
             confirmed
             and _tool_basename(pending.name) == "write"
@@ -726,12 +734,18 @@ def _record_validation_run(
                 output == f"File created successfully at: {written_path}"
                 or output.startswith(f"File created successfully at: {written_path} ")
             )
-        )
+        ) or created_source is not None
         state.edits[:] = [
             replace(
                 edit,
                 source_confirmed=confirmed,
                 source_confirmed_at=completed_at if confirmed else None,
+                source_after=created_source
+                if created_source is not None
+                and not any(
+                    prior.path == edit.path and prior.order < edit.order for prior in state.edits
+                )
+                else edit.source_after,
                 source_created=bool(
                     creation_receipt
                     and not any(
@@ -910,7 +924,7 @@ def _record_edit(
             else None
         )
         old, new = arguments.get("old_string"), arguments.get("new_string")
-        python_edit = basename == "edit" and task_file.endswith(".py")
+        python_edit = basename in {"edit", "search_replace"} and task_file.endswith(".py")
         fragment: str | None = None
         replaced: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None
