@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
+    from gobby.servers.websocket.native_publish import NativePublisher
     from gobby.storage.executor import DatabaseExecutor
     from gobby.terminals.workspace_contract import WorkspaceEvent
 
@@ -46,6 +47,7 @@ class BroadcastMixin:
 
     clients: dict[Any, dict[str, Any]]
     lease_registry: TerminalLeaseRegistry
+    native_publisher: NativePublisher | None = None
     session_manager: Any = None
     db_executor: DatabaseExecutor | None = None
     _attention_ordering: AttentionOrderingCoordinator | None = None
@@ -186,6 +188,13 @@ class BroadcastMixin:
             frames: Wire frames each recipient of ``message`` receives in order
                 instead of it, for a message sent as fragments
         """
+        if self.native_publisher is not None:
+            # Native mode: gdaemon's broker owns fanout and subscription filtering.
+            try:
+                await self.native_publisher.publish(message, frames)
+            except (TypeError, ValueError) as exc:
+                logger.warning("Broadcast payload is not JSON serializable: %s", exc)
+            return
         if not self.clients:
             return
 
@@ -241,7 +250,7 @@ class BroadcastMixin:
         The key stays absent when the row cannot be read — a deletion, most
         of all — which is the listener's signal to fall back to the sweep.
         """
-        if not self.clients:
+        if not self.clients and self.native_publisher is None:
             return
         if "project_id" not in kwargs:
             project_id = await self._session_event_project_id(session_id)

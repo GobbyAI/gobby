@@ -272,7 +272,11 @@ async fn start_front_door(
     tokio::spawn(async move {
         let _home = home;
         serve(
-            vec![PublicListener { listener, backend }],
+            vec![PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &routes,
             None,
             Arc::new(

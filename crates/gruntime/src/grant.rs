@@ -39,7 +39,7 @@ pub(crate) async fn runtime_config(
 ) -> Response<Body> {
     let grant = match presented_grant(&headers) {
         Ok(grant) => grant,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let token = deployment_token(&state.home);
     let fence = match read_fence(&state.pool, &token).await {
@@ -87,17 +87,17 @@ pub(crate) async fn runtime_config(
 
 /// The grant a request presented. The gate has already claimed decodable headers, so a
 /// refusal here is defensive and mirrors the Python route's responses.
-fn presented_grant(headers: &HeaderMap) -> Result<GrantBundle, Response<Body>> {
+fn presented_grant(headers: &HeaderMap) -> Result<GrantBundle, Box<Response<Body>>> {
     let Some(value) = headers
         .get(GRANT_HEADER)
         .and_then(|value| value.to_str().ok())
     else {
-        return Err(json_response(
+        return Err(Box::new(json_response(
             StatusCode::UNAUTHORIZED,
             json!({"detail": "Runtime grant required"}),
-        ));
+        )));
     };
-    decode_grant_header(value).map_err(|_| malformed_grant())
+    decode_grant_header(value).map_err(|_| Box::new(malformed_grant()))
 }
 
 /// The deployment's fencing epoch and grant-signing secret, read per request so a
