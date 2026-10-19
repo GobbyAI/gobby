@@ -17,7 +17,7 @@ from gobby.cli import cutover, install_setup_gclient, install_setup_gterm
 from gobby.install import bin_freshness_promotion as promotion
 from gobby.install import bin_release_identity as release
 from gobby.install import bin_set_coherence as coherence
-from gobby.install.bin_release_identity import release_identity_path
+from gobby.install.bin_release_identity import BinaryReleaseVersionError, release_identity_path
 from gobby.install.bin_set_coherence import promote_workspace_binary_set
 
 
@@ -26,7 +26,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "workspace"
     root.mkdir()
     (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
-    for name in ("gcode", "gdaemon", "ghook", "gclient", "gterminal", "gcore"):
+    for name in ("gcode", "gdaemon", "ghook", "gclient", "gmcp", "gterminal", "gcore"):
         crate = root / "crates" / name
         (crate / "src").mkdir(parents=True)
         dependency = '\n[dependencies]\ngobby-core = { path = "../gcore" }\n'
@@ -177,6 +177,22 @@ def test_current_artifact_shortcut_refuses_changed_workspace(
     (workspace / "crates" / "gcore" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
     with pytest.raises(RuntimeError, match=r"gclient.*bump.*patch version"):
         promotion.workspace_binary_is_current(destination.parent, "gclient", source, destination)
+
+
+def test_gmcp_promotion_refuses_changed_source_under_same_version(
+    workspace: Path, tmp_path: Path
+) -> None:
+    destination = tmp_path / "bin" / "gmcp"
+    promotion.stage_and_promote_binary_file(
+        binary(tmp_path / "build" / "first" / "gmcp"), destination=destination
+    )
+    assert (destination.parent / ".gmcp-release-identity.json").is_file()
+    (workspace / "crates" / "gmcp" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
+
+    with pytest.raises(BinaryReleaseVersionError, match=r"gmcp.*bump.*patch version"):
+        promotion.stage_and_promote_binary_file(
+            binary(tmp_path / "build" / "second" / "gmcp"), destination=destination
+        )
 
 
 @pytest.mark.parametrize("component", ["gclient", "gterm"])

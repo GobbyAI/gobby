@@ -10,19 +10,24 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.cargo_target import cargo_release_dir
+from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import (
     clear_source_hash,
     file_sha256,
+    install_staged_cargo_binary,
     stage_and_promote_binary_file,
     workspace_binary_is_current,
     write_source_hash,
 )
-from gobby.install.bin_set_coherence import _codesign_workspace_binary
-from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
+from gobby.install.bin_set_coherence import BinarySetCoherenceError, _codesign_workspace_binary
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.paths import get_gobby_home
 
+from . import install_release
 from .install_setup_gterm import ManagedBinaryReleaseMissing
 
 _CRATE_PACKAGE = "gobby-mcp"
@@ -173,39 +178,187 @@ def write_daemon_start_command(gobby_home: Path, argv: list[str]) -> None:
 
 
 def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
-    """Build and promote gmcp from the checkout; outside one, an absent binary raises."""
+    """Install gmcp: the published release once one exists, else build it from the checkout."""
     bin_dir = get_gobby_home() / "bin"
     gmcp_path = bin_dir / module._GMCP_BIN_NAME
     installed_version = module._get_installed_gmcp_version(bin_dir)
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    if force:
-        clear_source_hash(bin_dir, "gmcp")
+    pinned_version = MANAGED_BIN_VERSION_PINS["gmcp"]
+    published = is_published("gmcp")
+    if gmcp_path.exists() and not force and published:
+        if installed_version and managed_version_satisfies_pin("gmcp", installed_version):
+            module._write_gmcp_version_stamp(bin_dir, installed_version)
+            return {"installed": False, "skipped": True, "version": installed_version}
 
-    outcome = module._install_gmcp_from_submodule(bin_dir)
-    if not outcome:
-        if force or not gmcp_path.exists():
-            raise ManagedBinaryReleaseMissing("gmcp")
-        local_version = installed_version or "unknown"
-        module._write_gmcp_version_stamp(bin_dir, local_version)
-        return {
-            "installed": False,
-            "skipped": True,
-            "version": local_version,
-            "method": "local",
-            "reason": "unverified: local build unavailable",
-        }
-    if outcome == "current":
-        local_version = installed_version or "unknown"
-        module._write_gmcp_version_stamp(bin_dir, local_version)
-        return {"installed": False, "skipped": True, "version": local_version, "method": "local"}
+    target_version = pinned_version
+    if published and compare_versions(installed_version, pinned_version) == 1:
+        target_version = installed_version
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    method: str | None = None
+
+    try:
+        if not published:
+            if force:
+                clear_source_hash(bin_dir, "gmcp")
+            outcome = module._install_gmcp_from_submodule(bin_dir)
+            if not outcome:
+                if force or not gmcp_path.exists():
+                    raise ManagedBinaryReleaseMissing("gmcp")
+                local_version = installed_version or "unknown"
+                module._write_gmcp_version_stamp(bin_dir, local_version)
+                return {
+                    "installed": False,
+                    "skipped": True,
+                    "version": local_version,
+                    "method": "local",
+                    "reason": "unverified: local build unavailable",
+                }
+            if outcome == "current":
+                local_version = installed_version or "unknown"
+                module._write_gmcp_version_stamp(bin_dir, local_version)
+                return {
+                    "installed": False,
+                    "skipped": True,
+                    "version": local_version,
+                    "method": "local",
+                }
+            method = "workspace"
+        else:
+            os_name = module.sys.platform
+            machine = module.platform.machine().lower()
+            target = module._GMCP_TARGETS.get((os_name, machine))
+            if target is None:
+                module.logger.warning("gmcp: unsupported platform %s/%s", os_name, machine)
+                return {
+                    "installed": False,
+                    "skipped": True,
+                    "reason": f"unsupported platform {os_name}/{machine}",
+                }
+            if module._install_gmcp_from_github(bin_dir, target, target_version):
+                method = "github"
+            elif module._install_gmcp_from_cargo_binstall(bin_dir, target_version):
+                method = "cargo-binstall"
+            elif module._install_gmcp_from_cargo_install(bin_dir, target_version):
+                method = "cargo-install"
+            elif module._install_gmcp_from_cargo_git(bin_dir):
+                method = "cargo-git"
+            else:
+                return {
+                    "installed": False,
+                    "skipped": False,
+                    "reason": "all installation methods failed",
+                }
+    except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
+        return {"installed": False, "skipped": False, "reason": str(exc)}
 
     gmcp_path.chmod(0o755)
-    version = probe_gmcp_version(module, gmcp_path) or MANAGED_BIN_VERSION_PINS["gmcp"]
+    version = probe_gmcp_version(module, gmcp_path) or target_version
     module._write_gmcp_version_stamp(bin_dir, version)
     write_daemon_start_command(get_gobby_home(), daemon_start_argv())
+    module._ensure_gobby_bin_on_path(bin_dir)
     return {
         "installed": True,
         "upgraded": installed_version is not None and installed_version != version,
         "version": version,
-        "method": "workspace",
+        "method": method,
     }
+
+
+def install_gmcp_from_github(
+    module: Any,
+    bin_dir: Path,
+    target: str,
+    version: str | None = None,
+) -> bool:
+    """Download and extract gmcp from GitHub Releases."""
+    return bool(
+        install_release._download_release_binary(
+            bin_dir,
+            binary_name=module._GMCP_BIN_NAME,
+            artifact_name="gmcp",
+            target=target,
+            version=version,
+            tag_prefix=module._GMCP_RELEASE_TAG_PREFIX,
+            label="gmcp",
+        )
+    )
+
+
+def install_gmcp_from_cargo_git(module: Any, bin_dir: Path) -> bool:
+    """Install gmcp from source via cargo install --git."""
+    if not module.shutil.which("cargo"):
+        return False
+    try:
+        module.click.echo("  Compiling gmcp from source (this may take 30-60 seconds)...")
+        return install_staged_cargo_binary(
+            [
+                "cargo",
+                "install",
+                "--git",
+                "https://github.com/GobbyAI/gobby",
+                "-p",
+                _CRATE_PACKAGE,
+                "--root",
+                str(bin_dir.parent),
+            ],
+            binary_name=module._GMCP_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
+            timeout=180,
+        )
+    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
+        module.logger.warning("gmcp: cargo install --git failed: %s", e)
+        return False
+
+
+def install_gmcp_from_cargo_binstall(
+    module: Any,
+    bin_dir: Path,
+    version: str | None = None,
+) -> bool:
+    """Install gmcp via cargo-binstall."""
+    if not module.shutil.which("cargo-binstall"):
+        return False
+    try:
+        crate = f"{_CRATE_PACKAGE}@{version}" if version else _CRATE_PACKAGE
+        return install_staged_cargo_binary(
+            [
+                "cargo-binstall",
+                crate,
+                "--install-path",
+                str(bin_dir),
+                "--no-confirm",
+                "--no-symlinks",
+            ],
+            binary_name=module._GMCP_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
+            timeout=60,
+        )
+    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
+        module.logger.warning("gmcp: cargo-binstall failed: %s", e)
+        return False
+
+
+def install_gmcp_from_cargo_install(
+    module: Any,
+    bin_dir: Path,
+    version: str | None = None,
+) -> bool:
+    """Compile and install gmcp from source via cargo install."""
+    if not module.shutil.which("cargo"):
+        return False
+    try:
+        cmd = ["cargo", "install", _CRATE_PACKAGE, "--root", str(bin_dir.parent)]
+        if version:
+            cmd.extend(["--version", version])
+        module.click.echo("  Compiling gmcp from source (this may take 30-60 seconds)...")
+        return install_staged_cargo_binary(
+            cmd,
+            binary_name=module._GMCP_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
+            timeout=180,
+        )
+    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
+        module.logger.warning("gmcp: cargo install failed: %s", e)
+        return False

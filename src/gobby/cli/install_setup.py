@@ -598,3 +598,23 @@ def _install_gmcp_from_submodule(bin_dir: Path) -> str | None:
 
 def _install_gmcp(force: bool = False) -> dict[str, Any]:
     return _gmcp_impl.install_gmcp(_module(), force)
+
+
+_GMCP_RELEASE_TAG_PREFIX = "gmcp-v"
+_GMCP_TARGETS = _STAGE0_TARGETS
+
+
+def _install_gmcp_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    return _gmcp_impl.install_gmcp_from_github(_module(), bin_dir, target, version)
+
+
+def _install_gmcp_from_cargo_git(bin_dir: Path) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_git(_module(), bin_dir)
+
+
+def _install_gmcp_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_binstall(_module(), bin_dir, version)
+
+
+def _install_gmcp_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_install(_module(), bin_dir, version)

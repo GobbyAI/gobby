@@ -24,6 +24,7 @@ RELEASE_CRATES = {
     "ghook": "ghook",
     "gclient": "gclient",
     "gterm": "gterminal",
+    "gmcp": "gmcp",
 }
 
 
