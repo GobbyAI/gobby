@@ -66,6 +66,14 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
     return retained
 
 
+def unauthenticated_retained_note(run: TranscriptValidationRun, production_at: datetime) -> str:
+    """Rejection suffix naming a background run whose retained output fails authentication."""
+    path = run.background_output_path
+    if path is None or retained_red_output(run, production_at) is not None:
+        return ""
+    return f"; its retained full output at {path} could not be authenticated"
+
+
 def delivered_proof_runs(
     run: TranscriptValidationRun, production_at: datetime | None
 ) -> Iterator[TranscriptValidationRun]:
@@ -194,4 +202,9 @@ def _contains_delivered(delivered: str, truncated: bool, retained: str) -> bool:
     return verified
 
 
-__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "delivered_proof_runs", "retained_red_output"]
+__all__ = [
+    "RETAINED_OUTPUT_FLUSH_GRACE",
+    "delivered_proof_runs",
+    "retained_red_output",
+    "unauthenticated_retained_note",
+]

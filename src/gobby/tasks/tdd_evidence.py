@@ -40,7 +40,7 @@ from gobby.tasks.tdd_python_evidence import (
     _original_test_node,
     _retains_python_red_source,
 )
-from gobby.tasks.tdd_retained_output import delivered_proof_runs, retained_red_output
+from gobby.tasks.tdd_retained_output import delivered_proof_runs, unauthenticated_retained_note
 from gobby.tasks.tdd_stub_revert import has_stub_revert_proof
 from gobby.tasks.transcript_background import unread_reason
 from gobby.tasks.transcript_evidence_models import (
@@ -448,9 +448,7 @@ def _find_red_run(
             reason = unread_reason(run, production_at, _rust_node(test))
         if reason is None:
             continue
-        path = run.background_output_path
-        if path is not None and retained_red_output(run, production_at) is None:
-            reason = f"{reason}; its retained full output at {path} could not be authenticated"
+        reason = f"{reason}{unauthenticated_retained_note(run, production_at)}"
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
 
