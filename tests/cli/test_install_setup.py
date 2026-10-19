@@ -214,12 +214,14 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gmcp", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_success(
         self,
         mock_ide: MagicMock,
         _mock_gclient: MagicMock,
+        _mock_gmcp: MagicMock,
         _mock_gterm: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
@@ -299,12 +301,14 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gmcp", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_stops_when_srt_install_fails(
         self,
         mock_ide: MagicMock,
         _mock_gclient: MagicMock,
+        _mock_gmcp: MagicMock,
         _mock_gterm: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
@@ -394,12 +398,14 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gmcp", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide: MagicMock,
         _mock_gclient: MagicMock,
+        _mock_gmcp: MagicMock,
         _mock_gterm: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
@@ -1406,3 +1412,8 @@ class TestDownloadReleaseBinaryChecksum:
             result = self._download(tmp_path)
         assert result is False
         assert not (tmp_path / "gcode").exists()
+
+
+def test_managed_native_binaries_include_gmcp() -> None:
+    assert "gmcp" in install_setup.MANAGED_NATIVE_BINARY_NAMES
+    assert install_setup._MANAGED_NATIVE_BINARY_DESCRIPTIONS["gmcp"] == "MCP stdio client"

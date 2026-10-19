@@ -28,6 +28,7 @@ from gobby.paths import get_gobby_home
 from . import install_setup_gclient as _gclient_impl
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
+from . import install_setup_gmcp as _gmcp_impl
 from . import install_setup_gterm as _gterm_impl
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from .install_setup_impeccable import ImpeccableInstallResult
@@ -278,12 +279,13 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
         click.echo(f"Warning: {label} install timed out")
 
 
-MANAGED_NATIVE_BINARY_NAMES: tuple[str, ...] = ("gcode", "ghook", "gterm", "gclient")
+MANAGED_NATIVE_BINARY_NAMES: tuple[str, ...] = ("gcode", "ghook", "gterm", "gclient", "gmcp")
 _MANAGED_NATIVE_BINARY_DESCRIPTIONS: dict[str, str] = {
     "gcode": "code index CLI",
     "ghook": "hook manager",
     "gterm": "terminal host",
     "gclient": "workspace client",
+    "gmcp": "MCP stdio client",
 }
 
 
@@ -310,6 +312,7 @@ def _run_managed_native_binary_installs() -> None:
         "ghook": _install_ghook,
         "gterm": _install_gterm,
         "gclient": _install_gclient,
+        "gmcp": _install_gmcp,
     }
     for name in MANAGED_NATIVE_BINARY_NAMES:
         description = _MANAGED_NATIVE_BINARY_DESCRIPTIONS[name]
@@ -576,3 +579,22 @@ def _install_gclient_from_cargo_install(bin_dir: Path, version: str | None = Non
 
 def _install_gclient(force: bool = False) -> dict[str, Any]:
     return _gclient_impl.install_gclient(_module(), force)
+
+
+_GMCP_BIN_NAME = "gmcp"
+
+
+def _get_installed_gmcp_version(bin_dir: Path) -> str | None:
+    return _gmcp_impl.get_installed_gmcp_version(_module(), bin_dir)
+
+
+def _write_gmcp_version_stamp(bin_dir: Path, version: str) -> None:
+    _gmcp_impl.write_gmcp_version_stamp(_module(), bin_dir, version)
+
+
+def _install_gmcp_from_submodule(bin_dir: Path) -> str | None:
+    return _gmcp_impl.install_gmcp_from_submodule(_module(), bin_dir)
+
+
+def _install_gmcp(force: bool = False) -> dict[str, Any]:
+    return _gmcp_impl.install_gmcp(_module(), force)
