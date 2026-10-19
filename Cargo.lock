@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.77"
+version = "0.4.79"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

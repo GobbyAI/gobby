@@ -11,6 +11,7 @@ from typing import Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.app_context import get_app_context
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
     apply_in_place_compact_context_loss,
@@ -504,6 +505,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
     async def handle_worktree_create(self, event: HookEvent) -> HookResponse:
         """Handle WORKTREE_CREATE with a git-backed default implementation."""
+        if node_origin():
+            # The hub owns the worktree records and checkout; a node-origin event leaves both.
+            return HookResponse(decision="allow")
         worktree_name = event.data.get("name")
         if not isinstance(worktree_name, str) or not worktree_name.strip():
             self.logger.warning("WORKTREE_CREATE missing worktree name")
@@ -633,6 +637,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
     async def handle_worktree_remove(self, event: HookEvent) -> HookResponse:
         """Handle WORKTREE_REMOVE with git-backed cleanup."""
+        if node_origin():
+            return HookResponse(decision="allow")
         worktree_path = event.data.get("worktree_path")
         if not isinstance(worktree_path, str) or not worktree_path.strip():
             self.logger.warning("WORKTREE_REMOVE missing worktree_path")

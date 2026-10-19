@@ -90,7 +90,7 @@ impl ServerHandler for WrapperServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        if !self.readiness_started.swap(true, Ordering::AcqRel) {
+        if claim_readiness(&self.readiness_started) {
             tokio::spawn(report_bridge_ready(Arc::clone(&self.dialer)));
         }
         serde_json::from_str(TOOLS_LIST)
@@ -162,6 +162,11 @@ where
         ));
     }
     attempts
+}
+
+/// Whether this call is the first claim on `started`, so the readiness report starts once.
+fn claim_readiness(started: &AtomicBool) -> bool {
+    !started.swap(true, Ordering::AcqRel)
 }
 
 /// Reports bridge readiness once the first `tools/list` has been answered.

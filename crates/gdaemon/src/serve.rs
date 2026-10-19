@@ -40,6 +40,7 @@ use crate::front_door::routes::{terminal_route_latch, unimplemented_families};
 use crate::front_door::tls;
 use crate::front_door::{FrontDoor, FrontDoorState};
 use crate::nodes::NativeRoutes;
+use crate::websocket::transport::NativeWs;
 
 /// How long an accepted connection may take to send its first byte and, for
 /// TLS, finish the handshake before it is dropped.
@@ -112,10 +113,12 @@ impl AcceptSource for TcpListener {
     }
 }
 
-/// A bound public listener and the loopback backend it proxies to.
+/// A bound public listener, the loopback backend it proxies to, and whether it
+/// is the WebSocket port, whose upgrades are the direct entry.
 pub struct PublicListener {
     pub listener: TcpListener,
     pub backend: SocketAddr,
+    pub ws_listener: bool,
 }
 
 /// Entry point for `gdaemon serve`. Builds a tokio runtime for this subcommand only.
@@ -193,11 +196,27 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        let Some((secret, auth, (backend_http, backend_ws), pool, terminals, families)) = native
-        else {
+        let Some((secret, auth, (backend_http, _), pool, terminals, families)) = native else {
             let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
+            };
+            let terminal_host = match gobby_core::machine::read_machine_id_from_home(home) {
+                Ok(machine_id) => {
+                    use crate::nodes::agents::host::{NodeEpochAuthority, node_host_options};
+                    let host = gobby_terminals::host::HostSupervisor::new(
+                        node_host_options(home, machine_id),
+                        Arc::new(NodeEpochAuthority { agents: node.agents.clone() }),
+                    );
+                    if let Err(error) = host.start().await {
+                        eprintln!("gdaemon node terminal host unavailable (supervisor will retry): {error}");
+                    }
+                    Some(host)
+                }
+                Err(error) => {
+                    eprintln!("gdaemon node terminal host identity unavailable: {error}");
+                    None
+                }
             };
             crate::nodes::hooks::drain::boot_release(&node.hook_ledger).await?;
             let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
@@ -225,6 +244,8 @@ pub fn run() -> Result<()> {
             .await;
             channel.abort();
             let _ = channel.await;
+            // Stop supervision only; live terminal processes survive a daemon restart.
+            drop(terminal_host);
             drop(claim);
             return result;
         };
@@ -254,8 +275,33 @@ pub fn run() -> Result<()> {
                 home.display()
             )
         })?);
-        let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
-        listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);
+        let mut listeners = bind(
+            &bootstrap.bind_host,
+            bootstrap.daemon_port,
+            backend_http,
+            false,
+        )
+        .await?;
+        listeners.extend(
+            bind(
+                &bootstrap.bind_host,
+                bootstrap.websocket_port,
+                backend_http,
+                true,
+            )
+            .await?,
+        );
+        let native_ws = NativeWs::new(
+            crate::websocket::broker::BroadcastBroker::default(),
+            secret.clone(),
+            Some(state.write_token.clone()),
+            SocketAddr::from(([127, 0, 0, 1], backend_http)),
+        );
+        let retire = tokio::spawn({
+            let native_ws = native_ws.clone();
+            let backend = state.backend.clone();
+            async move { native_ws.retire_on_backend_change(backend).await }
+        });
         let (stop, shutdown) = tokio::sync::watch::channel(false);
         let owner = state.clone();
         let mut lifecycle = tokio::spawn(owner_run(
@@ -277,6 +323,7 @@ pub fn run() -> Result<()> {
                 native: native_routes,
                 compare_log: Some(compare_log),
                 families,
+                native_ws: Some(native_ws),
             },
             async {
                 tokio::select! {
@@ -286,6 +333,7 @@ pub fn run() -> Result<()> {
             },
         )
         .await;
+        retire.abort();
         stop.send_replace(true);
         match owner_result {
             Some(finished) => finished,
@@ -345,12 +393,21 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
 /// Bind `host:port`, plus a same-port loopback companion when `host` is a
 /// concrete non-loopback address, so a local client dialing loopback always
 /// reaches the front door.
-pub async fn bind(host: &str, port: u16, backend_port: u16) -> Result<Vec<PublicListener>> {
+pub async fn bind(
+    host: &str,
+    port: u16,
+    backend_port: u16,
+    ws_listener: bool,
+) -> Result<Vec<PublicListener>> {
     let backend = SocketAddr::from(([127, 0, 0, 1], backend_port));
     Ok(bind_listeners(host, port)
         .await?
         .into_iter()
-        .map(|listener| PublicListener { listener, backend })
+        .map(|listener| PublicListener {
+            listener,
+            backend,
+            ws_listener,
+        })
         .collect())
 }
 
@@ -423,7 +480,7 @@ pub async fn serve(
     serve_with_runtime(listeners, routes, tls, auth, shared, shutdown).await
 }
 
-/// What `run` adds to every listener's [`FrontDoorState`]; `serve` adds nothing.
+/// What `run` adds to every listener's [`FrontDoorState`]; `serve` sets only `families`.
 #[derive(Default)]
 struct ListenerShared {
     #[cfg(unix)]
@@ -431,6 +488,8 @@ struct ListenerShared {
     native: NativeRoutes,
     compare_log: Option<Arc<CompareLog>>,
     families: &'static [&'static dyn RouteFamily<FrontDoorState>],
+    /// One transport shared by every listener; drained after the doors stop.
+    native_ws: Option<NativeWs>,
 }
 
 async fn serve_with_runtime(
@@ -442,18 +501,31 @@ async fn serve_with_runtime(
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut doors = Vec::with_capacity(listeners.len());
-    for PublicListener { listener, backend } in listeners {
-        let state = FrontDoorState {
+    for PublicListener {
+        listener,
+        backend,
+        ws_listener,
+    } in listeners
+    {
+        let mut state = FrontDoorState {
             #[cfg(unix)]
             runtime: shared.runtime.clone(),
             native: shared.native.clone(),
             compare_log: shared.compare_log.clone(),
+            ws_listener,
             ..FrontDoorState::new(backend, BackendState::Down, auth.clone())
         };
+        if let Some(native_ws) = &shared.native_ws {
+            state.native_ws = native_ws.clone();
+        }
         let table = RouteTable::new(shared.families, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));
     }
-    serve_doors(doors, tls, crate::heartbeat::HeartbeatHost::new(), shutdown).await
+    let result = serve_doors(doors, tls, crate::heartbeat::HeartbeatHost::new(), shutdown).await;
+    if let Some(native_ws) = &shared.native_ws {
+        native_ws.shutdown().await;
+    }
+    result
 }
 
 /// Serve prepared backend or node doors on their public listeners.

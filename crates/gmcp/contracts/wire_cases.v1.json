@@ -99,6 +99,12 @@
       "requests": [
         {
           "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        },
+        {
+          "method": "GET",
           "path": "/api/mcp/gobby-tasks/tools",
           "query": {},
           "body": null
@@ -112,6 +118,12 @@
         "tool_name": "create_task"
       },
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        },
         {
           "method": "POST",
           "path": "/api/mcp/tools/schema",

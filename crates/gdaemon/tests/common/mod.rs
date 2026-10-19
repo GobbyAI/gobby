@@ -30,7 +30,11 @@ pub async fn start_front_door(backend: SocketAddr) -> SocketAddr {
     tokio::spawn(async move {
         let routes = BTreeMap::new();
         serve(
-            vec![PublicListener { listener, backend }],
+            vec![PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &routes,
             None,
             Arc::new(
@@ -75,7 +79,11 @@ pub async fn start_front_door_on(
     let addr = listener.local_addr().expect("front door addr");
     tokio::spawn(async move {
         serve(
-            vec![PublicListener { listener, backend }],
+            vec![PublicListener {
+                listener,
+                backend,
+                ws_listener: false,
+            }],
             &routes,
             config,
             Arc::new(

@@ -10,9 +10,80 @@ import pytest
 from pytest_mock import MockerFixture
 
 from tests.e2e import lifecycle_processes
-from tests.e2e.lifecycle_processes import LifecycleProcesses
+from tests.e2e.lifecycle_processes import LifecycleProcesses, wait_for_retiring_backend
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("status", [psutil.STATUS_SLEEPING, "gone", "denied"])
+def test_retirement_timeout_retains_bounded_logs_and_process_identity(
+    tmp_path: Path, mocker: MockerFixture, status: str
+) -> None:
+    process = mocker.create_autospec(psutil.Process, instance=True)
+    process.pid = 42
+    process.create_time.return_value = 123.5
+    if status == "gone":
+        process.status.side_effect = psutil.NoSuchProcess(42)
+    elif status == "denied":
+        process.status.side_effect = psutil.AccessDenied(42)
+    else:
+        process.status.return_value = status
+    clock = [10.0]
+    mocker.patch("tests.e2e.lifecycle_processes.time.monotonic", side_effect=lambda: clock[0])
+    failure = AssertionError("Timed out waiting for retiring backend reaped")
+
+    def expire_wait(*_args: object, **_kwargs: object) -> None:
+        clock[0] = 40.25
+        raise failure
+
+    wait = mocker.patch.object(lifecycle_processes, "wait_for_condition", side_effect=expire_wait)
+    home = tmp_path / "disposable-home"
+    home.mkdir()
+    log_file = home / "daemon.log"
+    log_file.write_bytes(b"excluded-prefix" + b"x" * 8192)
+    missing_log = home / "daemon_error.log"
+    artifact = tmp_path / "retirement.log"
+
+    with pytest.raises(AssertionError) as caught:
+        wait_for_retiring_backend(
+            process, log_files=(log_file, missing_log), artifact_path=artifact
+        )
+
+    assert caught.value is failure
+    assert wait.call_args.kwargs == {
+        "timeout": 30.0,
+        "description": "retiring backend reaped",
+    }
+    log_file.unlink()
+    home.rmdir()
+    evidence = artifact.read_text()
+    assert "pid=42 create_time=123.5" in evidence
+    assert "elapsed=30.250s budget=30.0s" in evidence
+    assert (
+        f"status={status}" in evidence
+        if status == psutil.STATUS_SLEEPING
+        else "status=unavailable" in evidence
+    )
+    assert "excluded-prefix" not in evidence
+    assert "x" * 8192 in evidence
+    assert "daemon_error.log" in evidence
+    assert "unavailable" in evidence
+    assert evidence in failure.__notes__
+    assert f"Retained diagnostics: {artifact}" in failure.__notes__
+
+
+def test_retirement_success_leaves_no_failure_artifact(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    process = mocker.create_autospec(psutil.Process, instance=True)
+    process.create_time.return_value = 123.5
+    process.status.return_value = psutil.STATUS_ZOMBIE
+    artifact = tmp_path / "retirement.log"
+
+    wait_for_retiring_backend(process, log_files=(), artifact_path=artifact)
+
+    process.status.assert_called_once_with()
+    assert not artifact.exists()
 
 
 @pytest.mark.parametrize("interruption", ["timeout", "pytest-timeout", "sigint"])
@@ -49,7 +120,9 @@ def test_interrupted_restart_cleans_detached_replacement(
     calls = 0
     failure: BaseException
     if interruption == "timeout":
-        failure = subprocess.TimeoutExpired("isolated-cli", 1)
+        failure = subprocess.TimeoutExpired(
+            "isolated-cli", 0.1, output=b"partial out", stderr=b"partial err"
+        )
     elif interruption == "pytest-timeout":
         failure = pytest.fail.Exception("Timeout (>60.0s) from pytest-timeout.")
     else:
@@ -73,7 +146,16 @@ def test_interrupted_restart_cleans_detached_replacement(
             owner.track(10)
             owner.run(["isolated-cli"], env={}, cwd=tmp_path, timeout=1)
 
-    assert caught.value is failure
+    if interruption == "timeout":
+        assert caught.value is not failure
+        assert isinstance(caught.value, subprocess.TimeoutExpired)
+        assert caught.value.cmd == ["isolated-cli"]
+        assert caught.value.timeout == 1
+        assert caught.value.output == b"partial out"
+        assert caught.value.stderr == b"partial err"
+        assert caught.value.__suppress_context__ is True
+    else:
+        assert caught.value is failure
     assert set(stopped) == {11, 20, 30, 31}
     assert stopped[0] == 20
     child.wait.assert_called_once_with(timeout=1)

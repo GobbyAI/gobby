@@ -334,6 +334,23 @@ class DaemonProxy:
         """Get daemon status."""
         return await self._request("GET", "/api/admin/status", session_id=session_id)
 
+    async def _get_discovery_timeouts(self, session_id: str | None) -> dict[str, float]:
+        """Read caller-scoped budgets lazily, without importing the storage stack."""
+        inventory = await self._request("GET", "/api/mcp/servers", session_id=session_id)
+        servers = inventory.get("servers")
+        if inventory.get("success") is not True or not isinstance(servers, list):
+            return {}
+        timeouts: dict[str, float] = {}
+        for server in servers:
+            if not isinstance(server, dict) or server.get("transport") == "internal":
+                continue
+            name = server.get("name")
+            budget = server.get("discovery_timeout")
+            if isinstance(name, str) and isinstance(budget, int | float):
+                if math.isfinite(budget) and budget > 0:
+                    timeouts[name] = max(30.0, float(budget))
+        return timeouts
+
     async def list_tools(
         self,
         server_name: str | None = None,
@@ -343,11 +360,13 @@ class DaemonProxy:
         if server_name:
             if server_name in {".", ".."}:
                 return {"success": False, "error": "server_name must name one server"}
+            timeouts = await self._get_discovery_timeouts(session_id)
             listing_response: dict[str, Any] = _strip_none(
                 await self._request(
                     "GET",
                     f"/api/mcp/{quote(server_name, safe='')}/tools",
                     session_id=session_id,
+                    timeout=timeouts.get(server_name, 30.0),
                 )
             )
             return listing_response
@@ -355,6 +374,7 @@ class DaemonProxy:
         if status.get("success") is False:
             return status
         servers = status.get("mcp_servers", {})
+        timeouts = await self._get_discovery_timeouts(session_id)
         all_tools: dict[str, list[dict[str, Any]]] = {}
         for srv_name in servers:
             if srv_name in {"", ".", ".."}:
@@ -363,6 +383,7 @@ class DaemonProxy:
                 "GET",
                 f"/api/mcp/{quote(srv_name, safe='')}/tools",
                 session_id=session_id,
+                timeout=timeouts.get(srv_name, 30.0),
             )
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
@@ -448,11 +469,13 @@ class DaemonProxy:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get schema for a specific tool."""
+        timeouts = await self._get_discovery_timeouts(session_id)
         result = await self._request(
             "POST",
             "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
             session_id=session_id,
+            timeout=timeouts.get(server_name, 30.0),
         )
         if "error" in result:
             return {"success": False, "error": result["error"]}
@@ -597,6 +620,8 @@ class DaemonProxy:
         scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
         """Set a session or step variable."""
+        if session_id in {"", ".", ".."}:
+            return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/set",
@@ -611,6 +636,8 @@ class DaemonProxy:
         session_id: str,
     ) -> dict[str, Any]:
         """Get session-scoped variable(s)."""
+        if session_id in {"", ".", ".."}:
+            return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/get",

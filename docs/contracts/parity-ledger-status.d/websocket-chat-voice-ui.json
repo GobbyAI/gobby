@@ -160,8 +160,8 @@
     "note": "Python handler `HandlerMixin._handle_stop_request` at `src/gobby/servers/websocket/handlers/core.py:236`. Blocked on #21562 Sessions and transcripts: port session stop signaling and event publication to Rust."
   },
   "WS message subscribe": {
-    "status": "proxied",
-    "note": "Python handler `HandlerMixin._handle_subscribe` at `src/gobby/servers/websocket/handlers/core.py:173`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "status": "delegated",
+    "note": "Native mode: gdaemon owns the subscription set per entry (`crates/gdaemon/src/websocket/subscriptions.rs`, `SubscriptionState`) and filters broadcasts before fanout. Python `HandlerMixin._handle_subscribe` at `src/gobby/servers/websocket/handlers/core.py:173` stays for Python-only mode. Contract: `docs/contracts/native-ws-transport.md`. Proof: `crates/gdaemon/tests/native_ws_transport.rs`."
   },
   "WS message terminal_attach": {
     "status": "proxied",
@@ -228,8 +228,8 @@
     "note": "Python handler `VoiceMixin._handle_tts_stop` at `src/gobby/servers/websocket/voice/mixin.py:195`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
   },
   "WS message unsubscribe": {
-    "status": "proxied",
-    "note": "Python handler `HandlerMixin._handle_unsubscribe` at `src/gobby/servers/websocket/handlers/core.py:202`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "status": "delegated",
+    "note": "Native mode: gdaemon applies unsubscribe to the connection's subscription set (`crates/gdaemon/src/websocket/subscriptions.rs`, `SubscriptionState`). Python `HandlerMixin._handle_unsubscribe` at `src/gobby/servers/websocket/handlers/core.py:202` stays for Python-only mode. Contract: `docs/contracts/native-ws-transport.md`. Proof: `crates/gdaemon/tests/native_ws_transport.rs`."
   },
   "WS message voice_audio": {
     "status": "proxied",
@@ -260,12 +260,12 @@
     "note": "Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:187`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
   },
   "WS transport /ws": {
-    "status": "proxied",
-    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:77`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "status": "delegated",
+    "note": "gdaemon accepts the browser entry natively (`crates/gdaemon/src/front_door/mod.rs` dispatch, `crates/gdaemon/src/websocket/transport.rs` `NativeWs::accept`) and admits through the private `/_gobby/ws/bridge` leg. Python `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:77` remains for Python-only mode. Contract: `docs/contracts/native-ws-transport.md`. Proof: `crates/gdaemon/tests/native_ws_transport.rs::application_paths_are_native_and_hmr_is_proxy`."
   },
   "WS transport /ws/{path:path}": {
-    "status": "proxied",
-    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:50`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+    "status": "delegated",
+    "note": "gdaemon accepts every `/ws/...` browser path natively (`crates/gdaemon/src/front_door/mod.rs` `is_browser_ws`) and admits through the private `/_gobby/ws/bridge` leg. Python `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:50` remains for Python-only mode. Contract: `docs/contracts/native-ws-transport.md`. Proof: `crates/gdaemon/tests/native_ws_transport.rs::application_paths_are_native_and_hmr_is_proxy`."
   },
   "WS transport /_gobby/ws/bridge": {
     "status": "proxied",

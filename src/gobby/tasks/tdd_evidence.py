@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from itertools import chain
 from pathlib import PurePosixPath
 
+from gobby.tasks import tdd_pytest_provenance as provenance
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     is_assertion_failure,
@@ -27,7 +28,7 @@ from gobby.tasks.tdd_compacted_output import (
     has_compacted_pytest_failure,
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
-from gobby.tasks.tdd_pytest_provenance import runtime_pytest_output, terminal_runtime_frame
+from gobby.tasks.tdd_pytest_provenance import _FAILURE_SECTION_BOUNDARY_RE, _failure_section
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
@@ -64,17 +65,6 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
     re.MULTILINE,
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
-_FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_+\s+(?![_\s]+$)\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
-    r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
-    r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
-    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
-    # Each Rust node's block ends where the next nextest status line or libtest
-    # per-test header starts, so a sibling's panic never lands in this section.
-    r"\s*(?:[A-Z][A-Z-]*|TRY \d+ [A-Z-]+)\s+\[\s*[\d.]+s\]|"
-    r"-{3,4} (?:\S+ std(?:out|err) -{4}|STD(?:OUT|ERR):\s))",
-    re.IGNORECASE,
-)
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 # (path, symbol, session, run order, require_not_implemented, window edit order)
 _RedCacheKey = tuple[str, str, str, int, bool, int]
@@ -501,34 +491,15 @@ def _has_runtime_stub(
     command: str,
     parse_cache: PythonModuleCache | None,
 ) -> bool:
-    """Bind an HTTP/helper-mediated stub failure to its named test section."""
     nodes, same_file = _selected_pytest_nodes(command, test)
-    # Captured payload can forge even a fresh failure header. Never resume inside it.
-    output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", run.output or "", maxsplit=1)[
-        0
-    ]
-    # Verify source spans before a local repr can forge fresh headers or frame markers.
-    source_output = runtime_pytest_output(output, evidence, run, parse_cache)
-    if source_output is None:
-        return False
-    lines = output.splitlines()
-    for index, line in enumerate(lines):
-        header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
-        if header is None or not _header_names_artifact(
-            header.group("name"), test, nodes, same_file
-        ):
-            continue
-        section = runtime_pytest_output(_failure_section(lines, index), evidence, run, parse_cache)
-        if section is None or section not in source_output:
-            continue
-        terminal = terminal_runtime_frame(section, "\n".join(lines[index:]))
-        if (
-            _section_has_artifact_location(section, test)
-            and terminal is not None
-            and _has_python_runtime_stub(terminal, evidence, run, parse_cache, command=command)
-        ):
-            return True
-    return False
+    return any(
+        _header_names_artifact(name, test, nodes, same_file)
+        and _section_has_artifact_location(section, test)
+        and _has_python_runtime_stub(terminal, evidence, run, parse_cache, command=command)
+        for name, section, terminal in provenance.runtime_pytest_stub_sections(
+            run.output or "", evidence, run, parse_cache
+        )
+    )
 
 
 def _test_tightening_proof(
@@ -901,15 +872,6 @@ def _section_has_failure_detail(section: str) -> bool:
         or _PYTHON_EXCEPTION_DETAIL_RE.search(section)
         or _RAISE_EXCEPTION_DETAIL_RE.search(section)
     )
-
-
-def _failure_section(lines: list[str], start: int) -> str:
-    end = min(len(lines), start + 120)
-    for boundary in range(start + 1, end):
-        if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
-            end = boundary
-            break
-    return "\n".join(lines[start:end])
 
 
 def _is_test_execution_run(run: TranscriptValidationRun) -> bool:

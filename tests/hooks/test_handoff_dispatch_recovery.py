@@ -31,6 +31,7 @@ from gobby.sessions.compact_continuation import (
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
     build_handoff_continue_prompt,
@@ -254,6 +255,8 @@ def test_dead_dispatch_whose_compact_landed_continues_without_resubmitting(
     assert _receipts(hub_db) == 1
     continuation.assert_called_once()
     assert continuation.call_args.args[1] == build_handoff_continue_prompt()
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
     consumed = consume_pending_handoff(hub_db, SESSION_ID)
     assert consumed is not None
     assert _receipts(hub_db) == 1
@@ -343,6 +346,7 @@ async def test_dispatch_killed_after_precompact_confirms_its_boundary_once(
     assert _receipts(hub_db) == 1
     variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE].get("delivery_failed") is not True
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
     if source == "codex":
         # Codex has no compact SessionStart, so the reclaimed wait sends the pull prompt.
         continuation.assert_called_once()

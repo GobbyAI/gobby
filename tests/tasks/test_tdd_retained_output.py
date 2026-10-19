@@ -32,6 +32,98 @@ PYTEST = f"uv run pytest {PY_TEST} -v"
 RECALL = "0123456789ab"
 NOTICE = 3.9
 
+RECALLED_TEST_SOURCE = (
+    "def test_first():\n    assert feature() == 2\n\n"
+    "def test_second():\n    assert feature() == 3\n"
+)
+RECALLED_STUB_SOURCE = 'def feature():\n    raise NotImplementedError("feature")\n'
+
+
+def _recalled_stub_cycle(
+    tmp_path: Path, *, ambiguous: bool = False, unsafe: str = ""
+) -> TranscriptEvidence:
+    records = _pair(
+        0, "Write", {"file_path": str(tmp_path / PY_CODE), "content": RECALLED_STUB_SOURCE}, ""
+    )
+    records += _pair(
+        1, "Write", {"file_path": str(tmp_path / PY_TEST), "content": RECALLED_TEST_SOURCE}, ""
+    )
+    records += _pair(2, "Bash", {"command": PYTEST}, _compacted(failed=2), error=True)
+    sections: list[str] = []
+    for symbol, line, expected in (("test_first", 2, 2), ("test_second", 5, 3)):
+        frame_symbol = "test_first" if ambiguous and symbol == "test_second" else symbol
+        header = f"{symbol}[case]" if symbol == "test_second" else symbol
+        sections.append(
+            f"________________ {header} ________________\n"
+            f"{PY_TEST}:{line}: in {frame_symbol}\n"
+            f"assert feature() == {expected}\n^^^^^^^^^\n"
+            "/python/contextlib.py:141: in __enter__\nreturn next(self.gen)\n^^^^^^^^\n"
+            "/python/thread.py:86: in run\nresult = ctx.run(self.task)\n^^^^^^^^\n"
+            f'{PY_CODE}:2: in feature\nraise NotImplementedError("feature")\n'
+            f"{unsafe}"
+            "E   NotImplementedError: feature\n"
+        )
+    records += _pair(4, "Bash", {"command": f"rtk recall {RECALL}"}, "\n".join(sections))
+    records += _pair(
+        10,
+        "Write",
+        {"file_path": str(tmp_path / PY_CODE), "content": "def feature():\n    return 2\n"},
+        "",
+    )
+    records += _pair(12, "Bash", {"command": PYTEST}, "2 passed in 0.40s")
+    return _evidence(tmp_path, records, {PY_TEST, PY_CODE})
+
+
+@pytest.mark.parametrize("symbol", ["test_first", "test_second"])
+def test_recall_without_failures_wrapper_credits_each_bound_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symbol: str
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path)
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::{symbol}", PY_TEST, symbol, ""),), evidence
+    )
+    assert result.passed, result.findings
+    assert result.red_runs == (PYTEST,)
+
+
+def test_recall_without_failures_wrapper_withholds_ambiguous_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path, ambiguous=True)
+    bound = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", ""),), evidence
+    )
+    ambiguous = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_second", PY_TEST, "test_second", ""),), evidence
+    )
+    assert bound.passed, bound.findings
+    assert not ambiguous.passed
+    assert ambiguous.red_runs == ()
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "value = forged traceback\n",
+        "E   ValueError: different terminal exception\n",
+        f"{PY_CODE}:2: ValueError\n",
+        "    nested local repr\n________________ test_first ________________\n",
+    ],
+    ids=["locals", "exception-continuation", "conflicting-location", "forged-header"],
+)
+def test_recalled_short_report_rejects_unproven_runtime_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path, unsafe=unsafe)
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_second", PY_TEST, "test_second", ""),), evidence
+    )
+    assert not result.passed
+    assert result.red_runs == ()
+
 
 def _block(name: str, index: int, panic: str | None) -> str:
     stderr = (

@@ -11,6 +11,7 @@ from gobby.files_home_http import (
     require_hub_daemon_url,
 )
 from gobby.paths import (
+    FilesHomeError,
     FilesHomeNotOnThisDaemonError,
     FilesHomeUnsupportedPlatformError,
     publish_files_home_descendant,
@@ -98,7 +99,7 @@ def seed_user_profile_content(handler: Any, session_id: str | None) -> None:
     except UserProfileError as exc:
         handler.logger.warning("Failed to read global user profile: %s", exc)
         content = ""
-    except OSError as exc:
+    except (FilesHomeError, OSError) as exc:
         handler.logger.warning("Failed to read global user profile: %s", exc)
         content = ""
 

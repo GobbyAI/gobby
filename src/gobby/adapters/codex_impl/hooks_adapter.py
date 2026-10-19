@@ -30,6 +30,7 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts.codex_items import normalize_command_execution
@@ -44,6 +45,8 @@ _TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024
 
 def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:
     """Recover the authoritative Codex command result for one hook payload."""
+    if node_origin():
+        return None
     transcript_path = input_data.get("transcript_path")
     tool_use_id = input_data.get("tool_use_id")
     if not isinstance(transcript_path, str) or not isinstance(tool_use_id, str):

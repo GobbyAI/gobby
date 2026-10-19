@@ -23,7 +23,7 @@ from gobby.sessions.compact_continuation import (
     unregister_compact_boundary_waiter,
 )
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
-from gobby.sessions.handoff import ClaimedHandoffDelivery
+from gobby.sessions.handoff import ClaimedHandoffDelivery, clear_handoff_turn_end_pending
 from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.transcript_cursor import (
     CodexRolloutCursor,
@@ -67,6 +67,7 @@ def settle_landed_boundary(
         boundary_kind="compact",
         continuation_session_id=claimed.session_id,
     )
+    clear_handoff_turn_end_pending(db, claimed.session_id, attempt_id=claimed.attempt_id)
     mark_handoff_compact_continuation_pending(db, claimed.session_id, attempt_id=claimed.attempt_id)
     consume_and_schedule_handoff_compact_continuation(
         db,
@@ -152,6 +153,7 @@ async def confirm_reclaimed_compact(
         boundary_kind="compact",
         continuation_session_id=session_id,
     )
+    clear_handoff_turn_end_pending(db, session_id, attempt_id=claimed.attempt_id)
     if codex:
         # Codex fires no compact SessionStart: the pull prompt and release are ours.
         await asyncio.to_thread(

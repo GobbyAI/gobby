@@ -295,7 +295,10 @@ fn wire_results_match_fixture() -> Result<()> {
     let wire = fixture(WIRE_CASES)?;
     let calls = wire["calls"].as_object().context("calls")?;
 
-    let daemon = StubDaemon::start(vec![Response::json(200, tasks_listing())])?;
+    let daemon = StubDaemon::start(vec![
+        Response::json(200, json!({"success": true, "servers": []})),
+        Response::json(200, tasks_listing()),
+    ])?;
     let home = tempfile::tempdir()?;
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
     reachable.initialize()?;
@@ -384,6 +387,78 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
     let tolerance = Duration::from_millis(50);
     assert!(arrivals[1] + tolerance >= Duration::from_secs_f64(delays[1]));
     assert!(arrivals[2] - arrivals[1] + tolerance >= Duration::from_secs_f64(delays[2]));
+    Ok(())
+}
+
+#[test]
+fn bridge_ready_posts_once_across_tools_lists() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+    let daemon = StubDaemon::start((0..4).map(|_| ok()).collect())?;
+    let home = tempfile::tempdir()?;
+    let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+    gmcp.initialize()?;
+
+    for _ in 0..3 {
+        gmcp.call("tools/list", json!({}))?;
+    }
+    daemon.wait_for_requests(1);
+    gmcp.call_tool("list_mcp_servers", json!({}))?;
+    let readiness = daemon
+        .requests()
+        .iter()
+        .filter(|request| request.path.starts_with("/api/mcp/bridge/ready"))
+        .count();
+    assert_eq!(readiness, 1, "repeated tools/list must post readiness once");
+    Ok(())
+}
+
+#[test]
+fn session_ids_stay_one_path_segment() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+
+    {
+        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        let arguments = json!({"session_id": "sess/1", "name": "x", "value": 1});
+        gmcp.call_tool("set_variable", arguments.clone())?;
+        gmcp.call_tool("get_variable", arguments)?;
+        assert_eq!(
+            request_targets(&daemon),
+            [
+                "POST /api/sessions/sess%2F1/variables/set",
+                "POST /api/sessions/sess%2F1/variables/get",
+            ]
+        );
+    }
+
+    {
+        let daemon = StubDaemon::start((0..6).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        for (tool, session_id) in [
+            ("set_variable", ""),
+            ("set_variable", "."),
+            ("set_variable", ".."),
+            ("get_variable", ""),
+            ("get_variable", "."),
+            ("get_variable", ".."),
+        ] {
+            let arguments = json!({"session_id": session_id, "name": "x", "value": 1});
+            let error = gmcp
+                .call_tool(tool, arguments)
+                .expect_err("an empty or dot-only session_id must be refused");
+            assert!(
+                error
+                    .to_string()
+                    .contains("session_id must name one session"),
+                "{error}"
+            );
+        }
+        assert!(request_targets(&daemon).is_empty());
+    }
     Ok(())
 }
 
@@ -565,7 +640,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true, "tools": []}));
 
     {
-        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let daemon = StubDaemon::start(vec![ok(), ok(), ok()])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
         gmcp.initialize()?;
@@ -575,6 +650,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
             request_targets(&daemon),
             [
                 "DELETE /api/mcp/servers/..%2F..%2Fprojects%2Fp1",
+                "GET /api/mcp/servers",
                 "GET /api/mcp/a%2F..%2Fb/tools",
             ]
         );
@@ -613,6 +689,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
                 }),
             ),
             ok(),
+            ok(),
         ])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
@@ -620,7 +697,11 @@ fn server_names_stay_one_path_segment() -> Result<()> {
         gmcp.call_tool("list_tools", json!({"server_name": ""}))?;
         assert_eq!(
             request_targets(&daemon),
-            ["GET /api/admin/status", "GET /api/mcp/tasks/tools"]
+            [
+                "GET /api/admin/status",
+                "GET /api/mcp/servers",
+                "GET /api/mcp/tasks/tools",
+            ]
         );
     }
     Ok(())

@@ -21,6 +21,7 @@ from gobby.adapters.degradation import (
     persist_kwargs_from_hook_response,
     truncate_context_for_adapter,
 )
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
     HookEvent,
     HookEventType,
@@ -42,6 +43,8 @@ _MCP_SPILL_NOTICE = re.compile(
 
 def _spilled_mcp_output(text: str, tool_use_id: object) -> str:
     """Return the full MCP output Grok spilled to disk in place of its truncated copy."""
+    if node_origin():
+        return text
     match = _MCP_SPILL_NOTICE.search(text)
     if match is None or not isinstance(tool_use_id, str) or not tool_use_id:
         return text

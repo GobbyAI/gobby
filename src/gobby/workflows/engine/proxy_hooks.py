@@ -12,6 +12,7 @@ from pathlib import Path
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.config.validation_detection import classify_validation_command
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
@@ -289,6 +290,9 @@ class ProxyHooksMixin:
         *,
         blocking_deadline: BlockingEffectDeadline | None,
     ) -> bool | HookResponse:
+        if node_origin():
+            # RTK probes and spawns on the hub; a node-origin command passes through unrewritten.
+            return False
         tool_input = event.data.get("tool_input")
         if not isinstance(tool_input, dict):
             return False

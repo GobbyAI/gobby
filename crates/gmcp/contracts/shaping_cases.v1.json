@@ -112,6 +112,10 @@
       "responses": [
         {
           "success": true,
+          "servers": []
+        },
+        {
+          "success": true,
           "server": null,
           "tools": [
             {
@@ -131,6 +135,12 @@
         }
       ],
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        },
         {
           "method": "GET",
           "path": "/api/mcp/gobby-tasks/tools",
@@ -188,6 +198,10 @@
         },
         {
           "success": true,
+          "servers": []
+        },
+        {
+          "success": true,
           "tools": [
             {
               "name": "create_task",
@@ -215,6 +229,12 @@
         {
           "method": "GET",
           "path": "/api/admin/status",
+          "query": {},
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
           "query": {},
           "body": null
         },
@@ -281,6 +301,10 @@
       },
       "responses": [
         {
+          "success": true,
+          "servers": []
+        },
+        {
           "name": "create_task",
           "description": null,
           "inputSchema": {
@@ -295,6 +319,12 @@
         }
       ],
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        },
         {
           "method": "POST",
           "path": "/api/mcp/tools/schema",
@@ -339,11 +369,21 @@
       },
       "responses": [
         {
+          "success": true,
+          "servers": []
+        },
+        {
           "error": "tool not found",
           "detail": "dropped"
         }
       ],
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/mcp/servers",
+          "query": {},
+          "body": null
+        },
         {
           "method": "POST",
           "path": "/api/mcp/tools/schema",

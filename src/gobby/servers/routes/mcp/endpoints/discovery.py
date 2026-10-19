@@ -167,14 +167,22 @@ async def _list_external_server_tools(
     *,
     timeout: float,
 ) -> list[dict[str, Any]]:
+    config = _get_external_server_config(mcp_manager, server_name)
+    connect_timeout = getattr(config, "connect_timeout", None)
+    if isinstance(connect_timeout, int | float) and connect_timeout > 0:
+        total_timeout = connect_timeout + timeout
+    else:
+        connect_timeout = timeout
+        total_timeout = timeout
     try:
         start = time.monotonic()
         session = await asyncio.wait_for(
             mcp_manager.ensure_connected(server_name),
-            timeout=timeout,
+            timeout=connect_timeout,
         )
-        # Budget remaining time after connection to ensure total time <= timeout
-        remaining = timeout - (time.monotonic() - start)
+        # A cold connection may consume its entire configured budget. Preserve
+        # the listing remainder without restarting the overall deadline.
+        remaining = total_timeout - (time.monotonic() - start)
         if remaining <= 0:
             raise TimeoutError
         tools_result = await asyncio.wait_for(session.list_tools(), timeout=remaining)
@@ -196,7 +204,7 @@ async def _list_external_server_tools(
         logger.warning(
             "Timed out listing tools from MCP server %s after %.1fs",
             server_name,
-            timeout,
+            total_timeout,
         )
         await _disconnect_external_server(mcp_manager, server_name)
         return []

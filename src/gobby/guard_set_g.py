@@ -25,6 +25,7 @@ from gobby.agents.zig_packages import (
     unsandboxed_zig_cache_dir,
     vendored_libghostty_vt,
 )
+from gobby.paths import get_gobby_home
 
 REQUIRED_GATED_TARGETS = frozenset(
     {
@@ -123,23 +124,19 @@ def leaked_hosts(
 
 def durable_hosts(
     hosts: Mapping[int, Path],
-    temp_roots: tuple[Path, ...],
 ) -> dict[int, Path]:
-    return {
-        pid: socket_dir
-        for pid, socket_dir in hosts.items()
-        if not any(path_under(socket_dir, root) for root in temp_roots)
-    }
+    """Protect production hosts under Gobby home, not other sessions' hosts."""
+    home = get_gobby_home().resolve()
+    return {pid: socket_dir for pid, socket_dir in hosts.items() if path_under(socket_dir, home)}
 
 
 def ended_durable_hosts(
     before: Mapping[int, Path],
     after: Mapping[int, Path],
-    temp_roots: tuple[Path, ...],
 ) -> dict[int, Path]:
     return {
         pid: socket_dir
-        for pid, socket_dir in durable_hosts(before, temp_roots).items()
+        for pid, socket_dir in durable_hosts(before).items()
         if after.get(pid) != socket_dir
     }
 
@@ -158,18 +155,6 @@ def isolated_run_roots(env: Mapping[str, str] | None = None) -> tuple[Path, ...]
         seen.add(root)
         roots.append(root)
     return tuple(roots)
-
-
-def default_temp_roots(run_roots: tuple[Path, ...]) -> tuple[Path, ...]:
-    extras = (Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve())
-    ordered: list[Path] = []
-    seen: set[Path] = set()
-    for root in (*run_roots, *extras):
-        if root in seen:
-            continue
-        seen.add(root)
-        ordered.append(root)
-    return tuple(ordered)
 
 
 def finalize_pidfile_host(pid: int, socket_dir: Path, roots: tuple[Path, ...]) -> None:
@@ -203,7 +188,7 @@ def _emit(message: str, stream: TextIO | None = None) -> None:
 def _classify(socket_dir: Path, run_roots: tuple[Path, ...]) -> str:
     if any(path_under(socket_dir, root) for root in run_roots):
         return "owned"
-    return "durable"
+    return "durable" if path_under(socket_dir, get_gobby_home()) else "foreign"
 
 
 def _report_hosts(hosts: Mapping[int, Path], run_roots: tuple[Path, ...]) -> None:
@@ -220,7 +205,6 @@ def _after_check(
     before: Mapping[int, Path],
     command_returncode: int,
     run_roots: tuple[Path, ...],
-    temp_roots: tuple[Path, ...],
     snapshot: HostSnapshot,
     finalize: FinalizeHost,
 ) -> GuardOutcome:
@@ -234,7 +218,7 @@ def _after_check(
         finalize(pid, socket_dir, run_roots)
     final = snapshot()
     remaining = leaked_hosts(before, final, run_roots)
-    ended = ended_durable_hosts(before, final, temp_roots)
+    ended = ended_durable_hosts(before, final)
     if remaining:
         _emit("surviving session-owned gterm hosts:")
         _report_hosts(remaining, run_roots)
@@ -258,12 +242,10 @@ def wrap_command(
     snapshot: HostSnapshot | None = None,
     finalize: FinalizeHost | None = None,
     env: Mapping[str, str] | None = None,
-    temp_roots: tuple[Path, ...] | None = None,
 ) -> GuardOutcome:
     take_snapshot = snapshot or snapshot_gterm_hosts
     do_finalize = finalize or finalize_pidfile_host
     run = runner or _default_runner
-    roots = temp_roots if temp_roots is not None else default_temp_roots(run_roots)
     before = take_snapshot()
     command_returncode = 0
     outcome = GuardOutcome(command_returncode=1)
@@ -277,7 +259,6 @@ def wrap_command(
             before=before,
             command_returncode=command_returncode,
             run_roots=run_roots,
-            temp_roots=roots,
             snapshot=take_snapshot,
             finalize=do_finalize,
         )
@@ -290,11 +271,9 @@ def run_wrapped(
     run_roots: tuple[Path, ...],
     snapshot: HostSnapshot | None = None,
     finalize: FinalizeHost | None = None,
-    temp_roots: tuple[Path, ...] | None = None,
 ) -> GuardOutcome:
     take_snapshot = snapshot or snapshot_gterm_hosts
     do_finalize = finalize or finalize_pidfile_host
-    roots = temp_roots if temp_roots is not None else default_temp_roots(run_roots)
     before = take_snapshot()
     command_returncode = 0
     outcome = GuardOutcome(command_returncode=1)
@@ -308,7 +287,6 @@ def run_wrapped(
             before=before,
             command_returncode=command_returncode,
             run_roots=run_roots,
-            temp_roots=roots,
             snapshot=take_snapshot,
             finalize=do_finalize,
         )
@@ -320,11 +298,9 @@ def check_hosts(
     run_roots: tuple[Path, ...],
     snapshot: HostSnapshot | None = None,
     finalize: FinalizeHost | None = None,
-    temp_roots: tuple[Path, ...] | None = None,
 ) -> GuardOutcome:
     take_snapshot = snapshot or snapshot_gterm_hosts
     do_finalize = finalize or finalize_pidfile_host
-    roots = temp_roots if temp_roots is not None else default_temp_roots(run_roots)
     current = take_snapshot()
     owned = {
         pid: socket_dir
@@ -341,7 +317,7 @@ def check_hosts(
         for pid, socket_dir in final.items()
         if any(path_under(socket_dir, root) for root in run_roots)
     }
-    ended = ended_durable_hosts(current, final, roots)
+    ended = ended_durable_hosts(current, final)
     if remaining:
         _emit("surviving session-owned gterm hosts:")
         _report_hosts(remaining, run_roots)

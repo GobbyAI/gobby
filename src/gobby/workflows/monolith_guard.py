@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from gobby.hooks.checkout_reads import (
+    CheckoutReadUnavailable,
+    event_machine_id,
+    node_origin,
+    path_facts,
+)
+
 MONOLITH_LINE_LIMIT = 1_000
+_NODE_READ_LIMIT = 8_388_608
+_NODE_READ_BATCH = 1_000
 MONOLITH_SOURCE_EXTENSIONS = frozenset(
     {".py", ".ts", ".tsx", ".css", ".rs", ".js", ".mjs", ".cjs", ".sh"}
 )
@@ -49,6 +58,7 @@ class _FileProjection:
     current_count: int
     projected_count: int
     text: str | None
+    unavailable: str | None = None
 
 
 @dataclass
@@ -128,9 +138,10 @@ def projected_monolith_paths(
         _get_projection(projections, root, path)
 
     return [
-        projection.relative_path
+        _listed_path(projection)
         for projection in projections.values()
-        if projection.current_count >= MONOLITH_LINE_LIMIT
+        if projection.unavailable
+        or projection.current_count >= MONOLITH_LINE_LIMIT
         or projection.projected_count >= MONOLITH_LINE_LIMIT
     ]
 
@@ -145,26 +156,58 @@ def outstanding_monolith_paths(
     if root is None or not isinstance(task_files, Mapping):
         return []
 
+    raw_ledger = [
+        raw_path
+        for raw_paths in task_files.values()
+        if isinstance(raw_paths, list)
+        for raw_path in raw_paths
+        if isinstance(raw_path, str)
+    ]
+    if node_origin():
+        _prefetch_node_paths(root, raw_ledger)
+
     paths: list[str] = []
-    for raw_paths in task_files.values():
-        if not isinstance(raw_paths, list):
+    for raw_path in raw_ledger:
+        projection = _projection_for_path(root, raw_path)
+        if projection is None or (
+            not projection.unavailable and projection.current_count < MONOLITH_LINE_LIMIT
+        ):
             continue
-        for raw_path in raw_paths:
-            if not isinstance(raw_path, str):
-                continue
-            projection = _projection_for_path(root, raw_path)
-            if (
-                projection is not None
-                and projection.relative_path not in paths
-                and projection.current_count >= MONOLITH_LINE_LIMIT
-            ):
-                paths.append(projection.relative_path)
+        listed = _listed_path(projection)
+        if listed not in paths:
+            paths.append(listed)
     return paths
+
+
+def _prefetch_node_paths(root: Path, raw_paths: list[str]) -> None:
+    absolutes = list(
+        dict.fromkeys(
+            str(absolute)
+            for raw_path in raw_paths
+            if (absolute := _absolute_path(root, raw_path)) is not None
+        )
+    )
+    for start in range(0, len(absolutes), _NODE_READ_BATCH):
+        try:
+            path_facts(absolutes[start : start + _NODE_READ_BATCH], read_limit=_NODE_READ_LIMIT)
+        except CheckoutReadUnavailable:
+            # Each path's projection re-raises and lists the diagnostic.
+            return
+
+
+def _listed_path(projection: _FileProjection) -> str:
+    if projection.unavailable:
+        return f"{projection.relative_path} ({projection.unavailable})"
+    return projection.relative_path
 
 
 def _project_root(project_path: str | Path | None) -> Path | None:
     if not project_path:
         return None
+    if node_origin():
+        # The checkout lives on the node, so the hub cannot resolve or stat it.
+        node_root = Path(project_path)
+        return node_root if node_root.is_absolute() else None
     try:
         root = Path(project_path).expanduser().resolve()
     except (OSError, RuntimeError, TypeError, ValueError):
@@ -172,12 +215,20 @@ def _project_root(project_path: str | Path | None) -> Path | None:
     return root if root.is_dir() else None
 
 
-def _projection_for_path(root: Path, raw_path: str) -> _FileProjection | None:
+def _absolute_path(root: Path, raw_path: str) -> Path | None:
     normalized = raw_path.replace("\\", "/").strip()
     if not normalized:
         return None
     candidate = Path(normalized)
-    absolute = candidate if candidate.is_absolute() else root / candidate
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def _projection_for_path(root: Path, raw_path: str) -> _FileProjection | None:
+    absolute = _absolute_path(root, raw_path)
+    if absolute is None:
+        return None
+    if node_origin():
+        return _node_projection(root, absolute)
     try:
         absolute = absolute.resolve()
         relative = absolute.relative_to(root).as_posix()
@@ -194,6 +245,37 @@ def _projection_for_path(root: Path, raw_path: str) -> _FileProjection | None:
             return None
     count = _line_count(text)
     return _FileProjection(relative, count, count, text)
+
+
+def _node_projection(root: Path, absolute: Path) -> _FileProjection | None:
+    try:
+        (fact,) = path_facts([str(absolute)], read_limit=_NODE_READ_LIMIT).files
+    except CheckoutReadUnavailable as exc:
+        relative = _guard_relative(root, absolute)
+        return None if relative is None else _FileProjection(relative, 0, 0, None, str(exc))
+    if fact.kind == "outside":
+        return None
+    relative = _guard_relative(root, Path(fact.resolved))
+    if relative is None:
+        return None
+
+    text = None
+    if fact.kind == "file" and fact.data is not None:
+        text = fact.data.decode("utf-8", errors="replace")
+    count = _line_count(text)
+    unavailable = None
+    if fact.truncated and count < MONOLITH_LINE_LIMIT:
+        machine = event_machine_id() or "unknown"
+        unavailable = str(CheckoutReadUnavailable("truncated", machine))
+    return _FileProjection(relative, count, count, text, unavailable)
+
+
+def _guard_relative(root: Path, path: Path) -> str | None:
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    return relative if is_monolith_guard_path(relative) else None
 
 
 def _get_projection(
