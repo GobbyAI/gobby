@@ -227,7 +227,7 @@ async fn hub_channel(mut socket: WebSocket, nodes: Arc<HubNodes>, machine: Uuid,
         }
         _ => return,
     };
-    let (connection, mut close) = nodes.registry.register(machine);
+    let (connection, mut close, mut commands) = nodes.registry.register(machine);
     let mut last_write = Instant::now();
     let mut write = persist_heartbeat(nodes.clone(), machine, connection, version.clone());
     let admission = tokio::select! {
@@ -294,11 +294,32 @@ async fn hub_channel(mut socket: WebSocket, nodes: Arc<HubNodes>, machine: Uuid,
                 if key_tick(&mut socket, &nodes.db, &nodes.registry, machine, connection, key,
                     tick + timing.recheck_deadline).await { break; }
             },
+            command = commands.recv() => {
+                let Some(command) = command else { break; };
+                let text = match serde_json::to_string(&command) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        eprintln!("could not encode node command: {error}");
+                        break;
+                    }
+                };
+                let sent = tokio::select! {
+                    biased;
+                    _ = &mut close => false,
+                    result = tokio::time::timeout_at(idle, socket.send(Message::Text(text.into()))) =>
+                        matches!(result, Ok(Ok(()))),
+                };
+                if !sent { break; }
+            },
             frame = socket.recv() => {
                 let Some(Ok(frame)) = frame else { break; };
                 idle = Instant::now() + timing.idle_timeout;
                 match frame {
                     Message::Close(_) => break,
+                    Message::Text(text) => match serde_json::from_str(&text) {
+                        Ok(reply) => commands.resolve(reply),
+                        Err(error) => eprintln!("dropping malformed node reply: {error}"),
+                    },
                     Message::Ping(_) if last_write.elapsed() >= timing.heartbeat_write && write.is_finished() => {
                         last_write = Instant::now();
                         write = persist_heartbeat(nodes.clone(), machine, connection, version.clone());

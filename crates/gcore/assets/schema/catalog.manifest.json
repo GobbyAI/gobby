@@ -5629,6 +5629,78 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "validation_run_records.agent_run_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.argv",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.completed_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.cwd",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.executable",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.exit_code",
+      "definition": "integer|int4|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.gdaemon_identity",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.not_reusable_reason",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.outcome",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.python_version",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.repo_root",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.reusable",
+      "definition": "boolean|bool|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.started_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "validation_run_records.tree_end",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "validation_run_records.tree_start",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "workflow_audit_log.condition",
       "definition": "text|text|YES||NEVER"
     },
@@ -7735,6 +7807,22 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "validation_run_records.validation_run_records_check",
+      "definition": "CHECK (reusable = (not_reusable_reason IS NULL))"
+    },
+    {
+      "name": "validation_run_records.validation_run_records_check1",
+      "definition": "CHECK ((outcome <> ALL (ARRAY['timed_out'::text, 'interrupted'::text])) OR exit_code IS NULL)"
+    },
+    {
+      "name": "validation_run_records.validation_run_records_outcome_check",
+      "definition": "CHECK (outcome = ANY (ARRAY['passed'::text, 'failed'::text, 'timed_out'::text, 'interrupted'::text]))"
+    },
+    {
+      "name": "validation_run_records.validation_run_records_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
       "name": "workflow_audit_log.workflow_audit_log_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -9797,6 +9885,14 @@
     {
       "name": "users_pkey",
       "definition": "CREATE UNIQUE INDEX users_pkey ON $schema.users USING btree (id)"
+    },
+    {
+      "name": "validation_run_records_pkey",
+      "definition": "CREATE UNIQUE INDEX validation_run_records_pkey ON $schema.validation_run_records USING btree (id)"
+    },
+    {
+      "name": "validation_run_records_project_completed",
+      "definition": "CREATE INDEX validation_run_records_project_completed ON $schema.validation_run_records USING btree (project_id, completed_at DESC)"
     },
     {
       "name": "workflow_audit_log_pkey",

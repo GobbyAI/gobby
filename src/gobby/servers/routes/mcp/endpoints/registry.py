@@ -359,16 +359,8 @@ async def refresh_mcp_tools(
                             connect_id = (
                                 instance.id if isinstance(instance.id, str) else server_name
                             )
-                            session = await server.mcp_manager.ensure_connected(connect_id)
-                            tools_result = await session.list_tools()
-                            for mcp_tool in tools_result.tools:
-                                tools.append(
-                                    {
-                                        "name": mcp_tool.name,
-                                        "description": mcp_tool.description,
-                                        "inputSchema": mcp_tool.input_schema,
-                                    }
-                                )
+                            tools_by_server = await server.mcp_manager.list_tools(connect_id)
+                            tools = tools_by_server[server_name]
                     except Exception as e:
                         logger.warning("Failed to refresh %s: %s", server_name, e)
                         stats["by_server"][stats_key] = {

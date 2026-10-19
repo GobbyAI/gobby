@@ -341,10 +341,12 @@ class DaemonProxy:
     ) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
+            if server_name in {".", ".."}:
+                return {"success": False, "error": "server_name must name one server"}
             listing_response: dict[str, Any] = _strip_none(
                 await self._request(
                     "GET",
-                    f"/api/mcp/{server_name}/tools",
+                    f"/api/mcp/{quote(server_name, safe='')}/tools",
                     session_id=session_id,
                 )
             )
@@ -355,9 +357,11 @@ class DaemonProxy:
         servers = status.get("mcp_servers", {})
         all_tools: dict[str, list[dict[str, Any]]] = {}
         for srv_name in servers:
+            if srv_name in {"", ".", ".."}:
+                continue
             result = await self._request(
                 "GET",
-                f"/api/mcp/{srv_name}/tools",
+                f"/api/mcp/{quote(srv_name, safe='')}/tools",
                 session_id=session_id,
             )
             if result.get("success"):
@@ -382,6 +386,8 @@ class DaemonProxy:
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
+        if server_name in {".", ".."} or tool_name in {".", ".."}:
+            return {"success": False, "error": "server_name/tool_name must name one entry"}
 
         tool_timeouts = await self._get_tool_timeouts()
 
@@ -406,7 +412,7 @@ class DaemonProxy:
                 }
             timeout = arg_timeout + WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS
 
-        request_path = f"/api/mcp/{server_name}/tools/{tool_name}"
+        request_path = f"/api/mcp/{quote(server_name, safe='')}/tools/{quote(tool_name, safe='')}"
         request_payload: Any = arguments if arguments is not None else {}
         if tool_name in WAIT_TOOL_NAMES:
             request_path = "/api/mcp/tools/call"
@@ -553,12 +559,14 @@ class DaemonProxy:
 
     async def remove_mcp_server(self, name: str, scope: str = "project") -> dict[str, Any]:
         """Remove an MCP server from the daemon's configuration."""
+        if name in {"", ".", ".."}:
+            return {"success": False, "error": "name must name one server"}
         params = {"scope": scope}
         if self._project_id:
             params["project_id"] = self._project_id
         return await self._request(
             "DELETE",
-            f"/api/mcp/servers/{name}",
+            f"/api/mcp/servers/{quote(name, safe='')}",
             params=params,
         )
 
