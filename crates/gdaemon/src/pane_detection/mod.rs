@@ -1,15 +1,58 @@
 //! Pane detection manifests, the Rust side of `gobby.agents.detection` (#24381, plan 2.12).
 
+mod attention;
+mod casefold_table;
+mod digits;
+mod idle;
+mod loop_tracker;
 mod manifest;
 mod matcher;
+mod prompt;
+mod quota;
 mod regions;
+mod stall;
 
 use std::collections::HashMap;
 
+pub use attention::{
+    AttentionClassification, AttentionInput, AttentionTransition, classify_attention,
+};
+pub use idle::{ComposerRead, ComposerState, IdleDetector};
+pub use loop_tracker::LoopTracker;
 pub use manifest::{DetectionState, ManifestError};
 pub use matcher::{
     CompiledManifest, DetectionMatch, IssueCode, ManifestIssue, MatchEvaluation, compile_manifest,
 };
+pub use prompt::{DetectedPrompt, PromptDetector, PromptKind};
+pub use quota::{ProviderQuotaExhaustion, capacity_pane_message, detect_provider_quota};
+pub use stall::{StallClassification, StallClassifier, StallRunState, StallStatus};
+
+/// Per-run detector state the caller owns (#24382, plan 2.14). Hub-side policy counters, such as
+/// reprompts and reset-idle, stay with the hub and are not part of it.
+#[derive(Debug, Default)]
+pub struct RunDetectState {
+    pub stall: StallRunState,
+    pub loop_dismissals: u32,
+    trust_dismissed: bool,
+    approval_fingerprint: Option<String>,
+}
+
+impl RunDetectState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records that the run's trust prompt was dismissed, as `PromptDetector.mark_dismissed`.
+    pub fn mark_trust_dismissed(&mut self) {
+        self.trust_dismissed = true;
+    }
+
+    /// Records the approval prompt already handled for this run, as
+    /// `PromptDetector.mark_approval_prompt_dismissed`.
+    pub fn mark_approval_prompt_dismissed(&mut self, pane: &str) {
+        self.approval_fingerprint = Some(prompt::pane_fingerprint(pane));
+    }
+}
 
 /// Compiled manifests keyed by provider id, as the Python registry holds them.
 #[derive(Debug, Default)]

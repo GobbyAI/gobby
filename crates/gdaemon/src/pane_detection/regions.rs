@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 
 use fancy_regex::Regex;
 
+use super::casefold_table::CASEFOLD_TABLE;
 use super::manifest::Region;
 
 /// Python's `str.isspace` for one character: Unicode whitespace, plus the separators
@@ -21,14 +22,22 @@ pub(super) fn py_strip(value: &str) -> &str {
     value.trim_matches(py_isspace)
 }
 
-fn py_lstrip(value: &str) -> &str {
+pub(super) fn py_lstrip(value: &str) -> &str {
     value.trim_start_matches(py_isspace)
 }
 
-/// Python's `str.casefold`, approximated by `to_lowercase`. The two differ on some characters,
-/// such as the German sharp s; the corpus avoids them.
+/// Python's `str.casefold`: each character folds through the full case folding table, which
+/// expands sharp s and folds final sigma to sigma. `to_lowercase` does neither, so it is not
+/// used here. Characters outside the table fold to themselves.
 pub(super) fn casefold(value: &str) -> String {
-    value.to_lowercase()
+    let mut folded = String::with_capacity(value.len());
+    for c in value.chars() {
+        match CASEFOLD_TABLE.binary_search_by_key(&c, |&(from, _)| from) {
+            Ok(index) => folded.push_str(CASEFOLD_TABLE[index].1),
+            Err(_) => folded.push(c),
+        }
+    }
+    folded
 }
 
 fn is_line_boundary(c: char) -> bool {
@@ -162,7 +171,7 @@ fn matches(regex: &Regex, text: &str) -> bool {
     regex.is_match(text).is_ok_and(|matched| matched)
 }
 
-fn cached<'a>(cell: &'a OnceLock<Regex>, pattern: &str) -> &'a Regex {
+pub(super) fn cached<'a>(cell: &'a OnceLock<Regex>, pattern: &str) -> &'a Regex {
     cell.get_or_init(|| Regex::new(pattern).expect("constant composer pattern compiles"))
 }
 
@@ -191,3 +200,7 @@ fn codex_footer() -> &'static Regex {
         r"^[\s\x1c-\x1f]*(?:← for agents · )?\? for shortcuts(?:[\s\x1c-\x1f]{2,}⚠\x{FE0F}? \d+(?: warnings?)? · f2(?: to view)?)?[\s\x1c-\x1f]*$",
     )
 }
+
+#[cfg(test)]
+#[path = "regions/tests.rs"]
+mod tests;
