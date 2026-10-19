@@ -1859,6 +1859,38 @@ def test_host_spawn_drops_the_daemons_tmux_pane(
     assert envs[0]["GTERM_LOG_FILE"].endswith(".log")
 
 
+def test_host_spawn_drops_daemon_internal_supervisor_fd_and_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The supervisor fd and front-door secret belong to the daemon; seat shells
+    inherit the host env, so the spawn must not pass them on."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "7")
+    monkeypatch.setenv("GOBBY_FRONT_DOOR_SECRET", "test-only-secret")
+    monkeypatch.setenv("GOBBY_TEST_KEEP_ME", "kept")
+    envs: list[dict[str, str]] = []
+
+    class _BoomPopen:
+        def __init__(self, args: list[str], *, env: dict[str, str], **kwargs: object) -> None:
+            del args, kwargs
+            envs.append(env)
+            raise OSError("boom")
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), binary_path="/bin/echo"),
+        terminal_config=TerminalConfig(),
+    )
+    with patch("subprocess.Popen", _BoomPopen):
+        with pytest.raises(OSError, match="boom"):
+            host._spawn_host_process()
+
+    assert "GOBBY_SUPERVISOR_FD" not in envs[0]
+    assert "GOBBY_FRONT_DOOR_SECRET" not in envs[0]
+    assert envs[0]["GOBBY_TEST_KEEP_ME"] == "kept"
+
+
 @pytest.mark.asyncio
 async def test_ensure_restart_is_singleflight_with_backoff(
     tmp_path: Path,
