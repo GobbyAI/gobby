@@ -403,7 +403,7 @@ def stage_handoff_attempt(
     prior status is recorded on the attempt markers and in the returned state.
     Staging always captures the active/paused status so compact attempts can restore
     a later PreCompact transition without implying it already ran.
-    Terminal delivery arms the turn-end bypass until SessionStart. Queued
+    Terminal delivery arms the turn-end bypass until its compact receipt or SessionStart. Queued
     in-process delivery arms it until the queued compact settles; idle in-process
     delivery completes its continuation without crossing a turn boundary.
     """
