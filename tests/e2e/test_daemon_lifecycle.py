@@ -19,7 +19,6 @@ import ssl
 import subprocess
 import sys
 from collections.abc import Generator
-from functools import partial
 from pathlib import Path
 
 import httpx
@@ -52,7 +51,7 @@ from tests.e2e.conftest import (
     terminate_process_tree,
     wait_for_daemon_health,
 )
-from tests.e2e.lifecycle_processes import LifecycleProcesses
+from tests.e2e.lifecycle_processes import LifecycleProcesses, wait_for_retiring_backend
 
 pytestmark = pytest.mark.e2e
 
@@ -550,6 +549,7 @@ class TestFrontDoor:
     def test_backend_sigkill_and_repeated_restart_preserve_native_authority(
         self,
         daemon_instance: DaemonInstance,
+        tmp_path: Path,
     ) -> None:
         owner = psutil.Process(daemon_instance.pid)
         backend = _backend_child(owner.pid)
@@ -571,10 +571,10 @@ class TestFrontDoor:
             )
             assert response.status_code == 200, response.text
             assert response.json()["backend_pid"] == previous.pid
-            wait_for_condition(
-                partial(_gone, previous),
-                timeout=30.0,
-                description="retiring backend reaped",
+            wait_for_retiring_backend(
+                previous,
+                log_files=(daemon_instance.log_file, daemon_instance.error_log_file),
+                artifact_path=tmp_path / f"retiring-backend-{_round}.log",
             )
             wait_for_daemon_health(daemon_instance.http_port, log_file=daemon_instance.log_file)
             assert _backend_child(owner.pid).pid != previous.pid
