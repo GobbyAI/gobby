@@ -15,7 +15,8 @@ use axum::http::{Method, Request, Response, StatusCode};
 use futures_util::FutureExt;
 use gobby_core::grant::presentation::sign_grant;
 use gobby_core::grant::{
-    EXPECTED_API_CONTRACT, GRANT_HEADER, GrantBundle, PrincipalKind, deployment_token,
+    EXPECTED_API_CONTRACT, GRANT_HEADER, GrantBundle, PostgresCapability, PrincipalKind,
+    deployment_token,
     encode_grant_header, expected_schema_identity,
 };
 use gobby_core::postgres_pool::{Pool, PoolSettings};
@@ -547,6 +548,54 @@ async fn presentation_rejections_follow_python_order_without_the_backend() -> Re
             "grant payload checksum is invalid",
         )
         .await;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn interactive_contract_errors_match_python_bodies() -> Result<()> {
+    database_case(async |db| {
+        let home = tempfile::tempdir()?;
+        let machine = Uuid::new_v4();
+        std::fs::write(home.path().join("machine_id"), machine.to_string())?;
+        let token = deployment_token(home.path());
+        let project = Uuid::new_v4();
+        db.seed(&token, EPOCH, SECRET).await?;
+        db.publish(&token, CONFIG_REVISION, &json!({"ai.embeddings.dim": 768}))
+            .await?;
+        db.bind(&token, machine, project).await?;
+        let family = RuntimeFamily::new(pool(&db.url)?, home.path().to_owned());
+
+        let mut malformed = interactive(&token, machine, project);
+        malformed.principal.project_id = "not-a-uuid".into();
+        let malformed = sign_grant(&malformed, SECRET.as_bytes()).expect("sign");
+        let rejected = call(&family, config_request(&malformed)).await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json_body(rejected).await,
+            json!({"detail": "malformed grant"})
+        );
+
+        let mut overflow = interactive(&token, machine, project);
+        if let PostgresCapability::Direct {
+            credential_generation,
+            ..
+        } = &mut overflow.capabilities.postgres
+        {
+            *credential_generation = i64::from(i32::MAX) + 1;
+        }
+        let overflow = sign_grant(&overflow, SECRET.as_bytes()).expect("sign");
+        let failed = call(&family, config_request(&overflow)).await;
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            json_body(failed).await,
+            json!({
+                "status": "error",
+                "message": "Internal server error",
+                "error_logged": true,
+            })
+        );
         Ok(())
     })
     .await

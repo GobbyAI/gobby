@@ -97,9 +97,7 @@ fn presented_grant(headers: &HeaderMap) -> Result<GrantBundle, Response<Body>> {
             json!({"detail": "Runtime grant required"}),
         ));
     };
-    decode_grant_header(value).map_err(|_| {
-        json_response(StatusCode::BAD_REQUEST, json!({"detail": "malformed grant"}))
-    })
+    decode_grant_header(value).map_err(|_| malformed_grant())
 }
 
 /// The deployment's fencing epoch and grant-signing secret, read per request so a
@@ -153,10 +151,12 @@ async fn interactive_revoked(
         return Err(grant_unavailable());
     };
     let Ok(project) = uuid::Uuid::parse_str(&grant.principal.project_id) else {
-        return Ok(true);
+        return Err(malformed_grant());
     };
     let Ok(generation) = i32::try_from(generation) else {
-        return Ok(true);
+        return Err(internal(format!(
+            "credential generation {generation} is outside i32"
+        )));
     };
     let client = state.pool.get().await.map_err(internal)?;
     let schema_row = client
@@ -199,11 +199,15 @@ fn grant_unavailable() -> Response<Body> {
     )
 }
 
+fn malformed_grant() -> Response<Body> {
+    json_response(StatusCode::BAD_REQUEST, json!({"detail": "malformed grant"}))
+}
+
 fn internal(error: impl Debug) -> Response<Body> {
     eprintln!("gdaemon runtime: grant presentation failed: {error:?}");
     json_response(
         StatusCode::INTERNAL_SERVER_ERROR,
-        json!({"detail": "Internal server error"}),
+        json!({"status": "error", "message": "Internal server error", "error_logged": true}),
     )
 }
 
