@@ -1,5 +1,6 @@
 //! The tools that forward to the daemon, each built the way its `DaemonProxy` method builds it.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::time::Duration;
 
@@ -36,23 +37,25 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                     None,
                 ));
             }
+            let timeouts = discovery_timeouts(dialer, session);
             let path = format!("/api/mcp/{}/tools", quote(server));
             Ok(strip_none(dialer.request(
                 "GET",
                 &path,
                 None,
-                scoped(session),
+                discovery_options(&timeouts, server, session),
             )))
         }
         "get_tool_schema" => {
             let server_name = str_arg(arguments, "server_name")?;
             let tool_name = str_arg(arguments, "tool_name")?;
+            let timeouts = discovery_timeouts(dialer, session);
             let body = json!({"server_name": server_name, "tool_name": tool_name});
             let answer = dialer.request(
                 "POST",
                 "/api/mcp/tools/schema",
                 Some(&body),
-                scoped(session),
+                discovery_options(&timeouts, server_name, session),
             );
             Ok(tool_schema(answer))
         }
@@ -178,6 +181,7 @@ fn list_all_tools(dialer: &Dialer, session: Option<&str>) -> Value {
     if status.get("success") == Some(&Value::Bool(false)) {
         return status;
     }
+    let timeouts = discovery_timeouts(dialer, session);
     let mut servers = Vec::new();
     if let Some(names) = status.get("mcp_servers").and_then(Value::as_object) {
         for name in names.keys() {
@@ -185,7 +189,12 @@ fn list_all_tools(dialer: &Dialer, session: Option<&str>) -> Value {
                 continue;
             }
             let path = format!("/api/mcp/{}/tools", quote(name));
-            let listing = dialer.request("GET", &path, None, scoped(session));
+            let listing = dialer.request(
+                "GET",
+                &path,
+                None,
+                discovery_options(&timeouts, name, session),
+            );
             if listing.get("success") == Some(&Value::Bool(true)) {
                 let tools = listing.get("tools").cloned().unwrap_or_else(|| json!([]));
                 servers.push(json!({"name": name, "tools": tools}));
@@ -193,6 +202,51 @@ fn list_all_tools(dialer: &Dialer, session: Option<&str>) -> Value {
         }
     }
     strip_none(json!({"success": true, "servers": servers}))
+}
+
+fn discovery_timeouts(dialer: &Dialer, session: Option<&str>) -> BTreeMap<String, Duration> {
+    let inventory = dialer.request("GET", "/api/mcp/servers", None, scoped(session));
+    parse_discovery_timeouts(&inventory)
+}
+
+fn parse_discovery_timeouts(inventory: &Value) -> BTreeMap<String, Duration> {
+    let mut timeouts = BTreeMap::new();
+    if inventory.get("success") != Some(&Value::Bool(true)) {
+        return timeouts;
+    }
+    if let Some(servers) = inventory.get("servers").and_then(Value::as_array) {
+        for server in servers {
+            if server.get("transport").and_then(Value::as_str) == Some("internal") {
+                continue;
+            }
+            let Some(name) = server.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(budget) = server.get("discovery_timeout").and_then(Value::as_f64) else {
+                continue;
+            };
+            if budget.is_finite() && budget > 0.0 {
+                let timeout =
+                    Duration::try_from_secs_f64(budget.max(30.0)).unwrap_or(Duration::MAX);
+                timeouts.insert(name.to_owned(), timeout);
+            }
+        }
+    }
+    timeouts
+}
+
+fn discovery_options<'a>(
+    timeouts: &BTreeMap<String, Duration>,
+    server: &str,
+    session: Option<&'a str>,
+) -> RequestOptions<'a> {
+    RequestOptions {
+        timeout: timeouts
+            .get(server)
+            .copied()
+            .unwrap_or(Duration::from_secs(30)),
+        ..scoped(session)
+    }
 }
 
 /// The call result for an answer: the answer as pretty JSON text, and as structured content.
@@ -265,3 +319,7 @@ fn quote(segment: &str) -> String {
 fn is_dot_segment(name: &str) -> bool {
     matches!(name, "." | "..")
 }
+
+#[cfg(test)]
+#[path = "tools/tests.rs"]
+mod tests;
