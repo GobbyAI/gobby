@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.checkout_reads import delivery_scope
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_PROCESSING_LEASE_TTL_SECONDS,
     finalize_envelope_processed,
@@ -333,7 +334,11 @@ async def run_adapter_hook(
         # staging buffer and nothing they stage survives into the next delivery
         # that lands on those shared threads (#21427).
         release_token = _current_session_admission_release.set(end_worker_admission)
-        with worker_staging_scope():
+        input_data = payload.get("input_data") or {}
+        with (
+            worker_staging_scope(),
+            delivery_scope(input_data.get("machine_id"), loop, input_data.get("cwd") or ""),
+        ):
             try:
                 result = cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
                 staged = take_worker_staging()
