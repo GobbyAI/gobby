@@ -12,6 +12,7 @@ on:
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gterminal.yml"
       - ".github/workflows/release-gclient.yml"
+      - ".github/workflows/release-gmcp.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**"
@@ -28,6 +29,7 @@ on:
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gterminal.yml"
       - ".github/workflows/release-gclient.yml"
+      - ".github/workflows/release-gmcp.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**"
@@ -124,6 +126,13 @@ jobs:
       # gobby-client: clippy is Zig-free; its tests run after the Zig setup
       - name: Clippy (gobby-client)
         run: cargo clippy -p gobby-client --all-targets -- -D warnings
+
+      # gobby-mcp: Zig-free stdio wrapper over gobby-core; no terminal host deps
+      - name: Clippy (gobby-mcp)
+        run: cargo clippy -p gobby-mcp --all-targets -- -D warnings
+
+      - name: Test (gobby-mcp)
+        run: cargo nextest run --profile ci -p gobby-mcp
 
       - name: Setup Zig 0.16.0
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29

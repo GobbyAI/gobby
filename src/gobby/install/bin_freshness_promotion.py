@@ -301,11 +301,12 @@ def workspace_binary_is_current(
 # Which crates a binary is built from. `workspace_binary_is_current` answers a
 # sharper question but needs a build artifact to compare against, so it cannot
 # tell an operator their installed binary is behind the source it was built from.
-# gclient carries gcore because it depends on it: a gobby-core change leaves an
-# unrebuilt gclient just as stale as one of its own. gterm has no gobby-core
-# dependency, so it watches only itself.
+# gclient and gmcp carry gcore because they depend on it: a gobby-core change
+# leaves an unrebuilt gclient or gmcp just as stale as one of its own. gterm has
+# no gobby-core dependency, so it watches only itself.
 WORKSPACE_BINARY_CRATES: dict[str, tuple[str, ...]] = {
     "gclient": ("gclient", "gcore"),
+    "gmcp": ("gmcp", "gcore"),
     "gterm": ("gterminal",),
 }
 _SOURCE_COMMIT_TIMEOUT_SECONDS = 10

@@ -1163,6 +1163,16 @@ class TestNativeBinPredatesSource:
 
         assert asked == [("gclient", "gcore")]
 
+    def test_gmcp_tracks_gmcp_and_gcore(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked, bin_dir = self._checkout(tmp_path, monkeypatch)
+        self._install(bin_dir, "gmcp", mtime=2000.0)
+
+        native_bin_predates_source("gmcp", bin_dir=bin_dir)
+
+        assert asked == [("gmcp", "gcore")]
+
     def test_gterm_ignores_gcore_because_it_does_not_depend_on_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
