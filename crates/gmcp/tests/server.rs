@@ -295,7 +295,10 @@ fn wire_results_match_fixture() -> Result<()> {
     let wire = fixture(WIRE_CASES)?;
     let calls = wire["calls"].as_object().context("calls")?;
 
-    let daemon = StubDaemon::start(vec![Response::json(200, tasks_listing())])?;
+    let daemon = StubDaemon::start(vec![
+        Response::json(200, json!({"success": true, "servers": []})),
+        Response::json(200, tasks_listing()),
+    ])?;
     let home = tempfile::tempdir()?;
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
     reachable.initialize()?;
@@ -637,7 +640,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true, "tools": []}));
 
     {
-        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let daemon = StubDaemon::start(vec![ok(), ok(), ok()])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
         gmcp.initialize()?;
@@ -647,6 +650,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
             request_targets(&daemon),
             [
                 "DELETE /api/mcp/servers/..%2F..%2Fprojects%2Fp1",
+                "GET /api/mcp/servers",
                 "GET /api/mcp/a%2F..%2Fb/tools",
             ]
         );
@@ -685,6 +689,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
                 }),
             ),
             ok(),
+            ok(),
         ])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
@@ -692,7 +697,11 @@ fn server_names_stay_one_path_segment() -> Result<()> {
         gmcp.call_tool("list_tools", json!({"server_name": ""}))?;
         assert_eq!(
             request_targets(&daemon),
-            ["GET /api/admin/status", "GET /api/mcp/tasks/tools"]
+            [
+                "GET /api/admin/status",
+                "GET /api/mcp/servers",
+                "GET /api/mcp/tasks/tools",
+            ]
         );
     }
     Ok(())

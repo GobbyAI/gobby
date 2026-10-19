@@ -2496,8 +2496,15 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     await proxy.get_tool_schema("gobby-tasks", "list_tasks")
     await proxy.call_tool("gobby-tasks", "list_tasks", {}, preflight_enabled=False)
 
-    # The schema read, the first call's tool-timeout read, and the call itself.
-    assert client.request.await_count == 3
+    # Discovery inventory, schema, the first call's tool-timeout read, and the call.
+    base_url = "http://127.0.0.1:31579"
+    assert [request_call.args[:2] for request_call in client.request.await_args_list] == [
+        ("GET", f"{base_url}/api/mcp/servers"),
+        ("POST", f"{base_url}/api/mcp/tools/schema"),
+        ("GET", f"{base_url}/api/mcp/bridge/tool-timeouts"),
+        ("POST", f"{base_url}/api/mcp/gobby-tasks/tools/list_tasks"),
+    ]
+    assert client.request.await_count == 4
     for request_call in client.request.await_args_list:
         assert request_call.args[1].startswith("http://127.0.0.1:31579/api/mcp/")
         headers = request_call.kwargs["headers"]

@@ -127,6 +127,7 @@ _SHAPING_CASES: tuple[tuple[str, str, dict[str, Any], list[Any]], ...] = (
         "list_tools",
         {"server_name": "gobby-tasks"},
         [
+            {"success": True, "servers": []},
             {
                 "success": True,
                 "server": None,
@@ -140,7 +141,7 @@ _SHAPING_CASES: tuple[tuple[str, str, dict[str, Any], list[Any]], ...] = (
                         },
                     }
                 ],
-            }
+            },
         ],
     ),
     (
@@ -156,6 +157,7 @@ _SHAPING_CASES: tuple[tuple[str, str, dict[str, Any], list[Any]], ...] = (
                     "notes": {"state": "connected"},
                 },
             },
+            {"success": True, "servers": []},
             {"success": True, "tools": [{"name": "create_task", "description": None}]},
             {"success": False, "error": "unreachable"},
             {"success": True, "tools": [{"name": "note", "inputSchema": {"type": "object"}}]},
@@ -166,19 +168,23 @@ _SHAPING_CASES: tuple[tuple[str, str, dict[str, Any], list[Any]], ...] = (
         "get_tool_schema",
         {"server_name": "gobby-tasks", "tool_name": "create_task"},
         [
+            {"success": True, "servers": []},
             {
                 "name": "create_task",
                 "description": None,
                 "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}},
                 "server_name": "gobby-tasks",
-            }
+            },
         ],
     ),
     (
         "get_tool_schema_keeps_only_the_error",
         "get_tool_schema",
         {"server_name": "gobby-tasks", "tool_name": "missing"},
-        [{"error": "tool not found", "detail": "dropped"}],
+        [
+            {"success": True, "servers": []},
+            {"error": "tool not found", "detail": "dropped"},
+        ],
     ),
 )
 
