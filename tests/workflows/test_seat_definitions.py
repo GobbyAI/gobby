@@ -141,6 +141,19 @@ FLAG_READ_RE = re.compile(r"vars\.(?:get\(\s*['\"])?(\w+)")
 ROUTED_SKILLS = {"impeccable", "rust", "typescript", "tech-writer"}
 CANDIDATE_EVENT_LINE = "`LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`"
 ROUTE_LINE_RE = re.compile(r"^- [^:]+: (?P<skills>.+)$")
+# Seat flags the workflow engine writes itself (seat_transitions.py). The
+# native-variable-authority rule rejects hand writes to them, so no step needs set_variable.
+ENGINE_OWNED_FLAGS = frozenset(
+    {
+        "bounced",
+        "candidate_received",
+        "log_monitor_reported",
+        "orchestrator_reported",
+        "skills_routed",
+        "tick_done",
+        "verdict_ready",
+    }
+)
 
 
 @cache
@@ -192,7 +205,7 @@ def _flags_set_by_hand(workflow: dict[str, Any]) -> set[str]:
     return {
         name
         for name, default in (workflow.get("variables") or {}).items()
-        if isinstance(default, bool) and name not in raised
+        if isinstance(default, bool) and name not in raised and name not in ENGINE_OWNED_FLAGS
     }
 
 
