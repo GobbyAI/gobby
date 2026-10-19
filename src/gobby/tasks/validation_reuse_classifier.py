@@ -368,12 +368,12 @@ def disposition_pin(disposition: Disposition, sources: Sources) -> str:
 # Each entry is a reviewed safety boundary, not a blanket conftest exemption.
 # Literal pins are populated after reviewing the root chain at the task's base.
 REVIEWED_DISPOSITIONS: tuple[Disposition, ...] = (
-    # Operator-home comparisons and isolated temporary bootstrap provisioning.
+    # Operator-home capture/comparisons and isolated temporary bootstrap provisioning.
     Disposition(
         "tests/conftest.py",
         "<module>",
         "isolation",
-        "6195344a82aad347cd9db3c4a8a8ebae66968eb0fdca1213367da2f8c87b6d6a",
+        "6481f05140bd680e44f83fec0a6968b3056df9683ab61dd78bb62acc21f550e2",
     ),
     Disposition(
         "tests/conftest.py",

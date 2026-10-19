@@ -143,8 +143,9 @@ def recalled_pytest_sections(
     """Bind RTK's dedented short reports without treating repr text as boundaries.
 
     A recall receipt binds the report to its original run. Each section must consist
-    entirely of short frames and one terminal exception, with no locals, metadata,
-    or exception continuations. Historical source proves its test and final frame;
+    entirely of short frames and terminal E rows, with no locals or metadata.
+    A counted full report may skip well-formed non-stub failures. Historical source
+    proves each credited section's test and final frame;
     intermediate library frames provide no attribution. Captured output is cut off
     by the caller before parsing.
     """
@@ -208,14 +209,24 @@ def recalled_pytest_sections(
                 r"[ \t]+\^+" if full_report else r"\^+", rows[index]
             ):
                 index += 1
-        if (
-            len(frames) < 2
-            or index == len(rows)
-            or not re.fullmatch(r"E[ \t]+NotImplementedError(?::[^\n]*)?", rows[index])
-        ):
+        if not frames:
             return ()
-        section.append(rows[index])
-        index += 1
+        exceptions: list[str] = []
+        while index < len(rows) and rows[index].startswith(("E ", "E\t")):
+            exceptions.append(rows[index])
+            index += 1
+        if not exceptions:
+            return ()
+        creditable = (
+            len(frames) >= 2
+            and len(exceptions) == 1
+            and re.fullmatch(r"E[ \t]+NotImplementedError(?::[^\n]*)?", exceptions[0]) is not None
+        )
+        if not creditable:
+            if not full_report:
+                return ()
+            continue
+        section.append(exceptions[0])
         first, last = frames[0], frames[-1]
         name = header["name"].split("[", 1)[0].rsplit(".", 1)[-1]
         if (
@@ -223,7 +234,7 @@ def recalled_pytest_sections(
             and _short_source_matches(*first, evidence, run, cache)
             and _short_source_matches(*last, evidence, run, cache)
         ):
-            terminal = "\n".join((last[0][0], last[1], rows[index - 1]))
+            terminal = "\n".join((last[0][0], last[1], exceptions[0]))
             # Only the first frame establishes node identity; a helper deeper in
             # a sibling's traceback cannot lend its path to the section header.
             sections.append(("\n".join(section[:3]), terminal))

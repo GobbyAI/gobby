@@ -42,6 +42,11 @@ def test_disposition_pins_are_current_and_fail_closed(tree_sources: dict[str, st
     for entry in REVIEWED_DISPOSITIONS:
         assert disposition_pin(entry, tree_sources) == entry.pin
     for path, before, after in (
+        (
+            "tests/conftest.py",
+            "OPERATOR_GOBBY_HOME = Path.home()",
+            "OPERATOR_GOBBY_HOME = Path.cwd()",
+        ),
         ("tests/conftest.py", "operator_home = Path.home()", "operator_home = Path.cwd()"),
         ("tests/fixtures/gdaemon_binary.py", "import", "# changed dependency\nimport"),
     ):
