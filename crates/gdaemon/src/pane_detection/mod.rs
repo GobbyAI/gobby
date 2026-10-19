@@ -12,7 +12,10 @@ mod quota;
 mod regions;
 mod stall;
 
-use std::collections::HashMap;
+#[cfg(test)]
+mod tests;
+
+use std::collections::{BTreeSet, HashMap};
 
 pub use attention::{
     AttentionClassification, AttentionInput, AttentionTransition, classify_attention,
@@ -35,6 +38,7 @@ pub struct RunDetectState {
     pub loop_dismissals: u32,
     trust_dismissed: bool,
     approval_fingerprint: Option<String>,
+    loop_prompt_fingerprints: BTreeSet<String>,
 }
 
 impl RunDetectState {
@@ -51,6 +55,22 @@ impl RunDetectState {
     /// `PromptDetector.mark_approval_prompt_dismissed`.
     pub fn mark_approval_prompt_dismissed(&mut self, pane: &str) {
         self.approval_fingerprint = Some(prompt::pane_fingerprint(pane));
+    }
+
+    /// Stub (#24382 correction, RED): the dismissal getters and loop dismissal are not yet
+    /// implemented.
+    pub fn was_trust_dismissed(&self) -> bool {
+        false
+    }
+
+    pub fn was_approval_prompt_dismissed(&self, _pane: &str) -> bool {
+        false
+    }
+
+    pub fn mark_loop_prompt_dismissed(&mut self, _pane: &str) {}
+
+    pub fn was_loop_prompt_dismissed(&self, _pane: &str) -> bool {
+        false
     }
 }
 
