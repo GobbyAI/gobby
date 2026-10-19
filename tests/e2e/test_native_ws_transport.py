@@ -462,6 +462,12 @@ async def test_failure_reconnect_and_shutdown_are_bounded(daemon_instance: Daemo
     ) as websocket:
         welcome = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5.0))
         assert welcome["type"] == "connection_established"
+        # Direct begins with an absent subscription state; this socket leaves a set behind.
+        await websocket.send(
+            json.dumps({"type": "subscribe", "events": ["hook_event", "terminal_output"]})
+        )
+        subscribed = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5.0))
+        assert subscribed["type"] == "subscribe_success"
         psutil.Process(backend).kill()
         started = time.monotonic()
         with pytest.raises(ConnectionClosed) as closed:
@@ -473,6 +479,17 @@ async def test_failure_reconnect_and_shutdown_are_bounded(daemon_instance: Daemo
     # A reconnect after the backend restart starts from the initial welcome.
     await _wait_admitted(daemon_instance.ws_url, token)
     await _welcome(daemon_instance.ws_url, bearer)
+
+    # The reconnect also starts from the entry mode's initial subscription state. Direct
+    # begins absent, so unsubscribing an event the dead socket held acknowledges an empty set.
+    async with websockets.connect(
+        daemon_instance.ws_url, additional_headers=bearer, open_timeout=5.0, close_timeout=2.0
+    ) as websocket:
+        welcome = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5.0))
+        assert welcome["type"] == "connection_established"
+        await websocket.send(json.dumps({"type": "unsubscribe", "events": ["hook_event"]}))
+        acked = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5.0))
+        assert acked == {"type": "unsubscribe_success", "events": []}
 
     # Daemon stop closes the public socket with 1001 within one second.
     async with websockets.connect(
