@@ -561,6 +561,203 @@ asyncio.run(main())
     assert "restart reap kept the worker-started broker" in result.stdout
 
 
+_PINNED_RESTART_PROGRAM = r"""
+import asyncio, hashlib, logging, os, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+from gobby.agents import srt_monitor, srt_runtime
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
+root, node, runner = (Path(arg) for arg in sys.argv[1:4])
+mode, preserve = sys.argv[4], sys.argv[5] == '1'
+temporary = tempfile.TemporaryDirectory(prefix='sp-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_runtime.srt_install_root = lambda: root
+srt_monitor.SRT_RELEASE = replace(
+    srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest()
+)
+
+
+async def main() -> None:
+    await asyncio.to_thread(srt_monitor.ensure_srt_monitor, node=node, runner=runner, env=os.environ)
+    broker = srt_monitor._children[-1]
+    noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
+    try:
+        if mode == 'registry-missing':
+            srt_monitor._children[:] = [child for child in srt_monitor._children if child is not broker]
+        else:
+            del srt_monitor._child_started[broker.pid]
+        (directory / f'v-{srt_monitor.SRT_RELEASE.runner_sha256[:12]}.owner.json').unlink()
+        await _reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=preserve,
+        )
+        noise.wait(timeout=5)
+        print(f'broker pid={broker.pid} alive={broker.poll() is None} noise reaped={noise.poll() is not None}')
+    finally:
+        for child in (noise, broker):
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+        temporary.cleanup()
+
+
+asyncio.run(main())
+"""
+
+
+def _run_pinned_restart_reap(
+    harness: MonitorHarness, mode: str, preserve: bool
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _PINNED_RESTART_PROGRAM,
+            str(harness.root),
+            str(harness.node),
+            str(harness.runner),
+            mode,
+            "1" if preserve else "0",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("mode", ["registry-missing", "identity-missing"])
+def test_restart_reap_keeps_pinned_broker_the_registry_lost(
+    monitor_harness: MonitorHarness, mode: str
+) -> None:
+    """Build the logged shape: a direct child of the restarting runner, RESTART, preserved 0.
+
+    The cause of the logged kill is unknown. This removes the registry entry or its identity
+    and the owner record, so only the pinned argv can keep the broker. The unpinned node -e
+    child must still be reaped.
+    """
+    result = _run_pinned_restart_reap(monitor_harness, mode, preserve=True)
+    assert result.returncode == 0, result.stderr
+    assert " alive=True noise reaped=True" in result.stdout, result.stdout
+    broker_pid = result.stdout.split("broker pid=", 1)[1].split()[0]
+    assert f"Preserving SRT monitor broker pid={broker_pid} source=pinned-argv" in result.stderr, (
+        result.stderr
+    )
+
+
+def test_restart_reap_without_srt_preservation_still_reaps_pinned_broker(
+    monitor_harness: MonitorHarness,
+) -> None:
+    """Only a RESTART intent preserves the monitor; other reaps keep the old behavior."""
+    result = _run_pinned_restart_reap(monitor_harness, "registry-missing", preserve=False)
+    assert result.returncode == 0, result.stderr
+    assert " alive=False noise reaped=True" in result.stdout, result.stdout
+    assert "source=pinned-argv" not in result.stderr, result.stderr
+
+
+_SPOOF_PROGRAM = r"""
+import asyncio, hashlib, logging, os, shutil, socket, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+from gobby.agents import srt_monitor, srt_runtime
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
+root, node, runner = (Path(arg) for arg in sys.argv[1:4])
+variant = sys.argv[4]
+temporary = tempfile.TemporaryDirectory(prefix='sp-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_runtime.srt_install_root = lambda: root
+srt_monitor.SRT_RELEASE = replace(
+    srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest()
+)
+socket_path = directory / f'v-{srt_monitor.SRT_RELEASE.runner_sha256[:12]}'
+
+
+async def main() -> None:
+    if variant == 'argv-script':
+        script = root / 'fake-runner.mjs'
+        script.write_text('setInterval(() => {}, 1000)\n')
+        spoof_node, spoof_runner, spoof_socket = node, script, socket_path
+    elif variant == 'copied-node':
+        spoof_node = directory / 'node-copy'
+        shutil.copy2(node, spoof_node)
+        for library in node.resolve().parents[1].joinpath('lib').glob('libnode*'):
+            shutil.copy2(library, directory)
+        spoof_runner, spoof_socket = runner, socket_path
+    else:
+        spoof_node, spoof_runner, spoof_socket = node, runner, directory / 'v-000000000000'
+    parent, child_ready = socket.socketpair()
+    with (directory / 'spoof.log').open('ab') as log:
+        argv = srt_monitor._monitor_argv(
+            node=spoof_node, runner=spoof_runner, path=spoof_socket, ready_fd=child_ready.fileno()
+        )
+        spoof = srt_monitor._start_monitor(
+            argv=argv, ready_fd=child_ready.fileno(), env=os.environ, log=log
+        )
+    child_ready.close()
+    try:
+        await asyncio.sleep(1.5)
+        alive_before = spoof.poll() is None
+        await _reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        print(f'spoof alive-before={alive_before} reaped={spoof.poll() is not None}')
+    finally:
+        if spoof.poll() is None:
+            spoof.kill()
+        spoof.wait(timeout=5)
+        parent.close()
+        temporary.cleanup()
+
+
+asyncio.run(main())
+"""
+
+
+def _run_spoof_restart_reap(
+    harness: MonitorHarness, variant: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _SPOOF_PROGRAM,
+            str(harness.root),
+            str(harness.node),
+            str(harness.runner),
+            variant,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("variant", ["argv-script", "copied-node", "other-socket"])
+def test_restart_reap_refuses_self_described_broker_spoofs(
+    monitor_harness: MonitorHarness, variant: str
+) -> None:
+    """Preserve only the verified release broker, never a process that claims the pinned argv.
+
+    Each spoof is a direct child of the restarting runner with preserve on: a different script
+    as argv[1], a copied node binary as argv[0], or a non-release socket name. All three are
+    reaped, and none is logged as preserved.
+    """
+    result = _run_spoof_restart_reap(monitor_harness, variant)
+    assert result.returncode == 0, result.stderr
+    assert "spoof alive-before=True reaped=True" in result.stdout, result.stdout
+    assert "Preserving SRT monitor broker" not in result.stderr, result.stderr
+
+
 @pytest.mark.parametrize("drift", ["exe", "argv", "started", "listener", "symlink"])
 def test_adopted_broker_refuses_each_drifted_pin(
     monitor_harness: MonitorHarness,
