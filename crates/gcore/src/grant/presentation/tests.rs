@@ -78,7 +78,11 @@ fn rejection_matrix_maps_codes_to_statuses() {
             "credential_issuance_failed",
             403,
         ),
-        (Rejection::CredentialBeforeProof, "credential_before_proof", 401),
+        (
+            Rejection::CredentialBeforeProof,
+            "credential_before_proof",
+            401,
+        ),
     ];
     for (rejection, code, status) in matrix {
         assert_eq!(rejection.code(), code);

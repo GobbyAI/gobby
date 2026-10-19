@@ -172,17 +172,17 @@ fn interactive_grant_header() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/runtime_grants/golden/direct_datastores.json");
     let raw = std::fs::read(path).expect("golden grant");
-    let grant: GrantBundle =
-        serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+    let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
     encode_grant_header(&grant).expect("encode")
 }
 
 /// `parts` for `caller`, carrying the interactive grant a gated row requires.
 fn granted_parts(method: Method, path: &str, caller: Caller) -> Parts {
     let mut presented = parts(method, path, Some(caller));
-    presented
-        .headers
-        .insert(GRANT_HEADER, interactive_grant_header().parse().expect("header"));
+    presented.headers.insert(
+        GRANT_HEADER,
+        interactive_grant_header().parse().expect("header"),
+    );
     presented
 }
 
