@@ -244,8 +244,7 @@ fn accept_leg(
         let Ok(upgraded) = upgrade.await else {
             return;
         };
-        let ws =
-            WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+        let ws = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
         let _ = tx.send(Leg { path, headers, ws });
     });
     Response::builder()
@@ -1291,36 +1290,57 @@ async fn server_subscriptions_reach_only_the_named_leg() {
     let (mut browser_other, mut browser_other_leg) = h.admit(BROWSER, &[]).await;
     wait_connections(&h.broker, 4).await;
 
+    // gclient's own subscribe. The broker acknowledges it and consumes it, so
+    // the leg never sees it.
+    let gclient_events = [
+        "terminal_event",
+        "agent_event",
+        "project_event",
+        "worktree_event",
+        "session_event",
+    ];
+    direct
+        .send(Message::text(
+            json!({"type": "subscribe", "events": gclient_events}).to_string(),
+        ))
+        .await;
+    assert_reply(
+        &direct.text("subscribe ack").await,
+        &json!({"ack": {"type": "subscribe_success", "events": gclient_events}}),
+        "direct subscribe",
+    );
+
+    // The leg's first frame is the attach, so the subscribe was never relayed.
+    let attach = r#"{"type": "workspace_attach", "request_id": "attach-1"}"#;
+    direct.send(Message::text(attach)).await;
+    assert_eq!(
+        direct_leg.next("attach relayed to the leg").await,
+        Message::text(attach)
+    );
+
     let selector = "workspace_event:workspace_id=w-1";
     let early = json!({"type": "workspace_event", "workspace_id": "w-1", "event": "early"});
+    let other = json!({"type": "workspace_event", "workspace_id": "w-2", "event": "other"});
     let event = json!({"type": "workspace_event", "workspace_id": "w-1", "event": "changed"});
 
-    // Published before the subscribe: never delivered.
+    // Published before the backend selects anything: never delivered.
     h.publish(json!([publish_op(&early)])).await;
-    // The subscribe itself sends nothing; an unregistered leg is a no-op.
+    // An unregistered leg is a no-op.
     h.publish(json!([
         subscribe_op(direct_leg.id(), &[selector]),
-        subscribe_op(browser_leg.id(), &[selector]),
         subscribe_op(UNREGISTERED_LEG, &[selector]),
     ]))
     .await;
-    assert_eq!(
-        frames_before_marker(&mut direct, &mut direct_leg, "direct after subscribe").await,
-        Vec::<Message>::new()
-    );
-    assert_eq!(
-        frames_before_marker(&mut browser, &mut browser_leg, "browser after subscribe").await,
-        Vec::<Message>::new()
-    );
+    h.publish(json!([publish_op(&other), publish_op(&event)]))
+        .await;
 
-    h.publish(json!([publish_op(&event)])).await;
     assert_eq!(
-        frames_before_marker(&mut direct, &mut direct_leg, "direct from absent").await,
+        frames_before_marker(&mut direct, &mut direct_leg, "direct after publish").await,
         texts(&[&event])
     );
     assert_eq!(
-        frames_before_marker(&mut browser, &mut browser_leg, "browser from empty").await,
-        texts(&[&event])
+        frames_before_marker(&mut browser, &mut browser_leg, "browser after publish").await,
+        Vec::<Message>::new()
     );
     assert_eq!(
         frames_before_marker(&mut direct_other, &mut direct_other_leg, "other direct").await,
@@ -1630,7 +1650,11 @@ async fn application_paths_are_native_and_hmr_is_proxy() {
         let (mut public, mut leg) = admit_at(&mut h, browser, path).await;
         assert_eq!(leg.single("x-gobby-ws-entry"), "browser", "{path}");
         leg.send(Message::text("browser-probe")).await;
-        assert_eq!(public.text("browser probe").await, "browser-probe", "{path}");
+        assert_eq!(
+            public.text("browser probe").await,
+            "browser-probe",
+            "{path}"
+        );
     }
 
     // The direct entry: every path on the WebSocket listener is native.
@@ -1671,9 +1695,7 @@ async fn application_paths_are_native_and_hmr_is_proxy() {
     let response = plain_request(direct, "/direct").await;
     assert!(response.starts_with("HTTP/1.1 426"), "{response}");
     assert!(
-        response
-            .to_ascii_lowercase()
-            .contains("upgrade: websocket"),
+        response.to_ascii_lowercase().contains("upgrade: websocket"),
         "{response}"
     );
 }
@@ -1698,15 +1720,20 @@ async fn browser_attach_receives_only_its_session_frames() {
     );
     h.publish(json!([subscribe_op(
         attached_leg.id(),
-        &["session_message:session_id=s-1", "hook_event:session_id=s-1"],
+        &[
+            "session_message:session_id=s-1",
+            "hook_event:session_id=ext-1"
+        ],
     )]))
     .await;
 
+    // Messages carry the internal session id; hook frames carry the external one.
     let own_message = json!({"type": "session_message", "session_id": "s-1", "content": "mine"});
-    let own_hook = json!({"type": "hook_event", "session_id": "s-1", "event_type": "PreToolUse"});
+    let own_hook = json!({"type": "hook_event", "session_id": "ext-1", "event_type": "PreToolUse"});
     let other_message =
         json!({"type": "session_message", "session_id": "s-2", "content": "theirs"});
-    let other_hook = json!({"type": "hook_event", "session_id": "s-2", "event_type": "PreToolUse"});
+    let other_hook =
+        json!({"type": "hook_event", "session_id": "ext-2", "event_type": "PreToolUse"});
     h.publish(json!([
         publish_op(&other_message),
         publish_op(&own_message),
