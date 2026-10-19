@@ -48,6 +48,10 @@ from gobby.utils.dependency_requirements import (
 
 pytestmark = pytest.mark.unit
 
+# A cold shim start (sh, then a fresh interpreter) can outlast a tight wall-clock
+# bound under host load; this budget only guards against a hang.
+SHIM_COLD_START_SECONDS = 15.0
+
 
 @pytest.fixture(autouse=True)
 def isolated_shared_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1099,7 +1103,7 @@ def test_cli_shim_scrubs_token_inherited_from_sdk_parent(tmp_path: Path) -> None
             env={"PATH": os.environ.get("PATH", ""), "GOBBY_AGENT_API_TOKEN": "dummy-token"},
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=SHIM_COLD_START_SECONDS,
             check=True,
         )
         assert result.stdout.splitlines() == ["False", "sdk-argument"]
