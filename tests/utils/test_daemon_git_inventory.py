@@ -306,6 +306,7 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
     ("src/gobby/test_types/suppressions.py", "_git_python_files"),
     # Explicit synchronous facades. Daemon callers use the adjacent async APIs.
+    ("src/gobby/hooks/checkout_reads.py", "run_git"),
     ("src/gobby/skills/_loader_github.py", "clone_skill_repo"),
     ("src/gobby/workflows/git_utils.py", "get_dirty_files_categorized"),
     ("src/gobby/workflows/git_utils.py", "get_file_changes"),
@@ -364,6 +365,14 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Close validation calls evaluate_validation_commands on a worker. Its
     # initial empty-evidence check returns before candidate-tree access.
     ("src/gobby/tasks/close_test_coverage.py", "_candidate_blobs"),
+    # The same Gate 10 worker verifies landed integration ancestry and cleanliness
+    # (test_close_task_flow.test_close_landed_credit_git_runs_off_the_event_loop).
+    ("src/gobby/tasks/close_integration_credit.py", "_git"),
+    # Historical blobs are resolved during transcript derivation, whose complete
+    # parse runs through run_in_transcript_evidence_pool, never on the daemon loop.
+    ("src/gobby/tasks/transcript_git_sources.py", "_blob"),
+    # _run_step_handlers offloads advance_seat and its linked candidate checks.
+    ("src/gobby/workflows/engine/seat_transitions.py", "_linked_candidate_matches"),
     # Rooted close validation reaches tracked-script checks only through its
     # asyncio.to_thread gate; the empty loop-thread probe has no criteria/root.
     # test_close_task_flow.test_close_tracked_script_git_runs_off_the_event_loop
@@ -378,6 +387,13 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {
+    # Sync registry tools run through InternalToolRegistry.call's worker
+    # (test_coordinator_claim_release.test_claim_release_dirty_git_runs_off_the_event_loop).
+    (
+        "src/gobby/mcp_proxy/tools/tasks/_claim_release.py",
+        "register_release_task_claim.release_task_claim",
+        "task_dirty_paths",
+    ),
     ("src/gobby/skills/loader.py", "SkillLoader.load_from_github", "clone_skill_repo"),
     (
         "src/gobby/skills/updater.py",

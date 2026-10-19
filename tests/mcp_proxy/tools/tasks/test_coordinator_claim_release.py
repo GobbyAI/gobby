@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+import gobby.mcp_proxy.tools.tasks._claim_release as claim_release
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
@@ -19,6 +21,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_dirty_state import task_dirty_paths
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -50,6 +53,25 @@ class ReleaseWorld:
                     },
                 ),
             )
+
+
+async def test_claim_release_dirty_git_runs_off_the_event_loop(
+    world: ReleaseWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = task_dirty_paths
+    calls: list[str] = []
+
+    def checked(paths: set[str], root: str) -> set[str] | None:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        calls.append(root)
+        return original(paths, root)
+
+    monkeypatch.setattr(claim_release, "task_dirty_paths", checked)
+    result = await world.release()
+
+    assert result["success"] is True
+    assert calls == [str(world.repo)]
 
 
 @pytest.fixture

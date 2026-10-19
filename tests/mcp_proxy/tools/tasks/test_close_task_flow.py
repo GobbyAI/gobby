@@ -639,6 +639,75 @@ async def test_close_tracked_script_git_runs_off_the_event_loop(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_close_landed_credit_git_runs_off_the_event_loop(tmp_path: Path) -> None:
+    root = tmp_path / "close"
+    other = tmp_path / "landed"
+    root.mkdir()
+    other.mkdir()
+    (other / "tests").mkdir()
+    (other / "tests" / "test_example.py").write_text("# Landed checkout test fixture.\n")
+    task = _task()
+    evidence = _successful_transcript(
+        task, command=f"uv run pytest {other}/tests/test_example.py -q"
+    )
+    audit = _successful_transcript(
+        task,
+        command=(
+            "uv run gobby test-types audit tests/test_example.py "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new"
+        ),
+    )
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            replace(evidence.validation_runs[0], workdir=str(other), output="1 passed in 0.01s"),
+            replace(
+                audit.validation_runs[0],
+                matcher_id="gobby-test-types-audit",
+                categories=("type_check",),
+                order=2,
+                workdir=str(root),
+            ),
+        ),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def git(argv: list[str], **_kwargs: Any) -> str:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        args = tuple(argv[1:])
+        calls.append(args)
+        if "--git-common-dir" in args:
+            return str(root / ".git")
+        if "symbolic-ref" in args:
+            return "refs/heads/0.5.0"
+        if "--show-toplevel" in args:
+            return str(other)
+        if "--verify" in args:
+            return "a" * 40
+        return ""
+
+    with (
+        patch.object(lifecycle, "select_close_candidate", return_value=("a" * 40, None)),
+        patch("gobby.tasks.close_test_coverage._same_bytes", return_value=False),
+        patch("gobby.tasks.close_integration_credit.run_git_command", side_effect=git),
+    ):
+        evaluation, _ = await _evaluate_named_test_close(
+            task,
+            tdd_result=None,
+            named_tests=False,
+            linked=("a" * 40,),
+            net_paths=NetCommitPaths(changed=frozenset({"tests/test_example.py"})),
+            transcript=evidence,
+            repo_path=str(root),
+        )
+
+    gate = next(gate for gate in evaluation.gates if gate.name == "validation_commands")
+    assert gate.status == "passed", gate.message
+    assert ("status", "--porcelain=v1", "--untracked-files=all") in calls
+
+
+@pytest.mark.asyncio
 async def test_close_gate_scans_transcript_evidence_off_the_event_loop() -> None:
     # #22708 criterion 9: the edit-language lookup (one DB read per edited path) and the
     # validation-command gate (re-parsing every transcript run) ran on the daemon loop.
