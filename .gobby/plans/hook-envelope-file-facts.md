@@ -476,6 +476,9 @@ other hook.
 | 25 | `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session` | AGY startup claim | `no-change`: `require_local_machine_id` refuses a node envelope before any disk walk | — | — |
 | 26 | `src/gobby/workflows/observer_plan_mode.py` Codex transcript read | plan-mode observer | `no-change`: a transcript is not the working tree | — | — |
 | 27 | `src/gobby/hooks/terminal_context.py::_is_fresh_seat_tui`, reached only through `enrich_terminal_context_with_cwd` | Codex seat adoption at session start and lookup | `no-change`: for an event whose `machine_id` is not the hub's, `enrich_terminal_context_with_cwd` returns before any process inspection (hub-mode 2.2, #24272, `05e9922f6d`). #24491 closed as already implemented; `tests/hooks/test_hooks_terminal_context.py::test_node_origin_fresh_seat_check_skips_hub_processes` and `::test_local_fresh_seat_check_unchanged` pin it | — | — |
+| 28 | `src/gobby/adapters/droid.py::DroidAdapter.translate_to_hook_event`, Notification wait branch, `droid_transcript_has_tool_id` | Droid `Notification` with a wait token (`permission_prompt`, `ask_user_question` and kin) | `skip`: a node delivery takes the no-file result, so `wait_kind` stays unset | — | 2.8 |
+| 29 | `src/gobby/adapters/droid.py::DroidAdapter.translate_to_hook_event`, idle_prompt branch, `droid_transcript_confirms_turn_cancellation` | Droid `Notification` idle_prompt with a cancel reason | `skip`: a node delivery never converts to `INTERRUPT` from the transcript | — | 2.8 |
+| 30 | `src/gobby/adapters/agy.py::AgyAdapter.translate_to_hook_event`, `read_current_user_prompt` | AGY `BEFORE_AGENT` prompt backfill | `skip`: a node delivery takes no prompt from the transcript | — | 2.8 |
 
 ## P1: Node checkout reads
 `kind: framing`
