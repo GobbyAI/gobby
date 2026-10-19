@@ -243,7 +243,10 @@ async def test_http_discovery_metadata_is_cleaned(
     session.list_tools.side_effect = RuntimeError("remote failure" + HIDDEN)
     failure = await execution.list_mcp_tools(config.name, request, server, None, manager)
     assert failure["success"] is False
-    assert failure["error"] == "Failed to list tools: remote failure"
+    assert failure["error"] == (
+        "Failed to list tools: Failed to list tools for server 'external': "
+        "initial listing failed: remote failure; reconnect retry failed: remote failure"
+    )
     for response in (result, failure):
         assert "\u202e" not in str(response)
         assert "\U000e0061" not in str(response)
