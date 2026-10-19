@@ -877,6 +877,10 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
         in prompt
     )
     assert "your release alone admits a close" in prompt
+    assert "the reviewer has run the retest" not in prompt
+    assert "the author lane already has the reviewer's report" not in prompt
+    assert "the author's `EVENT=PROOF_RESULT` has reported the retest" in prompt
+    assert "holds its own `EVENT=PROOF_RESULT`" in prompt
 
 
 def test_review_and_observation_seats_sync_as_installed_rows(
