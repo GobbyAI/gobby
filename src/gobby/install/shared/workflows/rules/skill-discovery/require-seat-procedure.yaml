@@ -1,0 +1,42 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-seat-procedure:
+    description: "Load the seat's detailed procedures before work in each context epoch"
+    event: before_tool
+    enabled: true
+    priority: 35
+    when: >
+      variables.get('_seat_procedure')
+      and not skill_loaded(variables.get('_seat_procedure'))
+      and not (
+        event.data.get('mcp_server') == 'gobby'
+        and event.data.get('mcp_tool') in [
+          'get_tool_schema', 'list_tools', 'list_mcp_servers', 'get_variable'
+        ]
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-skills'
+        and event.data.get('mcp_tool') in [
+          'get_skill', 'get_skill_file', 'get_skill_files', 'list_skills', 'search_skills'
+        ]
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-sessions'
+        and event.data.get('mcp_tool') in ['get_handoff', 'set_handoff']
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-agents'
+        and event.data.get('mcp_tool') in [
+          'send_message', 'get_inter_session_message', 'get_inter_session_messages',
+          'wait_for_coordination', 'wait_for_agent', 'wait_for_message'
+        ]
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-memory'
+        and event.data.get('mcp_tool') in ['get_memory', 'search_memories']
+      )
+      and event.data.get('mcp_server') != 'gobby-results'
+    effects:
+      - type: block
+        reason: '{{ skill_fetch_directive(variables.get("_seat_procedure")) }}'
