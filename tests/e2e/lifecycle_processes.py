@@ -7,7 +7,56 @@ from types import TracebackType
 
 import psutil
 
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import terminate_process_tree
+
+
+def wait_for_retiring_backend(
+    process: psutil.Process, *, log_files: tuple[Path, ...], artifact_path: Path
+) -> None:
+    """Keep bounded shutdown evidence outside the disposable daemon home on failure."""
+    started = time.monotonic()
+    try:
+        created = str(process.create_time())
+    except psutil.Error as error:
+        created = f"unavailable ({error})"
+
+    def gone() -> bool:
+        try:
+            return bool(process.status() == psutil.STATUS_ZOMBIE)
+        except psutil.NoSuchProcess:
+            return True
+
+    try:
+        wait_for_condition(gone, timeout=30.0, description="retiring backend reaped")
+    except AssertionError as failure:
+        elapsed = time.monotonic() - started
+        try:
+            status = process.status()
+        except psutil.Error as error:
+            status = f"unavailable ({error})"
+        sections = [
+            f"retiring backend: pid={process.pid} create_time={created} "
+            f"status={status} elapsed={elapsed:.3f}s budget=30.0s"
+        ]
+        for log_file in log_files:
+            try:
+                with log_file.open("rb") as stream:
+                    stream.seek(0, 2)
+                    stream.seek(max(0, stream.tell() - 8192))
+                    tail = stream.read(8192).decode("utf-8", errors="replace")
+            except OSError as error:
+                tail = f"unavailable ({error})"
+            sections.append(f"--- {log_file.name} (last 8192 bytes) ---\n{tail}")
+        diagnostics = "\n".join(sections)
+        failure.add_note(diagnostics)
+        try:
+            artifact_path.write_text(diagnostics)
+        except OSError as error:
+            failure.add_note(f"Could not retain diagnostics at {artifact_path}: {error}")
+        else:
+            failure.add_note(f"Retained diagnostics: {artifact_path}")
+        raise
 
 
 class LifecycleProcesses:
@@ -67,9 +116,11 @@ class LifecycleProcesses:
                 stdout, stderr = child.communicate(timeout=min(0.1, remaining))
                 self.record_daemon()
                 return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as expired:
                 if time.monotonic() >= deadline:
-                    raise
+                    raise subprocess.TimeoutExpired(
+                        argv, timeout, output=expired.output, stderr=expired.stderr
+                    ) from None
 
     def __exit__(
         self,
