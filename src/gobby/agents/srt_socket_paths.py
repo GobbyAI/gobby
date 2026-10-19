@@ -60,3 +60,17 @@ def srt_mux_tmpdir() -> Path:
         _ensure_private_directory(short_root)
     _ensure_private_directory(directory)
     return directory
+
+
+def existing_srt_mux_tmpdir() -> Path:
+    """Return the shared root only when it already exists as this uid's directory.
+
+    Read-only: the restart reaper selects brokers through it before any child is terminated,
+    so it must not create, chmod or re-permission the root. Raises OSError when it is absent
+    or unsafe.
+    """
+    directory = srt_socket_directory()
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise PermissionError(f"Unsafe SRT socket directory: {directory}")
+    return directory

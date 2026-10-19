@@ -231,6 +231,7 @@ def monitor_harness(
             srt_monitor, "SRT_RELEASE", replace(SRT_RELEASE, runner_sha256=identity)
         )
         monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: root)
+        monkeypatch.setattr(srt_monitor, "existing_srt_mux_tmpdir", lambda: root)
         monkeypatch.setattr(srt_monitor, "get_gobby_home", lambda: root)
         socket_path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ)
         monitor = srt_monitor._children[-1]
@@ -322,6 +323,7 @@ root, node, runner = map(Path, sys.argv[1:])
 temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ)
@@ -390,6 +392,7 @@ root, node, runner = map(Path, sys.argv[1:])
 temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 
@@ -467,6 +470,7 @@ from pathlib import Path
 from gobby.agents import srt_monitor
 root, node, runner, directory = map(Path, sys.argv[1:])
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ, run_key='prod-run')
@@ -491,6 +495,7 @@ worker_program = sys.argv[4]
 temporary = tempfile.TemporaryDirectory(prefix='sw-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 
@@ -573,6 +578,7 @@ mode, preserve = sys.argv[4], sys.argv[5] == '1'
 temporary = tempfile.TemporaryDirectory(prefix='sp-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_runtime.srt_install_root = lambda: root
 srt_monitor.SRT_RELEASE = replace(
@@ -659,6 +665,64 @@ def test_restart_reap_without_srt_preservation_still_reaps_pinned_broker(
     assert "source=pinned-argv" not in result.stderr, result.stderr
 
 
+_UNUSABLE_ROOT_REAP_PROGRAM = r"""
+import asyncio, os, subprocess, sys
+from pathlib import Path
+from gobby.agents import srt_runtime, srt_socket_paths
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+
+home, mode = Path(sys.argv[1]), sys.argv[2]
+blocker = home / 'blocker'
+blocker.write_text('a file, so the socket root cannot exist beneath it')
+root = blocker / 'srt-sock' if mode == 'blocked' else home / 'srt-sock'
+os.environ[srt_socket_paths.SOCKET_DIRECTORY_ENV] = str(root)
+srt_socket_paths.get_gobby_home = lambda: home
+srt_runtime.srt_install_root = lambda: home / 'no-install'
+noise = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+
+
+async def main() -> None:
+    try:
+        await _reap_remaining_child_processes(
+            timeout=2.0, preserve_agents=True, preserve_srt_monitor=True
+        )
+        try:
+            noise.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        print(f'noise reaped={noise.poll() is not None} root-created={root.exists()}')
+    finally:
+        if noise.poll() is None:
+            noise.kill()
+            noise.wait(timeout=5)
+
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.parametrize("mode", ["blocked", "absent"])
+def test_restart_reap_survives_an_unusable_socket_root_without_creating_it(
+    tmp_path: Path, mode: str
+) -> None:
+    """An unusable socket root must not abort the reap before its kill loop, nor be created.
+
+    The logged abort was an OSError from ensuring the shared root, raised inside the preserve
+    selection that runs before any child is terminated. Selection only reads the root, so an
+    absent root stays absent.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _UNUSABLE_ROOT_REAP_PROGRAM, str(tmp_path), mode],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Child process reap failed" not in result.stderr, result.stderr
+    assert result.stdout.strip() == "noise reaped=True root-created=False", result.stdout
+
+
 _SPOOF_PROGRAM = r"""
 import asyncio, hashlib, logging, os, shutil, socket, subprocess, sys, tempfile
 from dataclasses import replace
@@ -671,6 +735,7 @@ variant = sys.argv[4]
 temporary = tempfile.TemporaryDirectory(prefix='sp-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_runtime.srt_install_root = lambda: root
 srt_monitor.SRT_RELEASE = replace(
@@ -774,6 +839,7 @@ worker_program, drift = sys.argv[4], sys.argv[5]
 temporary = tempfile.TemporaryDirectory(prefix='sd-', dir=root.parent)
 directory = Path(temporary.name)
 srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
 
