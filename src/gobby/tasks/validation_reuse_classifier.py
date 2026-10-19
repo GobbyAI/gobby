@@ -102,6 +102,38 @@ def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str:
         return aliases.get(node.id, node.id)
     if isinstance(node, ast.Attribute):
         return f"{_dotted(node.value, aliases)}.{node.attr}"
+    if isinstance(node, ast.Call):
+        loader = _dotted(node.func, aliases)
+        if loader in {"__import__", "importlib.import_module"}:
+            name = (
+                node.args[0]
+                if node.args
+                else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "name"), None
+                )
+            )
+            if isinstance(name, ast.Constant) and isinstance(name.value, str):
+                # __import__ returns the top-level package unless fromlist is
+                # supplied; retain either namespace without executing the call.
+                if loader == "__import__":
+                    fromlist = (
+                        node.args[3]
+                        if len(node.args) > 3
+                        else next(
+                            (
+                                keyword.value
+                                for keyword in node.keywords
+                                if keyword.arg == "fromlist"
+                            ),
+                            ast.Constant(None),
+                        )
+                    )
+                    try:
+                        if not ast.literal_eval(fromlist):
+                            return name.value.split(".")[0]
+                    except (ValueError, TypeError):
+                        return _AMBIGUOUS_IMPORT
+                return name.value
     return ""
 
 
@@ -199,6 +231,8 @@ def _fixture(node: Function, aliases: Mapping[str, str]) -> tuple[str, bool] | N
         name, autouse = node.name, False
         if call:
             for keyword in call.keywords:
+                if keyword.arg is None:
+                    raise ValueError("unresolved fixture keyword unpacking")
                 if keyword.arg == "name":
                     value = ast.literal_eval(keyword.value)
                     if not isinstance(value, str):
@@ -340,11 +374,13 @@ REVIEWED_DISPOSITIONS: tuple[Disposition, ...] = (
     ),
     # Includes cleanup_run -> _stop_runner and exact lazy E2E helper bytes. This
     # hook drains only processes bearing this run's token and isolated home.
+    # Re-reviewed at integration 0d6cb79c10: E2E readiness diagnostics changed;
+    # the imported cleanup helpers and run ownership guards remain unchanged.
     Disposition(
         "tests/fixtures/e2e_run_cleanup.py",
         "pytest_sessionfinish",
         "isolation",
-        "daf1f988c23a6ca5e690b0e22c98f5d3639c9110570e5b40848bd4cde2a9d625",
+        "f155e43c74f5c8fbf5f5937af17416bdf78459833c997063df4e05e1fb0cecec",
     ),
 )
 
@@ -353,7 +389,7 @@ def _sites(nodes: Sequence[ast.AST], aliases: Mapping[str, str]) -> tuple[str, .
     sites: set[str] = set()
     for root in nodes:
         for node in ast.walk(root):
-            if isinstance(node, (ast.Name, ast.Attribute)):
+            if isinstance(node, (ast.Name, ast.Attribute, ast.Call)):
                 name = _dotted(node, aliases)
                 if (
                     name.startswith(_AMBIGUOUS_IMPORT)
@@ -541,6 +577,10 @@ def classify_module(
         file = load(path)
         if file:
             scan(file, "<whole>", (file.tree,))
+            requests, errors = _requests((file.tree,), file.aliases, parameters=False)
+            reasons.update(f"{file.path}::<whole>:{error}" for error in errors)
+            for name in sorted(requests):
+                request(name)
 
     def scan(file: _File, symbol: str, nodes: Sequence[ast.AST]) -> None:
         if (file.path, symbol) in exempt:

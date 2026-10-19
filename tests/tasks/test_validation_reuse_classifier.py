@@ -215,3 +215,58 @@ def test_unrelated_local_import_does_not_hide_module_alias(
     assert any("unbounded_input:" in reason for reason in reasons), reasons
     safe_source = f"{module_import}\ndef test_it(): pass\ndef helper():\n    {unrelated_import}\n"
     assert _classify(safe_source) == ()
+
+
+@pytest.mark.parametrize(
+    "helper_body, expected",
+    [
+        ("request.getfixturevalue('danger')", "unbounded_input:"),
+        ("request.getfixturevalue(variable)", "dynamic_fixture"),
+        ("return 1", ""),
+    ],
+)
+def test_correction_helper_fixture_requests(helper_body: str, expected: str) -> None:
+    reasons = _classify(
+        "from tests.helper import work\ndef test_it(request): work(request)",
+        "import pytest\n@pytest.fixture\ndef danger(): return __file__",
+        **{"tests/helper.py": f"def work(request):\n    {helper_body}\n"},
+    )
+    if expected:
+        assert any(expected in reason for reason in reasons), reasons
+    else:
+        assert reasons == ()
+
+
+@pytest.mark.parametrize("options", ["{'autouse': True}", "options"])
+def test_correction_fixture_keyword_unpacking_refuses(options: str) -> None:
+    reasons = _classify(
+        "def test_it(): pass",
+        f"import pytest\n@pytest.fixture(**{options})\ndef danger(): return __file__",
+    )
+    assert reasons, "unresolved fixture options must fail closed"
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "__import__('subprocess').run(['x'])",
+        "__import__('pty').spawn('x')",
+        "__import__('runpy').run_module('x')",
+        "__import__('os').system('x')",
+        "importlib.import_module('pathlib').Path.home()",
+        "importlib.import_module('importlib.resources').files('x')",
+    ],
+)
+def test_correction_literal_import_forbidden_namespace(expression: str) -> None:
+    reasons = _classify(f"import importlib\ndef test_it():\n    {expression}\n")
+    assert any("unbounded_input:" in reason for reason in reasons), reasons
+
+
+def test_correction_literal_repository_import_can_be_bounded() -> None:
+    assert (
+        _classify(
+            "import importlib\ndef test_it(): importlib.import_module('tests.helper')",
+            **{"tests/helper.py": "def work(): return 1"},
+        )
+        == ()
+    )
