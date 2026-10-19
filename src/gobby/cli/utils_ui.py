@@ -15,6 +15,7 @@ from typing import cast
 import click
 import psutil
 
+from gobby.cli.utils_process import ProcessConnectionsUnavailable, process_connections
 from gobby.cli.utils_runtime import facade
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
@@ -157,7 +158,11 @@ def _find_gobby_ui_port_holder(port: int, web_dir: Path) -> psutil.Process | Non
         try:
             if not _is_gobby_ui_process(proc, web_dir=web_dir):
                 continue
-            for conn in proc.net_connections(kind="inet"):
+            try:
+                connections = process_connections(proc, kind="inet")
+            except ProcessConnectionsUnavailable:
+                continue
+            for conn in connections:
                 if (
                     hasattr(conn, "laddr")
                     and conn.laddr
