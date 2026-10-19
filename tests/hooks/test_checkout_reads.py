@@ -270,3 +270,43 @@ async def test_node_content_stays_in_delivery_memo(
     for secret in (b"SECRET-FILE-BODY", b"SECRET-GIT-OUTPUT"):
         assert secret.decode("ascii") not in sinks
         assert base64.b64encode(secret).decode("ascii") not in sinks
+
+
+@pytest.mark.asyncio
+async def test_closed_loop_latches_channel_closed(node: FakeNode, tmp_path: Path) -> None:
+    cwd = str(tmp_path)
+    path = f"{cwd}/closed.txt"
+    node.add_file(NODE_MACHINE, path, b"closed")
+    closed = asyncio.new_event_loop()
+    closed.close()
+
+    with delivery_scope(NODE_MACHINE, closed, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as first:
+            path_facts([path], read_limit=64)
+        assert first.value.code == "channel_closed"
+        assert first.value.machine_id == NODE_MACHINE
+        with pytest.raises(CheckoutReadUnavailable) as later:
+            path_facts([path], read_limit=64)
+        assert later.value.code == "channel_closed"
+
+    with delivery_scope(NODE_MACHINE, closed, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as awaited:
+            await run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT)
+        assert awaited.value.code == "channel_closed"
+    assert node.requests == []
+
+
+def test_local_run_git_ignores_inherited_git_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    for checkout in (repo, other):
+        checkout.mkdir()
+        subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+
+    local = run_git(["rev-parse", "--absolute-git-dir"], cwd=str(repo), timeout=_TIMEOUT)
+
+    assert local.returncode == 0
+    assert Path(local.stdout.decode("utf-8").strip()).resolve() == (repo / ".git").resolve()

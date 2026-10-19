@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import subprocess
-from collections.abc import Awaitable, Iterator, Sequence
+from collections.abc import Awaitable, Coroutine, Iterator, Sequence
+from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -121,7 +123,11 @@ def run_git(
     delivery = _DELIVERY.get()
     if delivery is None:
         return spawn.run(
-            ["git", "-C", cwd, *args], capture_output=True, timeout=timeout, input=input_bytes
+            ["git", "-C", cwd, *args],
+            capture_output=True,
+            timeout=timeout,
+            input=input_bytes,
+            env=_local_git_env(),
         )
     reply = _send(delivery, _git_payload(cwd, args, timeout, input_bytes), _timeout_ms(timeout))
     return _git_result(delivery, args, timeout, reply["git"])
@@ -211,6 +217,22 @@ def _git_result(
     )
 
 
+def _local_git_env() -> dict[str, str]:
+    """The inherited environment without GIT_* selectors, so `git -C cwd` reads cwd's repo."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
+def _submit(
+    delivery: _NodeDelivery, call: Coroutine[Any, Any, dict[str, Any]]
+) -> Future[dict[str, Any]]:
+    """Hand `call` to the daemon loop. A closed loop latches `channel_closed` and closes `call`."""
+    try:
+        return asyncio.run_coroutine_threadsafe(call, delivery.loop)
+    except RuntimeError as exc:
+        call.close()
+        raise _unavailable(delivery, "channel_closed") from exc
+
+
 def _send(delivery: _NodeDelivery, payload: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     """Send one checkout.read from a worker thread and wait for the daemon loop to answer."""
     _check_latch(delivery)
@@ -218,7 +240,7 @@ def _send(delivery: _NodeDelivery, payload: dict[str, Any], timeout_ms: int) -> 
         # Blocking here would wait on the loop this thread runs; fail instead of deadlocking.
         raise _unavailable(delivery, "loop_thread")
     call = node_command_client().send(delivery.machine, _COMMAND, payload, timeout_ms)
-    future = asyncio.run_coroutine_threadsafe(call, delivery.loop)
+    future = _submit(delivery, call)
     try:
         return future.result(timeout=timeout_ms / 1000 + _BRIDGE_MARGIN_S)
     except NodeCommandError as exc:
@@ -236,7 +258,7 @@ async def _send_async(
     if _running_loop() is delivery.loop:
         pending: Awaitable[dict[str, Any]] = call
     else:
-        pending = asyncio.wrap_future(asyncio.run_coroutine_threadsafe(call, delivery.loop))
+        pending = asyncio.wrap_future(_submit(delivery, call))
     try:
         return await asyncio.wait_for(pending, timeout=timeout_ms / 1000 + _BRIDGE_MARGIN_S)
     except NodeCommandError as exc:
