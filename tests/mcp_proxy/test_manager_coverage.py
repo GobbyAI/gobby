@@ -37,6 +37,58 @@ _CHROME_DEVTOOLS_PACKAGE = "chrome-devtools-mcp@0.21.0"
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+async def test_connect_honors_server_timeout_beyond_manager_deadline() -> None:
+    config = MCPServerConfig(
+        name="slow-start",
+        project_id="test-project",
+        url="http://localhost:8001",
+        connect_timeout=0.5,
+    )
+    manager = MCPClientManager(
+        server_configs=[config],
+        connection_timeout=0.001,
+        max_connection_retries=0,
+    )
+    ready = asyncio.Event()
+    session = MagicMock()
+
+    async def delayed_connect(_config: MCPServerConfig) -> Any:
+        await ready.wait()
+        return session
+
+    release = asyncio.get_running_loop().call_later(0.02, ready.set)
+    try:
+        with patch.object(manager, "_connect_server", side_effect=delayed_connect):
+            result = await manager.ensure_connected(config.id)
+        assert result is session
+        assert manager._lazy_connector.is_connected(config.id)
+    finally:
+        release.cancel()
+
+
+@pytest.mark.asyncio
+async def test_connection_lock_honors_server_timeout_beyond_manager_deadline() -> None:
+    config = MCPServerConfig(
+        name="slow-start",
+        project_id="test-project",
+        url="http://localhost:8001",
+        connect_timeout=0.5,
+    )
+    manager = MCPClientManager(server_configs=[config], connection_timeout=0.001)
+    lock = manager._lazy_connector.get_connection_lock(config.id)
+    await lock.acquire()
+    release = asyncio.get_running_loop().call_later(0.02, lock.release)
+    try:
+        acquired = await connections._acquire_connection_lock(manager, config.id)
+        assert acquired is lock
+        assert lock.locked()
+    finally:
+        release.cancel()
+        if lock.locked():
+            lock.release()
+
+
 def _id(manager: MCPClientManager, name: str) -> str:
     for config in manager.server_configs:
         if config.name == name:
@@ -1214,6 +1266,7 @@ class TestMCPClientManagerEnsureConnected:
             project_id="test-project",
             transport="http",
             url="http://localhost:8001",
+            connect_timeout=0.01,
         )
 
         manager = MCPClientManager(
@@ -2166,6 +2219,7 @@ class TestMCPClientManagerReconnect:
             project_id="test-project",
             transport="http",
             url="http://localhost:8001",
+            connect_timeout=0.01,
         )
         manager = MCPClientManager(
             server_configs=[config],
