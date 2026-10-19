@@ -13,14 +13,23 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
+from gobby.tasks import transcript_evidence
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.tdd_python_evidence import PythonBindingCache, _binding_count
-from gobby.tasks.transcript_evidence import _derive_transcript_path_evidence
+from gobby.tasks.transcript_evidence import (
+    _derive_transcript_evidence_sync,
+    _derive_transcript_path_evidence,
+)
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
+)
+from gobby.tasks.transcript_evidence_snapshots import (
+    EvidenceSnapshot,
+    load_durable_snapshot,
+    read_transcript_suffix,
 )
 
 START = datetime(2026, 10, 3, tzinfo=UTC)
@@ -77,9 +86,9 @@ def _native_updates(call: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _native_evidence(
+def _native_session(
     tmp_path: Path, fixture: dict[str, Any], extra: list[dict[str, Any]] | None = None
-) -> TranscriptEvidence:
+) -> Session:
     records = [
         record
         for call in [
@@ -95,7 +104,7 @@ def _native_evidence(
     records.sort(key=lambda row: row["timestamp"])
     transcript = tmp_path / "grok.jsonl"
     transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n")
-    session = Session(
+    return Session(
         id="owner",
         external_id="native-fixture",
         machine_id="isolated",
@@ -111,6 +120,13 @@ def _native_evidence(
         created_at=START,
         updated_at=START,
     )
+
+
+def _native_evidence(
+    tmp_path: Path, fixture: dict[str, Any], extra: list[dict[str, Any]] | None = None
+) -> TranscriptEvidence:
+    session = _native_session(tmp_path, fixture, extra)
+    transcript = str(session.transcript_path)
     files = {_NATIVE_PRODUCT, _NATIVE_TEST, "tests/servers/test_caller_scope_binding.py"}
     evidence, _ = _derive_transcript_path_evidence(
         session,
@@ -124,6 +140,23 @@ def _native_evidence(
         resume=None,
     )
     return evidence
+
+
+def _native_cached_evidence(
+    session: Session, resume: EvidenceSnapshot | None = None
+) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
+    files = {_NATIVE_PRODUCT, _NATIVE_TEST, "tests/servers/test_caller_scope_binding.py"}
+    return _derive_transcript_evidence_sync(
+        session,
+        None,
+        default_validation_detection_config(),
+        files,
+        _NATIVE_ROOT,
+        frozenset((_NATIVE_ROOT, path) for path in files),
+        None,
+        "isolated",
+        resume,
+    )
 
 
 def _native_acceptance(fixture: dict[str, Any]) -> tuple[AcceptanceTest, ...]:
@@ -149,6 +182,72 @@ def test_native_searchreplace_creation_seeds_snapshot_for_red(tmp_path: Path) ->
     assert created.source_after == fixture["creations"][0]["arguments"]["new_string"]
     assert created.source_created and created.source_confirmed
     # Original binding partials have no authenticated full baseline: no invention.
+    binding = [edit for edit in evidence.edits if edit.path.startswith("tests/servers/")]
+    assert len(binding) == 8
+    assert all(edit.source_after is None for edit in binding)
+
+
+@pytest.mark.parametrize("durable", [False, True], ids=["memory", "durable"])
+@pytest.mark.parametrize("append_suffix", [False, True], ids=["eof", "appended"])
+def test_native_creation_rederives_pre_fix_v43_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, durable: bool, append_suffix: bool
+) -> None:
+    """A valid old cache must not hide authenticated historical creation records."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    fixture = _native_fixture()
+    session = _native_session(tmp_path, fixture)
+    original_dumps = json.dumps
+
+    def legacy_dumps(value: Any, **kwargs: Any) -> str:
+        if isinstance(value, dict) and "derivation_version" in value:
+            value = {**value, "derivation_version": 43}
+        return original_dumps(value, **kwargs)
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(json, "dumps", legacy_dumps)
+        legacy.setattr(transcript_evidence, "native_created_source", lambda *args: None)
+        stale_evidence, stale = _native_cached_evidence(session)
+
+    assert stale is not None
+    stale_created = next(edit for edit in stale.edits if edit.path == _NATIVE_PRODUCT)
+    assert stale_created.source_after is None and not stale_created.source_created
+    assert not evaluate_tdd_evidence(_native_acceptance(fixture), stale_evidence).passed
+    transcript = Path(str(session.transcript_path))
+    assert stale.watermark == transcript.stat().st_size
+    suffix = read_transcript_suffix(str(transcript), stale)
+    assert suffix is not None and suffix.lines == []
+    stored = load_durable_snapshot(f"{session.id}:{stale.fingerprint}")
+    assert stored is not None and stored.checkpoint() == stale.checkpoint()
+    assert stored.edits == stale.edits
+
+    if append_suffix:
+        with transcript.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": "2026-10-18T00:00:00Z",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": "Harmless fixture suffix."},
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    evidence, refreshed = _native_cached_evidence(session, None if durable else stale)
+    assert refreshed is not None
+    assert refreshed.parsed_from_offset == 0
+    assert refreshed.fingerprint != stale.fingerprint
+    assert refreshed.watermark == transcript.stat().st_size
+    created = next(edit for edit in evidence.edits if edit.path == _NATIVE_PRODUCT)
+    assert created.source_after == fixture["creations"][0]["arguments"]["new_string"]
+    assert created.source_created and created.source_confirmed
+    acceptance = _native_acceptance(fixture)
+    assert len(acceptance) == 2
+    result = evaluate_tdd_evidence(acceptance, evidence)
+    assert result.passed, result.findings
+    assert result.red_runs == (fixture["runs"][0]["arguments"]["command"],)
     binding = [edit for edit in evidence.edits if edit.path.startswith("tests/servers/")]
     assert len(binding) == 8
     assert all(edit.source_after is None for edit in binding)
