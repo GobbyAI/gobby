@@ -147,6 +147,8 @@ ENGINE_OWNED_FLAGS = frozenset(
     {
         "bounced",
         "candidate_received",
+        "consensus",
+        "implementation_complete",
         "log_monitor_reported",
         "orchestrator_reported",
         "skills_routed",
