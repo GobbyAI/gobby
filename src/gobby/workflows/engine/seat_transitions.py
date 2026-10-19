@@ -14,7 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.tasks.close_receipts import LANDING_APPROVAL, list_close_receipts
+from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, list_close_receipts
 from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
@@ -28,9 +28,11 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance
 
 
-def _approved(db: HubDatabase, task_id: str, sha: str) -> bool:
+def _approved(db: HubDatabase, reviewer_session_id: str, task_id: str, sha: str) -> bool:
     return any(
-        receipt.kind == LANDING_APPROVAL and receipt.commit_sha == sha
+        receipt.kind == INDEPENDENT_REVIEW_APPROVAL
+        and receipt.author_session_id == reviewer_session_id
+        and receipt.commit_sha == sha
         for receipt in list_close_receipts(db, task_id)
     )
 
@@ -49,6 +51,7 @@ def _requested_task(tasks: LocalTaskManager, bound_id: Any, requested_ref: Any) 
 
 def candidate_landing_approved(
     sessions: SessionManager | None,
+    reviewer_session_id: str,
     task_id: Any,
     sha: Any,
     requested_task: Any,
@@ -58,7 +61,7 @@ def candidate_landing_approved(
     if sessions is None or not isinstance(sha, str) or requested_sha != sha:
         return False
     task = _requested_task(LocalTaskManager(sessions.db), task_id, requested_task)
-    return task is not None and _approved(sessions.db, task.id, sha)
+    return task is not None and _approved(sessions.db, reviewer_session_id, task.id, sha)
 
 
 def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
@@ -200,7 +203,7 @@ def _reviewer_message(
             return {}
         return {
             "candidate_received": True,
-            "verdict_ready": _approved(db, event.task.id, event.sha),
+            "verdict_ready": _approved(db, session_id, event.task.id, event.sha),
             "candidate_task": event.task.id,
             "candidate_sha": event.sha,
             "candidate_owner": event.task.claimed_by_session_id,
@@ -227,7 +230,7 @@ def _reviewer_message(
             fields.get("VERDICT") != "LAND" or fields.get("LANDING") != "NOT_REQUIRED"
         ):
             return {}
-        if _approved(db, event.task.id, event.sha):
+        if _approved(db, session_id, event.task.id, event.sha):
             return _clear_candidate()
     return {}
 
@@ -270,7 +273,7 @@ def advance_seat(
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
         task = _requested_task(tasks, task_id, tool_input.get("task_id"))
         if task is not None and isinstance(sha, str) and state.get("candidate_received"):
-            if _approved(db, task.id, sha):
+            if _approved(db, session_id, task.id, sha):
                 return {"verdict_ready": True}
         return {}
     if mcp_tool[0] != "gobby-agents":

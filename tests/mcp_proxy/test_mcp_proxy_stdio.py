@@ -593,6 +593,21 @@ class TestCheckDaemonHttpHealth:
 
         assert healthy is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [httpx.ConnectTimeout("listener not accepting"), httpx.PoolTimeout("pool exhausted")],
+        ids=["connect-timeout", "pool-timeout"],
+    )
+    async def test_timeout_before_an_answer_is_busy_not_down(
+        self, monkeypatch: pytest.MonkeyPatch, error: httpx.TimeoutException
+    ) -> None:
+        """A daemon that is up but not accepting yet is busy, not down (#23650)."""
+        monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(side_effect=error))
+
+        assert await check_daemon_http_health(60887, tolerate_busy=True) is True
+        assert await check_daemon_http_health(60887) is False
+
 
 class TestCreateStdioMcpServer:
     """Tests for create_stdio_mcp_server function."""

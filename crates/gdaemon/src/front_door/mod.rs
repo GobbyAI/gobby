@@ -111,6 +111,9 @@ impl FrontDoor {
             } => (state, table, machines),
             #[cfg(unix)]
             Door::Node { node, ws_listener } => {
+                if crate::nodes::internal_api::is_route(request.uri().path()) {
+                    return crate::nodes::internal_api::not_found();
+                }
                 if request.method() == axum::http::Method::POST
                     && request.uri().path() == "/api/hooks/execute"
                 {
@@ -179,6 +182,10 @@ impl FrontDoor {
                     true,
                 );
             }
+        }
+        if crate::nodes::internal_api::is_route(request.uri().path()) {
+            return crate::nodes::internal_api::handle(&state.native, &state.auth, request, peer)
+                .await;
         }
         if request.method() == axum::http::Method::POST
             && request.uri().path() == "/api/runtime/handshake/challenge"

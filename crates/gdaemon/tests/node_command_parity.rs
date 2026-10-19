@@ -74,13 +74,43 @@ fn v4_checkout_read_round_trips() {
     assert_eq!(assert_round_trips(V4_MESSAGES), V4_MESSAGES.len());
 }
 
+/// The decode error for one invalid entry, or `None` when it names `expect`.
+fn invalid_mismatch(message: &serde_json::Value, expect: &str) -> Option<String> {
+    let name = field(message, "name");
+    match round_trip_json(field(message, "kind"), field(message, "json")) {
+        Ok(decoded) => Some(format!("{name} decoded as {decoded}")),
+        Err(error) if error.to_string().contains(expect) => None,
+        Err(error) => Some(format!("{name} error `{error}` lacks `{expect}`")),
+    }
+}
+
+fn named<'a>(entries: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
+    entries
+        .iter()
+        .find(|entry| field(entry, "name") == name)
+        .expect(name)
+}
+
 #[test]
 fn invalid_messages_fail() {
     let invalid = corpus_list("invalid");
-    assert_eq!(invalid.len(), 17);
-    for message in &invalid {
-        let name = field(message, "name");
-        let decoded = round_trip_json(field(message, "kind"), field(message, "json"));
-        assert!(decoded.is_err(), "{name} decoded as {decoded:?}");
-    }
+    assert_eq!(invalid.len(), 35);
+    let mismatches: Vec<String> = invalid
+        .iter()
+        .filter_map(|message| invalid_mismatch(message, field(&message["expect"], "rust")))
+        .collect();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn invalid_expectation_detects_changed_cause() {
+    let invalid = corpus_list("invalid");
+    let omitted = named(&invalid, "invalid.omitted_nullable");
+    let unknown = named(&invalid, "invalid.unknown_field");
+    let expect = field(&omitted["expect"], "rust");
+    assert!(invalid_mismatch(omitted, expect).is_none());
+    let mut changed = omitted.clone();
+    changed["kind"] = unknown["kind"].clone();
+    changed["json"] = unknown["json"].clone();
+    assert!(invalid_mismatch(&changed, expect).is_some());
 }

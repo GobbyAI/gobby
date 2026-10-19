@@ -43,10 +43,10 @@ class TestMCPRegistryRoutes:
         router = create_mcp_router()
         app.include_router(router)
 
-        async def override_server():
+        async def override_server() -> MagicMock:
             return mock_server
 
-        async def override_metrics():
+        async def override_metrics() -> None:
             return None
 
         app.dependency_overrides[get_server] = override_server
@@ -457,20 +457,22 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
 
-        mock_tool = MagicMock()
-        mock_tool.name = "list_repos"
-        mock_tool.description = "List GitHub repos"
-        mock_tool.input_schema = {"type": "object", "properties": {"org": {"type": "string"}}}
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = [mock_tool]
-        mock_session.list_tools.return_value = mock_tools_result
-
-        async def ensure_connected(_server_id: object) -> AsyncMock:
+        async def list_tools(_server_id: str) -> dict[str, list[dict[str, object]]]:
             ext_config.tools = [{"name": "list_repos", "brief": "List GitHub repos"}]
-            return mock_session
+            return {
+                "github-mcp": [
+                    {
+                        "name": "list_repos",
+                        "description": "List GitHub repos",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"org": {"type": "string"}},
+                        },
+                    }
+                ]
+            }
 
-        mock_server.mcp_manager.ensure_connected = AsyncMock(side_effect=ensure_connected)
+        mock_server.mcp_manager.list_tools = AsyncMock(side_effect=list_tools)
         mock_server.mcp_manager.refresh_server = AsyncMock()
 
         with (
@@ -497,7 +499,7 @@ class TestMCPRegistryRoutes:
         assert data["stats"]["servers_processed"] == 1
         assert "ext-github-1" in data["stats"]["by_server"]
         mock_server.mcp_manager.refresh_server.assert_called()
-        mock_server.mcp_manager.ensure_connected.assert_awaited()
+        mock_server.mcp_manager.list_tools.assert_awaited_once_with("ext-github-1")
 
         inventory_response = client.get("/api/mcp/tools")
 
@@ -505,7 +507,7 @@ class TestMCPRegistryRoutes:
         assert inventory_response.json()["tools"]["github-mcp"] == [
             {"name": "list_repos", "brief": "List GitHub repos"}
         ]
-        mock_server.mcp_manager.ensure_connected.assert_awaited_once_with("ext-github-1")
+        mock_server.mcp_manager.list_tools.assert_awaited_once_with("ext-github-1")
 
     def test_refresh_server_id_filter_loads_row_absent_from_manager(
         self, client: TestClient, mock_server: MagicMock
@@ -535,15 +537,17 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.refresh_server = AsyncMock()
         mock_server.mcp_manager.get_server_config.return_value = None
 
-        mock_tool = MagicMock()
-        mock_tool.name = "listPets"
-        mock_tool.description = "List pets"
-        mock_tool.input_schema = {"type": "object"}
-        mock_session = AsyncMock()
-        tools_result = MagicMock()
-        tools_result.tools = [mock_tool]
-        mock_session.list_tools.return_value = tools_result
-        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+        mock_server.mcp_manager.list_tools = AsyncMock(
+            return_value={
+                "lightspeed": [
+                    {
+                        "name": "listPets",
+                        "description": "List pets",
+                        "inputSchema": {"type": "object"},
+                    }
+                ]
+            }
+        )
 
         with (
             patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
@@ -565,6 +569,7 @@ class TestMCPRegistryRoutes:
         assert data["stats"]["servers_processed"] == 1
         mock_server._mcp_db_manager.get_server_by_id.assert_called_once_with("row-1")
         mock_server.mcp_manager.refresh_server.assert_awaited_once_with("row-1")
+        mock_server.mcp_manager.list_tools.assert_awaited_once_with("row-1")
 
     def test_refresh_name_filter_loads_row_absent_from_manager(
         self, client: TestClient, mock_server: MagicMock
@@ -594,15 +599,17 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.refresh_server = AsyncMock()
         mock_server.mcp_manager.get_server_config.return_value = None
 
-        mock_tool = MagicMock()
-        mock_tool.name = "listPets"
-        mock_tool.description = "List pets"
-        mock_tool.input_schema = {"type": "object"}
-        mock_session = AsyncMock()
-        tools_result = MagicMock()
-        tools_result.tools = [mock_tool]
-        mock_session.list_tools.return_value = tools_result
-        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+        mock_server.mcp_manager.list_tools = AsyncMock(
+            return_value={
+                "lightspeed": [
+                    {
+                        "name": "listPets",
+                        "description": "List pets",
+                        "inputSchema": {"type": "object"},
+                    }
+                ]
+            }
+        )
 
         with (
             patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
@@ -626,6 +633,7 @@ class TestMCPRegistryRoutes:
             "lightspeed", project_id=GLOBAL_PROJECT_ID
         )
         mock_server.mcp_manager.refresh_server.assert_awaited_once_with("row-2")
+        mock_server.mcp_manager.list_tools.assert_awaited_once_with("row-2")
 
     def test_refresh_unknown_filter_returns_unknown_server_error(
         self, client: TestClient, mock_server: MagicMock
@@ -658,7 +666,7 @@ class TestMCPRegistryRoutes:
         ext_config.enabled = True
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
-        mock_server.mcp_manager.ensure_connected = AsyncMock(side_effect=ConnectionError("refused"))
+        mock_server.mcp_manager.list_tools = AsyncMock(side_effect=ConnectionError("refused"))
 
         with patch("gobby.mcp_proxy.schema_hash.SchemaHashManager"):
             response = client.post(
@@ -670,7 +678,8 @@ class TestMCPRegistryRoutes:
         data = response.json()
         assert data["success"] is True
         assert "broken-server" in data["stats"]["by_server"]
-        assert "error" in data["stats"]["by_server"]["broken-server"]
+        assert data["stats"]["by_server"]["broken-server"]["error"] == "refused"
+        mock_server.mcp_manager.list_tools.assert_awaited_once_with("broken-server")
 
     def test_refresh_with_semantic_search_embeddings(
         self, client: TestClient, mock_server: MagicMock
@@ -906,12 +915,7 @@ class TestMCPRegistryRoutes:
             "properties": {"x": {"type": "string"}},
         }
         mock_tool.input_schema = mock_input_schema
-
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = [mock_tool]
-        mock_session.list_tools.return_value = mock_tools_result
-        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+        mock_server._mcp_db_manager.get_cached_tools.return_value = [mock_tool]
 
         with (
             patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
@@ -954,12 +958,7 @@ class TestMCPRegistryRoutes:
         mock_tool.description = "Has dict schema"
         # inputSchema is a plain dict (no model_dump)
         mock_tool.input_schema = {"type": "object", "properties": {}}
-
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = [mock_tool]
-        mock_session.list_tools.return_value = mock_tools_result
-        mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
+        mock_server._mcp_db_manager.get_cached_tools.return_value = [mock_tool]
 
         with (
             patch("gobby.mcp_proxy.schema_hash.SchemaHashManager") as MockSHM,
@@ -982,6 +981,7 @@ class TestMCPRegistryRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+        assert data["stats"]["tools_unchanged"] == 1
 
 
 def _demo_template() -> dict[str, Any]:

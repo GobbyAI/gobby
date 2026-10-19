@@ -810,7 +810,7 @@
           "active_session_pause_minutes": 30,
           "expire_check_interval_minutes": 60,
           "stale_session_timeout_hours": 24,
-          "transcript_archive_dir": "~/.gobby/session_transcripts",
+          "transcript_archive_dir": null,
           "transcript_processing_batch_size": 10,
           "transcript_processing_interval_minutes": 5,
           "workflow_audit_retention_days": 7
@@ -1903,7 +1903,7 @@
           "active_session_pause_minutes": 30,
           "expire_check_interval_minutes": 60,
           "stale_session_timeout_hours": 24,
-          "transcript_archive_dir": "~/.gobby/session_transcripts",
+          "transcript_archive_dir": null,
           "transcript_processing_batch_size": 10,
           "transcript_processing_interval_minutes": 5,
           "workflow_audit_retention_days": 7

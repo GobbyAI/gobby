@@ -439,11 +439,17 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.hide_tab_bar_when_single_tab = !prefs.hide_tab_bar_when_single_tab;
         }
         SettingsRow::SidebarWidth => {
+            // Steps from the drawn width. A step into the cap or the floor
+            // moves nothing, so the saved preference stays for a wider window.
             let (min, max) = chrome.sidebar.width_bounds();
-            let width = usize::from(prefs.sidebar_width)
+            let drawn = chrome.sidebar.width.clamp(min, max);
+            let width = usize::from(drawn)
                 .saturating_add_signed(delta)
                 .clamp(usize::from(min), usize::from(max));
             let width = u16::try_from(width).unwrap_or(max);
+            if width == drawn {
+                return;
+            }
             prefs.sidebar_width = width;
             chrome.sidebar.width = width;
         }
@@ -662,5 +668,45 @@ mod tests {
         chrome.set_theme(crate::theme::ThemeKind::Dark);
         step_settings_row(&ws, &mut chrome, 1);
         assert_eq!(chrome.prefs.palette, names[1]);
+    }
+
+    /// A pinned chrome on the sidebar-width row with `width` saved and
+    /// drawn, under the cap of a `columns`-wide window.
+    fn sidebar_width_settings(width: u16, columns: u16) -> Chrome {
+        let mut chrome = Chrome::dark();
+        chrome.settings.selected = SettingsRow::ALL
+            .iter()
+            .position(|row| *row == SettingsRow::SidebarWidth)
+            .expect("sidebar width row");
+        chrome.sidebar.pinned = true;
+        chrome.prefs.sidebar_width = width;
+        chrome.sidebar.width = width;
+        chrome.sidebar.cap_to_window(columns);
+        chrome
+    }
+
+    #[test]
+    fn settings_sidebar_step_at_cap_keeps_preference() {
+        let ws = Workspace::scripted();
+        let mut chrome = sidebar_width_settings(60, 90);
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.sidebar_width, 60, "the preference survives");
+        assert_eq!(chrome.sidebar.width, 60);
+        let window = ratatui::layout::Rect::new(0, 1, 90, 38);
+        assert_eq!(chrome.sidebar_width(window), 30, "drawn at the cap");
+    }
+
+    #[test]
+    fn settings_sidebar_step_below_cap_stores_stepped_width() {
+        let ws = Workspace::scripted();
+        let mut chrome = sidebar_width_settings(40, 200);
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.sidebar_width, 41);
+        assert_eq!(chrome.sidebar.width, 41);
+        // In a narrow window a step down starts from the drawn width.
+        let mut chrome = sidebar_width_settings(60, 90);
+        step_settings_row(&ws, &mut chrome, -1);
+        assert_eq!(chrome.prefs.sidebar_width, 29);
+        assert_eq!(chrome.sidebar.width, 29);
     }
 }

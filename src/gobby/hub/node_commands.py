@@ -240,6 +240,23 @@ class MergeResult(NodeModel):
     conflicted_files: list[str]
     dirty_paths: list[str]
 
+    @model_validator(mode="after")
+    def _outcome_consistent(self) -> MergeResult:
+        if self.outcome == "merged" and self.merge_sha is None:
+            raise ValueError("merge_sha is required with outcome merged")
+        if self.outcome != "merged" and self.merge_sha is not None:
+            raise ValueError("merge_sha is set only with outcome merged")
+        heads = ("merged", "already_merged")
+        if self.outcome in heads and self.target_head_sha is None:
+            raise ValueError("target_head_sha is required with outcome merged or already_merged")
+        if self.outcome not in heads and self.target_head_sha is not None:
+            raise ValueError("target_head_sha is set only with outcome merged or already_merged")
+        if self.conflicted_files and self.outcome != "conflict":
+            raise ValueError("conflicted_files is set only with outcome conflict")
+        if self.dirty_paths and self.outcome != "target_dirty":
+            raise ValueError("dirty_paths is set only with outcome target_dirty")
+        return self
+
 
 class RemoveResult(NodeModel):
     outcome: Literal["removed", "dirty", "unmerged", "busy"]
@@ -555,6 +572,7 @@ _PARSERS: dict[str, TypeAdapter[NodeModel]] = {
     "reply": TypeAdapter(ReplyFrame),
     "checkout": TypeAdapter(CheckoutBody),
     "checkout_result": TypeAdapter(CheckoutResult),
+    "merge_result": TypeAdapter(MergeResult),
     "report": TypeAdapter(ReportBody),
     "stale_report": TypeAdapter(StaleReport),
     "prompt_delivery_failure": TypeAdapter(PromptDeliveryFailureBody),

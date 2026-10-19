@@ -26,7 +26,7 @@ rules:
         # the pattern runs. Kept in sync with _REVIEW_GATED_GIT_SUBCOMMANDS in
         # src/gobby/workflows/condition_helpers.py.
         mask_quoted: true
-        command_pattern: &review_gated_git "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(?:commit|merge|cherry-pick|revert)(?![\\w-])(?!(?:\\s+-\\S+)*\\s+--(?:abort|quit)(?![\\w-]))"
+        command_pattern: &review_gated_git "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(?:commit|merge|rebase|cherry-pick|revert)(?![\\w-])(?!(?:\\s+-\\S+)*\\s+--(?:abort|quit)(?![\\w-]))"
         reason: |
           {{ skill_fetch_directive("code-review") }}
           Then run its pre-commit self-review only on paths attributed to this
@@ -45,6 +45,13 @@ rules:
           Gobby could not determine an exact owned path set for this Git
           operation. Do not include another session's staged paths.
           {% endif %}
+
+          For a clean lane worktree syncing to an already-landed integration
+          commit, run `git merge --ff-only <landed-integration-commit>` alone
+          in its own tool call. Run preflight and status checks in separate
+          calls. The exemption requires an empty index and proof that every
+          incoming commit is already on the registered integration branch;
+          compound commands remain gated.
 
   require-code-review-self-review:
     description: "Block each later review-gated Git operation until a fresh ocr rule review"
@@ -97,6 +104,13 @@ rules:
           command. Run the review in its own call: a review chained onto the Git
           operation is still blocked here, because the findings have to reach you
           before the commit does.
+
+          For a clean lane worktree syncing to an already-landed integration
+          commit, run `git merge --ff-only <landed-integration-commit>` alone
+          in its own tool call. Run preflight and status checks in separate
+          calls. The exemption requires an empty index and proof that every
+          incoming commit is already on the registered integration branch;
+          compound commands remain gated.
 
   track-ocr-review-freshness:
     description: "Record that an ocr rule review covered the current staged work"

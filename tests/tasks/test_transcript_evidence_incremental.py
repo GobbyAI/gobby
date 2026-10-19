@@ -108,7 +108,9 @@ async def _derive_for_caller(
         return await transcript_exclusions.derive_prelink_runs(
             session, window, DETECTION, str(repo)
         )
-    return await derive_transcript_evidence(session, window, DETECTION, set(), str(repo))
+    return await derive_transcript_evidence(
+        session, window, DETECTION, set(), str(repo), archive_dir=str(repo / "archives")
+    )
 
 
 def _assert_window_transfer(caller: Caller, result: Derived, call: PoolCall) -> None:
@@ -366,6 +368,7 @@ async def _derive(
     repo_path: Path,
     **kwargs: Any,
 ) -> TranscriptEvidence:
+    kwargs.setdefault("archive_dir", str(repo_path / "archives"))
     return await derive_transcript_evidence(
         session,
         window_start,

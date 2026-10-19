@@ -54,7 +54,7 @@ pub fn validate_request_shape(request: &EvidenceRequest) -> Result<()> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum EvidenceError {
     BindingMismatch {
         detail: String,
@@ -277,6 +277,10 @@ pub struct EvidenceLibrary {
     facts: Arc<dyn EvidenceFacts>,
     hybrid: Option<Arc<dyn HybridSearch>>,
     working_tree: bool,
+    /// Binding commit verification, run at most once per evidence invocation.
+    bound_commit: std::sync::OnceLock<std::result::Result<(), String>>,
+    /// Bound blobs read by this invocation, keyed by path, so each path is read once.
+    blob_cache: std::sync::Mutex<std::collections::BTreeMap<String, Result<Vec<u8>>>>,
 }
 
 impl EvidenceLibrary {
@@ -311,6 +315,8 @@ impl EvidenceLibrary {
             facts,
             hybrid: None,
             working_tree: false,
+            bound_commit: std::sync::OnceLock::new(),
+            blob_cache: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
 

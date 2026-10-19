@@ -307,3 +307,6 @@ pub fn head_has(head: &str, line: &str) -> bool {
             })
     })
 }
+
+#[cfg(unix)]
+pub mod channel;

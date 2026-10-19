@@ -1184,3 +1184,20 @@ def test_collect_all_deps_reports_slow_probes_as_timed_out_at_the_deadline(
     assert claude_lines and claude_lines[0].split(":", 1)[1].strip().startswith("timed out")
     assert "Status probes timed out: coding_clis.claude, integrations.tailscale" in rendered
     assert "Degraded" not in rendered
+
+
+def test_status_shows_a_generation_row_still_probing_as_pending_not_unreachable() -> None:
+    """A row the first background probe has not reached is pending, not down (#23650)."""
+    row = {
+        "name": "openrouter",
+        "provider_label": None,
+        "api_base": "https://openrouter.ai/api/v1",
+        "healthy": False,
+        "error": "probe pending",
+    }
+
+    rendered = format_status_message(running=True, api_data={"generation_endpoints": [row]})
+
+    line = next(line for line in rendered.splitlines() if "openrouter" in line)
+    assert "probe pending" in line
+    assert "unreachable" not in line
