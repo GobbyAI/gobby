@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import psutil
@@ -9,7 +10,12 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
-from gobby.cli.utils_process import _kill_port_holder, kill_all_gobby_daemons
+from gobby.cli.utils_process import (
+    ProcessConnectionsUnavailable,
+    _kill_port_holder,
+    get_port_listener_pid,
+    kill_all_gobby_daemons,
+)
 from gobby.cli.utils_ui import _find_gobby_ui_port_holder
 from gobby.config.app import DaemonConfig
 from gobby.runner_pid_file import ProbeState, SingletonProbe
@@ -42,6 +48,15 @@ class _SandboxedProcess:
 
     def net_connections(self, kind: str = "inet") -> list[object]:
         raise RuntimeError("proc_pidinfo(PROC_PIDLISTFDS) 2/2 syscall failed")
+
+
+class _ListeningProcess(_SandboxedProcess):
+    """A process that inspects normally and listens on the port under test."""
+
+    pid = 5678
+
+    def net_connections(self, kind: str = "inet") -> list[object]:
+        return [SimpleNamespace(status=psutil.CONN_LISTEN, laddr=SimpleNamespace(port=61234))]
 
 
 def test_status_reports_an_uninspectable_listener_instead_of_crashing(
@@ -123,3 +138,25 @@ def test_find_gobby_ui_port_holder_skips_a_process_whose_sockets_the_os_refuses(
     )
 
     assert _find_gobby_ui_port_holder(5173, tmp_path) is None
+
+
+def test_port_listener_is_found_past_a_process_whose_sockets_the_os_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "psutil.process_iter",
+        lambda *_args, **_kwargs: iter([_SandboxedProcess(), _ListeningProcess()]),
+    )
+
+    assert get_port_listener_pid(61234) == _ListeningProcess.pid
+
+
+def test_port_listener_lookup_raises_when_the_only_evidence_is_a_refused_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "psutil.process_iter", lambda *_args, **_kwargs: iter([_SandboxedProcess()])
+    )
+
+    with pytest.raises(ProcessConnectionsUnavailable, match="proc_pidinfo"):
+        get_port_listener_pid(61234)

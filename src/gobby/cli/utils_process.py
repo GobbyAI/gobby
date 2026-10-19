@@ -87,8 +87,11 @@ def is_port_available(port: int, host: str = "localhost") -> bool:
 def get_port_listener_pid(port: int) -> int | None:
     """Return the PID owning a TCP listener on ``port``, if observable.
 
-    Raises ProcessConnectionsUnavailable when the OS refuses a socket listing.
+    Scans every process before giving up. Raises ProcessConnectionsUnavailable
+    only when no listener is found and the OS refused a socket listing, since
+    the refused process may be the listener (#23650).
     """
+    refusal: ProcessConnectionsUnavailable | None = None
     try:
         for proc in psutil.process_iter(["pid"]):
             try:
@@ -102,8 +105,12 @@ def get_port_listener_pid(port: int) -> int | None:
                         return int(proc.pid)
             except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
+            except ProcessConnectionsUnavailable as exc:
+                refusal = exc
     except (OSError, psutil.Error):
         return None
+    if refusal is not None:
+        raise refusal
     return None
 
 
