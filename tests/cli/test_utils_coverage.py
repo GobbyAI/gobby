@@ -1711,19 +1711,25 @@ def test_stop_daemon_force_kill_after_timeout(tmp_path: Path) -> None:
     mock_proc = MagicMock()
     mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
 
-    # Process stays alive through initial check + 200 loop iterations (201 Trues),
-    # then dies after SIGKILL (default False at line 874)
-    alive_results = [True] * 201  # 1 initial + 200 loop iterations
-    alive_iter = iter(alive_results)
+    # The process ignores SIGTERM and dies only on SIGKILL. Modeling the signal,
+    # not a count of wait-loop polls, keeps the test independent of max_wait.
+    signals_sent: list[int] = []
+
+    def fake_kill(_pid: int, sig: int) -> None:
+        signals_sent.append(sig)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
-        patch("gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_iter, False)),
+        patch(
+            "gobby.cli.utils._is_process_alive",
+            side_effect=lambda _pid: signal.SIGKILL not in signals_sent,
+        ),
         patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
-        patch("gobby.cli.utils.os.kill") as mock_kill,
+        patch("gobby.cli.utils.os.kill", side_effect=fake_kill) as mock_kill,
+        patch("gobby.runner_maintenance.write_shutdown_source"),
         patch("gobby.cli.utils.time.sleep"),
         patch("gobby.cli.utils.click.echo"),
         patch(

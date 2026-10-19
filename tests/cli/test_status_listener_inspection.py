@@ -62,7 +62,7 @@ def test_status_reports_an_uninspectable_listener_instead_of_crashing(
         "psutil.process_iter", lambda *_args, **_kwargs: iter([_SandboxedProcess()])
     )
     monkeypatch.setattr(
-        "gobby.cli.runtime.CliRuntime.require_config",
+        "gobby.cli.runtime.CliRuntime.read_only_operational_config",
         MagicMock(return_value=DaemonConfig(daemon_port=61234)),
     )
     monkeypatch.setattr("gobby.cli.runtime.CliRuntime.require_database", MagicMock())
