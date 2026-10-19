@@ -63,11 +63,11 @@ async fn acknowledge(
     // terminalizes, while only an acknowledged delivery supplies carrying ids.
     if acknowledgment.acknowledged {
         for id in acknowledgment.carrying_envelope_ids {
-            ledger.mark_processed(&id, None, None).await?;
+            ledger.mark_acknowledged(&id).await?;
         }
     }
     if let Some(id) = envelope_id {
-        ledger.mark_processed(id, None, None).await?;
+        ledger.mark_acknowledged(id).await?;
     }
     Ok(())
 }

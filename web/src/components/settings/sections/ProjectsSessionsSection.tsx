@@ -173,7 +173,8 @@ function SessionLifecycleGroup({ fields }: { fields: SettingsSectionFields }) {
         path="session_lifecycle.transcript_archive_dir"
         label="Transcript archive directory"
         ariaLabel="Transcript archive directory"
-        placeholder="~/.gobby/session_transcripts"
+        placeholder="<GOBBY_HOME>/session_transcripts (leave blank for the default)"
+        nullable
       />
     </Subsection>
   );

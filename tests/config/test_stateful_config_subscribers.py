@@ -402,10 +402,11 @@ async def test_preparation_timeout_preserves_last_good() -> None:
 
         return PreparedService(client, dispose)
 
+    # Startup activation uses the helper's 0.2s budget. Only revision 1 outlives it.
     runtime = ConfigRuntime(
         repository,
         registry=FakeRegistry(),
-        subscribers=[subscriber("client", {"alpha"}, build, prepare_timeout=0.02)],
+        subscribers=[subscriber("client", {"alpha"}, build)],
     )
     await runtime.start()
     previous = runtime.capture().services["client"]
@@ -434,7 +435,7 @@ async def test_shutdown_cancels_subscriber_work() -> None:
     runtime = ConfigRuntime(
         repository,
         registry=FakeRegistry(),
-        subscribers=[subscriber("client", {"alpha"}, build, prepare_timeout=0.02)],
+        subscribers=[subscriber("client", {"alpha"}, build)],
     )
     await runtime.start()
     repository.index = 1

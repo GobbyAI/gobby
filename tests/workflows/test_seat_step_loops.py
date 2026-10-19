@@ -19,13 +19,17 @@ import pytest
 import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.agents.runner import AgentRunner
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -38,6 +42,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 from tests.fixtures.isolated_checkout import (
@@ -223,11 +228,18 @@ class SeatRun:
     async def intake(self, task: Task, sha: str = SHA) -> None:
         await self.incoming(f"LANE=1 EVENT=CANDIDATE TASK={task.id} COMMIT={sha} NOTE=ready")
 
-    async def approve(self, task: Task, sha: str = SHA, kind: str = "landing_approval") -> None:
+    async def approve(
+        self,
+        task: Task,
+        sha: str = SHA,
+        kind: str = "independent_review_approval",
+        author: str = SESSION_ID,
+    ) -> None:
+        SessionTaskManager(self.db).link_task(SESSION_ID, task.id, "reviewing")
         record_close_receipt(
             self.db,
             task=task,
-            author_session_id=COORDINATOR_ID,
+            author_session_id=author,
             kind=kind,
             commit_sha=sha,
             facts={"reason": "restart"} if kind == "landing_approval" else {},
@@ -308,25 +320,109 @@ async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -
     assert run.step == ("claim" if name == "developer" else "await")
 
 
-@pytest.mark.parametrize("kind", ["independent_review_approval", "wrong-sha", "landing_approval"])
-async def test_land_phase_requires_exact_stored_landing_approval(
-    temp_db: HubDatabase, kind: str
+@pytest.mark.parametrize("trigger", ["get_task", "record_close_receipt"])
+@pytest.mark.parametrize(
+    "kind,author,sha,ready",
+    [
+        ("independent_review_approval", SESSION_ID, SHA, True),
+        ("independent_review_approval", PEER_ID, SHA, False),
+        ("independent_review_approval", COORDINATOR_ID, SHA, False),
+        ("independent_review_approval", SESSION_ID, REPLACEMENT_SHA, False),
+        ("landing_approval", COORDINATOR_ID, SHA, False),
+    ],
+)
+async def test_reviewer_own_review_receipt_controls_land_admission(
+    temp_db: HubDatabase, trigger: str, kind: str, author: str, sha: str, ready: bool
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     await run.intake(task)
-    receipt_kind = "landing_approval" if kind == "wrong-sha" else kind
-    await run.approve(task, REPLACEMENT_SHA if kind == "wrong-sha" else SHA, receipt_kind)
-    assert run.step == ("verdict" if kind == "landing_approval" else "review")
-    assert await run.admits(
-        "gobby-tasks-ops",
-        "land_commit",
-        {
-            "task_id": f"#{task.seq_num}",
-            "commit_sha": SHA,
-        },
-    ) is (kind == "landing_approval")
+    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
+    receipt, _ = record_close_receipt(
+        temp_db,
+        task=task,
+        author_session_id=author,
+        kind=kind,
+        commit_sha=sha,
+        facts={"reason": "restart"} if kind == "landing_approval" else {},
+    )
+    await run.call(
+        "gobby-tasks",
+        trigger,
+        {"task_id": task.id, "kind": kind, "commit_sha": sha},
+        {"success": True, "receipt": {"id": receipt.id}},
+    )
+    assert run.step == ("verdict" if ready else "review")
+    assert (
+        await run.admits("gobby-tasks-ops", "land_commit", {"task_id": task.id, "commit_sha": SHA})
+        is ready
+    )
+
+
+@pytest.mark.parametrize(
+    "event", ["CANDIDATE_RESUMED", "LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"]
+)
+async def test_reviewer_resume_and_clear_follow_own_review_receipt(
+    temp_db: HubDatabase, event: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
+    record_close_receipt(
+        temp_db,
+        task=task,
+        author_session_id=SESSION_ID,
+        kind="independent_review_approval",
+        commit_sha=SHA,
+    )
+    if event == "CANDIDATE_RESUMED":
+        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
+        assert run.step == "await"
+    else:
+        # Exercise the completion guard independently of the readiness transition.
+        instance = run.instances.get_for_session(SESSION_ID)
+        assert instance is not None
+        instance.current_step = "verdict"
+        instance.variables["verdict_ready"] = True
+        run.instances.save(instance)
+    suffix = " VERDICT=LAND LANDING=NOT_REQUIRED" if event == "REVIEW_COMPLETE" else ""
+    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA}{suffix}")
+    assert run.step == ("verdict" if event == "CANDIDATE_RESUMED" else "await")
+    assert run.vars["candidate_received"] is (event == "CANDIDATE_RESUMED")
+
+
+@pytest.mark.parametrize(
+    "kind,sha,author,ready",
+    [
+        ("independent_review_approval", SHA, SESSION_ID, True),
+        ("independent_review_approval", REPLACEMENT_SHA, SESSION_ID, False),
+        ("independent_review_approval", SHA, COORDINATOR_ID, False),
+        ("landing_approval", SHA, COORDINATOR_ID, False),
+    ],
+)
+async def test_land_phase_requires_exact_stored_own_review_approval(
+    temp_db: HubDatabase, kind: str, sha: str, author: str, ready: bool
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task, sha, kind, author)
+    assert run.step == ("verdict" if ready else "review")
+    assert (
+        await run.admits(
+            "gobby-tasks-ops",
+            "land_commit",
+            {
+                "task_id": f"#{task.seq_num}",
+                "commit_sha": SHA,
+            },
+        )
+        is ready
+    )
     assert not await run.admits(
         "gobby-tasks-ops",
         "land_commit",
@@ -337,7 +433,9 @@ async def test_land_phase_requires_exact_stored_landing_approval(
     )
 
 
-async def test_stale_verdict_snapshot_cannot_bypass_landing_approval(temp_db: HubDatabase) -> None:
+async def test_stale_verdict_snapshot_cannot_bypass_own_review_approval(
+    temp_db: HubDatabase,
+) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task, other = run.task(), run.task()
@@ -842,6 +940,7 @@ async def test_standing_seats_never_use_native_idle_writes(temp_db: HubDatabase,
         ("EVENT=SEAT_READY NOTE=idle", "content"),
         ("EVENT=SEAT_READY NOTE=idle", "structured"),
         ("EVENT=SEAT_READY NOTE=idle", "transport"),
+        ("EVENT=SEAT_READY NOTE=idle", "identity"),
     ],
 )
 async def test_idle_is_declared_only_by_readiness_rule(
@@ -892,10 +991,215 @@ async def test_idle_is_declared_only_by_readiness_rule(
     )
     if failure == "transport":
         event.metadata["is_failure"] = True
+    if failure != "identity":
+        event.metadata["_platform_session_id"] = SESSION_ID
     await run._evaluate(event)
     assert bool(run.session_vars.get("seat_idle")) == (
         content == "EVENT=SEAT_READY NOTE=idle" and not failure
     )
+
+
+def _reviewer_stop_handler(run: SeatRun) -> WorkflowHookHandler:
+    """Install the bundled gates and let hooks project the real step context."""
+    for name in ("declare-seat-idle-on-readiness", "require-step-completion"):
+        path = AGENTS_DIR.parent / f"rules/stop-gates/{name}.yaml"
+        document = yaml.safe_load(path.read_text())
+        rule = document["rules"][name]
+        body = RuleDefinitionBody.model_validate(
+            {
+                "event": rule["event"],
+                "when": rule["when"],
+                "effects": rule.get("effects", [rule.get("effect")]),
+            }
+        )
+        run.engine.rule_manager.create(
+            name=name,
+            definition_json=body.model_dump_json(),
+            enabled=True,
+            priority=rule.get("priority", 50),
+            tags=document["tags"],
+        )
+    SessionVariableManager(run.db).merge_variables(
+        SESSION_ID, {**run.session_vars, "is_spawned_agent": True}
+    )
+    return WorkflowHookHandler(
+        rule_engine=run.engine,
+        session_manager=run.sessions,
+        task_manager=LocalTaskManager(run.db),
+        session_task_manager=SessionTaskManager(run.db),
+    )
+
+
+def _reviewer_stop_event(cwd: Path) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="ext-seat",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        cwd=str(cwd),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+
+@pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
+@pytest.mark.parametrize("name", ["developer", "code-reviewer"])
+async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
+    temp_db: HubDatabase, tmp_path: Path, envelope: str, name: str
+) -> None:
+    run = SeatRun(temp_db, name)
+    await run.load(*run.vars["required_skills"])
+    idle_step = "claim" if name == "developer" else "await"
+    assert run.step == idle_step
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+
+    content = "EVENT=SEAT_READY NOTE=idle"
+    message = InterSessionMessageManager(temp_db).create_message(
+        SESSION_ID, COORDINATOR_ID, content
+    )
+    wire = _process_tool_proxy_result(
+        {"target": "session", "message_ids": [message.id], "delivery_status": "sent"},
+        *SEND,
+        1.0,
+    )
+    output: dict[str, Any] = wire
+    if envelope == "content":
+        output = {"isError": False, "content": [{"type": "text", "text": json.dumps(wire)}]}
+    elif envelope == "structured":
+        output = {"isError": False, "structuredContent": wire}
+    completion = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": "ext-seat",
+                "cwd": str(tmp_path),
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": SEND[0],
+                    "tool_name": SEND[1],
+                    "arguments": {
+                        "target": "session",
+                        "target_id": COORDINATOR_ID,
+                        "content": content,
+                    },
+                },
+                "tool_response": output,
+            },
+        }
+    )
+    completion.metadata["_platform_session_id"] = SESSION_ID
+    await handler.evaluate_async(completion)
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert stopped.decision == "allow", stopped.reason
+    assert SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle") is True
+    assert run.step == idle_step
+
+
+@pytest.mark.parametrize("step", ["await", "review"])
+async def test_reviewer_registered_coordination_wait_allows_stop_with_external_session_id(
+    temp_db: HubDatabase, tmp_path: Path, step: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    if step == "review":
+        await run.intake(run.task())
+    assert run.step == step
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+    wait = CoordinationWaitManager(temp_db).register(SESSION_ID, COORDINATOR_ID, reply=True)
+    assert wait["outcome"] == "waiting"
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert stopped.decision == "allow", stopped.reason
+    assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
+    assert run.step == step
+
+
+@pytest.mark.parametrize(
+    "name, step",
+    [
+        ("developer", "claim"),
+        ("developer", "implement"),
+        ("developer", "submit"),
+        ("code-reviewer", "await"),
+        ("code-reviewer", "review"),
+        ("code-reviewer", "verdict"),
+        ("plan-adversary", "review"),
+    ],
+)
+@pytest.mark.parametrize("wait_state", ["active", "replied", "cancelled"])
+async def test_standing_seat_wait_through_call_tool_controls_stop(
+    temp_db: HubDatabase, tmp_path: Path, name: str, step: str, wait_state: str
+) -> None:
+    run = SeatRun(temp_db, name)
+    await run.load(*run.vars["required_skills"])
+    if name == "developer" and step != "claim":
+        task = run.task(owner=SESSION_ID, skills=["rust"])
+        ref = f"#{task.seq_num}"
+        await run.call(
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": task.id},
+            {"result": {"task_id": task.id, "ref": ref}},
+        )
+        await run.call(
+            "gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id, "ref": ref}}
+        )
+        await run.load("rust")
+        if step == "submit":
+            await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
+    elif name == "code-reviewer" and step == "review":
+        await run.intake(run.task())
+    elif step == "verdict":
+        # A recovered legacy snapshot can retain verdict without a bound candidate.
+        instance = run.instances.get_for_session(SESSION_ID)
+        assert instance is not None
+        instance.current_step = "verdict"
+        run.instances.save(instance)
+    assert run.step == step
+    handler = _reviewer_stop_handler(run)
+    blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
+    arguments = {"owner_session": COORDINATOR_ID, "reply": True}
+    assert await run.admits(*WAIT, arguments)
+    registry = create_agents_registry(
+        AgentRunner(temp_db, run.sessions),
+        session_manager=run.sessions,
+        db=temp_db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(SESSION_ID):
+        wait = await registry.call(WAIT[1], arguments)
+    assert wait["outcome"] == "waiting"
+    wire = _process_tool_proxy_result(wait, *WAIT, 1.0)
+    completion = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": "ext-seat",
+                "cwd": str(tmp_path),
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": WAIT[0],
+                    "tool_name": WAIT[1],
+                    "arguments": arguments,
+                },
+                "tool_response": wire,
+            },
+        }
+    )
+    completion.metadata["_platform_session_id"] = SESSION_ID
+    await handler.evaluate_async(completion)
+    if wait_state == "replied":
+        InterSessionMessageManager(temp_db).create_message(COORDINATOR_ID, SESSION_ID, "Still held")
+    elif wait_state == "cancelled":
+        CoordinationWaitManager(temp_db).cancel(str(wait["wait_id"]), SESSION_ID)
+    assert CoordinationWaitManager(temp_db).has_active_wait(SESSION_ID) is (wait_state == "active")
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert stopped.decision == ("allow" if wait_state == "active" else "block"), stopped.reason
+    assert not SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")
 
 
 async def test_candidate_latch_survives_native_reset_and_blocks_already_implemented_close(
@@ -953,10 +1257,9 @@ async def test_task_reads_accept_aliases_and_replacement_clears_only_same_task_p
     record_close_receipt(
         run.db,
         task=first,
-        author_session_id=COORDINATOR_ID,
-        kind="landing_approval",
+        author_session_id=SESSION_ID,
+        kind="independent_review_approval",
         commit_sha=REPLACEMENT_SHA,
-        facts={"reason": "restart"},
     )
     await run.call("gobby-tasks", "get_task", {"task_id": ref})
     assert run.step == "verdict"

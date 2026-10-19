@@ -103,10 +103,11 @@ async def test_team_lane_requires_code_review_before_seat_work(
     assert run.step == ready_step
     assert "code-review" in run.session_vars["loaded_skills"]
     if seat == "code-reviewer":
-        await run.set_flag("candidate_task", "#101")
-        await run.set_flag("candidate_received", True)
+        task = run.task()
+        await run.intake(task)
         assert run.step == "review"
-        await run.set_flag("verdict_ready", True)
+        await run.approve(task)
+        assert run.step == "verdict"
         assert await run.admits("gobby-tasks", "record_close_receipt")
 
 

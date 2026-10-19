@@ -842,6 +842,40 @@ async def test_gate_blocks_a_commit_that_records_code(
     assert "code-review" in response.reason
 
 
+@pytest.mark.parametrize("command", ["git rebase 0.5.0", "git rebase --continue"])
+@pytest.mark.parametrize("review_state", ["missing_skill", "stale", "fresh"])
+async def test_gate_requires_fresh_review_for_rebase(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+    command: str,
+    review_state: str,
+) -> None:
+    handler, session, project = gate_handler
+    _edit(repo, "src/app.py", "value = 2\n")
+    _git(repo, "add", "src/app.py")
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "loaded_skills": [] if review_state == "missing_skill" else ["code-review"],
+            "code_review_fresh": review_state == "fresh",
+            "session_dirty_files": ["src/app.py"],
+            "session_dirty_file_checkouts": {str(repo): ["src/app.py"]},
+        },
+    )
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, repo))
+
+    assert response.decision == ("allow" if review_state == "fresh" else "block")
+    if review_state != "fresh":
+        expected_gate = (
+            "require-code-review-skill"
+            if review_state == "missing_skill"
+            else "require-code-review-self-review"
+        )
+        assert expected_gate in str(response.reason)
+
+
 @pytest.mark.parametrize("skill_loaded", [False, True])
 @pytest.mark.parametrize("scenario", ["reviewed", "unreviewed", "detached", "foreign_repo"])
 async def test_fast_forward_code_review_gates_use_registered_main_target(

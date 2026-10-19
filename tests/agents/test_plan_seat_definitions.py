@@ -35,7 +35,7 @@ HANDOFF_TOOLS = {
 }
 
 
-def test_adversary_stamps_only_after_consensus() -> None:
+async def test_adversary_stamps_only_after_consensus(temp_db: HubDatabase) -> None:
     body = _load("plan-adversary")
     workflow = body.step_workflow
     assert workflow is not None
@@ -52,26 +52,20 @@ def test_adversary_stamps_only_after_consensus() -> None:
         ("stamp", "vars.consensus and not vars.bounced")
     ]
     assert [(entry.to, entry.when) for entry in stamp.transitions] == [("review", "vars.bounced")]
-    handlers = review.on_mcp_success or []
-    assert len(handlers) == 2
-    consensus_event = (
-        "any(line.startswith('EVENT=CONSENSUS ') and "
-        "any(field.startswith('SHA=') and 7 <= len(field.split('=', 1)[1]) <= 40 and "
-        "all(char in '0123456789abcdefABCDEF' for char in field.split('=', 1)[1]) "
-        "for field in line.split()) "
-        "for line in str(tool_input.get('content') or '').split('\\n'))"
-    )
-    for handler, variable, value in zip(
-        handlers, ("consensus", "bounced"), (True, False), strict=True
-    ):
-        assert _field(handler, "server") == "gobby-agents"
-        assert _field(handler, "tool") == "send_message"
-        expression = _field(handler, "when")
-        assert isinstance(expression, str)
-        assert " ".join(expression.split()) == consensus_event
-        assert _field(handler, "action") == "set_variable"
-        assert _field(handler, "variable") == variable
-        assert _field(handler, "value") is value
+    from tests.workflows.test_seat_step_loops import DERIVE, SHA, SeatRun
+
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "review"
+    assert not await run.admits(*DERIVE)
+    await run.send("EVENT=CONSENSUS SHA=abc NOTE=unresolved")
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    assert run.step == "stamp"
+    assert run.vars["consensus"] is True
+    assert run.vars["consensus_sha"] == SHA
+    assert await run.admits(*DERIVE)
     assert workflow.variables["consensus"] is False
     assert workflow.variables["bounced"] is False
     assert workflow.exit_condition == "vars.seat_complete"

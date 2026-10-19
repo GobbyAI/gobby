@@ -14,7 +14,6 @@ from fastapi import Depends, HTTPException, Request
 
 from gobby.hooks.tool_error_tracker import extract_error_snippet
 from gobby.hooks.tool_outcomes import ToolOutcomeStatus, classify_raw_tool_result
-from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_resolution import resolve_server
@@ -327,7 +326,7 @@ async def list_mcp_tools(
 
         # Use ensure_connected for lazy loading - connects on-demand if not connected
         try:
-            session = await mcp_manager.ensure_connected(resolved.id)
+            await mcp_manager.ensure_connected(resolved.id)
         except KeyError as e:
             error, counts = clean_untrusted_value(str(e))
             log_invisible_counts(counts, "external MCP discovery error")
@@ -345,9 +344,10 @@ async def list_mcp_tools(
             }
             return result
 
-        # List tools using MCP SDK
+        # Use the manager's bounded stale-session recovery for discovery.
         try:
-            tools = await list_tools_from_session(session)
+            tools_by_server = await mcp_manager.list_tools(resolved.id)
+            tools = tools_by_server[server_name]
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 

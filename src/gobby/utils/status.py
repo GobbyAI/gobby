@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Label width for alignment in status sections
 _LW = 18
 _FULL_BM25_CHECK = "gobby postgres status"
+# Error text of the placeholder generation row written before its first probe.
+# generation_endpoint_health writes it; this renderer reads it, so both import it.
+PROBE_PENDING_ERROR = "probe pending"
 # The managed native binaries, in install-set order. gterm and gclient were
 # absent here while the payload carried them, so a stale gclient reported
 # nothing at all: see #22551.
@@ -624,7 +627,10 @@ def format_status_message(
                     error = _safe_status_text(entry.get("error")) or "unknown error"
                     if len(error) > 80:
                         error = f"{error[:77]}..."
-                    state = f"unreachable ({error})"
+                    if error == PROBE_PENDING_ERROR:
+                        state = f"pending ({error})"
+                    else:
+                        state = f"unreachable ({error})"
                 identity = f"{name} ({provider_label})" if provider_label else name
                 detail = f"{identity} {origin} — {state}" if origin else f"{identity} — {state}"
                 row_label = "Generation:" if printed == 0 else ""

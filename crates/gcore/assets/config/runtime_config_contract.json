@@ -4050,13 +4050,16 @@
     },
     {
       "activation": "live",
-      "default": "~/.gobby/session_transcripts",
-      "description": "Directory for gzip-compressed transcript backups",
+      "default": null,
+      "description": "Directory for gzip-compressed transcript backups; unset uses <GOBBY_HOME>/session_transcripts",
       "key": "session_lifecycle.transcript_archive_dir",
       "machineExport": false,
       "namespace": "session_lifecycle",
       "secrecy": "none",
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "visibility": "public"
     },
     {

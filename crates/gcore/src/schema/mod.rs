@@ -28,7 +28,7 @@ pub use external::{
     ExternalPostgresObject, ExternalPostgresObjectKind, ExternalSchemaError, gcode_postgres_objects,
 };
 pub use identity::{AssetIdentity, SchemaIdentity, SchemaIdentityContract, schema_identity};
-pub use runner::{ApplyReport, PlanReport, SchemaRunner};
+pub use runner::{ApplyReport, PlanReport, SchemaRunner, auth_schema_for};
 pub use sql_splitter::split_sql_statements;
 pub use sweep::sweep_test_schemas;
 pub use verify::{

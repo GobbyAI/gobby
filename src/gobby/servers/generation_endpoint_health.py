@@ -12,6 +12,7 @@ from gobby.servers.local_provider_models import (
     generation_endpoint_probe_result,
     probe_generation_endpoints,
 )
+from gobby.utils.status import PROBE_PENDING_ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class GenerationEndpointHealthCoordinator:
             if self._endpoint_signatures.get(name) == signatures[name] and name in existing:
                 rows.append(dict(existing[name]))
             else:
-                rows.append(self._failed_result(name, endpoint, "probe pending"))
+                rows.append(self._failed_result(name, endpoint, PROBE_PENDING_ERROR))
 
         self._endpoints = endpoints
         self._endpoint_signatures = signatures
