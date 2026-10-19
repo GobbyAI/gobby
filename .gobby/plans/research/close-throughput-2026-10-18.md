@@ -59,7 +59,7 @@ All eight requested stages are represented below. Receipt stages have complete e
 
 | Task | READY→RM GO | GO→PASS | Gate 10 reruns: lower-bound evidence | CANDIDATE→reviewer LAND | LAND→land_commit receipt | Landed retest wait | Activation interval / receipt lag | Close queue / run |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| #24582 Ledger prune fixture | U | U | ≥1 expanded 10-file set: 210 PASS, 743.10 s (M1) | U | U | U | A cycles | queue U; terminal 05:14:37 (M1) |
+| #24582 Ledger prune fixture | U | U | ≥1 expanded 10-file set: 210 PASS, 743.10 s (M1) | U | U | U | none in window; pre-window landing `75084ce125523559aa17d79ee0ca70a6350b97fb` at 03:24:37.165752, activation `ae9a3324253f2c2158e1545f031e9482e0066aa2` at 03:52:13.581997 (UTC; task `9af2f8aa-f6ed-4453-a352-87ba04fdb584` receipts) | queue U; terminal 05:14:37 (M1) |
 | #24642 Gate 10 integration credit | U | U | ≥1 extra 13-file set: 957 PASS,137.90 s after 681 PASS/128.57 s (M2) | U | U | U | A cycles | queue/run U; terminal valid M2 |
 | #21588 Voice route epic | N/A organizational parent | N/A organizational parent | N/A organizational parent | N/A organizational parent | N/A organizational parent | N/A organizational parent | N/A organizational parent | N/A organizational parent |
 | #24647 Daemon recovery | U | U | ≥2: fresh18/811 PASS,107.64 s; later2 files/175 PASS (M3) | U | U | U | A cycles | multiple previews; invalid rollback finding then valid (M3) |
