@@ -183,7 +183,9 @@ def _reviewer_message(
                 record for record in parked if not _same_task(db, record.get("task"), event)
             ],
         }
-    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
+    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(
+        db, event, session_id, parked_candidates=parked
+    ):
         changes = _clear_candidate() if same_unit else {}
         remaining = [
             record
@@ -193,7 +195,9 @@ def _reviewer_message(
         if remaining != parked:
             changes["parked_candidates"] = remaining
         return changes
-    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(db, event, session_id):
+    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(
+        db, event, session_id, parked_candidates=parked
+    ):
         matching = [
             record
             for record in parked

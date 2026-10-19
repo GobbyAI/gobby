@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.step_binding import release_lost_binding
+from gobby.workflows.step_binding import release_completed_review, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -114,7 +114,7 @@ def _iter_active_step_instances(
     instance = AgentStepInstanceManager(db).get_active_for_session(session_id)
     if instance is None or not instance.enabled:
         return
-    yield instance
+    yield release_completed_review(db, instance)
 
 
 def first_incomplete_step_workflow(

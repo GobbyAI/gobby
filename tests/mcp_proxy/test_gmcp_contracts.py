@@ -5,11 +5,20 @@ from pathlib import Path
 
 from gobby.mcp_proxy import wait_tools
 from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
+from gobby.prompts.sync import get_bundled_prompts_path
 from gobby.utils.local_token import _AGENT_IDENTITY_ENV_HEADERS
+
+CRATE_DIR = Path(__file__).resolve().parents[2] / "crates/gmcp"
+
+
+def test_instructions_copy_matches_bundled_prompt() -> None:
+    bundled = get_bundled_prompts_path() / "mcp" / "progressive-discovery.md"
+    embedded = CRATE_DIR / "assets/progressive-discovery.md"
+    assert embedded.read_bytes() == bundled.read_bytes()
 
 
 def test_wrapper_contract_matches_python_constants() -> None:
-    contract_path = Path(__file__).resolve().parents[2] / "crates/gmcp/contracts/mcp_wrapper.v1.json"
+    contract_path = CRATE_DIR / "contracts/mcp_wrapper.v1.json"
     contract = json.loads(contract_path.read_text())
     assert contract == {
         "protocol_version": wait_tools.MCP_WRAPPER_PROTOCOL_VERSION,

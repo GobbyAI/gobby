@@ -547,9 +547,14 @@ async def test_park_review_next_resume_and_withdraw_exact_unit(
     await run.send(f"EVENT=CANDIDATE_PARKED TASK={first.id} SHA={SHA} REASON=approval")
     assert run.step == "await"
     await run.intake(second)
+    await run.approve(second)
+    assert not any(
+        row["session_id"] == SESSION_ID and row["action"] == "reviewing"
+        for row in SessionTaskManager(temp_db).get_task_sessions(first.id)
+    )
     await run.send(f"EVENT=CANDIDATE_VERDICT TASK={second.id} SHA={SHA} VERDICT=BOUNCE")
     assert run.step == "await"
-    await run.incoming(f"EVENT=CANDIDATE_RESUMED TASK={first.id} SHA={SHA}", COORDINATOR_ID)
+    await run.send(f"EVENT=CANDIDATE_RESUMED TASK={first.id} SHA={SHA}")
     assert run.step == "verdict"
     assert run.vars["parked_candidates"] == []
     await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={REPLACEMENT_SHA}")
@@ -716,6 +721,7 @@ async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabas
     assert "EVENT=PROOF_REQUEST" in retest
     assert "EVENT=PROOF_RESULT" in retest
     assert "RETEST=UNAVAILABLE" in retest
+    assert "re-arm" in retest
     assert "main checkout" not in retest
 
 
@@ -723,6 +729,7 @@ def test_developer_submit_releases_only_after_reviewer_landed() -> None:
     source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
     assert "Once the reviewer has sent EVENT=LANDED and only activation remains" in source
     assert "A `Landed #N` notice alone keeps you at submit" in source
+    assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
     assert "Once the candidate has landed" not in source
 
 
@@ -1112,10 +1119,25 @@ def _reviewer_stop_event(cwd: Path) -> HookEvent:
     )
 
 
+@pytest.mark.parametrize(
+    "content, ready",
+    [
+        ("EVENT=SEAT_READY NOTE=idle", True),
+        ("LANE=3 EVENT=SEAT_READY NOTE=idle", True),
+        ("LANE=3 EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
+        ("EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
+        ("LANE=3 EVENT=OTHER NOTE=idle", False),
+        ("LANE=3 EVENT=SEAT_READY prose NOTE=idle", False),
+        ("LANE=3 EVENT=SEAT_READY NOTE=busy", False),
+        ("LANE=3 EVENT=SEAT_READY OTHER=value NOTE=idle", False),
+        ("LANE=3 EVENT=SEAT_READY RUN=one RUN=two NOTE=idle", False),
+        ("LANE=3 EVENT=SEAT_READY NOTE=idle extra", False),
+    ],
+)
 @pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
 @pytest.mark.parametrize("name", ["developer", "code-reviewer"])
 async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
-    temp_db: HubDatabase, tmp_path: Path, envelope: str, name: str
+    temp_db: HubDatabase, tmp_path: Path, envelope: str, name: str, content: str, ready: bool
 ) -> None:
     run = SeatRun(temp_db, name)
     await run.load(*run.vars["required_skills"])
@@ -1125,7 +1147,6 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     blocked = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
     assert blocked.decision == "block" and "require-step-completion" in (blocked.reason or "")
 
-    content = "EVENT=SEAT_READY NOTE=idle"
     message = InterSessionMessageManager(temp_db).create_message(
         SESSION_ID, COORDINATOR_ID, content
     )
@@ -1162,9 +1183,56 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     completion.metadata["_platform_session_id"] = SESSION_ID
     await handler.evaluate_async(completion)
     stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
-    assert stopped.decision == "allow", stopped.reason
-    assert SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle") is True
+    assert stopped.decision == ("allow" if ready else "block"), stopped.reason
+    assert bool(SessionVariableManager(temp_db).get_variables(SESSION_ID).get("seat_idle")) is ready
     assert run.step == idle_step
+
+
+@pytest.mark.parametrize(
+    "kind, sha, author, recovered",
+    [
+        ("landing", SHA, SESSION_ID, True),
+        ("landing", REPLACEMENT_SHA, SESSION_ID, False),
+        ("landing", SHA, PEER_ID, False),
+        ("activation", SHA, COORDINATOR_ID, False),
+        (None, SHA, SESSION_ID, False),
+    ],
+)
+async def test_reviewer_completed_landing_recovers_stale_verdict(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    kind: str | None,
+    sha: str,
+    author: str,
+    recovered: bool,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    assert run.step == "verdict"
+    if kind is not None:
+        record_close_receipt(
+            temp_db,
+            task=task,
+            author_session_id=author,
+            kind=kind,
+            commit_sha=sha,
+            facts={"landed_tip": "c" * 40, "mode": "merge", "provenance": "recorded"},
+        )
+    # This is the persisted split observed in reviewer 16865 after its landing:
+    # the session copies were cleared while the workflow instance stayed bound.
+    run.session_vars.update(
+        candidate_task=None, candidate_sha=None, candidate_received=False, verdict_ready=False
+    )
+    handler = _reviewer_stop_handler(run)
+    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
+    assert run.step == ("await" if recovered else "verdict")
+    assert run.vars["candidate_received"] is not recovered
+    assert run.vars["candidate_task"] == (None if recovered else task.id)
+    # Recovery still requires an actual readiness send before an idle stop.
+    assert stopped.decision == "block"
 
 
 @pytest.mark.parametrize("step", ["await", "review"])

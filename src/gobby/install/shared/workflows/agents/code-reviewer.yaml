@@ -43,7 +43,7 @@ prompts:
     - Foreign-overlay candidate. If `gcode` returns `code_overlay_mismatch` for the author's worktree, navigate the exact candidate SHA from your own checkout: `git grep -n <pattern> <sha>`, `git show <sha>:<path>` and `git diff <base>...<sha>`. Linked worktrees share Git objects. Use `gcode` in your admitted checkout for base-tree structure; do not treat that output as the candidate's source. For candidate citations, use commit-bound `gcode evidence` from your own checkout; if evidence cannot serve the read, follow its documented fallback and cite the exact SHA, path and lines from `git show`. Keep the existing overlay and sandbox scope; report unavailable Git objects to your Lane Manager.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA= VERDICT=LAND|BOUNCE TASK_TITLE= NOTE=` with the findings to the Orchestrator and the author lane. Put all protocol fields before the free TASK_TITLE and NOTE text. A BOUNCE ends the unit when its message starts with that line.
     - Land. Record your independent review with `gobby-tasks:record_close_receipt(task_id, kind="independent_review_approval", commit_sha=<full candidate SHA>)`, then send the LAND verdict and call `gobby-tasks-ops:land_commit(task_id, commit_sha)` on the same SHA. land_commit separately enforces the operator's landing_approval for freeze, restart or cutover class, and overlaps. Ask the coordinator for any missing approvals for that exact SHA and wait before retrying.
-    - Retest. A `landed: true` response means the branch moved. When `retest_required` is true, do not run anything. Send the author session and your Lane Manager `EVENT=PROOF_REQUEST TASK=#NNNNN SHA=<candidate SHA> NOTE=` with the `landed_tip` and the focused verification commands from the task's validation evidence. The author runs them in its own worktree under the Release Manager's GO and replies with `EVENT=PROOF_RESULT`, which carries `RETEST=PASS|FAIL|UNAVAILABLE` and each command, result, HEAD tested and unrelated checkout change. Wait for that reply with `wait_for_coordination` on the author, timeout 900, then copy its `RETEST` value into `EVENT=LANDED`. If no `EVENT=PROOF_RESULT` arrives within that wait, send `EVENT=LANDED` with `RETEST=UNAVAILABLE` and a `NOTE=` naming the unanswered `EVENT=PROOF_REQUEST`, so the Lane Manager holds the release. Report `RETEST=UNAVAILABLE` also when the evidence names no focused command the author can run.
+    - Retest. A `landed: true` response means the branch moved. When `retest_required` is true, do not run anything. Send the author session and your Lane Manager `EVENT=PROOF_REQUEST TASK=#NNNNN SHA=<candidate SHA> NOTE=` with the `landed_tip` and the focused verification commands from the task's validation evidence. The author runs them in its own worktree under the Release Manager's GO and replies with `EVENT=PROOF_RESULT`, which carries `RETEST=PASS|FAIL|UNAVAILABLE` and each command, result, HEAD tested and unrelated checkout change. Wait for that reply with `wait_for_coordination` on the author (reply=true, timeout 900); if the wait ends on any other author message, re-arm it for the remaining budget. Then copy its `RETEST` value into `EVENT=LANDED`. If no `EVENT=PROOF_RESULT` arrives within that wait, send `EVENT=LANDED` with `RETEST=UNAVAILABLE` and a `NOTE=` naming the unanswered `EVENT=PROOF_REQUEST`, so the Lane Manager holds the release. Report `RETEST=UNAVAILABLE` also when the evidence names no focused command the author can run.
     - Receipt pending. With `receipt_pending: true`, the landing receipt failed after the ref moved. Send your Lane Manager `EVENT=LAND_PENDING TASK=#NNNNN SHA= TASK_TITLE= LANDED_TIP= NOTE=receipt_pending`, keep the unit open, and call `land_commit` again on the same SHA until a `receipt_id` returns. There is no rollback and no second candidate.
     - Notification pending. Send each session listed in `notification_pending` the `Landed #N ...` line yourself; a replayed receipt does not resend it.
     - Already landed. When `already_landed: true`, a `receipt_id` returns and `landed_by_session_id` names another session (neither your current session ID nor `unknown`), send your Lane Manager and the author lane `EVENT=ALREADY_LANDED TASK=#NNNNN SHA= TASK_TITLE= RECEIPT= LANDED_BY_SESSION_ID= NOTE=`. Copy the full `commit_sha`, original `receipt_id` and original `landed_by_session_id` into `SHA`, `RECEIPT` and `LANDED_BY_SESSION_ID`. Never send your own `EVENT=LANDED` for another reviewer's landing. That notice ends the unit when its message starts with that line.
@@ -149,8 +149,11 @@ step_workflow:
       description: "Wait for a routed CANDIDATE"
       status_message: |
         Read a routed CANDIDATE with gobby-agents:get_inter_session_message.
-        Its stored incoming task/SHA starts review. For idle, send
-        EVENT=SEAT_READY NOTE=idle to your coordinator, then end the turn.
+        Its stored incoming task/SHA starts review. End each idle turn on a
+        registered gobby-agents:wait_for_coordination reply wait on your
+        coordinator; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your coordinator and end the turn.
+        An idle declaration expires when the next turn starts.
         Read stored incoming resume/withdraw messages to update parked units.
         For your own parked unit, send an exact CANDIDATE_RESUMED or
         CANDIDATE_WITHDRAWN event to your coordinator.
@@ -247,7 +250,8 @@ step_workflow:
         independent_review_approval receipt, send the LAND verdict, then call
         land_commit on the same SHA and follow its response: when
         retest_required, send EVENT=PROOF_REQUEST to the author and wait for its
-        EVENT=PROOF_RESULT (timeout 900) without running the retest yourself, then
+        EVENT=PROOF_RESULT (timeout 900; re-arm after any other author message)
+        without running the retest yourself, then
         send LANDED with RETEST=UNAVAILABLE and a NOTE if none arrives; LAND_PENDING
         and retry on receipt_pending, LAND_BLOCKED
         and wait on a refusal. Once a receipt_id returns, send EVENT=ALREADY_LANDED
