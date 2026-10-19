@@ -31,7 +31,10 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                 return Ok(list_all_tools(dialer, session));
             }
             if is_dot_segment(server) {
-                return Err(ErrorData::invalid_params("server_name must name one server", None));
+                return Err(ErrorData::invalid_params(
+                    "server_name must name one server",
+                    None,
+                ));
             }
             let path = format!("/api/mcp/{}/tools", quote(server));
             Ok(strip_none(dialer.request(
