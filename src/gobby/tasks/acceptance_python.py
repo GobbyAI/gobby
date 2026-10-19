@@ -267,6 +267,13 @@ class _HelperResolver:
                 targets: list[_Module] = []
                 if isinstance(node, ast.ImportFrom):
                     targets = await self._loaded_candidates(scanned.path, node.level, node.module)
+                    # ``from pkg import submodule`` binds the submodule, so it is checked too.
+                    for alias in node.names:
+                        if alias.name != "*":
+                            dotted = f"{node.module}.{alias.name}" if node.module else alias.name
+                            targets += await self._loaded_candidates(
+                                scanned.path, node.level, dotted
+                            )
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         targets += await self._loaded_candidates(scanned.path, 0, alias.name)
@@ -508,7 +515,10 @@ def _scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
 def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
     """Nodes a scope can run: ``_scope_nodes`` minus code no run reaches.
 
-    Statements after a terminator and branches that a constant test rules out are skipped.
+    Skipped: statements after a block-ending statement, branches a constant test rules out,
+    short-circuit operands after the operand that decides the result, and loop bodies over an
+    empty literal. Comprehension bodies are declined outright and only the first iterable is
+    kept, so an unconsumed generator body never counts as executed.
     """
     queue: deque[ast.AST] = deque(_live_block(body))
     while queue:
@@ -532,17 +542,105 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
             queue.append(node.test)
             queue.extend(_live_block(node.orelse))
             continue
+        elif isinstance(node, ast.BoolOp):
+            queue.extend(_live_operands(node))
+            continue
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and _is_empty_literal(node.iter):
+            queue.append(node.iter)
+            queue.extend(_live_block(node.orelse))
+            continue
+        elif isinstance(node, (ast.Try, ast.TryStar)):
+            queue.extend(_live_block(node.body))
+            # The else clause runs only when the body completes normally.
+            if not _block_ends(node.body):
+                queue.extend(_live_block(node.orelse))
+            queue.extend(node.handlers)
+            queue.extend(_live_block(node.finalbody))
+            continue
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            queue.append(node.generators[0].iter)
+            continue
         queue.extend(_live_children(node))
 
 
 def _live_block(statements: Iterable[ast.AST]) -> list[ast.AST]:
-    """A block's statements up to and including its first terminator."""
+    """A block's statements up to and including the first one that ends the block."""
     live: list[ast.AST] = []
     for statement in statements:
         live.append(statement)
-        if isinstance(statement, _TERMINATORS):
+        if _ends_block(statement):
             break
     return live
+
+
+def _ends_block(node: ast.AST) -> bool:
+    """Whether control never reaches the statement after ``node`` in its block.
+
+    Loops never end the block around them: a loop body can run zero times, and break or
+    continue ends only one iteration. A with statement ends it when its body ends by return,
+    since a return itself is never suppressed. A body ending in raise does not, because a
+    context manager can suppress that raise.
+    """
+    if isinstance(node, _TERMINATORS):
+        return True
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return _returns_block(node.body)
+    if isinstance(node, ast.If):
+        truth = _static_truth(node.test)
+        if truth is None:
+            return _block_ends(node.body) and _block_ends(node.orelse)
+        return _block_ends(node.body if truth else node.orelse)
+    if isinstance(node, (ast.Try, ast.TryStar)):
+        if _block_ends(node.finalbody):
+            return True
+        normal_ends = _block_ends(node.body) or _block_ends(node.orelse)
+        return normal_ends and all(_block_ends(handler.body) for handler in node.handlers)
+    return False
+
+
+def _block_ends(statements: Iterable[ast.AST]) -> bool:
+    return any(_ends_block(statement) for statement in statements)
+
+
+def _returns_block(statements: Iterable[ast.AST]) -> bool:
+    """Whether a block ends, and every path that ends it does so with a return."""
+    live = _live_block(statements)
+    return bool(live) and _returns_statement(live[-1])
+
+
+def _returns_statement(node: ast.AST) -> bool:
+    if isinstance(node, ast.Return):
+        return True
+    if isinstance(node, ast.If):
+        truth = _static_truth(node.test)
+        if truth is None:
+            return _returns_block(node.body) and _returns_block(node.orelse)
+        return _returns_block(node.body if truth else node.orelse)
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return _returns_block(node.body)
+    return False
+
+
+def _live_operands(node: ast.BoolOp) -> list[ast.expr]:
+    """Operands a boolean operator evaluates: up to the first one that decides its result."""
+    decisive = isinstance(node.op, ast.Or)
+    live: list[ast.expr] = []
+    for operand in node.values:
+        live.append(operand)
+        if _static_truth(operand) is decisive:
+            break
+    return live
+
+
+def _is_empty_literal(node: ast.expr) -> bool:
+    """Whether a literal iterable has no items, so a loop over it never runs its body."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return not node.elts
+    if isinstance(node, ast.Dict):
+        return not node.keys
+    return (
+        isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and not node.value
+    )
 
 
 def _live_children(node: ast.AST) -> Iterator[ast.AST]:

@@ -2065,6 +2065,419 @@ MOCK_CALL_TEST = """
     """
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            if True:
+                return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            if True:
+                if True:
+                    return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            if False:
+                pass
+            else:
+                return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            with nullcontext():
+                return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            with nullcontext():
+                with nullcontext():
+                    return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            with nullcontext():
+                if receipt:
+                    return None
+                else:
+                    return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+    ],
+    ids=[
+        "compound_true_return",
+        "nested_true_return",
+        "constant_else_return",
+        "with_return",
+        "nested_with_return",
+        "with_if_return_both_branches",
+    ],
+)
+def test_assert_helper_compound_termination_is_not_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            if True:
+                return None
+            _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            if True:
+                raise RuntimeError("stop")
+            assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            with nullcontext():
+                return None
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            with nullcontext():
+                return None
+            _assert_ok("ok")
+        """,
+    ],
+    ids=[
+        "compound_return_before_helper",
+        "selected_raise_before_assert",
+        "with_return_before_assert",
+        "with_return_before_helper",
+    ],
+)
+def test_test_body_compound_termination_is_not_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'False and _assert_ok("ok")',
+        'True or _assert_ok("ok")',
+        'make_receipt() and False and _assert_ok("ok")',
+        'make_receipt() or True or _assert_ok("ok")',
+    ],
+    ids=["false_and", "true_or", "unknown_then_false_and", "unknown_then_true_or"],
+)
+def test_short_circuit_after_deciding_constant_is_not_credited(
+    tmp_path: Path, statement: str
+) -> None:
+    source = f"""
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            {statement}
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "iterable",
+    ["()", "[]", "{}", '""', 'b""'],
+    ids=["tuple", "list", "dict", "str", "bytes"],
+)
+def test_empty_literal_loop_helper_is_not_credited(tmp_path: Path, iterable: str) -> None:
+    source = f"""
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            for value in {iterable}:
+                _assert_ok(value)
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+def test_empty_literal_loop_assertion_is_not_credited(tmp_path: Path) -> None:
+    source = """
+        def test_feature():
+            for value in ():
+                assert value == "ok"
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "[_assert_ok(value) for value in []]",
+        "{_assert_ok(value) for value in ()}",
+        "{value: _assert_ok(value) for value in {}}",
+        "any(_assert_ok(value) for value in [])",
+        "any(_assert_ok(value) for value in [1])",
+        "[_assert_ok(value) for value in [1]]",
+    ],
+    ids=[
+        "list_empty",
+        "set_empty",
+        "dict_empty",
+        "generator_empty",
+        "generator_nonempty_declined",
+        "list_nonempty_declined",
+    ],
+)
+def test_comprehension_helper_is_not_credited(tmp_path: Path, expression: str) -> None:
+    source = f"""
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            {expression}
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                return None
+            finally:
+                pass
+            _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            try:
+                return None
+            finally:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                pass
+            finally:
+                return None
+                _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            try:
+                pass
+            finally:
+                return None
+                assert make_receipt() == "ok"
+        """,
+    ],
+    ids=[
+        "helper_after_return_finally",
+        "assert_after_return_finally",
+        "helper_after_return_in_finally",
+        "assert_after_return_in_finally",
+    ],
+)
+def test_try_termination_is_not_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature():
+            if True:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            if False:
+                return None
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            True and _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            False or _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok") and False
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            for value in ["ok"]:
+                _assert_ok(value)
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            for value in []:
+                pass
+            else:
+                _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            try:
+                return None
+            finally:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                raise RuntimeError("stop")
+            finally:
+                _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            [_assert_ok(value) for value in []]
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            any(_assert_ok(value) for value in [1])
+            _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            with nullcontext():
+                raise RuntimeError("stop")
+            assert make_receipt() == "ok"
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            with nullcontext():
+                raise RuntimeError("stop")
+            _assert_ok("ok")
+        """,
+        """
+        def test_feature():
+            with nullcontext():
+                if make_flag():
+                    return None
+            assert make_receipt() == "ok"
+        """,
+    ],
+    ids=[
+        "true_if_then_assert",
+        "false_if_then_helper",
+        "true_and_helper",
+        "false_or_helper",
+        "helper_before_short_circuit",
+        "nonempty_literal_loop",
+        "empty_loop_else_helper",
+        "return_through_finally_assert",
+        "raise_through_finally_helper",
+        "independent_helper_after_declined_comprehension",
+        "independent_helper_after_declined_generator",
+        "with_raise_then_assert",
+        "with_raise_then_helper",
+        "with_if_return_no_else_then_assert",
+    ],
+)
+def test_live_assertion_after_constant_control_is_credited(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
 def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None:
     conftest = "import pytest\n\n\n@pytest.fixture\ndef client():\n    return None\n"
     result = _committed_python_result(
@@ -2120,6 +2533,39 @@ def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None
                 "tests/support/__init__.py": "def assert_called_once_with(*args):\n    pass\n",
             },
         ),
+        (
+            """
+            from unittest.mock import MagicMock
+            from tests import fakes
+
+            def test_feature():
+                sink = MagicMock()
+                publish(sink)
+                sink.assert_called_once_with(1)
+            """,
+            {"tests/fakes.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
+        (
+            """
+            from unittest.mock import MagicMock
+            from . import fakes
+
+            def test_feature():
+                sink = MagicMock()
+                publish(sink)
+                sink.assert_called_once_with(1)
+            """,
+            {"tests/fakes.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
+        (
+            """
+            import fakes
+
+            def test_feature():
+                fakes.client.assert_called_once_with(1)
+            """,
+            {"fakes.py": "def assert_called_once_with(*args):\n    pass\n"},
+        ),
     ],
     ids=[
         "fakes_module",
@@ -2127,6 +2573,9 @@ def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None
         "parent_conftest",
         "conftest_imported_module",
         "module_package_pair",
+        "from_pkg_import_submodule",
+        "from_dot_import_submodule",
+        "import_module_attribute",
     ],
 )
 def test_mock_assertion_defined_nearby_is_not_credited(
