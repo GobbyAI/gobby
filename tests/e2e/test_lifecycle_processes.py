@@ -28,9 +28,15 @@ def test_retirement_timeout_retains_bounded_logs_and_process_identity(
         process.status.side_effect = psutil.AccessDenied(42)
     else:
         process.status.return_value = status
-    mocker.patch("tests.e2e.lifecycle_processes.time.monotonic", side_effect=[10.0, 40.25])
+    clock = [10.0]
+    mocker.patch("tests.e2e.lifecycle_processes.time.monotonic", side_effect=lambda: clock[0])
     failure = AssertionError("Timed out waiting for retiring backend reaped")
-    wait = mocker.patch.object(lifecycle_processes, "wait_for_condition", side_effect=failure)
+
+    def expire_wait(*_args: object, **_kwargs: object) -> None:
+        clock[0] = 40.25
+        raise failure
+
+    wait = mocker.patch.object(lifecycle_processes, "wait_for_condition", side_effect=expire_wait)
     home = tmp_path / "disposable-home"
     home.mkdir()
     log_file = home / "daemon.log"
