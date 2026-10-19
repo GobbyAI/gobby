@@ -656,6 +656,49 @@ async def test_developer_bounce_requires_incoming_assigned_reviewer(
     assert run.step == "submit"
 
 
+async def test_developer_submit_returns_to_implement_on_reviewer_request(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, _ = linked_developer
+    assert not await run.admits_native("Bash", {"command": "git status"})
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "implement"
+    assert run.vars["implementation_complete"] is False
+    assert await run.admits_native("Bash", {"command": "git status"})
+
+
+async def test_developer_submit_return_refused_for_unowned_task(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, unlinked_sha = linked_developer
+    foreign = run.task(owner=PEER_ID)
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={foreign.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "submit"
+    await run.incoming(
+        f"EVENT=PROOF_REQUEST TASK={task.id} SHA={unlinked_sha} NOTE=evidence", PEER_ID
+    )
+    assert run.step == "submit"
+
+
+async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task, SHA, "independent_review_approval", SESSION_ID)
+    assert run.step == "verdict"
+    request = f"EVENT=PROOF_REQUEST TASK={task.id} SHA={SHA} NOTE=retest"
+    assert await run.admits(
+        "gobby-agents",
+        "send_message",
+        {"target": "session", "target_id": OWNER_ID, "content": request},
+    )
+    source = (AGENTS_DIR / "code-reviewer.yaml").read_text()
+    retest = next(line for line in source.splitlines() if "- Retest." in line)
+    assert "EVENT=PROOF_REQUEST" in retest
+    assert "main checkout" not in retest
+
+
 @pytest.fixture
 async def reviewer_authorities(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch

@@ -668,7 +668,10 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`landed_by_session_id` equals your current session ID" in prompt
     assert "equals your current session ID or is `unknown`, send" in prompt
     assert "Report an unknown lander as unknown." not in prompt
-    assert "recovery or replay of your own landing; perform the required retest" in prompt
+    assert (
+        "recovery or replay of your own landing; when retest is required, wait for the author's "
+        "`EVENT=PROOF_RESULT` before reporting it"
+    ) in prompt
     status = str(verdict.status_message)
     assert "send EVENT=ALREADY_LANDED" in status
     assert "otherwise send EVENT=LANDED" in status

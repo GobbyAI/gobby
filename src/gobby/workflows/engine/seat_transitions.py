@@ -235,6 +235,13 @@ def _reviewer_message(
     return {}
 
 
+def _returns_to_implement(fields: dict[str, str]) -> bool:
+    """A pre-land BOUNCE, or a PROOF_REQUEST for evidence or a landed retest."""
+    if fields.get("EVENT") == "PROOF_REQUEST":
+        return True
+    return fields.get("EVENT") == "CANDIDATE_VERDICT" and fields.get("VERDICT") == "BOUNCE"
+
+
 def advance_seat(
     db: HubDatabase,
     session_id: str,
@@ -309,11 +316,11 @@ def advance_seat(
             if (
                 message.to_session == session_id
                 and _same_task(db, state.get("assigned_task_id"), event)
-                and event.fields.get("EVENT") == "CANDIDATE_VERDICT"
-                and event.fields.get("VERDICT") == "BOUNCE"
+                and _returns_to_implement(event.fields)
                 and is_task_reviewer(db, event)
                 and _linked_candidate_matches(db, session_id, event)
             ):
+                # The flag returns the claim to implement with shell access; link_commit clears it.
                 changes = {"bounced": True, "implementation_complete": False}
         if changes:
             return {**changes, "_seat_consumed_messages": consumed + [message.id]}
