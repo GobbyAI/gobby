@@ -516,9 +516,9 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
     """Nodes a scope can run: ``_scope_nodes`` minus code no run reaches.
 
     Skipped: statements after a block-ending statement, branches a constant test rules out,
-    short-circuit operands after the operand that decides the result, and loop bodies over an
-    empty literal. Comprehension bodies are declined outright and only the first iterable is
-    kept, so an unconsumed generator body never counts as executed.
+    short-circuit operands after the operand that decides the result, and loop bodies over a
+    statically empty iterable. Comprehension bodies are declined outright; only the first
+    iterable is kept, so an unconsumed generator body never counts as executed.
     """
     queue: deque[ast.AST] = deque(_live_block(body))
     while queue:
@@ -632,12 +632,35 @@ def _live_operands(node: ast.BoolOp) -> list[ast.expr]:
     return live
 
 
+_EMPTY_BUILDERS = frozenset({"dict", "frozenset", "list", "set", "tuple"})
+
+
+def _is_empty_range(args: list[ast.expr]) -> bool:
+    """Whether ``range`` over literal integers yields nothing. A zero step raises before any item."""
+    if not 1 <= len(args) <= 3:
+        return False
+    try:
+        values = [ast.literal_eval(arg) for arg in args]
+    except (TypeError, ValueError):
+        return False
+    if not all(isinstance(value, int) for value in values):
+        return False
+    try:
+        return len(range(*values)) == 0
+    except ValueError:
+        return True
+
+
 def _is_empty_literal(node: ast.expr) -> bool:
-    """Whether a literal iterable has no items, so a loop over it never runs its body."""
+    """Whether a literal or builtin call yields no items, so a loop over it never runs its body."""
     if isinstance(node, (ast.List, ast.Tuple)):
         return not node.elts
     if isinstance(node, ast.Dict):
         return not node.keys
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+        if node.func.id in _EMPTY_BUILDERS:
+            return not node.args
+        return node.func.id == "range" and _is_empty_range(node.args)
     return (
         isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and not node.value
     )

@@ -2222,8 +2222,36 @@ def test_short_circuit_after_deciding_constant_is_not_credited(
 
 @pytest.mark.parametrize(
     "iterable",
-    ["()", "[]", "{}", '""', 'b""'],
-    ids=["tuple", "list", "dict", "str", "bytes"],
+    [
+        "()",
+        "[]",
+        "{}",
+        '""',
+        'b""',
+        "range(0)",
+        "range(-1)",
+        "range(0, 0)",
+        "list()",
+        "tuple()",
+        "set()",
+        "dict()",
+        "frozenset()",
+    ],
+    ids=[
+        "tuple",
+        "list",
+        "dict",
+        "str",
+        "bytes",
+        "range_zero",
+        "range_negative",
+        "range_equal_bounds",
+        "list_call",
+        "tuple_call",
+        "set_call",
+        "dict_call",
+        "frozenset_call",
+    ],
 )
 def test_empty_literal_loop_helper_is_not_credited(tmp_path: Path, iterable: str) -> None:
     source = f"""
@@ -2245,6 +2273,23 @@ def test_empty_literal_loop_assertion_is_not_credited(tmp_path: Path) -> None:
         def test_feature():
             for value in ():
                 assert value == "ok"
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "iterable",
+    ["range(0)", "list()", "tuple()", "set()", "dict()", "frozenset()"],
+    ids=["range_zero", "list_call", "tuple_call", "set_call", "dict_call", "frozenset_call"],
+)
+def test_empty_call_loop_assertion_is_not_credited(tmp_path: Path, iterable: str) -> None:
+    source = f"""
+        def test_feature():
+            for _ in {iterable}:
+                assert make_receipt() == "ok"
         """
     result = _committed_python_result(tmp_path, source)
 
@@ -2393,6 +2438,14 @@ def test_try_termination_is_not_credited(tmp_path: Path, source: str) -> None:
             assert receipt == "ok"
 
         def test_feature():
+            for value in range(1):
+                _assert_ok(value)
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
             for value in []:
                 pass
             else:
@@ -2461,6 +2514,7 @@ def test_try_termination_is_not_credited(tmp_path: Path, source: str) -> None:
         "false_or_helper",
         "helper_before_short_circuit",
         "nonempty_literal_loop",
+        "nonempty_range_loop",
         "empty_loop_else_helper",
         "return_through_finally_assert",
         "raise_through_finally_helper",
