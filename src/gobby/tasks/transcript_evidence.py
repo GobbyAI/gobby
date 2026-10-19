@@ -604,7 +604,12 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
-    output, output_truncated = _extract_output(outcome.result)
+    recall = _RTK_RECALL_RE.fullmatch(outcome.command.strip())
+    output, output_truncated = (
+        _extract_output(outcome.result, max_chars=64_000)
+        if recall
+        else _extract_output(outcome.result)
+    )
     provenance = outcome.result.get("outcome_provenance")
     outcome_fields = outcome.result
     if provenance == "codex.functions_exec.wrapper":
