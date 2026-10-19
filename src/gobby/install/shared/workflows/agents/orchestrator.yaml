@@ -44,6 +44,8 @@ prompts:
 
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    If your own pane shows an existing native goal paused after compaction or an interrupt, resume it with `gobby-sessions:send_keys` targeting your own session, sending literal `/goal resume` with a trailing newline. Do not stop the close drain because the goal paused.
+    This operator-authorized resumption of an existing goal is the exception to the general prohibition on provider-native goal loops; do not create a new goal or manufacture a pause.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

@@ -87,6 +87,9 @@ from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 from gobby.tasks.validation_confinement import load_confinement_context
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
+# FIXME(#24760): Temporary operator-directed bypass (2026-10-19).
+# Remove when the operator re-enables gate 12; keep the other closure gates intact.
+_TEMPORARILY_SKIP_TDD_EVIDENCE = True
 _NO_WORK_TARGET_RE = re.compile(
     r"\b(?:duplicate of|implemented in|implemented by|superseded by|absorbed by|"
     r"covered by|tracked in|replaced by|moved to)\s+#[0-9]+\b",
@@ -742,7 +745,17 @@ async def _evaluate_close(
                 skipped=not artifacts.tests and not artifacts.evidence_files,
             )
             test_bodies = render_acceptance_test_bodies(artifacts.tests)
-            if task_requires_tdd(
+            if _TEMPORARILY_SKIP_TDD_EVIDENCE:
+                skip_reason = "Temporary operator-authorized skip of gate 12 (#24760)."
+                tdd_details.update({"skipped": True, "skip_reason": skip_reason})
+                evaluation.pass_gate(
+                    12,
+                    "tdd_evidence",
+                    skip_reason,
+                    details=tdd_details,
+                    skipped=True,
+                )
+            elif task_requires_tdd(
                 labels=task.labels or (),
                 additional_skills=task.additional_skills or (),
                 validation_criteria=task.validation_criteria,
