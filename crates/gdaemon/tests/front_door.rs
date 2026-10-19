@@ -497,10 +497,12 @@ async fn valid_key_forwards_identity_headers() {
     let forged = format!(
         "authorization: Bearer {TEST_API_KEY}\r\nx-gobby-user-id: forged\r\nx-gobby-machine-id: forged\r\nx-gobby-key-id: forged\r\nx-gobby-front-door: forged\r\n"
     );
-    let (response, _) =
-        tokio::time::timeout(TIMEOUT, ws_upgrade(&mut client, address, "/__vite_hmr", &forged))
-            .await
-            .expect("upgrade");
+    let (response, _) = tokio::time::timeout(
+        TIMEOUT,
+        ws_upgrade(&mut client, address, "/__vite_hmr", &forged),
+    )
+    .await
+    .expect("upgrade");
     assert!(response.starts_with("HTTP/1.1 101"), "{response}");
     let capture = tokio::time::timeout(TIMEOUT, capture)
         .await
@@ -1421,7 +1423,9 @@ async fn concrete_bind_adds_loopback_listener() {
         eprintln!("no non-loopback IPv4 address; the live companion check is skipped");
         return;
     };
-    let listeners = bind(&ip.to_string(), 0, 1, false).await.expect("concrete bind");
+    let listeners = bind(&ip.to_string(), 0, 1, false)
+        .await
+        .expect("concrete bind");
     assert_eq!(listeners.len(), 2, "a concrete bind adds a companion");
     let primary = listeners[0].listener.local_addr().expect("primary addr");
     let companion = listeners[1].listener.local_addr().expect("companion addr");

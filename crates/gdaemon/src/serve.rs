@@ -196,8 +196,7 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        let Some((secret, auth, (backend_http, _), pool, terminals, families)) = native
-        else {
+        let Some((secret, auth, (backend_http, _), pool, terminals, families)) = native else {
             let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
@@ -462,7 +461,7 @@ pub async fn serve(
     serve_with_runtime(listeners, routes, tls, auth, shared, shutdown).await
 }
 
-/// What `run` adds to every listener's [`FrontDoorState`]; `serve` adds nothing.
+/// What `run` adds to every listener's [`FrontDoorState`]; `serve` sets only `families`.
 #[derive(Default)]
 struct ListenerShared {
     #[cfg(unix)]
@@ -503,13 +502,7 @@ async fn serve_with_runtime(
         let table = RouteTable::new(shared.families, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));
     }
-    let result = serve_doors(
-        doors,
-        tls,
-        crate::heartbeat::HeartbeatHost::new(),
-        shutdown,
-    )
-    .await;
+    let result = serve_doors(doors, tls, crate::heartbeat::HeartbeatHost::new(), shutdown).await;
     if let Some(native_ws) = &shared.native_ws {
         native_ws.shutdown().await;
     }

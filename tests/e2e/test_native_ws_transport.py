@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -55,6 +56,8 @@ pytestmark = pytest.mark.e2e
 TEST_EMAIL = "native-ws-e2e-user@gobby.local"
 TEST_PASSWORD = "native-ws-e2e-password"
 SESSION_COOKIE = "gobby_session"
+# Browser connections get a fresh per-connection identity in this form (native_bridge.py).
+LOCAL_WEB_ID = re.compile(r"local-web-[0-9a-f]{8}")
 MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 E2E_PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
 PROBE_RUNNER = "tests.e2e.native_ws_probe_bootstrap"
@@ -275,8 +278,9 @@ async def test_credential_ownership_and_private_channel_refusal(
     # Browser entry admits the session cookie; anonymous upgrades close 4401.
     assert (await _upgrade_close(browser))[0] == 4401
     operator_browser = await _welcome(browser, bearer)
-    assert operator_browser["user_id"] == operator_direct["user_id"]
+    assert LOCAL_WEB_ID.fullmatch(operator_browser["user_id"]), operator_browser
     browser_user = (await _welcome(browser, session))["user_id"]
+    assert LOCAL_WEB_ID.fullmatch(browser_user), browser_user
 
     # An invalid key refuses at the front door even beside a valid cookie.
     invalid = token[:-1] + ("A" if token[-1] != "A" else "B")
@@ -327,7 +331,8 @@ async def test_credential_ownership_and_private_channel_refusal(
     assert await _refused_status(direct, session + break_glass) == 401
 
     # Forged identity, entry, path, generation, forwarding, and bridge headers
-    # change nothing: each reaches the welcome as the clean baseline identity.
+    # change nothing: direct reaches the operator identity, and browser reaches a fresh
+    # local-web identity, never the forged value.
     for name, value in FORGED_HEADERS:
         for forged in (
             [(name, value)],
@@ -337,7 +342,7 @@ async def test_credential_ownership_and_private_channel_refusal(
             welcome_direct = await _welcome(direct, bearer + forged)
             assert welcome_direct["user_id"] == operator_direct["user_id"], name
             welcome_browser = await _welcome(browser, session + forged)
-            assert welcome_browser["user_id"] == browser_user, name
+            assert LOCAL_WEB_ID.fullmatch(welcome_browser["user_id"]), name
             assert await _refused_status(direct, forged) == 401, name
             assert (await _upgrade_close(browser, forged))[0] == 4401, name
 
@@ -566,9 +571,13 @@ async def test_running_pane_keeps_its_process_across_daemon_stop_and_restart(
         )
         terminal_id = f"native-ws-{uuid4().hex[:8]}"
         spawn_key = uuid4().hex
+        reserve_key = uuid4().hex
+        reservation = await client.reserve_observer(terminal_id, reserve_key)
         prepared = await client.spawn(
             terminal_id=terminal_id,
             spawn_key=spawn_key,
+            reservation_id=reservation["reservation_id"],
+            reserve_key=reservation["reserve_key"],
             argv=["/bin/sh"],
             cwd=str(tmp_path),
             env={"PATH": os.environ["PATH"]},
