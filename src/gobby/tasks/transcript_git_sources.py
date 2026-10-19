@@ -67,8 +67,19 @@ def is_git_source_command(command: str) -> bool:
 
 
 def _blob(repo: str, ref: str, path: str) -> str | None:
-    object_name = f"{ref}:{path}"
     try:
+        # Enumerate object IDs directly: revision lookup can prefer a hex-named
+        # branch or tag over the historical object prefix in the receipt.
+        resolved = subprocess.run(
+            ["git", "-C", repo, "rev-parse", f"--disambiguate={ref}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", resolved) is None or not resolved.startswith(ref):
+            return None
+        object_name = f"{resolved}:{path}"
         size = subprocess.run(
             ["git", "-C", repo, "cat-file", "-s", object_name],
             check=True,

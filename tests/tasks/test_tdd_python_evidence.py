@@ -77,9 +77,17 @@ def _bash_checkout_cycle(
     git("add", ".")
     git("commit", "-qm", "committed stub fixture tree")
     stub = git("rev-parse", "HEAD")
+    restore_ref = restored[:10]
+    if invalid in {"hex_branch", "hex_tag"}:
+        restore_ref = "deadbeef"
+        assert not restored.startswith(restore_ref)
+        git("branch" if invalid == "hex_branch" else "tag", restore_ref, restored)
+        assert git("rev-parse", restore_ref) == restored
+    if invalid == "missing_object":
+        restore_ref = "f" * 40
     replacements = {
         fixture["root"]: str(root),
-        "485b7c140e": "f" * 40 if invalid == "missing_object" else restored,
+        "485b7c140e": restore_ref,
         "08f161662aefa541d18a54eb36defcbead34ee3d": stub,
     }
 
@@ -153,7 +161,7 @@ def _bash_checkout_cycle(
                 call["arguments"]["command"] += " && echo unproven"
             if invalid == "symbolic_ref":
                 call["arguments"]["command"] = call["arguments"]["command"].replace(
-                    restored, "HEAD~1"
+                    restore_ref, "HEAD~1"
                 )
         if invalid == "stub_mismatch" and call["name"] == "Edit":
             call["arguments"]["new_string"] = call["arguments"]["new_string"].replace(
@@ -268,6 +276,8 @@ def test_bash_git_checkout_restore_credits_retained_stub_red(
         "untrusted_suffix",
         "symbolic_ref",
         "stub_mismatch",
+        "hex_branch",
+        "hex_tag",
     ],
 )
 def test_unprovable_bash_restore_earns_no_stub_credit(
