@@ -1,15 +1,86 @@
 //! Pane detection manifests, the Rust side of `gobby.agents.detection` (#24381, plan 2.12).
 
+mod attention;
+mod casefold_table;
+mod digits;
+mod idle;
+mod loop_tracker;
 mod manifest;
 mod matcher;
+mod prompt;
+mod quota;
 mod regions;
+mod stall;
 
-use std::collections::HashMap;
+#[cfg(test)]
+mod tests;
 
+use std::collections::{BTreeSet, HashMap};
+
+pub use attention::{
+    AttentionClassification, AttentionInput, AttentionTransition, classify_attention,
+};
+pub use idle::{ComposerRead, ComposerState, IdleDetector};
+pub use loop_tracker::LoopTracker;
 pub use manifest::{DetectionState, ManifestError};
 pub use matcher::{
     CompiledManifest, DetectionMatch, IssueCode, ManifestIssue, MatchEvaluation, compile_manifest,
 };
+pub use prompt::{DetectedPrompt, PromptDetector, PromptKind};
+pub use quota::{ProviderQuotaExhaustion, capacity_pane_message, detect_provider_quota};
+pub use stall::{StallClassification, StallClassifier, StallRunState, StallStatus};
+
+/// Per-run detector state the caller owns (#24382, plan 2.14). Hub-side policy counters, such as
+/// reprompts and reset-idle, stay with the hub and are not part of it.
+#[derive(Debug, Default)]
+pub struct RunDetectState {
+    pub stall: StallRunState,
+    pub loop_dismissals: u32,
+    trust_dismissed: bool,
+    approval_fingerprint: Option<String>,
+    loop_prompt_fingerprints: BTreeSet<String>,
+}
+
+impl RunDetectState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records that the run's trust prompt was dismissed, as `PromptDetector.mark_dismissed`.
+    pub fn mark_trust_dismissed(&mut self) {
+        self.trust_dismissed = true;
+    }
+
+    /// Records the approval prompt already handled for this run, as
+    /// `PromptDetector.mark_approval_prompt_dismissed`.
+    pub fn mark_approval_prompt_dismissed(&mut self, pane: &str) {
+        self.approval_fingerprint = Some(prompt::pane_fingerprint(pane));
+    }
+
+    /// Whether the run's trust prompt was dismissed, as `PromptDetector.was_dismissed`.
+    pub fn was_trust_dismissed(&self) -> bool {
+        self.trust_dismissed
+    }
+
+    /// Whether this pane is the approval prompt already handled for this run, as
+    /// `PromptDetector.was_approval_prompt_dismissed`.
+    pub fn was_approval_prompt_dismissed(&self, pane: &str) -> bool {
+        self.approval_fingerprint == Some(prompt::pane_fingerprint(pane))
+    }
+
+    /// Records a loop prompt handled for this run, as `PromptDetector.mark_loop_prompt_dismissed`.
+    pub fn mark_loop_prompt_dismissed(&mut self, pane: &str) {
+        self.loop_prompt_fingerprints
+            .insert(prompt::pane_fingerprint(pane));
+    }
+
+    /// Whether this pane's loop prompt was already handled for this run, as
+    /// `PromptDetector.was_loop_prompt_dismissed`.
+    pub fn was_loop_prompt_dismissed(&self, pane: &str) -> bool {
+        self.loop_prompt_fingerprints
+            .contains(&prompt::pane_fingerprint(pane))
+    }
+}
 
 /// Compiled manifests keyed by provider id, as the Python registry holds them.
 #[derive(Debug, Default)]
