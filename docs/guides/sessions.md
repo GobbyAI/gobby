@@ -316,6 +316,12 @@ restart.
 Once a non-forced shutdown passes the check, new handoffs cannot stage until it
 finishes or is cancelled. A blocked restart names the sessions and attempts to finish.
 
+A spawned run's cooperative `end_agent_run` handoff is parent-facing by design. Staging
+records the parent session as its delivery continuation, and no automatic path delivers
+it. The parent, or its bound clear successor, reads it with
+`get_handoff(agent_run_id=<child run>)`, which is idempotent and does not consume it.
+The ending child seat cannot read it back through that call.
+
 Load `gobby:references/sessions/handoffs.md` before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
 the existing model-aware context-pressure warnings also request the reference.
@@ -677,4 +683,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-10-17_

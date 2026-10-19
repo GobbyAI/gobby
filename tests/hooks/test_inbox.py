@@ -506,6 +506,28 @@ async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -
     }
 
 
+def _owned_replay_database() -> SimpleNamespace:
+    """Seed the replay caller as the owner of machine-1."""
+    owned_machine = {"id": "machine-1", "owner_user_id": "user-1"}
+
+    def fetchone(*_args: object) -> dict[str, str]:
+        return owned_machine
+
+    def fetchall(*_args: object) -> list[dict[str, str]]:
+        return [owned_machine]
+
+    def execute(*_args: object) -> None:
+        return None
+
+    return SimpleNamespace(
+        execute=execute,
+        fetchone=fetchone,
+        fetchall=fetchall,
+        transaction=lambda: None,
+        transaction_immediate=lambda: None,
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("spooled_during_downtime", [False, True])
 async def test_replay_shared_key_passes_through_front_door_auth(
@@ -527,7 +549,14 @@ async def test_replay_shared_key_passes_through_front_door_auth(
     async def run_db(function: Callable[..., Any], *args: Any) -> Any:
         return function(*args)
 
-    server = cast("HTTPServer", SimpleNamespace(auth_service=auth_service, run_db=run_db))
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=run_db,
+            services=SimpleNamespace(database=_owned_replay_database()),
+        ),
+    )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
 

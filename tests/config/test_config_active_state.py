@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -222,8 +223,18 @@ def test_publish_upserts_one_row_per_deployment(temp_db: HubDatabase, tmp_path: 
             active_values={"test_mode": revision == 2},
         )
 
+    def database_clock() -> datetime:
+        with temp_db.transaction() as conn:
+            row = conn.execute("SELECT clock_timestamp() AS now").fetchone()
+        assert row is not None
+        return cast(datetime, row["now"])
+
     publisher(snapshot(1))
+    # The upsert must refresh published_at: bracket the second publish with the
+    # database clock, so a timestamp kept from the first publish falls outside.
+    before_second = database_clock()
     publisher(snapshot(2))
+    after_second = database_clock()
     ActiveStatePublisher(temp_db, store, "deployment-two")(snapshot(3))
     with temp_db.transaction() as conn:
         conn.execute("SET LOCAL ROLE gobby_daemon_runtime")
@@ -236,6 +247,6 @@ def test_publish_upserts_one_row_per_deployment(temp_db: HubDatabase, tmp_path: 
     assert rows[0]["revision"] == 2
     state = json.loads(rows[0]["state"])
     assert state["active_values"] == {"test_mode": True}
-    assert rows[0]["published_at"] is not None
+    assert before_second <= rows[0]["published_at"] <= after_second
     assert rows[1]["deployment_token"] == "deployment-two"
     assert rows[1]["revision"] == 3

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -16,22 +17,29 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import gobby.servers.websocket.native_bridge as native_bridge
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.node_client import NodeCommandError
 from gobby.servers._app_ui import _mount_ws_endpoint
 from gobby.servers.auth_service import AuthService
+from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.auth import AuthStore
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
-from tests.fixtures.postgres import TEST_USER_ID
+from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.postgres import TEST_USER_ID, TEST_USER_PASSWORD_HASH
 
 pytestmark = pytest.mark.unit
 
 SECRET = "native-bridge-test-front-door"
 GENERATION = "0123456789abcdef0123456789abcdef"
 LOOPBACK = ("127.0.0.1", 50000)
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 OPERATOR_IDENTITY = {
     "X-Gobby-User-Id": TEST_USER_ID,
     "X-Gobby-Machine-Id": "machine-1",
@@ -83,12 +91,13 @@ def _client(
     websocket_server: WebSocketServer,
     auth_service: Any,
     *,
+    database: Any = None,
     peer: tuple[str, int] = LOOPBACK,
 ) -> TestClient:
     app = FastAPI()
     server = SimpleNamespace(
         auth_service=auth_service,
-        services=SimpleNamespace(websocket_server=websocket_server),
+        services=SimpleNamespace(websocket_server=websocket_server, database=database),
         websocket_server=websocket_server,
     )
     _mount_ws_endpoint(app, cast(HTTPServer, server))
@@ -284,7 +293,7 @@ def test_bridge_admission_matrix_matches_entry_owners(
     for entry, case, credentials, refusal in cases:
         publisher = _Publisher()
         websocket_server = _ws_server(bridge_auth, publisher, db_executor)
-        client = _client(websocket_server, bridge_auth)
+        client = _client(websocket_server, bridge_auth, database=temp_db)
         headers = _headers(entry, path="/ws" if entry == "browser" else "/", extra=credentials)
         with client.websocket_connect("/_gobby/ws/bridge", headers=headers) as websocket:
             ready = websocket.receive_json()
@@ -310,6 +319,103 @@ def test_bridge_admission_matrix_matches_entry_owners(
         assert _refused_before_ready(_client(websocket_server, bridge_auth), headers) == 1008
 
 
+def _record_owner_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+    websocket_server: WebSocketServer,
+    machine_ids: tuple[str, ...],
+) -> dict[str, str]:
+    """Record each require_machine_owned answer inside the connection's bound scope."""
+    outcomes: dict[str, str] = {}
+    original = websocket_server._handle_connection
+
+    async def probe(websocket: Any) -> None:
+        for machine_id in machine_ids:
+            try:
+                require_machine_owned(machine_id)
+            except NodeCommandError as error:
+                outcomes[machine_id] = error.code
+            else:
+                outcomes[machine_id] = "ok"
+        await original(websocket)
+
+    monkeypatch.setattr(websocket_server, "_handle_connection", probe)
+    return outcomes
+
+
+def test_browser_cookie_owner_is_bound_as_caller(
+    temp_db: HubDatabase,
+    bridge_auth: AuthService,
+    db_executor: DatabaseExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hub = str(UUID(get_machine_id()))
+    remote = str(uuid4())
+    manager = LocalMachineManager(temp_db)
+    manager.upsert_seen(hub, TEST_USER_ID, label="hub")
+    manager.upsert_seen(remote, TEST_USER_ID, label="remote")
+    cookie = f"gobby_session={AuthStore(temp_db).create_session(TEST_USER_ID)[0]}"
+    websocket_server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    outcomes = _record_owner_outcomes(monkeypatch, websocket_server, (hub, remote))
+    client = _client(websocket_server, bridge_auth, database=temp_db)
+    headers = _headers("browser", path="/ws", extra={"Cookie": cookie})
+    with client.websocket_connect("/_gobby/ws/bridge", headers=headers) as websocket:
+        assert websocket.receive_json() == _ready(admitted=True)
+        welcome = websocket.receive_json()
+        assert welcome["user_id"].startswith("local-web-")
+    assert outcomes == {hub: "ok", remote: "ok"}
+
+
+def test_browser_decision_without_owner_answers_machine_not_owned(
+    temp_db: HubDatabase,
+    bridge_auth: AuthService,
+    db_executor: DatabaseExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hub = str(UUID(get_machine_id()))
+    monkeypatch.setattr(bridge_auth, "authenticate", lambda _request: AuthDecision(allowed=True))
+    websocket_server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    outcomes = _record_owner_outcomes(monkeypatch, websocket_server, (hub,))
+    client = _client(websocket_server, bridge_auth, database=temp_db)
+    headers = _headers("browser", path="/ws")
+    with client.websocket_connect("/_gobby/ws/bridge", headers=headers) as websocket:
+        assert websocket.receive_json() == _ready(admitted=True)
+        websocket.receive_json()
+    assert outcomes == {hub: "machine_not_owned"}
+
+
+def test_browser_break_glass_header_keeps_cookie_owner_bound(
+    temp_db: HubDatabase,
+    bridge_auth: AuthService,
+    db_executor: DatabaseExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Break-glass admits only HTTP, so the cookie decides this leg and binds TEST_USER_ID.
+    # The canonical seed owns the hub row as TEST_USER_ID, so probe a remote machine that
+    # OTHER_USER_ID owns: a bound caller answers machine_not_owned, while an unbound
+    # caller would answer "ok".
+    LocalUserManager(temp_db).create(
+        name="Other Test User",
+        email="other-test-user@gobby.local",
+        password_hash=TEST_USER_PASSWORD_HASH,
+        user_id=OTHER_USER_ID,
+    )
+    remote = str(uuid4())
+    LocalMachineManager(temp_db).upsert_seen(remote, OTHER_USER_ID, label="remote")
+    cookie = f"gobby_session={AuthStore(temp_db).create_session(TEST_USER_ID)[0]}"
+    websocket_server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    outcomes = _record_owner_outcomes(monkeypatch, websocket_server, (remote,))
+    client = _client(websocket_server, bridge_auth, database=temp_db)
+    headers = _headers(
+        "browser",
+        path="/ws",
+        extra={"X-Gobby-Break-Glass": BREAK_GLASS_VALUE, "Cookie": cookie},
+    )
+    with client.websocket_connect("/_gobby/ws/bridge", headers=headers) as websocket:
+        assert websocket.receive_json() == _ready(admitted=True)
+        websocket.receive_json()
+    assert outcomes == {remote: "machine_not_owned"}
+
+
 def test_bridge_preserves_application_connection_lifecycle(
     db_executor: DatabaseExecutor,
 ) -> None:
@@ -325,14 +431,14 @@ def test_bridge_preserves_application_connection_lifecycle(
         await websocket.send(message)
 
     auth_service = MagicMock()
-    auth_service.is_request_authenticated.return_value = True
+    auth_service.authenticate.return_value = AuthDecision(allowed=True)
     text = json.dumps({"type": "bridge_ready", "version": 1, "generation": GENERATION})
     binary = b"\x01\x02terminal-bytes\xc3\xa9"
     with (
         patch.object(websocket_server, "_handle_message", side_effect=echo),
         patch.object(websocket_server, "_cleanup_terminal_client", AsyncMock()) as cleanup,
     ):
-        client = _client(websocket_server, auth_service)
+        client = _client(websocket_server, auth_service, database=MagicMock())
         with client.websocket_connect("/_gobby/ws/bridge", headers=_headers()) as websocket:
             assert websocket.receive_json() == _ready(admitted=True)
             welcome = websocket.receive_json()

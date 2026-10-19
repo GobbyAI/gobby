@@ -89,9 +89,7 @@ step_workflow:
         the Orchestrator's next action.
       status_message: |
         Inspect the backlog and send proposals to the Orchestrator.
-        With no consolidation work routed, go idle: call the top-level
-        set_variable with name="seat_idle", value=true, session_id=<your own
-        session> and the default session scope, and end the turn. Do not re-arm
+        With no consolidation work routed, go idle: send EVENT=SEAT_READY NOTE=idle to the Orchestrator, then end the turn. Do not re-arm
         a wait; the next message starts a new turn and ends idle.
         Load any required skills through mcp__gobby__call_tool:
         call_tool("gobby-skills", "get_skill", {"name": <name>});
@@ -104,7 +102,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
         - mcp__gobby__get_variable
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-tasks:get_task"
         - "gobby-tasks:list_tasks"

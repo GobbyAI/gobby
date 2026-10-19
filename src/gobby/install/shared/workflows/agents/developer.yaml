@@ -27,7 +27,7 @@ prompts:
     ## Role
     You are a lane developer. You implement your lane's tasks one at a time in your lane's worktree. Your lane, worktree, Lane Manager and Code Reviewer come from your launch prompt and from Orchestrator or Lane Manager messages.
     - Flow. Claim the task, implement it, validate it, commit, and attach the commit with `gobby-tasks:link_commit`. Then send a CANDIDATE to your Lane Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`, and close the task only when your Lane Manager releases it.
-    - Bounces. When the reviewer bounces the candidate, or a close names a blocker you must fix, set `bounced` to true with the top-level `set_variable(scope="step")`. That returns you to implementation, and linking the rework commit clears it.
+    - Bounces. Read the reviewer's stored incoming CANDIDATE_VERDICT with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation. Report close blockers to your Lane Manager; never write bounced yourself.
     - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO. Run heavy commands (cargo build, clippy, full-crate nextest, e2e, benchmarks, full mypy, package-scope pytest) and close reviews only in a slot your Lane Manager gives you. Focused single-file runs need no slot.
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
@@ -39,7 +39,7 @@ prompts:
     - `crates/`: `rust`
     - Python only: nothing beyond the required set
     - docs only: `tech-writer`
-    Add the task's own `additional_skills`, any skill its description names, and `test-driven-development` for a `tdd:required` task. Write the list to `additional_skills`, then set `skills_routed` to true, both with the top-level `set_variable(scope="step")`.
+    Add the task's own `additional_skills`, any skill its description names, and `test-driven-development` for a `tdd:required` task. get_task routes stored extras and TDD automatically. Load path-specific and description-named skills before touching those paths.
 
     ## Messages
     Reach your Lane Manager, your reviewer and the Orchestrator through `gobby-agents:send_message`.
@@ -148,9 +148,8 @@ step_workflow:
         Defer implementation and validation until implement. With no task assigned,
         report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
-        then go idle: call the top-level set_variable with name="seat_idle",
-        value=true, session_id=<your own session> and the default session
-        scope, and end the turn. This step admits no other set_variable. Do
+        then go idle: send EVENT=SEAT_READY NOTE=idle to your Lane Manager,
+        and end the turn. Do
         not re-arm a wait; the next message or assignment starts a new turn
         and ends idle.
       allowed_tools:
@@ -343,19 +342,14 @@ step_workflow:
       mcp_error_policy: stay
       description: "Route the claimed task's skills"
       status_message: |
-        Read the claimed task with get_task(task_id=assigned_task_id). When the
-        card comes back offloaded, read it in full with
-        gobby-results:get_tool_result(result_id=<its result_id>), paging with
-        next_offset. Route its skills with the table in your prompt, then call
-        the top-level set_variable with scope="step": first
-        name="additional_skills" with the list, then name="skills_routed" with
-        true.
+        Read the claimed task with get_task(task_id=assigned_task_id). The
+        completion routes stored additional_skills and TDD automatically.
+        Read offloaded cards in full and load path-specific skills before edits.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:get_task"
@@ -363,6 +357,9 @@ step_workflow:
       on_mcp_before:
         - *assigned_handoff_guard
       on_mcp_success:
+        - server: gobby-tasks
+          tool: get_task
+          action: advance_seat
         - *record_land_handoff
         - *release_handoff_binding
         - *reset_handoff_completion
@@ -475,7 +472,8 @@ step_workflow:
         - *assigned_handoff_guard
         - *handoff_de_escalate_guard
         # A sent candidate is under review; its bounce returns here for rework.
-        - server: gobby-tasks
+        - &candidate_close_guard
+          server: gobby-tasks
           tool: close_task
           action: block
           when: >-
@@ -686,17 +684,22 @@ step_workflow:
         The task stays in your hand-off list until it closes. On release,
         de_escalate_task it, then close it with close_task, whether or not you
         reclaimed it.
+        To resume implementation or a directed retest after landing, use that
+        handoff reason, then de_escalate_task and claim_task on the same task.
+        Claiming routes skills and returns you to implement with shell access.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
-        task open, call the top-level set_variable(name="bounced", value=true,
-        scope="step") to return to implement.
+        task open, report the blocker to your Lane Manager. For landed work,
+        use the handoff, de-escalate and reclaim sequence above. Before landing,
+        read the assigned reviewer's stored incoming CANDIDATE_VERDICT with
+        get_inter_session_message to return to implementation. Never write flags.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
-        - mcp__gobby__set_variable
       allowed_mcp_tools:
         - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:wait_for_agent"
         - "gobby-tasks:close_task"
@@ -707,9 +710,13 @@ step_workflow:
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
       on_mcp_before:
+        - *candidate_close_guard
         - *handoff_de_escalate_guard
         - *assigned_handoff_guard
       on_mcp_success:
+        - server: gobby-agents
+          tool: get_inter_session_message
+          action: advance_seat
         - *forget_closed_handoff
         - *forget_observed_closed_handoff
         - *record_land_handoff

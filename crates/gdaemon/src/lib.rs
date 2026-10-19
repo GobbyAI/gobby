@@ -6,6 +6,7 @@ pub mod lease;
 pub mod lifecycle;
 pub mod node_commands;
 pub mod nodes;
+pub mod pane_detection;
 mod retention;
 pub mod serve;
 #[cfg(unix)]

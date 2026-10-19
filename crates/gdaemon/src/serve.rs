@@ -16,6 +16,9 @@ use gobby_core::bootstrap::{
 };
 #[cfg(unix)]
 use gobby_core::bootstrap::{RunMode, backend_ports, bootstrap_path};
+use gobby_core::route_family::RouteFamily;
+#[cfg(unix)]
+use gobby_runtime::RuntimeFamily;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -156,13 +159,22 @@ pub fn run() -> Result<()> {
             .map(|pool| Arc::new(PostgresKeyResolver::new(pool)) as Arc<dyn KeyResolver>);
         let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
         let ports = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
-        for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
+        let mut families = FAMILIES.to_vec();
+        if let Some(pool) = &pool {
+            let home = path.parent().context("bootstrap has no parent directory")?;
+            let runtime: &'static RuntimeFamily =
+                Box::leak(Box::new(RuntimeFamily::new(pool.clone(), home.to_owned())));
+            families.push(runtime);
+        }
+        let families: &'static [&'static dyn RouteFamily<FrontDoorState>] =
+            Box::leak(families.into_boxed_slice());
+        for name in unimplemented_families(families, &bootstrap.front_door.routes) {
             eprintln!(
                 "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
             );
         }
         let terminals = terminal_route_latch(&bootstrap.front_door.routes)?;
-        Some((secret, auth, ports, pool, terminals))
+        Some((secret, auth, ports, pool, terminals, families))
     };
     let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
     if let Some(loaded) = &tls {
@@ -181,11 +193,15 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        let Some((secret, auth, (backend_http, backend_ws), pool, terminals)) = native else {
+        let Some((secret, auth, (backend_http, backend_ws), pool, terminals, families)) = native
+        else {
             let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
             };
+            crate::nodes::hooks::drain::boot_release(&node.hook_ledger).await?;
+            let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
+            crate::nodes::hooks::drain::register_jobs(&mut heartbeat, node.clone())?;
             let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
             let ws = bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?;
             let doors = http
@@ -200,8 +216,13 @@ pub fn run() -> Result<()> {
                 node.clone(),
                 crate::nodes::channel::ChannelTiming::default(),
             ));
-            let result =
-                serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
+            let result = serve_doors(
+                doors,
+                tls.map(|loaded| loaded.config),
+                heartbeat,
+                shutdown_signal(),
+            )
+            .await;
             channel.abort();
             let _ = channel.await;
             drop(claim);
@@ -255,6 +276,7 @@ pub fn run() -> Result<()> {
                 runtime: Some(state),
                 native: native_routes,
                 compare_log: Some(compare_log),
+                families,
             },
             async {
                 tokio::select! {
@@ -412,6 +434,7 @@ struct ListenerShared {
     runtime: Option<Arc<crate::state::RuntimeState>>,
     native: NativeRoutes,
     compare_log: Option<Arc<CompareLog>>,
+    families: &'static [&'static dyn RouteFamily<FrontDoorState>],
 }
 
 async fn serve_with_runtime(
@@ -431,20 +454,19 @@ async fn serve_with_runtime(
             compare_log: shared.compare_log.clone(),
             ..FrontDoorState::new(backend, BackendState::Down, auth.clone())
         };
-        let table = RouteTable::new(FAMILIES, routes, &state);
+        let table = RouteTable::new(shared.families, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));
     }
-    serve_doors(doors, tls, shutdown).await
+    serve_doors(doors, tls, crate::heartbeat::HeartbeatHost::new(), shutdown).await
 }
 
 /// Serve prepared backend or node doors on their public listeners.
 pub async fn serve_doors(
     doors: Vec<(TcpListener, FrontDoor)>,
     tls: Option<Arc<ServerConfig>>,
+    mut heartbeat: crate::heartbeat::HeartbeatHost,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
-    let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
     heartbeat.start()?;
     let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();

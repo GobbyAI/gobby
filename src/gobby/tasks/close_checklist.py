@@ -621,6 +621,7 @@ def _evaluate_validation_commands(
         differing_paths=differing,
         unread_runs=unread,
         close_root=close_root,
+        rejected_trees=candidate.integration.rejections if candidate else (),
     )
     unmet.extend(coverage_failures)
 

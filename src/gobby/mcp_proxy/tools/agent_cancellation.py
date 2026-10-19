@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.storage.agents import TerminalAction
+from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +262,11 @@ async def terminate_agent_run(
             if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
                 return result
 
+            if is_daemon_stop_parked(run):
+                agent_run_manager.merge_resume_metadata(
+                    run_id, {REAP_REQUESTED_AT_KEY: datetime.now(UTC).isoformat()}
+                )
+
             if not stop:
                 result["workflow_stopped"] = False
                 return result
@@ -285,6 +293,15 @@ async def terminate_agent_run(
                 terminal_transition_owned=transitioned
                 and (effective_status == "error" or lifecycle_monitor is None),
             )
+            if lifecycle_monitor is not None:
+                try:
+                    await lifecycle_monitor.reap_daemon_stop_orphans()
+                except Exception:
+                    logger.warning(
+                        "Failed to reap daemon-stop orphans after killing agent %s",
+                        run_id,
+                        exc_info=True,
+                    )
             return result
         finally:
             await deliver_existing_terminal_run_in_scope(

@@ -188,6 +188,7 @@ async def test_prospective_commit_paths_survive_released_session_attribution(
         default_validation_detection_config(),
         set(snapshot.edited_paths),
         repo_path,
+        archive_dir=str(Path(repo_path) / "archives"),
     )
 
     assert [edit.path for edit in evidence.edits] == ["src/gobby/memory/recall.py"]

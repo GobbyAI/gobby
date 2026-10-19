@@ -87,7 +87,7 @@ Per phase and leaf:
   - 3.2, #23853 **Planning definitions retire with the spawned review round**: changes. The `review.md` sentence it rewrites lost its build clause in 2.3, and the Grok template sync test is now parametrized, so the leaf drops one parameter instead of deleting a test. Its note that `PlanReviewEvidenceService` and its service tests stay unchanged goes, because 4.2 removes the run binding (Decision Record item 9).
   - 3.3, #23854 **Discovery and review stage definitions retire**: stands.
   - 3.4, #23855 **Kept definitions drop the stage tools**: changes. 2.3 already removed the `build-coordinator` row from `rules/AGENTS.md`.
-  - 3.5, #23856 **Stage tools, review transitions, stage CLI and stage routes go**: changes. The `workflows/hooks.py` delete-lines proof is re-derived, the `task-enforcement` count becomes 20 in `rules/AGENTS.md` and in the `test_worker_safety_rules.py` parametrize that pins it, and `test_lifecycle_session_links.py` is a Target. It also deletes the lesson mint with `recorders.py` and `round_diff.py` (Decision Record item 9).
+  - 3.5, #23856 **Stage tools, review transitions, stage CLI and stage routes go**: changes. The `workflows/hooks.py` delete-lines proof is re-derived, the `task-enforcement` count in `rules/AGENTS.md` and in the `test_worker_safety_rules.py` parametrize that pins it drops by one from its value at implementation, and `test_lifecycle_session_links.py` is a Target. It also deletes the lesson mint with `recorders.py` and `round_diff.py` (Decision Record item 9).
 - P4, #23842 **P4: Stage readers and task storage**: changes in both leaves.
   - 4.1, #23857 **Nothing outside task storage reads or writes stages or the automation columns**: changes. `list_tasks` moved to `_listing.py`, so the `_crud.py` proof is re-derived and `_listing.py` joins the Targets with `attention_roster.py`, `reporter.yaml`, `tests/agents/test_coordination_seat_definitions.py` and `tests/agents/test_task_recovery.py`. The compact list column `stage` becomes `state`.
   - 4.2, #23858 **Task storage drops stages and the automation columns**: changes. File sizes are refreshed, and `test_reopen_build_state.py` loses one more stage case. It removes the review-evidence run binding, moves the attempt methods into `review_attempt_service.py`, and deletes `test_round_diff.py`, so 26 test files go (Decision Record item 9).
@@ -1075,7 +1075,7 @@ Targets:
 - `src/gobby/install/shared/workflows/rules/task-enforcement/block-needs-review-interactive.yaml::*` — operation: delete — scope-reason: its only rule blocks the three review tools for interactive sessions
 - `src/gobby/install/shared/workflows/rules/task-enforcement/require-commit-before-status.yaml::*` — scope-reason: drop the three review tools
 - `src/gobby/install/shared/workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml::*` — scope-reason: the task-transition rule drops the three review tools
-- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the task-enforcement rule count drops to 20
+- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the task-enforcement rule count drops by one from its value at implementation
 - `src/gobby/install/shared/skills/gobby/references/plan/enhancement.md::*` — scope-reason: the autonomous enhancer no longer records through `record_plan_enhancement`
 - `docs/reference-audit/tasks.json::*` — scope-reason: drop the stage tool, stage CLI and backfill entries
 - `docs/reference-audit/plan.json::*` — scope-reason: drop the `record_plan_enhancement` and backfill entries and the delegated review tools
@@ -1122,7 +1122,7 @@ Targets:
 - `tests/workflows/test_monolith_guard.py::*` — scope-reason: the task-transition rule names two tools
 - `tests/framing_corpus.py::*` — scope-reason: drop the deleted rule name
 - `tests/workflows/test_retired_bundled_definitions.py::*` — scope-reason: list the deleted rule
-- `tests/workflows/test_worker_safety_rules.py::*` — scope-reason: the task-enforcement rule-reference count drops from 21 to 20
+- `tests/workflows/test_worker_safety_rules.py::*` — scope-reason: the task-enforcement rule-reference pin drops by one from its value at implementation
 - `tests/agents/test_bundled_agent_contract.py`
 - `tests/tasks/test_expansion_qa_coverage.py::*` — scope-reason: coverage results carry no review action
 - `tests/workflows/test_expansion_qa_rejection.py::*` — scope-reason: assert pass state and failures instead of a review action
@@ -1165,7 +1165,7 @@ Rules:
 - Delete `block-needs-review-interactive.yaml`.
 - `require-commit-before-status`: `mcp_tools` keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`.
 - `require-monolith-resolution-before-task-transition` in `require-same-session-decomposition.yaml`: `mcp_tools` keeps the same two tools, and the description becomes "Block task completion while owned source is over budget".
-- `rules/AGENTS.md`: the `task-enforcement` count becomes 20.
+- `rules/AGENTS.md`: the `task-enforcement` count drops by one from its value at implementation, for the one rule this leaf deletes.
 
 Gates and hints:
 
@@ -1205,7 +1205,7 @@ Tests:
 - `test_monolith_guard.py`: `test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance` expects `{"gobby-tasks:close_task", "gobby-tasks:de_escalate_task"}`.
 - `tests/framing_corpus.py`: drop `block-needs-review-interactive`.
 - `test_retired_bundled_definitions.py`: add `block-needs-review-interactive` to `RETIRED_RULES`.
-- `test_worker_safety_rules.py`: the `test_rule_reference_counts_match_yaml` parametrize row becomes `("task-enforcement", 20)`, and `("worker-safety", 58)` stays.
+- `test_worker_safety_rules.py`: the `task-enforcement` row of the `test_rule_reference_counts_match_yaml` parametrize drops by one from its value at implementation, and the `worker-safety` row stays.
 - `test_bundled_agent_contract.py`: `REMOVED_LIFECYCLE_TOOLS` adds the 19 stage tools and `backfill_plan_review_lessons`.
 - `test_expansion_qa_coverage.py`: `test_hash_prefixed_root_ref_matches_registry_written_manifest` asserts `result["qa_result"]["scope"]["root_task"] == _ROOT_REF` instead of the review action argument. Delete `test_interactive_coverage_persists_inapplicable_review_action` and `test_spawned_coverage_persists_legacy_review_action_shape`.
 - `test_expansion_qa_rejection.py`: `test_missing_row_triggers_rejection` asserts `result["passed"] is False` and one failure with `section_id` `A1`, `item_id` `A1.1`, `status` `invalid`, `detail` "artifact src/example.py was not referenced" and `leaves` `["#13244"]`. `test_zero_missing_invalid_triggers_approval` asserts `result["passed"] is True`, an empty `result["qa_result"]["failures"]` and no `review_action` key.
@@ -1932,6 +1932,8 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-16: Josh answered Decision Record item 9 when he approved the item-9 leaves, through the Orchestrator: "Use best judgment on the plan. I already approved it." His 2026-10-13 ruling (button `24318-review-evidence:remove`) removes the review-evidence run binding, and the Orchestrator applied those leaves on 2026-10-16. Item 9 now records the answer, and 3.2, 3.5, 4.2, 5.2 and 6.1 carry the applied leaf text, so M1 no longer waits on a decision.
 - 2026-10-16: Writer repairs for Plan Adversary gobby#16993's review of `21bb8c3a52`. F1 and F2, on the Orchestrator's ruling: 2.4 and 6.1 each bump `gobby-core` and its four dependent binaries, with the pins and the gcode floor, at the integration tip's version plus 0.0.1 (version ledger, 2026-10-16). Constraints states the per-leaf rule, 2.4 moves the gcode version floors out of the 969-line gateway, and 2.5 takes the bump if its regenerated contract changes. F3 is recorded above. N1: 6.1's new runner test applies every migration before 471. 4.2 names `src/gobby/cli/plans.py` by its full path.
 - 2026-10-16: Plan Adversary gobby#16993 consensus on cb53e1ab96560536ce25455d540dbe6202f8fadc for #24318: F1, F2, F3 and N1 resolved, no blocking finding remains.
+- 2026-10-17: Writer repair for #24644 on the Orchestrator's post-expansion GO: #24613 and #24566 changed the live task-enforcement count, so Refresh Reconciliation and 3.5 state it relatively. 3.5 deletes one task-enforcement rule, `block-needs-review-interactive`, so the `rules/AGENTS.md` count and the `test_worker_safety_rules.py` pin each drop by one from their values at implementation, and the `worker-safety` row stays. The 3.5 acceptance names no count.
+- 2026-10-17: Plan Adversary gobby#16993 consensus on b91a7b5ef367023b9c08246ba360f80e11f2a2eb for #24644: no findings. The M1 derived at 2c5fb099b7 is withdrawn for re-derivation.
 
 ## M1 Task Manifest
 `kind: manifest`

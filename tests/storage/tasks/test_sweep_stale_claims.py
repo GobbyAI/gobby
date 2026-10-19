@@ -14,12 +14,14 @@ from unittest.mock import patch
 import psutil
 import pytest
 
+from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_types import HookSessionManager
+from gobby.mcp_proxy.tools.agents_termination import _cleanup_terminal_artifacts
 from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
@@ -46,6 +48,8 @@ from gobby.storage.tasks._models import CheckoutMode, Task
 from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -845,7 +849,7 @@ def _expire_seat_whose_native_pane_exited(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     *,
-    live_host_epoch: str,
+    live_host_epoch: str | None,
     before_expiry: Callable[[str], object] | None = None,
 ) -> tuple[SessionManager, str]:
     """Expire a paused seat whose native pane exited under ``_EXITED_HOST_EPOCH``."""
@@ -893,13 +897,14 @@ def _expire_seat_whose_native_pane_exited(
     ("live_host_epoch", "claim_survives"),
     [
         pytest.param("host-epoch-after-drain", True, id="host_drain"),
+        pytest.param(None, True, id="live_host_not_connected"),
         pytest.param(_EXITED_HOST_EPOCH, False, id="pane_closed_under_live_host"),
     ],
 )
 def test_a_native_pane_exit_releases_its_claim_only_when_the_host_stayed_up(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
-    live_host_epoch: str,
+    live_host_epoch: str | None,
     claim_survives: bool,
 ) -> None:
     """A host drain ends every pane and the seats resume into the same sessions.
@@ -908,6 +913,8 @@ def test_a_native_pane_exit_releases_its_claim_only_when_the_host_stayed_up(
     the liveness monitor expires the paused seat before anything resumes it.
     That expiry is a guess, so the claim waits for the resume. A pane closed
     while its host is still the live one is finished, and releases on schedule.
+    An unknown live epoch proves no such close: a daemon restart can expire the
+    seat before its host has connected, so that expiry is a guess too.
     """
     _sessions, session_id = _expire_seat_whose_native_pane_exited(
         temp_db, sample_project, live_host_epoch=live_host_epoch
@@ -922,6 +929,99 @@ def test_a_native_pane_exit_releases_its_claim_only_when_the_host_stayed_up(
         CONTESTED_TERMINAL_EXPIRY_VARIABLE
     )
     assert (marker is not None and marker["cause"] == "terminal_drain") is claim_survives
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+def test_a_same_status_rewrite_keeps_the_drain_marker_and_the_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A status write that leaves a drained seat expired settles nothing.
+
+    Every status write used to clear the contested marker, so a same-status
+    rewrite after the drain expiry dropped the shield and the claim fell to the
+    ordinary schedule. Only a write that changes the status can settle the guess.
+    """
+    sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch="host-epoch-after-drain"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    sessions.update_status(session_id, "expired")
+
+    marker = (read_session_variables(temp_db, session_id) or {}).get(
+        CONTESTED_TERMINAL_EXPIRY_VARIABLE
+    )
+    assert marker is not None and marker["cause"] == "terminal_drain"
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+async def test_an_explicit_termination_of_a_drained_seat_releases_its_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Explicit termination is final, so it settles the drained seat's guess.
+
+    The termination path writes ``expired`` to a seat that is already expired. That
+    write keeps the drain marker, so the termination path must clear it itself, or
+    the claim shield holds for the whole revival horizon.
+    """
+    sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch="host-epoch-after-drain"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
+        return_value=AgentRuntimeCleanupResult(),
+    ):
+        await _cleanup_terminal_artifacts(
+            run_id="11111111-1111-4111-8111-111111111111",
+            db=temp_db,
+            terminal_id=None,
+            agent_session_id=session_id,
+            debug=False,
+            session_manager=sessions,
+            result={},
+            terminal_transition_owned=False,
+        )
+
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 1
+    assert _claim(temp_db, task.id) is None
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+def test_a_drained_seat_keeps_its_developer_handoff_binding(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A seat whose pane exited during a daemon stop keeps the tasks it handed off.
+
+    The developer handoff guards read ``_developer_handoff_tasks``. Expiry must
+    leave that binding in place, so the resumed seat can still finish its handoff.
+    """
+    bound: list[Task] = []
+
+    def bind_handoff(owner: str) -> None:
+        task = _claimed_task(temp_db, sample_project, claimed_by=owner)
+        bound.append(task)
+        SessionVariableManager(temp_db).merge_variables(
+            owner, {DEVELOPER_HANDOFF_TASKS_VARIABLE: [task.id]}
+        )
+
+    _sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db,
+        sample_project,
+        live_host_epoch=None,
+        before_expiry=bind_handoff,
+    )
+
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, bound[0].id) == session_id
+    variables = read_session_variables(temp_db, session_id) or {}
+    assert variables[DEVELOPER_HANDOFF_TASKS_VARIABLE] == [bound[0].id]
 
 
 @pytest.mark.usefixtures("_local_machine_identity")

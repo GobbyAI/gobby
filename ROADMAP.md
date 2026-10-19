@@ -251,7 +251,9 @@ epics are not complete.
 Ordered so story B emerges mid-port. S2.7 and S2.11 each split into a node half
 and a hub half (decision 17, amended 2026-10-12): the node halves feed story B
 and wait only on Stage 1. The S2.11 hub half lands late because the rule engine
-is entangled with sessions and MCP dispatch. Each family lands as its own
+is entangled with sessions and MCP dispatch. S2.4 splits around S2.5 (Josh,
+2026-10-18): sessions need only S2.4a, and S2.4b's claim and session-bound
+transitions need sessions. Each family lands as its own
 workspace-private crate (decision 16), added to the workspace when its epic is
 claimed; S2.3 is the template.
 
@@ -260,8 +262,10 @@ claimed; S2.3 is the template.
 | **S2.1** · #21557 | `gcore` async Postgres layer — pool vs `spawn_blocking`, the repository seam, grant-role compatibility with `baseline@420` |
 | **S2.2** · #21558 | Native WS transport in `gdaemon` — accept, auth handshake, subscription filter, broadcast envelope |
 | **S2.3** · #21559 | Config, runtime handshake, and grant issuing — the first takeover, and the template for every later one |
-| **S2.4** · #21560 | Tasks family — reduced list, then get, then the write path (#21561, which hosts the hub authority contract #20822), stages, dependencies, the MCP server |
+| **S2.4** · #21560 | Tasks family; closes with its two halves |
+| **S2.4a** · #21560 | Reduced list, then get, then the write path (#21561, which hosts the hub authority contract #20822), stages, dependencies |
 | **S2.5** · #21562 | Sessions and transcripts — including the resumability decision |
+| **S2.4b** · #21560 | Claim and the session-bound transitions behind HTTP; the tasks MCP server moves with S2.12 |
 | **S2.6** · #21563 | Memory and search — repositories, recall injection, dream |
 | **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only; closes with its two halves |
 | **S2.7 node** · #24148 | Node-local agent spawn and worktrees in `gdaemon`, driven by the hub over the node channel |
@@ -272,7 +276,7 @@ claimed; S2.3 is the template.
 | **S2.11** · #21569 | Hook ingress and the node-local envelope ledger; closes with its two halves |
 | **S2.11 node** · #24150 | `gdaemon` node-local envelope ledger that drains the `ghook` spool and forwards each envelope to the hub's `POST /api/hooks/execute` |
 | **S2.11 hub** · #24151 | Hub-side hook ingress and the rule engine in Rust |
-| **S2.12** · #21570 | MCP front door flip — the last MCP step |
+| **S2.12** · #21570 | MCP front door flip — the last MCP step, including the tasks MCP server |
 | **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
 Stage 2 has started early under Lane 5: S2.1 #21557 async Postgres has
@@ -281,13 +285,19 @@ terminal-family crate work. The stage-level S1 edge remains; individual
 dependency-ready work can proceed while Stage 1 is open (decision 21).
 
 Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
-`S2.4` ← `S2.3`; `S2.5` ← `S2.4`, `S2.2`;
-`S2.6` ← `S2.4`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
+`S2.4` ← `S2.4a`, `S2.4b`; `S2.4a` ← `S2.3`;
+`S2.5` ← `S2.4a`, `S2.2`; `S2.4b` ← `S2.4a`, `S2.5`;
+`S2.6` ← `S2.4a`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
 `S2.7 node` ← `S1.4`; `S2.7 hub` ← `S2.4`, `S1.4`;
 `S2.9` ← `S2.5`, `S2.7`;
-`S2.10` ← `S2.4`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
+`S2.10` ← `S2.4a`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
 `S2.11 node` ← `S1.4`; `S2.11 hub` ← `S2.5`, `S2.9`, `S2.10`;
-`S2.12` ← `S2.10`, `S2.11`; `S2.13` ← `S2.4`, `S2.2`.
+`S2.12` ← `S2.10`, `S2.11`. `S2.13` has no group gate: each family waits only
+on the families it uses (Josh, 2026-10-18). On `S2.4`: #21581 plans, #21584
+source control, #21589 admin. On `S2.2`: #21580 skills, #21583 communications,
+#21585 projects and hub documents, #21588 voice, #21589 admin, #21590 web UI
+static serving, #21592 WS chat. #21582 cron, #21587 AI providers and #21591
+install and setup wait on neither.
 
 S2.8's M1 adoption/epoch work has no S2.2 transport dependency. Its D2
 #23219 terminal WS/relay waits on S2.2 #21558 native WS transport.
@@ -323,7 +333,8 @@ begin. The naming switch and the Python retirement follow it.
 
 Edges: `S4` ← `S1`; `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
 S2.8 M1 #23205, #21549 machine-scoped terminals;
-`S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`.
+`S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`;
+`S4.8` ← #21585 projects and hub documents only (Josh, 2026-10-18).
 
 **Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2's mode gate
 landed right after S1.2 (#23111), so the first hub-node pair test in S1.4 has a
@@ -332,6 +343,42 @@ S2.10: those edges stay on the S2.7 and S2.11 hub halves, which are off its
 critical path. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes its
 index through hub HTTP routes owned by whichever Stage 2 family absorbs the
 code-index routes (decision 17).
+
+**Node path-scope contract — #20438 (agent-side temp roots).** The S4.1 node
+classifies hook paths on the machine that executes the agent, before forwarding
+through S2.11's node-local hook ingress. This is a planned node duty; the current
+Python helper, `src/gobby/hooks/_path_scope.py::_temp_scratchpad_roots`, reads
+the classifying process's tempdir and `/tmp` and `/private/tmp` aliases. Moving
+that helper unchanged to a hub would classify paths against the wrong filesystem.
+
+The node uses the executing agent's effective tempdir, captured from its launch
+context, together with the node's own local temp roots. The agent's context is
+per execution: the node daemon's environment is not a substitute when `TMPDIR`
+differs. For an unmanaged agent, a hook-reported root is only a hint until the
+node validates it against local temp-root policy. An arbitrary client root must
+never grant an exemption. Missing or unverified agent context permits only the
+node's known local roots; an unknown custom agent tempdir remains subject to
+ordinary path-scope rules rather than being silently exempted.
+
+Resolve paths, symlinks, temp roots, project membership, and Git worktree linkage
+on that node. Preserve the classifier's ordering: a path inside the active project
+is project-scoped even under a temp root; an external temp path needs an existing
+scratchpad marker or prefix before the scratchpad exemption applies. A temp root
+alone does not make every descendant an agent scratchpad.
+
+The forwarded classification and its provenance are bound to the authenticated
+node and originating execution. The hub applies its rules to that result without
+resolving remote paths, probing the hub filesystem, or adding the hub's tempdir.
+This extends the existing hook [machine binding](docs/contracts/hook-ingress.md#machine-binding).
+Absent or invalid node classification must not produce a scratchpad exemption.
+`standalone`, and agents running on the hub itself, use the same local duty on
+their executing machine; remote agents never inherit the hub's roots.
+
+The S4.1/S2.11 implementation verification must cover differing hub, node, and
+agent tempdirs; two agents with different tempdirs; missing/unverified agent
+context; forged machine/root metadata; temp paths without markers; project paths
+under temp roots; and symlinks and linked scratchpad worktrees. These are future
+runtime checks, not a claim that this documentation change implements them.
 
 ## Side quests
 
@@ -534,6 +581,15 @@ separate planning effort before implementation.
     #21571 Operator verbs on the client: "Ok, it needs to be after stage 2 but before stage 3."
     This supersedes his earlier Stage 4 idea. S3.1 starts after #21544 Stage 2 completes and
     lands before S3.2 to S3.4 begin.
+
+25. **Scratchpad path scope belongs to the executing node** (2026-10-18;
+    #20438 agent-side temp roots). Filesystem classification runs node-side;
+    semantic hook rules remain hub-side. The agent's effective tempdir and the
+    node's validated local roots govern the exemption, including when agent and
+    node daemon environments differ. The hub's tempdir never governs a remote
+    agent. Client-supplied roots alone carry no exemption authority. The
+    [Stage 4 contract](#stage-4--hub-and-node-live-story-b-21546) records the
+    missing-context behavior, trust boundary, and implementation verification.
 
 ## References
 

@@ -101,8 +101,7 @@ def test_patched_which_resolves_shell_when_which_cannot_answer(
     from tests.srt_fixture_helpers import upstream_proxy_bytes
 
     node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is required to execute the SRT which helper")
+    assert node is not None
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_executable(bin_dir / "bash", "exit 0")
@@ -123,8 +122,7 @@ def test_patched_which_skips_non_executable_entries_like_which(tmp_path: Path) -
     from gobby.agents.srt_package_patch import WHICH_PATH
 
     node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is required to execute the SRT which helper")
+    assert node is not None
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()

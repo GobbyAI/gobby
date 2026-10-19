@@ -130,6 +130,7 @@ def test_tests_mirror_of_declared_source_stays_in_scope() -> None:
 
 def test_directory_entry_without_trailing_slash_covers_children(tmp_path: Path) -> None:
     (tmp_path / "src/gobby/tasks").mkdir(parents=True)
+    (tmp_path / "src/gobby/tasks/_task_scope.py").touch()
 
     evaluation = _evaluate(
         annotations=[_annotation("src/gobby/tasks", "manual")],
@@ -398,6 +399,76 @@ def _git_repo(tmp_path: Path) -> Callable[..., str]:
     git("config", "user.email", "test@example.com")
     git("config", "user.name", "Test User")
     return git
+
+
+@pytest.mark.parametrize("remaining_kind", ["absent", "file", "dangling_symlink"])
+def test_scope_ignores_only_vanished_uncommitted_attribution(
+    tmp_path: Path, remaining_kind: str
+) -> None:
+    git = _git_repo(tmp_path)
+    (tmp_path / "delivered.py").write_text("VALUE = 1\n")
+    git("add", "delivered.py")
+    git("commit", "-qm", "deliver declared target")
+    sha = git("rev-parse", "HEAD")
+    transient = tmp_path / "connect.head"
+    if remaining_kind == "file":
+        transient.write_text("uncommitted edit\n")
+    elif remaining_kind == "dangling_symlink":
+        transient.symlink_to("missing-target")
+
+    with patch.object(
+        TaskAffectedFileManager, "get_files", return_value=[_annotation("delivered.py", "manual")]
+    ):
+        evaluation = evaluate_task_scope(
+            db=MagicMock(),
+            task=_task(),
+            commit_shas=(sha,),
+            attributed_paths={"delivered.py", "connect.head", "connect.body"},
+            repo_path=str(tmp_path),
+            scope_justification=None,
+        )
+
+    expected_drift = () if remaining_kind == "absent" else ("connect.head",)
+    assert evaluation.out_of_scope_paths == expected_drift
+    assert evaluation.accepted is (remaining_kind == "absent")
+    assert evaluation.actual_paths == tuple(sorted(("delivered.py", *expected_drift)))
+
+
+def test_scope_does_not_treat_inaccessible_attribution_as_absent(tmp_path: Path) -> None:
+    with (
+        patch.object(Path, "lstat", side_effect=PermissionError("Cannot inspect attributed path")),
+        pytest.raises(PermissionError, match="Cannot inspect attributed path"),
+    ):
+        _evaluate(
+            annotations=[_annotation("declared.py", "manual")],
+            actual_paths={"outside.py"},
+            repo_path=str(tmp_path),
+        )
+
+
+def test_scope_keeps_committed_deletions_absent_from_checkout(tmp_path: Path) -> None:
+    git = _git_repo(tmp_path)
+    (tmp_path / "outside.py").write_text("VALUE = 1\n")
+    git("add", "outside.py")
+    git("commit", "-qm", "baseline")
+    git("rm", "outside.py")
+    git("commit", "-qm", "delete outside declared scope")
+    sha = git("rev-parse", "HEAD")
+    with patch.object(
+        TaskAffectedFileManager, "get_files", return_value=[_annotation("declared.py", "manual")]
+    ):
+        evaluation = evaluate_task_scope(
+            db=MagicMock(),
+            task=_task(),
+            commit_shas=(sha,),
+            attributed_paths={"outside.py", "connect.head"},
+            repo_path=str(tmp_path),
+            scope_justification=None,
+        )
+
+    assert evaluation.out_of_scope_paths == ("outside.py",)
+    assert evaluation.accepted is False
+    assert evaluation.actual_paths == ("outside.py",)
 
 
 async def test_net_commit_paths_drop_a_file_a_later_link_reverts(tmp_path: Path) -> None:

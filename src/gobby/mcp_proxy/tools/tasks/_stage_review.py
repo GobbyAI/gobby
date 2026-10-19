@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.task_repo_paths import RepoPathValidationError, resolve_task_repo_path
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
     RegistryContext,
@@ -254,20 +256,30 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             else set()
         )
         try:
+            worktree_path = ctx.task_manager.artifacts.get_artifacts(resolved_id).worktree_path
+            if isinstance(worktree_path, str):
+                try:
+                    Path(worktree_path).stat()
+                except (FileNotFoundError, NotADirectoryError):
+                    worktree_path = None
+            repo_path = resolve_task_repo_path(
+                task_manager=ctx.task_manager,
+                project_manager=ctx.project_manager,
+                task=task,
+                project_path=worktree_path if isinstance(worktree_path, str) else None,
+                machine_id=ctx.checkout_machine_id(task.project_id, get_current_session_id()),
+            )
             scope = evaluate_task_scope(
                 db=ctx.task_manager.db,
                 task=task,
                 commit_shas=task.commits or (),
                 attributed_paths=attributed_paths,
-                repo_path=ctx.get_project_repo_path(
-                    task.project_id,
-                    ctx.checkout_machine_id(task.project_id, get_current_session_id()),
-                ),
+                repo_path=repo_path,
                 scope_justification=scope_justification,
             )
         except CHECKOUT_RESOLUTION_ERRORS as exc:
             return checkout_unresolved_error(exc)
-        except RuntimeError as exc:
+        except (RuntimeError, RepoPathValidationError) as exc:
             return {
                 "success": False,
                 "error": "task_scope_unavailable",

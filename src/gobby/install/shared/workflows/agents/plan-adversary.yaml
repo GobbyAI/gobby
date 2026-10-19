@@ -80,8 +80,8 @@ prompts:
        entry. Send a line starting `EVENT=CONSENSUS SHA=<commit>` to plan-writer
        and the coordinator through gobby-agents:send_message. The successful message
        handler enters stamp; never call set_variable to enter it. If the
-       consensus prerequisite becomes invalid, set `bounced` to true with
-       top-level set_variable(scope="step") to return to review. You then own
+       consensus prerequisite becomes invalid, use
+       send_message with EVENT=CONSENSUS_WITHDRAWN SHA=<consensus SHA> NOTE= to the coordinator to return to review. You then own
        `## M1 Task Manifest`: derive it with
        `gobby-plans:derive_plan_handoff_manifest` from complete routing
        decisions, and apply it with `gobby-plans:apply_plan_handoff_manifest`
@@ -207,21 +207,7 @@ step_workflow:
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
-          when: &consensus_event >-
-            any(line.startswith('EVENT=CONSENSUS ') and
-                any(field.startswith('SHA=') and 7 <= len(field.split('=', 1)[1]) <= 40 and
-                    all(char in '0123456789abcdefABCDEF' for char in field.split('=', 1)[1])
-                    for field in line.split())
-                for line in str(tool_input.get('content') or '').split('\n'))
-          action: set_variable
-          variable: consensus
-          value: true
-        - server: gobby-agents
-          tool: send_message
-          when: *consensus_event
-          action: set_variable
-          variable: bounced
-          value: false
+          action: advance_seat
       transitions:
         - to: stamp
           when: "vars.consensus and not vars.bounced"
@@ -231,7 +217,7 @@ step_workflow:
       description: "Derive and apply M1 after verified consensus"
       status_message: |
         Reject any plan with unresolved questions; do not stamp, approve, or expand it.
-        If any question remains, set bounced=true with top-level set_variable(scope="step")
+        If any question remains, send EVENT=CONSENSUS_WITHDRAWN SHA=<consensus SHA> NOTE= to the coordinator
         and return to review. Require operator answers, the writer's resolved plan text,
         and a fresh re-review before consensus or stamping.
         Send an EVENT=CONSENSUS SHA=<commit> event line to both the writer and
@@ -241,7 +227,7 @@ step_workflow:
         and digest; derive again after any plan edit. Validate in expansion mode,
         send the manifest digest to the writer and coordinator, then call end_agent_run.
         If consensus was premature or its prerequisite becomes invalid, call
-        top-level set_variable(name="bounced", value=true, scope="step"). This
+        send_message with EVENT=CONSENSUS_WITHDRAWN SHA=<consensus SHA> NOTE= to the coordinator. This
         returns to review and blocks stamping until a new consensus event;
         verify a committed V1 entry and send a new consensus event before stamping.
       allowed_tools: "all"
@@ -262,6 +248,9 @@ step_workflow:
         - "gobby-agents:dispatch_batch"
         - "gobby-agents:kill_agent"
       on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
         - server: gobby-agents
           tool: end_agent_run
           action: set_variable

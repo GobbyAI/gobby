@@ -803,3 +803,30 @@ async fn native_write_oversized_reply_is_uncertain_and_reopens() {
     assert_eq!(outcome, Ok(Delivery::Delivered));
     assert_eq!(host.connections(), 2, "the uncertain connection is dropped");
 }
+
+#[tokio::test]
+async fn native_write_refuses_oversized_request_before_any_byte() {
+    let host = FakeHost::new(|_| ok());
+    let runtime = NativeWrite::new(host.options());
+    let outcome = runtime
+        .write(
+            &row(Some("ht-1"), Some(EPOCH)),
+            &step(Kind::Text, &"x".repeat(MAX_CONTROL_LINE), false),
+        )
+        .await;
+    assert_eq!(refusal(outcome), (Stage::None, "request_too_large".into()));
+    assert!(host.logged("write").is_empty(), "no write reaches the host");
+    let outcome = runtime
+        .write(
+            &row(Some("ht-2"), Some(EPOCH)),
+            &step(Kind::Text, "x", false),
+        )
+        .await;
+    assert_eq!(outcome, Ok(Delivery::Delivered));
+    assert_eq!(host.logged("write").len(), 1);
+    assert_eq!(
+        host.connections(),
+        1,
+        "a refused request keeps the connection"
+    );
+}

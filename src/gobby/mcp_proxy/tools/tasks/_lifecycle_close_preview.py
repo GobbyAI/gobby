@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
@@ -436,6 +437,28 @@ async def select_close_candidate(
     }
 
 
+async def _close_tagged_roots(cwd: str, candidate: str | None) -> tuple[str, str]:
+    """Resolve immutable scan roots from the candidate and authoritative main checkout."""
+    common = await daemon_git.run(
+        ("rev-parse", "--path-format=absolute", "--git-common-dir"), cwd=cwd
+    )
+    if not isinstance(common, GitOk) or not common.stdout.strip():
+        raise RuntimeError("Integration checkout could not be resolved.")
+    main = Path(common.stdout.strip()).parent
+    branch = await daemon_git.run(("symbolic-ref", "--quiet", "HEAD"), cwd=main)
+    if not isinstance(branch, GitOk) or not branch.stdout.strip():
+        raise RuntimeError("Integration branch could not be resolved.")
+    roots: list[str] = []
+    for root, directory in ((candidate or "HEAD", cwd), (branch.stdout.strip(), main)):
+        result = await daemon_git.run(
+            ("rev-parse", "--verify", "--end-of-options", f"{root}^{{commit}}"), cwd=directory
+        )
+        if not isinstance(result, GitOk) or not result.stdout.strip():
+            raise RuntimeError("Close candidate or integration tip could not be resolved.")
+        roots.append(result.stdout.strip())
+    return roots[0], roots[1]
+
+
 async def unlinked_tagged_commits(
     task_manager: LocalTaskManager,
     *,
@@ -444,6 +467,7 @@ async def unlinked_tagged_commits(
     commit_shas: list[str],
     cwd: str | None,
     project_name: str | None,
+    candidate_commit_sha: str | None = None,
 ) -> tuple[tuple[list[str], list[str]], dict[str, Any] | None]:
     """Find task-tagged commits since the task's creation that the close would not judge."""
     if cwd is None:
@@ -459,6 +483,7 @@ async def unlinked_tagged_commits(
             project_name=project_name,
             project_id=task.project_id,
             linked=commit_shas,
+            revs=await _close_tagged_roots(cwd, candidate_commit_sha),
         )
     except Exception:
         return ([], []), {

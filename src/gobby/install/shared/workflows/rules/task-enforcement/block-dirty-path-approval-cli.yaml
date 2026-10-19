@@ -9,15 +9,45 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        # The subcommand name is unique, so any unquoted occurrence in an
-        # executable segment blocks, whatever launcher, wrapper, global option
-        # or variable names the CLI. Quoted data is not an invocation, so a
-        # refusal relaying the command to the user stays sendable; command
-        # substitution still blocks. Managed executions are also denied the
-        # session tables at the database, so this rule is not the only boundary.
+        # The approval subcommand blocks only where it fills the subcommand slot
+        # right after `sessions` (flags aside), whatever launcher, wrapper, global
+        # option or variable names the CLI. A quoted or read-only mention, such as
+        # a search term, is not an invocation and stays allowed. A segment that
+        # names `sessions` and expands a variable or runs a substitution unquoted
+        # also blocks: the subcommand can then be assembled at run time, so the
+        # literal name never appears.
+        # `gobby sessions list` is exempt when its arguments hold no command
+        # substitution or separator: list takes no operator-only subcommand, so a
+        # variable in its arguments cannot reach approve-dirty-paths. Quoted data
+        # is not an invocation, so a refusal relaying the command to the user stays
+        # sendable. Managed executions are also denied the session tables at the
+        # database, so this rule is not the only boundary.
         mask_quoted: true
-        command_pattern: "(?<![\\w./-])approve-dirty-paths(?![\\w-])"
+        command_pattern: "(?<![\\w.-])sessions(?![\\w-])(?:\\s+-[\\w-]+)*\\s+approve-dirty-paths(?![\\w-])|^(?!\\s*(?:uv\\s+run\\s+)?gobby\\s+sessions\\s+list(?![\\w-])(?:[^;&|\\n`$]|\\$(?!\\())*$)(?=[\\s\\S]*(?<![\\w./-])sessions(?![\\w-]))(?=[\\s\\S]*[$`])"
         reason: |
           Approving unowned dirty paths is operator-only. Relay the exact
           `gobby sessions approve-dirty-paths ...` command from the refusal to
           the user, who runs it in their own shell, then retry.
+
+  block-gobby-cli-expansion:
+    description: "Block agent shell commands that name the operator-only approval subcommand inside a substitution, or build a gobby sessions subcommand from a variable or substitution."
+    event: before_tool
+    enabled: true
+    priority: 30
+    effects:
+      - type: block
+        tools: [Bash]
+        # Raw text on purpose: quoting or escaping the subcommand does not stop a
+        # shell from running it, so two shapes block. A literal approval name in a
+        # substitution or backtick runs it. A gobby sessions call whose subcommand
+        # slot holds a variable or substitution, through quote and backslash noise,
+        # can assemble the approval subcommand at run time. The slot must sit
+        # before any quote, so quoted arguments such as JSON pass. Braces and globs
+        # pass here; one that would name the approval is refused by the operator
+        # route's credential check, not by this rule.
+        mask_quoted: false
+        command_pattern: "(?:\\$\\(|`)[^;&|\\n]*?(?<![\\w./-])approve-dirty-paths(?![\\w-])|(?<![\\w./-])gobby(?![\\w-])[^;&|\\n'\"]*?(?<![\\w./-])['\"]?s['\"\\\\]*e['\"\\\\]*s['\"\\\\]*s['\"\\\\]*i['\"\\\\]*o['\"\\\\]*n['\"\\\\]*s['\"\\\\]*\\s+['\"]*[^\\s;&|]*[$`]"
+        reason: |
+          The operator-only approval subcommand is named inside a substitution, or a
+          gobby sessions subcommand is built from a variable or substitution. Use the
+          gobby MCP tools, or pass the literal subcommand name.

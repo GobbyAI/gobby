@@ -152,7 +152,17 @@ def test_post_production_proof_needs_confirmed_baseline(cause: str) -> None:
         )
         evidence = replace(evidence, edits=(baseline, *evidence.edits[1:]))
 
-    assert not evaluate_tdd_evidence((test,), evidence).passed
+    if cause == "no_green":
+        red = evidence.validation_runs[0]
+        matched, reason = _red_run_proof(test, evidence, red, red.command, True, {}, {}, None)
+        assert not matched
+        assert (
+            reason
+            == "post-production red has no attributable NotImplementedError or proven API stub"
+        )
+        assert evaluate_tdd_evidence((test,), evidence).passed
+    else:
+        assert not evaluate_tdd_evidence((test,), evidence).passed
 
 
 @pytest.mark.parametrize("cause", ["no_fix", "no_pass", "wrong_node_pass", "newer_green"])
@@ -204,15 +214,35 @@ def test_post_production_proof_rejects_unconfirmed_source(order: int) -> None:
 
 @pytest.mark.parametrize(
     "selection",
-    [f"{TEST_PATH}::test_other", f"{TEST_PATH} -k test_other", f"{TEST_PATH} -k=test_other"],
+    [
+        f"{TEST_PATH}::test_other",
+        f"{TEST_PATH} -k test_other",
+        f"{TEST_PATH} -k=test_other",
+        f"{TEST_PATH} -m unit",
+        f"{TEST_PATH} -k 'a and not b'",
+    ],
 )
-def test_post_production_cycle_rejects_sibling_green_selection(selection: str) -> None:
+def test_post_production_cycle_rejects_unproven_green_selection(selection: str) -> None:
     test, evidence = cycle()
     evidence = replace(
         evidence,
         validation_runs=(
             *evidence.validation_runs[:-1],
             replace(evidence.validation_runs[-1], command=f"pytest {selection} -q"),
+        ),
+    )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("selection", ["-m unit", "-k 'a and not b'"])
+def test_post_production_proof_needs_confirmed_filtered_baseline(selection: str) -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            replace(evidence.validation_runs[0], command=f"pytest {TEST_PATH} {selection} -q"),
+            *evidence.validation_runs[1:],
         ),
     )
 

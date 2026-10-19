@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures_util::Sink;
 use gobby_daemon::websocket::broker::{
     Batch, BroadcastBroker, ConnectionId, MAX_QUEUED_BATCHES, MAX_QUEUED_BYTES, Registration,
@@ -32,7 +33,7 @@ const CONFIG_EVENT: &str = r#"{"type": "config_event", "revision": 1}"#;
 #[derive(Debug)]
 struct Gone;
 
-/// In-memory socket. A stalling sink accepts a text frame but never finishes
+/// In-memory socket. A stalling sink accepts a data frame but never finishes
 /// sending it, like a peer that stopped reading; close frames still go out.
 struct FakeSink {
     tx: UnboundedSender<Message>,
@@ -49,7 +50,7 @@ impl Sink<Message> for FakeSink {
 
     fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Gone> {
         let this = self.get_mut();
-        this.stalled = this.stall && matches!(item, Message::Text(_));
+        this.stalled = this.stall && matches!(item, Message::Text(_) | Message::Binary(_));
         if this.stalled {
             return Ok(());
         }
@@ -452,4 +453,57 @@ async fn direct_reply_bypasses_event_filter() {
         Some(application)
     );
     assert_eq!(texts(&direct.drain().await), vec![invalid]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn typed_batches_keep_order_and_opcode() {
+    let broker = BroadcastBroker::default();
+    let mut client = connect(&broker, 1, EntryMode::Browser, false);
+    // Neither binary payload is valid UTF-8.
+    let first = Bytes::from_static(&[0xff, 0xfe, 0x00, 0x80]);
+    let last = Bytes::from_static(&[0xc3, 0x28]);
+    let task = r#"{"type": "task_event", "event": "created"}"#;
+    let session = r#"{"type": "session_event", "event": "updated"}"#;
+    let ack = r#"{"type": "subscribe_success", "events": ["session_event"]}"#;
+
+    broker.reply(
+        &client.registration,
+        Batch::binary(first.clone()).expect("binary batch"),
+    );
+    broker.reply(&client.registration, batch(&["text reply"]));
+    broker.publish(&json!({"type": "task_event"}), &batch(&[task]));
+    let subscribe = r#"{"type": "subscribe", "events": ["session_event"]}"#;
+    assert_eq!(broker.receive(&client.registration, subscribe), None);
+    broker.publish(&json!({"type": "session_event"}), &batch(&[session]));
+    broker.reply(
+        &client.registration,
+        Batch::binary(last.clone()).expect("binary batch"),
+    );
+    assert_eq!(
+        client.drain().await,
+        vec![
+            Message::Binary(first),
+            Message::text("text reply"),
+            Message::text(task),
+            Message::text(ack),
+            Message::text(session),
+            Message::Binary(last),
+        ]
+    );
+
+    // Binary bytes count toward the queue bound: one half-queue batch is in
+    // flight on a stalled socket, a second fits, and a third retires it.
+    let mut stalled = connect(&broker, 2, EntryMode::Browser, true);
+    let half = Batch::binary(Bytes::from(vec![0_u8; MAX_QUEUED_BYTES / 2 + 1])).expect("half");
+    broker.reply(&stalled.registration, half.clone());
+    assert!(stalled.drain().await.is_empty(), "the first batch stalls");
+    broker.reply(&stalled.registration, half.clone());
+    assert!(stalled.drain().await.is_empty(), "the second batch queues");
+    broker.reply(&stalled.registration, half);
+    assert_closed_1011(&stalled.drain().await, "binary byte overflow");
+    assert_eq!(stalled.cleanups(), 1);
+    assert!(
+        Batch::binary(Bytes::from(vec![0_u8; MAX_QUEUED_BYTES + 1])).is_err(),
+        "a binary batch larger than a whole queue is refused"
+    );
 }

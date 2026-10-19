@@ -19,6 +19,7 @@ from gobby.terminals.workspace_agent_panes import (
     ResolvedPlacement,
 )
 from gobby.utils.git import run_to_completion
+from gobby.workflows.condition_helpers_sessions import own_seat_resume
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ class PlacedLaunch:
 
     reserver: AgentPaneReserver
     resolved: ResolvedPlacement
+    # An empty tab the resumed seat replaces; closed before the reserve takes the title.
+    replaces_tab: str | None = None
 
 
 def _refusal(code: str, message: str) -> dict[str, Any]:
@@ -42,6 +45,10 @@ async def preflight_placement(
     machine_id: str | None,
     project_id: str | None,
     project_context_authoritative: bool,
+    session_manager: Any | None = None,
+    agent_name: str | None = None,
+    resume_session_id: str | None = None,
+    replaces_tab: str | None = None,
 ) -> PlacedLaunch | dict[str, Any] | None:
     """Resolve a placement before any side effect; return a refusal reply or ``None``."""
     if placement is None:
@@ -66,11 +73,24 @@ async def preflight_placement(
         )
     if reserver is None:
         return _refusal("invalid_op", "Agent pane placement is not available")
+    # Only a lane manager's own-lane seat resume may place from an autonomous caller.
+    own_seat = (
+        resume_session_id is not None
+        and session_manager is not None
+        and await asyncio.to_thread(
+            own_seat_resume, session_manager, parent_session_id, agent_name, resume_session_id
+        )
+    )
     try:
-        resolved = await reserver.preflight(f"session:{parent_session_id}", project_id, parsed)
+        resolved = await reserver.preflight(
+            f"session:{parent_session_id}",
+            project_id,
+            parsed,
+            own_seat_resume=own_seat,
+        )
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc))
-    return PlacedLaunch(reserver=reserver, resolved=resolved)
+    return PlacedLaunch(reserver=reserver, resolved=resolved, replaces_tab=replaces_tab)
 
 
 def task_active_refusal(response: dict[str, Any]) -> dict[str, Any]:
@@ -90,6 +110,8 @@ async def run_placed_spawn(
     """Reserve the pane, launch inline, then settle on success or release on any other exit."""
     reserver = placed.reserver
     try:
+        if placed.replaces_tab is not None:
+            await reserver.close_empty_tab(placed.replaces_tab)
         reserved = await reserver.reserve(placed.resolved, worktree_id=worktree_id)
     except asyncio.CancelledError:
         await phase.fail("Agent spawn cancelled")

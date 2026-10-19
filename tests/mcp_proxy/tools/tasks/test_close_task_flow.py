@@ -1044,7 +1044,10 @@ async def test_tagged_commit_only_on_another_ref_is_a_diagnostic_not_a_blocker()
 
     assert evaluation.ready is True
     assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
-    assert evaluation.gates[6].details == {"other_ref_tagged_commit_shas": ["def888"]}
+    assert evaluation.gates[6].details == {
+        "other_ref_tagged_commit_shas": ["def888"],
+        "excluded_unreachable_tagged_commit_shas": ["def888"],
+    }
     assert evaluation.extra["other_ref_tagged_commit_shas"] == ["def888"]
     review.assert_awaited_once()
 
