@@ -2298,6 +2298,183 @@ def test_empty_call_loop_assertion_is_not_credited(tmp_path: Path, iterable: str
 
 
 @pytest.mark.parametrize(
+    "iterable",
+    [
+        "range(100000000000000000000)",
+        "range(-100000000000000000000, 100000000000000000000)",
+        "range(100000000000000000000, 0, -1)",
+        "range(0, -100000000000000000000, -1)",
+        "range(-100000000000000000000, 100000000000000000000, 1)",
+    ],
+    ids=["one_arg", "two_args", "negative_step", "negative_step_from_zero", "positive_step"],
+)
+@pytest.mark.parametrize(
+    "body",
+    ['assert value == "ok"', "_assert_ok(value)"],
+    ids=["direct_assert", "helper"],
+)
+def test_builtin_range_analysis_handles_large_bounds(
+    tmp_path: Path, iterable: str, body: str
+) -> None:
+    source = f"""
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            for value in {iterable}:
+                {body}
+                break
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "iterable",
+    [
+        "range(-100000000000000000000)",
+        "range(100000000000000000000, 100000000000000000000)",
+        "range(0, 100000000000000000000, -1)",
+        "range(100000000000000000000, -100000000000000000000, 10000000000000000000)",
+        "range(-100000000000000000000, 100000000000000000000, -1)",
+    ],
+    ids=[
+        "one_arg",
+        "two_args_equal",
+        "negative_step_ascending",
+        "positive_step_descending",
+        "negative_step_crossed",
+    ],
+)
+def test_builtin_range_analysis_handles_large_bounds_empty(tmp_path: Path, iterable: str) -> None:
+    source = f"""
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            for value in {iterable}:
+                _assert_ok(value)
+                assert value == "ok"
+        """
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    assert make_receipt() == "ok"
+            except ValueError:
+                pass
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    _assert_ok("ok")
+            except ValueError:
+                pass
+        """,
+        """
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    pass
+                else:
+                    assert make_receipt() == "ok"
+            except ValueError:
+                pass
+        """,
+        """
+        def _assert_ok(receipt):
+            assert receipt == "ok"
+
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    pass
+                else:
+                    _assert_ok("ok")
+            except ValueError:
+                pass
+        """,
+    ],
+    ids=["body_assert", "body_helper", "else_assert", "else_helper"],
+)
+def test_zero_step_range_never_credits_loop_body_or_else(tmp_path: Path, source: str) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def test_feature():
+            for _ in range(0):
+                pass
+            else:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    pass
+            except ValueError:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    pass
+            except ValueError:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                for _ in range(0, 0, 0):
+                    pass
+            finally:
+                assert make_receipt() == "ok"
+        """,
+    ],
+    ids=[
+        "normal_empty_else",
+        "reachable_after_caught_zero_step",
+        "handler_assert_after_zero_step",
+        "finally_assert_after_zero_step",
+    ],
+)
+def test_zero_step_range_never_credits_loop_body_or_else_keeps_reachable_assertions(
+    tmp_path: Path, source: str
+) -> None:
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
     "expression",
     [
         "[_assert_ok(value) for value in []]",

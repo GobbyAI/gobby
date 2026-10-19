@@ -545,6 +545,10 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
         elif isinstance(node, ast.BoolOp):
             queue.extend(_live_operands(node))
             continue
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and _raises_at_iterator(node.iter):
+            # The iterator raises before any item, so neither the body nor the else clause runs.
+            queue.append(node.iter)
+            continue
         elif isinstance(node, (ast.For, ast.AsyncFor)) and _is_empty_literal(node.iter):
             queue.append(node.iter)
             queue.extend(_live_block(node.orelse))
@@ -577,12 +581,15 @@ def _ends_block(node: ast.AST) -> bool:
     """Whether control never reaches the statement after ``node`` in its block.
 
     Loops never end the block around them: a loop body can run zero times, and break or
-    continue ends only one iteration. A with statement ends it when its body ends by return,
-    since a return itself is never suppressed. A body ending in raise does not, because a
-    context manager can suppress that raise.
+    continue ends only one iteration. A for over a literal zero-step range is the exception:
+    its iterator raises before any item, so the block ends as it does at raise. A with statement
+    ends it when its body ends by return, since a return itself is never suppressed. A body
+    ending in raise does not, because a context manager can suppress that raise.
     """
     if isinstance(node, _TERMINATORS):
         return True
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return _raises_at_iterator(node.iter)
     if isinstance(node, (ast.With, ast.AsyncWith)):
         return _returns_block(node.body)
     if isinstance(node, ast.If):
@@ -635,20 +642,47 @@ def _live_operands(node: ast.BoolOp) -> list[ast.expr]:
 _EMPTY_BUILDERS = frozenset({"dict", "frozenset", "list", "set", "tuple"})
 
 
-def _is_empty_range(args: list[ast.expr]) -> bool:
-    """Whether ``range`` over literal integers yields nothing. A zero step raises before any item."""
+def _literal_range(args: list[ast.expr]) -> tuple[int, int, int] | None:
+    """Start, stop and step of a ``range`` call whose arguments are all literal integers."""
     if not 1 <= len(args) <= 3:
-        return False
+        return None
     try:
         values = [ast.literal_eval(arg) for arg in args]
     except (TypeError, ValueError):
-        return False
+        return None
     if not all(isinstance(value, int) for value in values):
+        return None
+    if len(values) == 1:
+        return 0, values[0], 1
+    if len(values) == 2:
+        return values[0], values[1], 1
+    return values[0], values[1], values[2]
+
+
+def _is_empty_range(args: list[ast.expr]) -> bool:
+    """Whether ``range`` over literal integers yields nothing, decided by comparing bounds.
+
+    Bounds are compared rather than measured, so a span wider than a machine word never
+    overflows. A zero step is not empty: its iterator raises (see ``_raises_at_iterator``).
+    """
+    bounds = _literal_range(args)
+    if bounds is None or bounds[2] == 0:
         return False
-    try:
-        return len(range(*values)) == 0
-    except ValueError:
-        return True
+    start, stop, step = bounds
+    return start >= stop if step > 0 else start <= stop
+
+
+def _raises_at_iterator(node: ast.expr) -> bool:
+    """Whether iterating ``node`` raises before any item: a literal ``range`` with step zero."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "range"
+        and not node.keywords
+    ):
+        return False
+    bounds = _literal_range(node.args)
+    return bounds is not None and bounds[2] == 0
 
 
 def _is_empty_literal(node: ast.expr) -> bool:
