@@ -116,11 +116,13 @@ async def test_path_facts_queries_node_once_per_delivery(node: FakeNode, tmp_pat
     node.add_file(NODE_MACHINE, alpha, b"alpha")
     node.add_file(NODE_MACHINE, beta, b"beta")
     node.add_file(NODE_MACHINE, gamma, b"gamma")
+    node.set_checkout(NODE_MACHINE, cwd, root=cwd, project_id="project-a")
     loop = asyncio.get_running_loop()
 
     with delivery_scope(NODE_MACHINE, loop, cwd):
         first = await asyncio.to_thread(path_facts, [alpha, beta], read_limit=64)
         assert [fact.path for fact in first.files] == [alpha, beta]
+        assert (first.root, first.project_id) == (cwd, "project-a")
         assert [fact.data for fact in first.files] == [b"alpha", b"beta"]
         assert first.files[0].kind == "file"
         assert node.requests == [
@@ -139,6 +141,19 @@ async def test_path_facts_queries_node_once_per_delivery(node: FakeNode, tmp_pat
         await asyncio.to_thread(path_facts, [alpha, gamma], read_limit=64)
         assert len(node.requests) == 2
         assert node.requests[-1][2]["query"]["paths"] == [gamma]
+
+        other_cwd = f"{tmp_path}/other"
+        delta = f"{other_cwd}/delta.txt"
+        node.add_file(NODE_MACHINE, delta, b"delta")
+        node.set_checkout(NODE_MACHINE, other_cwd, root=other_cwd, project_id="project-other")
+        elsewhere = await asyncio.to_thread(path_facts, [delta], cwd=other_cwd, read_limit=64)
+        assert (elsewhere.root, elsewhere.project_id) == (other_cwd, "project-other")
+        assert [fact.data for fact in elsewhere.files] == [b"delta"]
+        assert len(node.requests) == 3
+        assert node.requests[-1][2]["cwd"] == other_cwd
+        back = await asyncio.to_thread(path_facts, [alpha], read_limit=64)
+        assert (back.root, back.project_id) == (cwd, "project-a")
+        assert len(node.requests) == 3
 
     with delivery_scope(None, loop, cwd), pytest.raises(RuntimeError):
         path_facts([alpha], read_limit=64)

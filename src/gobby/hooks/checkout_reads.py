@@ -69,7 +69,7 @@ class _NodeDelivery:
     machine: str
     loop: asyncio.AbstractEventLoop
     cwd: str
-    header: CheckoutFacts | None = None
+    headers: dict[str, CheckoutFacts] = field(default_factory=dict)
     files: dict[tuple[str, int | None, str], PathFact] = field(default_factory=dict)
     latched: str | None = None
 
@@ -110,7 +110,7 @@ def path_facts(
     delivery = _require_node_delivery()
     target = delivery.cwd if cwd is None else cwd
     missing = list(dict.fromkeys(p for p in paths if (target, read_limit, p) not in delivery.files))
-    header = delivery.header
+    header = delivery.headers.get(target)
     if missing or header is None:
         header = _read_files(delivery, target, read_limit, missing)
     return replace(header, files=tuple(delivery.files[(target, read_limit, p)] for p in paths))
@@ -168,7 +168,7 @@ def _read_files(
         temp_dir=reply["temp_dir"],
         files=(),
     )
-    delivery.header = header
+    delivery.headers[cwd] = header
     return header
 
 

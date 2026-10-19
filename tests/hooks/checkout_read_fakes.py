@@ -34,6 +34,7 @@ class FakeNode:
     files: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     git: dict[str, dict[str, Any]] = field(default_factory=dict)
     failures: dict[str, tuple[str, Literal["none", "partial"] | None]] = field(default_factory=dict)
+    checkouts: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
     requests: list[tuple[str, str, dict[str, Any], int]] = field(default_factory=list)
 
     def add_file(self, machine_id: str, path: str, data: bytes) -> None:
@@ -76,6 +77,10 @@ class FakeNode:
     def recover(self, machine_id: str) -> None:
         self.failures.pop(machine_id, None)
 
+    def set_checkout(self, machine_id: str, cwd: str, *, root: str, project_id: str) -> None:
+        """Answer files queries for `cwd` with its own checkout root and project id."""
+        self.checkouts[(machine_id, cwd)] = (root, project_id)
+
     async def send(
         self, machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
     ) -> dict[str, Any]:
@@ -91,9 +96,12 @@ class FakeNode:
             files = [machine_files[path] for path in query["paths"]]
         else:
             git = self.git[machine_id]
+        root, project_id = self.checkouts.get(
+            (machine_id, payload["cwd"]), ("/checkout", _PROJECT_ID)
+        )
         return {
-            "root": "/checkout",
-            "project_id": _PROJECT_ID,
+            "root": root,
+            "project_id": project_id,
             "home": _HOME,
             "temp_dir": _TEMP_DIR,
             "files": files,
