@@ -69,7 +69,9 @@ async def test_prelink_parse_cannot_credit_old_runs_or_replace_window_snapshot(
     session = _session("claude", transcript)
     config = default_validation_detection_config()
     start = BASE_TIME + timedelta(minutes=1)
-    credited = await derive_transcript_evidence(session, start, config, set(), str(tmp_path))
+    credited = await derive_transcript_evidence(
+        session, start, config, set(), str(tmp_path), archive_dir=str(tmp_path / "archives")
+    )
     excluded = await derive_prelink_runs(session, start, config, str(tmp_path))
     assert [run.command for run in excluded] == ["pytest tests/old.py"]
     assert excluded[0].output is None
@@ -81,7 +83,9 @@ async def test_prelink_parse_cannot_credit_old_runs_or_replace_window_snapshot(
     )
     assert gate.status == "failed"
     assert gate.details["nearest_observed_run"]["reason_code"] == "pre-link"
-    again = await derive_transcript_evidence(session, start, config, set(), str(tmp_path))
+    again = await derive_transcript_evidence(
+        session, start, config, set(), str(tmp_path), archive_dir=str(tmp_path / "archives")
+    )
     assert again == credited
 
 
@@ -123,7 +127,9 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     window_key = f"{session.id}:{window_fingerprint}"
     prelink_key = f"{session.id}:{prelink_fingerprint}"
 
-    credited = await derive_transcript_evidence(session, start, config, set(), str(tmp_path))
+    credited = await derive_transcript_evidence(
+        session, start, config, set(), str(tmp_path), archive_dir=str(tmp_path / "archives")
+    )
     window_snapshot = transcript_evidence_snapshots.load_durable_snapshot(window_key)
     assert window_snapshot is not None
     first = await derive_prelink_runs(session, start, config, str(tmp_path))
@@ -149,7 +155,10 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     assert advanced.parsed_from_offset == prelink_snapshot.watermark
     assert transcript_evidence_snapshots.load_durable_snapshot(window_key) == window_snapshot
     assert (
-        await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited
+        await derive_transcript_evidence(
+            session, start, config, set(), str(tmp_path), archive_dir=str(tmp_path / "archives")
+        )
+        == credited
     )
 
 

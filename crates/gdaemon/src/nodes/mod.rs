@@ -1,4 +1,5 @@
 //! Hub-owned node channels and the reconnecting node client.
+pub mod agents;
 pub mod channel;
 pub mod hooks;
 pub mod machines_api;

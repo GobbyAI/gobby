@@ -26,6 +26,7 @@ pub struct NodeServices {
     pub bootstrap_path: PathBuf,
     pub relay: HubRelay,
     pub hook_ledger: crate::nodes::hooks::ledger::Ledger,
+    pub agents: Arc<crate::nodes::agents::NodeAgents>,
 }
 
 impl NodeServices {
@@ -68,6 +69,7 @@ impl NodeServices {
                 bootstrap_path: path.to_owned(),
                 relay,
                 hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
+                agents: Arc::new(crate::nodes::agents::NodeAgents::open(home)?),
             }),
             claim,
         )))

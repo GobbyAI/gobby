@@ -664,10 +664,11 @@ async def test_blocking_work_is_bounded_and_quarantined() -> None:
         "ui",
         {"ui.enabled"},
         blocked,
-        prepare_timeout=0.02,
     )
     runtime = ConfigRuntime(repository, registry=FakeRegistry(), subscribers=[subscriber])
     await runtime.start()
+    # Startup keeps the default budget; the reconcile below runs under 20ms.
+    subscriber.prepare_timeout = 0.02
     repository.index = 1
     main_thread = threading.get_ident()
 
@@ -883,7 +884,6 @@ async def test_lane_saturation_preserves_bounds() -> None:
         "ui",
         {"ui.enabled"},
         blocked,
-        prepare_timeout=0.02,
     )
     runtime = ConfigRuntime(
         repository,
@@ -893,6 +893,8 @@ async def test_lane_saturation_preserves_bounds() -> None:
         constructor_admission_timeout=0.02,
     )
     await runtime.start()
+    # Startup keeps the default budget; the reconcile below runs under 20ms.
+    subscriber.prepare_timeout = 0.02
     repository.index = 1
     await asyncio.wait_for(runtime.reconcile_local_commit(1), 0.2)
     repository.index = 2

@@ -444,6 +444,8 @@ def prepare_daemon_env(
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
+    # A supervised seat inherits the gdaemon liveness fd; a spawned daemon must not watch it.
+    env.pop("GOBBY_SUPERVISOR_FD", None)
     for name in (
         *ALL_TERMINAL_ENV_VARS,
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",

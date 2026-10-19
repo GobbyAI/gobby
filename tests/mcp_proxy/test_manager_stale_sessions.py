@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -31,6 +33,12 @@ class FakeSession:
         return self._tool_result
 
 
+class HangingSession(FakeSession):
+    async def list_tools(self) -> SimpleNamespace:
+        await asyncio.Event().wait()
+        return await super().list_tools()
+
+
 class ClosedSession:
     def __init__(self, error: Exception | None = None) -> None:
         self._error = error or anyio.ClosedResourceError()
@@ -47,6 +55,7 @@ class FakeConnection(BaseTransportConnection):
         self,
         session: FakeSession | ClosedSession,
         connect_error: Exception | None = None,
+        disconnect_error: Exception | None = None,
     ) -> None:
         super().__init__(
             MCPServerConfig(
@@ -61,6 +70,7 @@ class FakeConnection(BaseTransportConnection):
         self._state = ConnectionState.CONNECTED
         self.connect_error = connect_error
         self.disconnect_calls = 0
+        self.disconnect_error = disconnect_error
 
     async def connect(self) -> FakeSession | ClosedSession:
         if self.connect_error:
@@ -71,6 +81,8 @@ class FakeConnection(BaseTransportConnection):
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
+        if self.disconnect_error:
+            raise self.disconnect_error
         self._session = None
         self._state = ConnectionState.DISCONNECTED
 
@@ -187,3 +199,73 @@ async def test_schema_lookup_reports_reconnect_failure_not_missing_tool() -> Non
     assert "initial listing failed: ClosedResourceError" in message
     assert "reconnect retry failed" in message
     assert "Tool fresh_tool not found" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_times_out", [False, True])
+async def test_schema_lookup_recovers_hung_session(cleanup_times_out: bool) -> None:
+    manager, config = make_manager()
+    manager.connection_timeout = 0.01
+    stale_connection = FakeConnection(
+        HangingSession(),
+        disconnect_error=TimeoutError("owner cleanup timed out") if cleanup_times_out else None,
+    )
+    manager._connections[config.id] = stale_connection
+    fresh_connection = FakeConnection(
+        FakeSession(
+            [
+                SimpleNamespace(
+                    name="fresh_tool", description="Fresh", input_schema={"type": "object"}
+                )
+            ]
+        )
+    )
+
+    with patch(
+        "gobby.mcp_proxy.manager.create_transport_connection",
+        return_value=fresh_connection,
+    ) as factory:
+        lookup = asyncio.create_task(manager.get_tool_input_schema(config.id, "fresh_tool"))
+        try:
+            done, _ = await asyncio.wait({lookup}, timeout=0.5)
+            assert lookup in done, "Hung discovery must reconnect instead of waiting indefinitely"
+            assert await lookup == {"type": "object"}
+        finally:
+            lookup.cancel()
+            with suppress(asyncio.CancelledError):
+                await lookup
+
+    factory.assert_called_once()
+    assert stale_connection.disconnect_calls == 1
+    assert manager._connections[config.id] is fresh_connection
+    assert manager.health[config.id].state is ConnectionState.CONNECTED
+
+
+@pytest.mark.asyncio
+async def test_schema_lookup_discards_hung_session_after_retry() -> None:
+    manager, config = make_manager()
+    manager.connection_timeout = 0.01
+    stale_connection = FakeConnection(ClosedSession())
+    manager._connections[config.id] = stale_connection
+    retry_connection = FakeConnection(HangingSession())
+
+    with patch(
+        "gobby.mcp_proxy.manager.create_transport_connection",
+        return_value=retry_connection,
+    ) as factory:
+        lookup = asyncio.create_task(manager.get_tool_input_schema(config.id, "fresh_tool"))
+        try:
+            done, _ = await asyncio.wait({lookup}, timeout=0.5)
+            assert lookup in done, "A hung reconnect must fail within the discovery deadline"
+            with pytest.raises(MCPError, match="reconnect retry failed: TimeoutError"):
+                await lookup
+        finally:
+            lookup.cancel()
+            with suppress(asyncio.CancelledError, MCPError):
+                await lookup
+
+    factory.assert_called_once()
+    assert stale_connection.disconnect_calls == 1
+    assert retry_connection.disconnect_calls == 1
+    assert config.id not in manager._connections
+    assert not manager._lazy_connector.is_connected(config.id)

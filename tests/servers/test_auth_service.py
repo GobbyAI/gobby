@@ -422,6 +422,8 @@ async def test_session_and_ws_verifiers(temp_db: HubDatabase, tmp_path: Path) ->
     assert service.validate_session(session_token) is True
     assert service.validate_session("wrong-session") is False
     assert await service.verify_ws_identity(_OPERATOR_IDENTITY) == TEST_USER_ID
+    # Bearer resolution lives in the Rust front door (crates/gdaemon/src/front_door/auth.rs).
+    # AuthService accepts only front-door identity headers, so a bare bearer is never identity here.
     assert await service.verify_ws_identity({"Authorization": "Bearer api-key"}) is None
 
 

@@ -266,7 +266,7 @@ rules:
           - ORCH creates worktrees only: lane-N-<name>[-K] stays with seat. Never per-task trees. Next task, clean+committed: git switch -c <branch> 0.5.0. Planners main 0.5.0; reviewers developer tree.
           - Backlog cap 20: candidate-sent/open tasks across lanes, except planning/operator-decision parks/closure-enabling work. Assign only <=20; park operator-review closes.
           - close preview is deterministic only; actual close requires explicit LM release. close_review_busy: wait reviewer+release, retry.
-          - Hold after two consecutive 5-minute load readings>54; lift after two consecutive <36. One reading/equality does nothing. Never invent/change thresholds/admission/escalation without Josh approval via Assistant. Report load only if breaching.
+          - Hold after two consecutive 5-minute load readings>60; lift after two consecutive <36. One reading/equality does nothing. Never invent/change thresholds/admission/escalation without Josh approval via Assistant. Report load only if breaching.
           - RM grants heavy cap 6: build/clippy/full-crate/e2e/bench; cargo CARGO_BUILD_JOBS=3. Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
           - Game Goblins 04:45–06:45 CT: no restart/cutover, low load; never rerun jobs.
           - Before crate releases, read project_policy.release_guidance.
