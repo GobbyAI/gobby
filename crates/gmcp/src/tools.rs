@@ -30,7 +30,10 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
             if server.is_empty() {
                 return Ok(list_all_tools(dialer, session));
             }
-            let path = format!("/api/mcp/{server}/tools");
+            if is_dot_segment(server) {
+                return Err(ErrorData::invalid_params("server_name must name one server", None));
+            }
+            let path = format!("/api/mcp/{}/tools", quote(server));
             Ok(strip_none(dialer.request(
                 "GET",
                 &path,
@@ -104,6 +107,9 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
         }
         "remove_mcp_server" => {
             let name = str_arg(arguments, "name")?;
+            if name.is_empty() || is_dot_segment(name) {
+                return Err(ErrorData::invalid_params("name must name one server", None));
+            }
             let scope = opt_str(arguments, "scope")?.unwrap_or("project");
             let project = dialer.caller_project_id();
             let mut params = vec![("scope", scope)];
@@ -114,7 +120,7 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                 params: &params,
                 ..RequestOptions::default()
             };
-            let path = format!("/api/mcp/servers/{name}");
+            let path = format!("/api/mcp/servers/{}", quote(name));
             Ok(dialer.request("DELETE", &path, None, options))
         }
         "import_mcp_server" => {
@@ -160,7 +166,10 @@ fn list_all_tools(dialer: &Dialer, session: Option<&str>) -> Value {
     let mut servers = Vec::new();
     if let Some(names) = status.get("mcp_servers").and_then(Value::as_object) {
         for name in names.keys() {
-            let path = format!("/api/mcp/{name}/tools");
+            if name.is_empty() || is_dot_segment(name) {
+                continue;
+            }
+            let path = format!("/api/mcp/{}/tools", quote(name));
             let listing = dialer.request("GET", &path, None, scoped(session));
             if listing.get("success") == Some(&Value::Bool(true)) {
                 let tools = listing.get("tools").cloned().unwrap_or_else(|| json!([]));
@@ -235,4 +244,9 @@ fn quote(segment: &str) -> String {
         }
     }
     quoted
+}
+
+/// Whether `name` is `.` or `..`, which a URL resolves to a parent route instead of a server.
+fn is_dot_segment(name: &str) -> bool {
+    matches!(name, "." | "..")
 }

@@ -538,3 +538,85 @@ fn shaping_get_tool_schema_reshapes_the_answer() -> Result<()> {
 fn shaping_get_tool_schema_keeps_only_the_error() -> Result<()> {
     shaping_case_matches_fixture("get_tool_schema_keeps_only_the_error")
 }
+
+/// The method and raw request-target of each daemon request, without its query string.
+fn request_targets(daemon: &StubDaemon) -> Vec<String> {
+    daemon
+        .requests()
+        .into_iter()
+        .filter(|request| !request.path.starts_with("/api/mcp/bridge/ready"))
+        .map(|request| {
+            let path = request
+                .path
+                .split_once('?')
+                .map_or(request.path.as_str(), |(path, _)| path);
+            format!("{} {path}", request.method)
+        })
+        .collect()
+}
+
+#[test]
+fn server_names_stay_one_path_segment() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true, "tools": []}));
+
+    {
+        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        gmcp.call_tool("remove_mcp_server", json!({"name": "../../projects/p1"}))?;
+        gmcp.call_tool("list_tools", json!({"server_name": "a/../b"}))?;
+        assert_eq!(
+            request_targets(&daemon),
+            [
+                "DELETE /api/mcp/servers/..%2F..%2Fprojects%2Fp1",
+                "GET /api/mcp/a%2F..%2Fb/tools",
+            ]
+        );
+    }
+
+    {
+        let daemon = StubDaemon::start((0..5).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        for (tool, arguments) in [
+            ("remove_mcp_server", json!({"name": ".."})),
+            ("remove_mcp_server", json!({"name": "."})),
+            ("remove_mcp_server", json!({"name": ""})),
+            ("list_tools", json!({"server_name": ".."})),
+            ("list_tools", json!({"server_name": "."})),
+        ] {
+            let error = gmcp
+                .call_tool(tool, arguments)
+                .expect_err("a dot-only or empty name must be refused");
+            assert!(
+                error.to_string().contains("must name one server"),
+                "{error}"
+            );
+        }
+        assert!(request_targets(&daemon).is_empty());
+    }
+
+    {
+        let daemon = StubDaemon::start(vec![
+            Response::json(
+                200,
+                json!({
+                    "success": true,
+                    "mcp_servers": {"": {}, "..": {}, ".": {}, "tasks": {}},
+                }),
+            ),
+            ok(),
+        ])?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        gmcp.call_tool("list_tools", json!({"server_name": ""}))?;
+        assert_eq!(
+            request_targets(&daemon),
+            ["GET /api/admin/status", "GET /api/mcp/tasks/tools"]
+        );
+    }
+    Ok(())
+}
