@@ -192,6 +192,28 @@ def test_startup_poll_waits_through_transient_unavailability(
     sleep.assert_called_once_with(0.5)
 
 
+def test_startup_poll_gives_up_at_the_deadline_while_the_backend_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend still starting when the readiness budget runs out fails, not hangs (#23650)."""
+    clock = {"now": 100.0}
+    monkeypatch.setattr(
+        daemon_start,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: clock["now"],
+            sleep=lambda seconds: clock.update(now=clock["now"] + seconds),
+        ),
+    )
+    starting = {"status": "unavailable", "backend": {"state": "starting", "target": "test"}}
+    get = MagicMock(return_value=httpx.Response(503, json=starting))
+    monkeypatch.setattr(httpx, "get", get)
+
+    assert daemon_start._poll_startup_progress(1, max_wait=3.0) is False
+    assert get.call_count > 1
+    assert all(call.kwargs["timeout"] <= 3.0 for call in get.call_args_list)
+
+
 def test_startup_poll_bounds_each_request_by_the_remaining_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

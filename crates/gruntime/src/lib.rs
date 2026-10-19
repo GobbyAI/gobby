@@ -2,6 +2,7 @@
 //! gdaemon from Python's published state, with Python as the proxy target.
 
 pub mod config;
+mod grant;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,12 +41,20 @@ pub struct NativeRoute {
 }
 
 /// Every route the family serves; requests matching no row reach Python.
-pub const NATIVE_ROUTES: &[NativeRoute] = &[NativeRoute {
-    method: Method::GET,
-    path: "/api/config/effective",
-    callers: &[Caller::Operator],
-    gate: None,
-}];
+pub const NATIVE_ROUTES: &[NativeRoute] = &[
+    NativeRoute {
+        method: Method::GET,
+        path: "/api/config/effective",
+        callers: &[Caller::Operator],
+        gate: None,
+    },
+    NativeRoute {
+        method: Method::GET,
+        path: "/api/runtime/config",
+        callers: &[Caller::Operator],
+        gate: Some(grant::interactive_gate),
+    },
+];
 
 /// State shared by every native handler of the family.
 pub(crate) struct RuntimeState {
@@ -71,6 +80,7 @@ fn handler(row: &NativeRoute) -> MethodRouter<Arc<RuntimeState>> {
         .expect("native routes use standard HTTP methods");
     match row.path {
         "/api/config/effective" => on(filter, config::effective),
+        "/api/runtime/config" => on(filter, grant::runtime_config),
         other => panic!("native route {other} has no handler"),
     }
 }
