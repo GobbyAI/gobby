@@ -90,7 +90,13 @@ def delivered_proof_runs(
         return
     retained = retained_red_output(run, production_at)
     if retained is not None:
-        yield replace(run, output=retained)
+        recalls = set(_RECALL_HINT_RE.findall(run.output or ""))
+        # Preserve the authenticated SQLite recall's provenance for strict
+        # source-bound traceback parsing, just as a native recall receipt does.
+        recovered_from = run.output_recovered_from
+        if run.background_output_path is None and len(recalls) == 1:
+            recovered_from = f"rtk recall {recalls.pop()}"
+        yield replace(run, output=retained, output_recovered_from=recovered_from)
 
 
 def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | None:

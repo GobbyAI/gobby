@@ -2,6 +2,7 @@
 
 import ast
 import json
+import subprocess
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import replace
@@ -33,6 +34,249 @@ from gobby.tasks.transcript_evidence_snapshots import (
 )
 
 START = datetime(2026, 10, 3, tzinfo=UTC)
+
+
+def _bash_checkout_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str | None = None,
+    *,
+    incremental: bool = False,
+) -> tuple[TranscriptEvidence, tuple[AcceptanceTest, ...]]:
+    """Replay retained tool/output bytes in an isolated, relocated Git repository."""
+    from tests.tasks.test_tdd_retained_output import START as RECALL_START
+    from tests.tasks.test_tdd_retained_output import _recall_store
+
+    fixtures = Path(__file__).parent / "fixtures"
+    fixture = json.loads((fixtures / "bash_checkout_retained_cycle.json").read_text())
+    product = "src/gobby/servers/routes/nodes.py"
+    test_path = "tests/servers/test_node_routes.py"
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(root), *args], text=True, stderr=subprocess.PIPE
+        ).strip()
+
+    git("init", "-q")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "user.name", "Fixture")
+    test_source = (fixtures / "bash_checkout_test.txt").read_text()
+    for path, source in (
+        (test_path, test_source),
+        (product, (fixtures / "bash_checkout_restored.txt").read_text()),
+    ):
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source)
+    git("add", ".")
+    git("commit", "-qm", "restored fixture tree")
+    restored = git("rev-parse", "HEAD")
+    (root / product).write_text((fixtures / "bash_checkout_stub.txt").read_text())
+    git("add", ".")
+    git("commit", "-qm", "committed stub fixture tree")
+    stub = git("rev-parse", "HEAD")
+    replacements = {
+        fixture["root"]: str(root),
+        "485b7c140e": "f" * 40 if invalid == "missing_object" else restored,
+        "08f161662aefa541d18a54eb36defcbead34ee3d": stub,
+    }
+
+    def relocated(text: str) -> str:
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text
+
+    records: list[dict[str, Any]] = []
+
+    def pair(call: dict[str, Any]) -> None:
+        records.extend(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": call["started_at"],
+                    "cwd": str(root),
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": call["id"],
+                                "name": call["name"],
+                                "input": call["arguments"],
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": call["completed_at"],
+                    "cwd": str(root),
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": call["id"],
+                                **call["result"],
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+    # Synthetic fixture setup; never a claimed historical test-authoring receipt.
+    # Product baseline is deliberately absent, as in the unread retained cycle.
+    pair(
+        {
+            "id": "fixture-test-source",
+            "name": "Write",
+            "started_at": "2026-10-18T18:40:00Z",
+            "completed_at": "2026-10-18T18:40:01Z",
+            "arguments": {"file_path": str(root / test_path), "content": test_source},
+            "result": {
+                "content": f"File created successfully at: {root / test_path}",
+                "is_error": False,
+            },
+        }
+    )
+    for original in fixture["calls"]:
+        call = json.loads(relocated(json.dumps(original)))
+        if invalid == "failed_restore" and "git checkout " in call["arguments"].get("command", ""):
+            call["result"] = {"content": "Exit code 1", "is_error": True}
+        if invalid == "dirty_receipt" and call["id"] == "toolu_01WDyj1DGAyxnJNNj2aYqRnB":
+            call["result"]["content"] += f"\n M {product}"
+        if "git checkout " in call["arguments"].get("command", ""):
+            if invalid == "untrusted_suffix":
+                call["arguments"]["command"] += " && echo unproven"
+            if invalid == "symbolic_ref":
+                call["arguments"]["command"] = call["arguments"]["command"].replace(
+                    restored, "HEAD~1"
+                )
+        if invalid == "stub_mismatch" and call["name"] == "Edit":
+            call["arguments"]["new_string"] = call["arguments"]["new_string"].replace(
+                "raise NotImplementedError", "raise RuntimeError"
+            )
+        pair(call)
+    records.sort(key=lambda row: row["timestamp"])
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n")
+    recall = relocated((fixtures / "bash_checkout_recall.txt").read_text())
+    _recall_store(
+        tmp_path / "home",
+        monkeypatch,
+        recall,
+        created=(datetime(2026, 10, 18, 18, 54, 13, tzinfo=UTC) - RECALL_START).total_seconds(),
+        recall="45d9703c9157",
+    )
+    session = replace(
+        _native_session(tmp_path, _native_fixture()),
+        source="claude",
+        transcript_path=str(transcript),
+    )
+    files = {test_path, product}
+    resume = None
+    if incremental:
+        cutoff = next(
+            call["completed_at"]
+            for call in fixture["calls"]
+            if call["id"] == "toolu_01WDyj1DGAyxnJNNj2aYqRnB"
+        )
+        prefix = [row for row in records if row["timestamp"] <= cutoff]
+        transcript.write_text("\n".join(json.dumps(row) for row in prefix) + "\n")
+        _, resume = _derive_transcript_path_evidence(
+            session,
+            str(transcript),
+            None,
+            default_validation_detection_config(),
+            files,
+            str(root),
+            frozenset((str(root), path) for path in files),
+            [str(transcript)],
+            resume=None,
+        )
+        transcript.write_text("\n".join(json.dumps(row) for row in records) + "\n")
+    evidence, snapshot = _derive_transcript_path_evidence(
+        session,
+        str(transcript),
+        None,
+        default_validation_detection_config(),
+        files,
+        str(root),
+        frozenset((str(root), path) for path in files),
+        [str(transcript)],
+        resume=resume,
+    )
+    if incremental:
+        assert snapshot is not None
+        assert snapshot.parsed_from_offset > 0
+    symbols = [
+        node.name
+        for node in ast.parse(test_source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("test_")
+        and node.name != "test_out_of_order_duplicate_exit_is_charged_once"
+    ]
+    tests = tuple(
+        AcceptanceTest(
+            reference=f"{test_path}::{symbol}", path=test_path, symbol=symbol, body=test_source
+        )
+        for symbol in symbols
+    )
+    return evidence, tests
+
+
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "resumed"])
+def test_bash_git_checkout_restore_credits_retained_stub_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, incremental: bool
+) -> None:
+    from gobby.tasks.tdd_pytest_provenance import recalled_pytest_sections
+    from gobby.tasks.tdd_retained_output import delivered_proof_runs
+
+    evidence, tests = _bash_checkout_cycle(tmp_path, monkeypatch, incremental=incremental)
+    assert len(tests) == 9
+    restored = [edit for edit in evidence.edits if edit.tool_name == "Bash"]
+    assert len(restored) == 1, [
+        (edit.path, edit.tool_name, edit.source_after is not None, edit.source_confirmed)
+        for edit in evidence.edits
+    ]
+    assert restored[0].source_confirmed
+    assert (
+        restored[0].source_after
+        == (Path(__file__).parent / "fixtures/bash_checkout_restored.txt").read_text()
+    )
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    proofs = list(delivered_proof_runs(red, restored[0].timestamp))
+    assert len(proofs) == 1
+    proof = proofs[0]
+    assert proof.output_recovered_from == "rtk recall 45d9703c9157"
+    assert len(recalled_pytest_sections(proof.output or "", evidence, proof)) == 18
+    for test in tests:
+        result = evaluate_tdd_evidence((test,), evidence)
+        assert result.passed, (test.reference, result.findings)
+        assert len(result.red_runs) == 1
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "missing_object",
+        "failed_restore",
+        "dirty_receipt",
+        "untrusted_suffix",
+        "symbolic_ref",
+        "stub_mismatch",
+    ],
+)
+def test_unprovable_bash_restore_earns_no_stub_credit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    evidence, tests = _bash_checkout_cycle(tmp_path, monkeypatch, invalid)
+    result = evaluate_tdd_evidence(tests, evidence)
+    assert not result.passed
+    assert result.red_runs == ()
 
 
 _NATIVE_ROOT = "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode"
