@@ -92,6 +92,20 @@ async def list_tools(
     return results
 
 
+async def _list_tools_with_timeout(
+    manager: _ToolInventoryManager,
+    session: ClientSession,
+) -> list[dict[str, Any]]:
+    deadline = asyncio.timeout(manager.connection_timeout)
+    try:
+        async with deadline:
+            return await manager._list_tools_from_session(session)
+    except TimeoutError as exc:
+        if not deadline.expired():
+            raise
+        raise MCPError(f"Tool discovery timeout after {manager.connection_timeout}s") from exc
+
+
 async def list_tools_for_server(
     manager: _ToolInventoryManager,
     server_id: str,
@@ -104,8 +118,7 @@ async def list_tools_for_server(
     label = config.name if config is not None else server_id
     try:
         session = await manager.get_client_session(server_id)
-        async with asyncio.timeout(manager.connection_timeout):
-            tool_list = await manager._list_tools_from_session(session)
+        tool_list = await _list_tools_with_timeout(manager, session)
     except Exception as initial_error:
         error_message, counts = clean_untrusted_value(describe_exception(initial_error))
         log_invisible_counts(counts, "external MCP discovery error")
@@ -145,8 +158,7 @@ async def retry_list_tools_after_failure(
     try:
         session = await manager.ensure_connected(server_id)
         retry_connection = manager._connections.get(server_id)
-        async with asyncio.timeout(manager.connection_timeout):
-            tool_list = await manager._list_tools_from_session(session)
+        tool_list = await _list_tools_with_timeout(manager, session)
     except Exception as retry_error:
         if retry_connection is not None:
             await discard_connection(
