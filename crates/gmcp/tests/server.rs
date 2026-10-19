@@ -516,27 +516,32 @@ fn shaping_case_matches_fixture(name: &str) -> Result<()> {
 
 #[test]
 fn shaping_list_mcp_servers_compacts_rows() -> Result<()> {
-    shaping_case_matches_fixture("list_mcp_servers_compacts_rows")
+    shaping_case_matches_fixture("list_mcp_servers_compacts_rows")?;
+    Ok(())
 }
 
 #[test]
 fn shaping_list_tools_strips_none_for_one_server() -> Result<()> {
-    shaping_case_matches_fixture("list_tools_strips_none_for_one_server")
+    shaping_case_matches_fixture("list_tools_strips_none_for_one_server")?;
+    Ok(())
 }
 
 #[test]
 fn shaping_list_tools_aggregates_servers_without_a_name() -> Result<()> {
-    shaping_case_matches_fixture("list_tools_aggregates_servers_without_a_name")
+    shaping_case_matches_fixture("list_tools_aggregates_servers_without_a_name")?;
+    Ok(())
 }
 
 #[test]
 fn shaping_get_tool_schema_reshapes_the_answer() -> Result<()> {
-    shaping_case_matches_fixture("get_tool_schema_reshapes_the_answer")
+    shaping_case_matches_fixture("get_tool_schema_reshapes_the_answer")?;
+    Ok(())
 }
 
 #[test]
 fn shaping_get_tool_schema_keeps_only_the_error() -> Result<()> {
-    shaping_case_matches_fixture("get_tool_schema_keeps_only_the_error")
+    shaping_case_matches_fixture("get_tool_schema_keeps_only_the_error")?;
+    Ok(())
 }
 
 /// The method and raw request-target of each daemon request, without its query string.
