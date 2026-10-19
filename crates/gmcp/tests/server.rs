@@ -107,7 +107,12 @@ impl Gmcp {
             }
         });
         let stdin = child.stdin.take();
-        Ok(Self { child, stdin, messages, next_id: 1 })
+        Ok(Self {
+            child,
+            stdin,
+            messages,
+            next_id: 1,
+        })
     }
 
     fn send(&mut self, message: &Value) -> Result<()> {
@@ -226,21 +231,33 @@ fn tools_list_matches_fixture() -> Result<()> {
 fn tools_forward_like_python_wrapper() -> Result<()> {
     let wire = fixture(WIRE_CASES)?;
     for case in wire["forwarded"].as_array().context("forwarded cases")? {
-        let daemon = StubDaemon::start((0..8).map(|_| Response::json(200, json!({"success": true}))).collect())?;
+        let daemon = StubDaemon::start(
+            (0..8)
+                .map(|_| Response::json(200, json!({"success": true})))
+                .collect(),
+        )?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
         gmcp.initialize()?;
 
-        gmcp.call_tool(case["tool"].as_str().context("tool name")?, case["arguments"].clone())?;
+        gmcp.call_tool(
+            case["tool"].as_str().context("tool name")?,
+            case["arguments"].clone(),
+        )?;
 
         let requests: Vec<_> = daemon
             .requests()
             .into_iter()
             .filter(|request| !request.path.starts_with("/api/mcp/bridge/ready"))
             .collect();
-        let header = WRAPPER_CONTRACT.protocol_version_header.to_ascii_lowercase();
+        let header = WRAPPER_CONTRACT
+            .protocol_version_header
+            .to_ascii_lowercase();
         for request in &requests {
-            assert_eq!(request.headers.get(&header), Some(&WRAPPER_CONTRACT.protocol_version));
+            assert_eq!(
+                request.headers.get(&header),
+                Some(&WRAPPER_CONTRACT.protocol_version)
+            );
         }
         let observed = requests
             .into_iter()
@@ -259,7 +276,10 @@ fn tools_forward_like_python_wrapper() -> Result<()> {
                 })
             })
             .collect();
-        let expected = case["requests"].as_array().context("expected requests")?.clone();
+        let expected = case["requests"]
+            .as_array()
+            .context("expected requests")?
+            .clone();
         assert_eq!(
             with_cwd_placeholder(observed),
             with_cwd_placeholder(expected),
@@ -280,23 +300,39 @@ fn wire_results_match_fixture() -> Result<()> {
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
     reachable.initialize()?;
     let listed = reachable.call_tool("list_tools", json!({"server_name": "gobby-tasks"}))?;
-    assert_eq!(canonical(listed), canonical(calls["list_tools_success"].clone()));
+    assert_eq!(
+        canonical(listed),
+        canonical(calls["list_tools_success"].clone())
+    );
 
     TcpListener::bind(("127.0.0.1", FIXTURE_DAEMON_PORT))
         .context("the fixture port must be free for the unavailable case")?;
     let down_home = tempfile::tempdir()?;
-    let mut down = Gmcp::spawn(&format!("http://localhost:{FIXTURE_DAEMON_PORT}"), down_home.path())?;
+    let mut down = Gmcp::spawn(
+        &format!("http://localhost:{FIXTURE_DAEMON_PORT}"),
+        down_home.path(),
+    )?;
     down.initialize()?;
     let unavailable = down.call_tool("list_mcp_servers", json!({}))?;
-    assert_eq!(canonical(unavailable), canonical(calls["daemon_unavailable"].clone()));
+    assert_eq!(
+        canonical(unavailable),
+        canonical(calls["daemon_unavailable"].clone())
+    );
     let init_project = down.call_tool("init_project", json!({"name": "demo"}))?;
-    assert_eq!(canonical(init_project), canonical(calls["init_project"].clone()));
+    assert_eq!(
+        canonical(init_project),
+        canonical(calls["init_project"].clone())
+    );
     Ok(())
 }
 
 #[test]
 fn result_type_is_complete_on_list_and_call_envelopes() -> Result<()> {
-    let daemon = StubDaemon::start((0..8).map(|_| Response::json(200, tasks_listing())).collect())?;
+    let daemon = StubDaemon::start(
+        (0..8)
+            .map(|_| Response::json(200, tasks_listing()))
+            .collect(),
+    )?;
     let home = tempfile::tempdir()?;
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
     reachable.initialize()?;
@@ -333,7 +369,10 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
     gmcp.initialize()?;
-    assert!(daemon.requests().is_empty(), "readiness waits for the first tools/list");
+    assert!(
+        daemon.requests().is_empty(),
+        "readiness waits for the first tools/list"
+    );
 
     gmcp.call("tools/list", json!({}))?;
     let started = Instant::now();
@@ -350,7 +389,9 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
 
 #[test]
 fn binary_version_and_clean_exit() -> Result<()> {
-    let output = Command::new(env!("CARGO_BIN_EXE_gmcp")).arg("--version").output()?;
+    let output = Command::new(env!("CARGO_BIN_EXE_gmcp"))
+        .arg("--version")
+        .output()?;
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout)?.trim(),
@@ -392,7 +433,10 @@ fn stdin_close_exits_with_outstanding_wait() -> Result<()> {
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&url, home.path())?;
     gmcp.initialize()?;
-    gmcp.request("tools/call", json!({"name": "list_mcp_servers", "arguments": {}}))?;
+    gmcp.request(
+        "tools/call",
+        json!({"name": "list_mcp_servers", "arguments": {}}),
+    )?;
     held.recv_timeout(Duration::from_secs(5))
         .context("the daemon never received the wait request")?;
 

@@ -44,7 +44,7 @@ const READY_DELAYS: [Duration; 9] = [
 pub fn instructions() -> &'static str {
     BUNDLED_PROMPT
         .strip_prefix("---")
-        .and_then(|rest| rest.splitn(2, "---").nth(1))
+        .and_then(|rest| rest.split_once("---").map(|(_, body)| body))
         .unwrap_or(BUNDLED_PROMPT)
         .trim()
 }
