@@ -124,19 +124,23 @@ def leaked_hosts(
 
 def durable_hosts(
     hosts: Mapping[int, Path],
+    *,
+    production_home: Path | None = None,
 ) -> dict[int, Path]:
     """Protect production hosts under Gobby home, not other sessions' hosts."""
-    home = get_gobby_home().resolve()
+    home = (production_home if production_home is not None else get_gobby_home()).resolve()
     return {pid: socket_dir for pid, socket_dir in hosts.items() if path_under(socket_dir, home)}
 
 
 def ended_durable_hosts(
     before: Mapping[int, Path],
     after: Mapping[int, Path],
+    *,
+    production_home: Path | None = None,
 ) -> dict[int, Path]:
     return {
         pid: socket_dir
-        for pid, socket_dir in durable_hosts(before).items()
+        for pid, socket_dir in durable_hosts(before, production_home=production_home).items()
         if after.get(pid) != socket_dir
     }
 

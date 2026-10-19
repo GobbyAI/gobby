@@ -35,6 +35,7 @@ from gobby.guard_set_g import (
     terminal_nextest_run_argv,
     wrap_command,
 )
+from tests.conftest import OPERATOR_GOBBY_HOME
 from tests.terminals import conftest as terminal_fixtures
 
 pytestmark = pytest.mark.unit
@@ -177,10 +178,7 @@ def test_unrelated_host_outside_run_roots_is_not_a_leak(tmp_path: Path) -> None:
     assert path_under(stranger, run_root) is False
 
 
-def test_foreign_temp_host_ending_is_not_durable_loss(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+def test_foreign_temp_host_ending_is_not_durable_loss(tmp_path: Path) -> None:
     foreign = Path("/foreign-seat/private-temp/gterm")
     outcome = wrap_command(
         ["true"],
@@ -223,7 +221,7 @@ def test_terminal_fixture_host_ownership(
     monkeypatch.setenv("CLAUDE_CODE_TMPDIR", str(run_root))
     socket_dir = {
         "foreign": Path("/foreign-seat/private-temp/gterm"),
-        "production": home / "gterm",
+        "production": OPERATOR_GOBBY_HOME / "gterm",
         "owned": run_root / "gterm",
     }[host_kind]
     before = {} if host_kind == "owned" else {83: socket_dir}
@@ -232,6 +230,7 @@ def test_terminal_fixture_host_ownership(
     finalize = RecordingFinalize()
     monkeypatch.setattr(terminal_fixtures, "_gterm_hosts", snapshot)
     monkeypatch.setattr(terminal_fixtures, "_finalize_pidfile_host", finalize)
+    # Invoke the actual fixture so this test also checks its ownership wiring.
     fixture_body = cast(
         Callable[[pytest.TempPathFactory], Iterator[None]],
         inspect.unwrap(terminal_fixtures._assert_no_leaked_hosts),

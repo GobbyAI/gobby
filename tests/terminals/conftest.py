@@ -20,6 +20,7 @@ from gobby.guard_set_g import (
 from gobby.guard_set_g import (
     snapshot_gterm_hosts as _gterm_hosts,
 )
+from tests.conftest import OPERATOR_GOBBY_HOME
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
     select_native_binary,
@@ -84,7 +85,7 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
         "tests/terminals leaked gterm host processes that use this session's temp roots: "
         f"before={sorted(before)} after={sorted(final)} remaining={sorted(remaining)}"
     )
-    ended = ended_durable_hosts(before, final)
+    ended = ended_durable_hosts(before, final, production_home=OPERATOR_GOBBY_HOME)
     assert not ended, (
         "tests/terminals ended durable gterm host processes it did not start: "
         f"before={sorted(before)} after={sorted(final)} ended={sorted(ended)}"
