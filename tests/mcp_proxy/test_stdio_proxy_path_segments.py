@@ -1,4 +1,4 @@
-"""Keep server and tool names one encoded path segment on the Python stdio wrapper.
+"""Keep server, tool and session names one encoded path segment on the Python stdio wrapper.
 
 Each request is recorded from its raw request-target, as the daemon receives it. A
 traversal name such as ``../x`` must arrive as ``..%2Fx``, and a bare ``.`` or ``..``
@@ -111,4 +111,35 @@ async def test_dot_only_names_are_refused_without_a_request() -> None:
         {"success": False, "error": "server_name/tool_name must name one entry"},
         {"success": False, "error": "server_name/tool_name must name one entry"},
     ]
+    assert daemon.targets == []
+
+
+async def test_session_ids_send_one_encoded_segment() -> None:
+    daemon = _Daemon()
+    proxy = _proxy(daemon)
+
+    await proxy.set_variable("x", 1, session_id="sess/1")
+    await proxy.get_variable("x", session_id="sess/1")
+
+    assert daemon.targets == [
+        "POST /api/sessions/sess%2F1/variables/set",
+        "POST /api/sessions/sess%2F1/variables/get",
+    ]
+
+
+async def test_empty_or_dot_only_session_ids_are_refused_without_a_request() -> None:
+    daemon = _Daemon()
+    proxy = _proxy(daemon)
+
+    refusals = [
+        await proxy.set_variable("x", 1, session_id=""),
+        await proxy.set_variable("x", 1, session_id="."),
+        await proxy.set_variable("x", 1, session_id=".."),
+        await proxy.get_variable("x", session_id=""),
+        await proxy.get_variable("x", session_id="."),
+        await proxy.get_variable("x", session_id=".."),
+    ]
+
+    refused = {"success": False, "error": "session_id must name one session"}
+    assert refusals == [refused] * 6
     assert daemon.targets == []

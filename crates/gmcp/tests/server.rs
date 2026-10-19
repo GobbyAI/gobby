@@ -388,6 +388,56 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
 }
 
 #[test]
+fn session_ids_stay_one_path_segment() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+
+    {
+        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        let arguments = json!({"session_id": "sess/1", "name": "x", "value": 1});
+        gmcp.call_tool("set_variable", arguments.clone())?;
+        gmcp.call_tool("get_variable", arguments)?;
+        assert_eq!(
+            request_targets(&daemon),
+            [
+                "POST /api/sessions/sess%2F1/variables/set",
+                "POST /api/sessions/sess%2F1/variables/get",
+            ]
+        );
+    }
+
+    {
+        let daemon = StubDaemon::start((0..6).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        gmcp.initialize()?;
+        for (tool, session_id) in [
+            ("set_variable", ""),
+            ("set_variable", "."),
+            ("set_variable", ".."),
+            ("get_variable", ""),
+            ("get_variable", "."),
+            ("get_variable", ".."),
+        ] {
+            let arguments = json!({"session_id": session_id, "name": "x", "value": 1});
+            let error = gmcp
+                .call_tool(tool, arguments)
+                .expect_err("an empty or dot-only session_id must be refused");
+            assert!(
+                error
+                    .to_string()
+                    .contains("session_id must name one session"),
+                "{error}"
+            );
+        }
+        assert!(request_targets(&daemon).is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn binary_version_and_clean_exit() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_gmcp"))
         .arg("--version")
