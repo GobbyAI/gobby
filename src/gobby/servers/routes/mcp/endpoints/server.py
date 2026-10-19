@@ -19,6 +19,7 @@ from gobby.mcp_proxy.models import MCPError, TemplateOwnedFieldsError, TemplateV
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.server_resolution import resolve_server
 from gobby.servers.routes.dependencies import get_server
+from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
 from gobby.servers.routes.mcp.endpoints.templates import list_mcp_templates
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -110,6 +111,10 @@ async def list_mcp_servers(
         connected_count = len(server_list)
         manager = server.mcp_manager
         if manager:
+            listing_timeout = getattr(manager, "connection_timeout", None)
+            if not isinstance(listing_timeout, int | float) or listing_timeout <= 0:
+                listing_timeout = _mcp_call_timeout(server)
+            listing_timeout = max(listing_timeout, _mcp_call_timeout(server))
             mapping = getattr(manager, "_configs", None)
             if isinstance(mapping, dict) and mapping:
                 configs = visible_configs(manager, scope_project)
@@ -146,6 +151,7 @@ async def list_mcp_servers(
                     "requires_oauth": config.requires_oauth,
                     "oauth_provider": config.oauth_provider,
                     "connect_timeout": config.connect_timeout,
+                    "discovery_timeout": config.connect_timeout + listing_timeout,
                 }
                 server_list.append(entry)
 
