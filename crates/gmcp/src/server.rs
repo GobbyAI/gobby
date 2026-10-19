@@ -112,34 +112,70 @@ impl ServerHandler for WrapperServer {
     }
 }
 
+/// A readiness post the daemon did not accept: the error code it returned and its message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadyFailure {
+    pub code: String,
+    pub message: String,
+}
+
 /// Runs `attempt` after each delay until it succeeds or fails outside the retry set.
 ///
-/// `attempt` yields `None` on success and the failure's error code otherwise. Returns the
-/// number of attempts made.
-pub async fn report_ready<F, Fut>(delays: &[Duration], mut attempt: F) -> usize
+/// `attempt` yields `Ok` on success and the failure otherwise. Failures in the retry set are
+/// retried silently. As the Python `DaemonProxy.report_bridge_ready` does, `log` receives the
+/// failure that ends the run: one outside the set at once, or the last retried failure once
+/// the schedule runs out. A give-up on `SESSION_REQUIRED` stays silent, since a client without
+/// Gobby hooks never registers a session. Returns the number of attempts made.
+pub async fn report_ready<F, Fut>(
+    delays: &[Duration],
+    mut attempt: F,
+    mut log: impl FnMut(&str),
+) -> usize
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Option<String>>,
+    Fut: Future<Output = Result<(), ReadyFailure>>,
 {
     let mut attempts = 0;
+    let mut last = None;
     for delay in delays {
         tokio::time::sleep(*delay).await;
         attempts += 1;
         match attempt().await {
-            Some(code) if RETRYABLE_ERROR_CODES.contains(&code.as_str()) => {}
-            _ => break,
+            Ok(()) => return attempts,
+            Err(failure) if RETRYABLE_ERROR_CODES.contains(&failure.code.as_str()) => {
+                last = Some(failure);
+            }
+            Err(failure) => {
+                log(&format!(
+                    "gmcp: bridge readiness report failed: {}",
+                    failure.message
+                ));
+                return attempts;
+            }
         }
+    }
+    if let Some(failure) = last.filter(|failure| failure.code != "SESSION_REQUIRED") {
+        let retries = attempts.saturating_sub(1);
+        log(&format!(
+            "gmcp: bridge readiness report gave up after {retries} retries: {}",
+            failure.message
+        ));
     }
     attempts
 }
 
 /// Reports bridge readiness once the first `tools/list` has been answered.
 async fn report_bridge_ready(dialer: Arc<Dialer>) {
-    report_ready(&READY_DELAYS, || post_ready(Arc::clone(&dialer))).await;
+    report_ready(
+        &READY_DELAYS,
+        || post_ready(Arc::clone(&dialer)),
+        |line| eprintln!("{line}"),
+    )
+    .await;
 }
 
-/// One readiness post: `None` when the daemon accepted it, otherwise the error code.
-async fn post_ready(dialer: Arc<Dialer>) -> Option<String> {
+/// One readiness post: `Ok` when the daemon accepted it, otherwise the failure it reported.
+async fn post_ready(dialer: Arc<Dialer>) -> Result<(), ReadyFailure> {
     let answer = tokio::task::spawn_blocking(move || {
         let body = json!({});
         dialer.request(
@@ -149,22 +185,25 @@ async fn post_ready(dialer: Arc<Dialer>) -> Option<String> {
             RequestOptions::default(),
         )
     })
-    .await;
-    let answer = match answer {
-        Ok(answer) => answer,
-        Err(error) => return Some(error.to_string()),
-    };
+    .await
+    .map_err(|error| ReadyFailure {
+        code: String::new(),
+        message: error.to_string(),
+    })?;
     if answer.get("success").and_then(Value::as_bool) == Some(true) {
-        return None;
+        return Ok(());
     }
-    eprintln!("gmcp: bridge readiness report failed: {answer}");
-    Some(
-        answer
+    Err(ReadyFailure {
+        code: answer
             .get("error_code")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-    )
+        message: answer
+            .get("error")
+            .and_then(Value::as_str)
+            .map_or_else(|| answer.to_string(), str::to_owned),
+    })
 }
 
 #[cfg(test)]

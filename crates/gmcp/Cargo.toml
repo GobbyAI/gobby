@@ -23,7 +23,7 @@ gobby-core = { path = "../gcore", version = "0.10.0" }
 rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio ={ version = "1", features = ["io-std", "macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt", "sync", "time"] }
 ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]

@@ -397,6 +397,11 @@ fn binary_version_and_clean_exit() -> Result<()> {
         String::from_utf8(output.stdout)?.trim(),
         format!("gmcp {}", env!("CARGO_PKG_VERSION"))
     );
+    let help = Command::new(env!("CARGO_BIN_EXE_gmcp"))
+        .arg("--help")
+        .output()?;
+    assert!(help.status.success());
+    assert!(String::from_utf8(help.stdout)?.contains("Usage: gmcp"));
 
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&closed_url()?, home.path())?;
