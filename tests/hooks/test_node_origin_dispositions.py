@@ -18,8 +18,10 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.agy import AgyAdapter
 from gobby.adapters.claude_code import _saved_mcp_result
 from gobby.adapters.codex_impl.hooks_adapter import _command_execution_result
+from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import _spilled_mcp_output
 from gobby.hooks import checkout_reads
 from gobby.hooks.checkout_reads import delivery_scope
@@ -276,3 +278,73 @@ async def test_node_found_work_terminal_evidence_is_empty(
 
     assert failures == ()
     assert node_reads == []
+
+
+@pytest.mark.asyncio
+async def test_node_droid_notification_reads_no_transcript(tmp_path: Path) -> None:
+    loop = asyncio.get_running_loop()
+    transcript = tmp_path / "droid.jsonl"
+    transcript.write_text(json.dumps({"id": "tool-1"}) + "\n", encoding="utf-8")
+    native = {
+        "hook_type": "Notification",
+        "input_data": {
+            "session_id": "droid-session",
+            "notification_type": "permission_prompt",
+            "tool_use_id": "tool-1",
+            "transcript_path": str(transcript),
+        },
+    }
+
+    # Hub-origin control: the matching hub transcript still sets the wait kind.
+    assert DroidAdapter().translate_to_hook_event(native).wait_kind == "approval"
+
+    with delivery_scope(NODE_MACHINE, loop, str(tmp_path)):
+        node = DroidAdapter().translate_to_hook_event(native)
+    assert node.wait_kind is None
+
+
+@pytest.mark.asyncio
+async def test_node_droid_idle_prompt_reads_no_transcript(tmp_path: Path) -> None:
+    loop = asyncio.get_running_loop()
+    transcript = tmp_path / "droid.jsonl"
+    cancelled = {"type": "turn_cancelled", "turn_id": "turn-current"}
+    transcript.write_text(json.dumps(cancelled) + "\n", encoding="utf-8")
+    native = {
+        "hook_type": "Notification",
+        "input_data": {
+            "session_id": "droid-session",
+            "notification_type": "idle_prompt",
+            "reason": "cancelled",
+            "turn_id": "turn-current",
+            "transcript_path": str(transcript),
+        },
+    }
+
+    # Hub-origin control: the matching cancellation marker still interrupts.
+    local = DroidAdapter().translate_to_hook_event(native)
+    assert local.event_type is HookEventType.INTERRUPT
+
+    with delivery_scope(NODE_MACHINE, loop, str(tmp_path)):
+        node = DroidAdapter().translate_to_hook_event(native)
+    assert node.event_type is not HookEventType.INTERRUPT
+
+
+@pytest.mark.asyncio
+async def test_node_agy_prompt_reads_no_transcript(tmp_path: Path) -> None:
+    loop = asyncio.get_running_loop()
+    transcript = tmp_path / "transcript.jsonl"
+    record = {"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "hub prompt"}
+    transcript.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    native = {
+        "hook_event_name": "PreInvocation",
+        "session_id": "agy-session",
+        "cwd": str(tmp_path),
+        "transcript_path": str(transcript),
+    }
+
+    # Hub-origin control: the hub transcript still recovers the BEFORE_AGENT prompt.
+    assert AgyAdapter().translate_to_hook_event(native).data["prompt"] == "hub prompt"
+
+    with delivery_scope(NODE_MACHINE, loop, str(tmp_path)):
+        node = AgyAdapter().translate_to_hook_event(native)
+    assert node.data.get("prompt") is None
