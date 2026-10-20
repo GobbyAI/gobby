@@ -28,6 +28,27 @@ class _AmbiguousSyntax(ValueError):
     """An unsupported expansion cannot establish that a brace word is safe."""
 
 
+def _parameter_end(raw: str, index: int) -> int:
+    """Find a simple parameter span; nested expansion remains ambiguous."""
+    quote = ""
+    index += 2
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if quote != "'" and (char in "{`" or raw.startswith("$(", index)):
+            raise _AmbiguousSyntax("Nested expansion in parameter span")
+        if char == quote:
+            quote = ""
+        elif not quote and char in "'\"":
+            quote = char
+        elif not quote and char == "}":
+            return index + 1
+        index += 1
+    raise _AmbiguousSyntax("Unclosed parameter span")
+
+
 def _characters(raw: str) -> list[_Character]:
     """Remove shell quoting, preserving which characters can be syntax."""
     result: list[_Character] = []
@@ -42,6 +63,10 @@ def _characters(raw: str) -> list[_Character]:
                     result.append((following, False))
                 index += 2
                 continue
+        if quote != "'" and raw.startswith("${", index):
+            index = _parameter_end(raw, index)
+            result.append(("*", True))
+            continue
         if char == quote:
             quote = ""
         elif not quote and char in "'\"":
@@ -95,6 +120,23 @@ def _in_range(value: str, interval: tuple[int, int, int]) -> bool:
     return min(first, last) <= code <= max(first, last) and abs(code - first) % step == 0
 
 
+def _in_brace_ccl(value: str, body: list[_Character]) -> bool:
+    """zsh BRACE_CCL selects characters, including inclusive x-y spans."""
+    index = 0
+    while index < len(body):
+        first = body[index][0]
+        if index + 2 < len(body) and body[index + 1][0] == "-":
+            last = body[index + 2][0]
+            if min(ord(first), ord(last)) <= ord(value) <= max(ord(first), ord(last)):
+                return True
+            index += 3
+        else:
+            if value == first:
+                return True
+            index += 1
+    return False
+
+
 def _matches(chars: list[_Character], target: str) -> bool:
     groups = _groups(chars)
 
@@ -123,6 +165,17 @@ def _matches(chars: list[_Character], target: str) -> bool:
                         for offset in offsets
                         if offset < len(target) and _in_range(target[offset], interval)
                     } | ({0} if _in_range("/", interval) else set())
+                    index = close + 1
+                    continue
+                if close > index + 1:
+                    body = chars[index + 1 : close]
+                    if nested or any(not active for _, active in body):
+                        raise _AmbiguousSyntax("Nested or quoted BRACE_CCL body")
+                    offsets = {
+                        offset + 1
+                        for offset in offsets
+                        if offset < len(target) and _in_brace_ccl(target[offset], body)
+                    } | ({0} if _in_brace_ccl("/", body) else set())
                     index = close + 1
                     continue
             if char == "/":

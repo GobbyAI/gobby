@@ -27,6 +27,9 @@ SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
 INVOCATIONS = (
+    "setopt BRACE_CCL; caffeinate g{o}bby sessions a{p}prove-dirty-paths s7 a.txt",
+    "setopt BRACE_CCL; /usr/bin/arch -arch arm64 g{o}bby sessions a{p}prove-dirty-paths s7 a.txt",
+    "setopt BRACE_CCL; unknown-launcher g{o}bby sessions a{p}prove-dirty-paths s7 a.txt",
     "caffeinate g{o..o}bby sessions {approve-dirty-paths,} s7 --checkout /repo a.txt",
     "/usr/bin/arch -arch arm64 g{o..o}bby sessions {approve-dirty-paths,} s7 a.txt",
     "unknown-launcher {f..h}{n..p}bby sessions approve-{dirty-paths,} s7 a.txt",

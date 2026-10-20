@@ -79,7 +79,7 @@ def test_large_brace_inputs_do_not_generate_cartesian_expansions() -> None:
     started = time.perf_counter()
     assert not approval_brace_spelling("echo " + "{" * 15000)
     assert not approval_brace_spelling("echo " + "{a,b}" * 15000)
-    assert not approval_brace_spelling("echo " + "{" * 15000 + "a" + "}" * 15000)
+    assert approval_brace_spelling("echo " + "{" * 15000 + "a" + "}" * 15000)
     assert time.perf_counter() - started < 5.0
 
 
@@ -95,3 +95,46 @@ def test_fully_ranged_protected_words_behind_arbitrary_launchers(
 @pytest.mark.parametrize("word", ["{'g'..'g'}obby", r"{g\..g}obby"])
 def test_zsh_ranges_can_use_quoted_or_escaped_range_components(word: str) -> None:
     assert approval_brace_spelling(f"unknown-launcher {word} sessions list")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "caffeinate g{o}bby sessions a{p}prove-dirty-paths s --checkout /r a.txt",
+        "/usr/bin/arch -arch arm64 g{o}bby sessions list",
+        "unknown {g}{o}{b}{b}{y}",
+        "unknown {f-h}obby",
+        "unknown {abg}obby",
+        "unknown x{./}gobby",
+        "unknown x{.-0}gobby",
+        "echo {{x,y}}",
+        "echo {'x'}",
+    ],
+)
+def test_zsh_brace_ccl_groups_are_checked_symbolically(command: str) -> None:
+    assert approval_brace_spelling(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -exec rm {} +",
+        "git log HEAD@{u}",
+        "echo '{o}'",
+        r"echo \{o\}",
+        "echo {x}",
+        "ls ${HOME}",
+        "cd ${WT} && git status",
+        "echo ${x:-y}",
+        'echo ${x:-"y"}',
+    ],
+)
+def test_brace_ccl_and_parameter_data_controls_stay_allowed(command: str) -> None:
+    assert not approval_brace_spelling(command)
+
+
+@pytest.mark.parametrize(
+    "command", ["echo ${NAME}{,}", "echo ${N}obb{y,}", "echo ${x:-${y}}", "echo ${x:-$(id)}"]
+)
+def test_parameter_spans_preserve_target_matching_and_ambiguity_refusals(command: str) -> None:
+    assert approval_brace_spelling(command)
