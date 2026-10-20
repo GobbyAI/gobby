@@ -786,11 +786,13 @@ def _static_truth(node: ast.expr) -> bool | None:
         return None if inner is None else not inner
     if isinstance(node, ast.BoolOp):
         decisive = isinstance(node.op, ast.Or)
+        unknown = False
         for operand in node.values:
             truth = _static_truth(operand)
-            if truth is None or truth is decisive:
+            if truth is decisive:
                 return truth
-        return not decisive
+            unknown |= truth is None
+        return None if unknown else not decisive
     if isinstance(node, ast.Compare):
         return _static_comparison(node)
     if _is_literal(node):
@@ -815,20 +817,7 @@ def _static_comparison(node: ast.Compare) -> bool | None:
         left, right = ast.literal_eval(previous), ast.literal_eval(following)
         try:
             if isinstance(op, (ast.Is, ast.IsNot)):
-                # Identical scalar constants share a compiler constant; containers may not.
-                if isinstance(previous, ast.Constant) and isinstance(following, ast.Constant):
-                    result = type(left) is type(right) and left == right
-                elif (
-                    left is None
-                    or right is None
-                    or isinstance(left, bool)
-                    or isinstance(right, bool)
-                ):
-                    result = left is right
-                elif type(left) is not type(right):
-                    result = False
-                else:
-                    return None
+                result = _literal_identity(left, right)
                 if isinstance(op, ast.IsNot):
                     result = not result
             elif isinstance(op, (ast.In, ast.NotIn)):
@@ -843,6 +832,18 @@ def _static_comparison(node: ast.Compare) -> bool | None:
             return False
         previous = following
     return True
+
+
+def _literal_identity(left: object, right: object) -> bool:
+    """CPython constant keys merge immutable literals; mutable displays stay distinct."""
+    if type(left) is not type(right) or isinstance(left, (list, dict, set)):
+        return False
+    if isinstance(left, tuple) and isinstance(right, tuple):
+        return len(left) == len(right) and all(
+            _literal_identity(a, b) for a, b in zip(left, right, strict=True)
+        )
+    # repr preserves scalar type/sign distinctions, including positive and negative zero.
+    return repr(left) == repr(right)
 
 
 def _local_testcase(module: _Module, name: str, depth: int) -> bool:

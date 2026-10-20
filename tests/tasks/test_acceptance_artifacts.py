@@ -2135,6 +2135,16 @@ def test_test_body_unreachable_assertion_is_not_credited(tmp_path: Path, source:
         "while None is None:\n    return",
         "while None is not False:\n    return",
         "while 1 is 1:\n    return",
+        "while calls() or True:\n    return",
+        "if calls() and False:\n    assert receipt == 'ok'\nreturn",
+        "while [] is []:\n    assert receipt == 'ok'\nreturn",
+        "while [] is not []:\n    return",
+        "while {} is {}:\n    assert receipt == 'ok'\nreturn",
+        "while {1} is not {1}:\n    return",
+        "while () is ():\n    return",
+        "while (1,) is (1,):\n    return",
+        "while (True,) is (1,):\n    assert receipt == 'ok'\nreturn",
+        "while ([],) is ([],):\n    assert receipt == 'ok'\nreturn",
         "if False and calls():\n    assert receipt == 'ok'\nreturn",
         "while True:\n    while True:\n        break\n    else:\n        break\n    return",
         "while True:\n    for _ in range(0, 1, 0):\n        pass\n    else:\n        break\n    return",
@@ -2156,6 +2166,16 @@ def test_test_body_unreachable_assertion_is_not_credited(tmp_path: Path, source:
         "constant_is",
         "constant_is_not",
         "constant_integer_is",
+        "unknown_then_decisive_or",
+        "unknown_then_decisive_and",
+        "list_identity_false",
+        "list_nonidentity_true",
+        "dict_identity_false",
+        "set_nonidentity_true",
+        "empty_tuple_identity_true",
+        "nonempty_tuple_identity_true",
+        "type_distinct_tuple_identity_false",
+        "mutable_tuple_identity_false",
         "decisive_and_call",
         "nested_true_while_else",
         "nested_zero_step_else",
@@ -2208,6 +2228,21 @@ def test_outer_assertion_after_nested_loop_else_break_is_credited(
 ) -> None:
     source = "def test_feature():\n    while True:\n" + textwrap.indent(nested, "        ")
     source += "\n    assert make_receipt() == 'ok'\n"
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
+@pytest.mark.parametrize(
+    "condition",
+    ["_assert_ok('ok') or True", "_assert_ok('ok') and False", "1 == 1 < _assert_ok('ok')"],
+)
+def test_reachable_assertion_in_decisive_condition_is_credited(
+    tmp_path: Path, condition: str
+) -> None:
+    source = "def _assert_ok(receipt):\n    assert receipt == 'ok'\n    return 2\n"
+    source += f"\ndef test_feature():\n    if {condition}:\n        pass\n"
     result = _committed_python_result(tmp_path, source)
 
     assert result.passed is True, result.findings
