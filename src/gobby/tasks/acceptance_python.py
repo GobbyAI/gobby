@@ -781,6 +781,14 @@ def _live_children(node: ast.AST) -> Iterator[ast.AST]:
 
 def _static_truth(node: ast.expr) -> bool | None:
     """Truth value of a constant test, or None when the test is not a constant."""
+    if isinstance(node, ast.NamedExpr):
+        return _static_truth(node.value)
+    if isinstance(node, ast.IfExp):
+        test = _static_truth(node.test)
+        if test is not None:
+            return _static_truth(node.body if test else node.orelse)
+        body = _static_truth(node.body)
+        return body if body is not None and body is _static_truth(node.orelse) else None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         inner = _static_truth(node.operand)
         return None if inner is None else not inner
@@ -811,9 +819,28 @@ def _static_comparison(node: ast.Compare) -> bool | None:
         ast.GtE: operator.ge,
     }
     previous = node.left
+    unknown = False
     for op, following in zip(node.ops, node.comparators, strict=True):
+        if isinstance(op, (ast.Is, ast.IsNot)) and any(
+            _is_literal(operand)
+            and not _literal_identity(ast.literal_eval(operand), ast.literal_eval(operand))
+            for operand in (previous, following)
+        ):
+            if isinstance(op, ast.Is):
+                return False
+            previous = following
+            continue
+        if isinstance(op, (ast.In, ast.NotIn)) and _is_literal(following):
+            container = ast.literal_eval(following)
+            if isinstance(container, (tuple, list, dict, set)) and not container:
+                if isinstance(op, ast.In):
+                    return False
+                previous = following
+                continue
         if not _is_literal(previous) or not _is_literal(following):
-            return None
+            unknown = True
+            previous = following
+            continue
         left, right = ast.literal_eval(previous), ast.literal_eval(following)
         try:
             if isinstance(op, (ast.Is, ast.IsNot)):
@@ -831,7 +858,7 @@ def _static_comparison(node: ast.Compare) -> bool | None:
         if not result:
             return False
         previous = following
-    return True
+    return None if unknown else True
 
 
 def _literal_identity(left: object, right: object) -> bool:
