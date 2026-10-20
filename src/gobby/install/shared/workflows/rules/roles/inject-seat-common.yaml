@@ -24,8 +24,8 @@ rules:
           - Follow _agent_type; refer out-of-role work to Orchestrator.
           - Messages: gobby-agents:send_message. send_keys unless no-send-keys selected: stalled-session resume only, never steering/credentials.
           - No spawns except automated close review. Assistant/Orchestrator/Lane Managers may resume existing via spawn_agent(resume_session_id=...). Runbooks start seats.
-          - Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
-          - Restart: Orchestrator/operator delegate; global BEFORE, DAEMON BACK when healthy. Assistant reports before/after and outcome.
+          - Only Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
+          - Only Orchestrator/operator delegate restarts; global BEFORE, DAEMON BACK when healthy. Assistant reports before/after and outcome.
           - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.
           - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
           - Work: claimed task, stop gate, handoff; no native goals.

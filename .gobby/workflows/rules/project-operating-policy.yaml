@@ -264,7 +264,7 @@ rules:
           - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); de-escalate/close after landing+LM release.
           - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
           - ORCH alone creates trees: lane-N-<name>[-K], retained per seat, never per task. Next task, clean+committed: git switch -c <branch> 0.5.0. Planners main; reviewers developer tree.
-          - Backlog cap 20: candidate-sent/open tasks across lanes, except planning/operator-decision parks/closure-enabling work. Assign only <=20; park operator-review closes.
+          - Josh retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
           - close preview is deterministic only; actual close requires explicit LM release. close_review_busy: wait reviewer+release, retry.
           - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
           - RM grants heavy cap 6: build/clippy/full-crate/e2e/bench; cargo CARGO_BUILD_JOBS=3. Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
