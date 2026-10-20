@@ -441,7 +441,8 @@ async def ensure_project_json_for_isolation(
     Copies source project.json bytes into the isolated root only when that file
     is missing. Parent identity lives in the gitignored sidecar so git status
     stays clean. Generated parent-key dirt on tracked metadata is restored from
-    HEAD when it matches Gobby's old rewrite.
+    HEAD when it matches Gobby's old rewrite. New markers use the selected base;
+    repairs preserve an existing complete pin for the same parent checkout.
     """
     source_root = Path(source_repo_path)
     isolated_root = Path(isolated_path)
@@ -458,13 +459,20 @@ async def ensure_project_json_for_isolation(
             raise KeyError("id")
 
         ancestor_checkout_path = str(source_root.resolve())
-        marker = {
-            _PARENT_PROJECT_PATH_KEY: ancestor_checkout_path,
-            _PARENT_PROJECT_ID_KEY: parent_project_id,
-            "base_commit": await _source_head_commit(source_root),
-            "ancestor_checkout_path": ancestor_checkout_path,
-            "ancestor_checkout_identity": parent_project_id,
-        }
+        marker = read_isolation_marker(isolated_root)
+        if (
+            marker is None
+            or "base_commit" not in marker
+            or marker[_PARENT_PROJECT_PATH_KEY] != ancestor_checkout_path
+            or marker[_PARENT_PROJECT_ID_KEY] != parent_project_id
+        ):
+            marker = {
+                _PARENT_PROJECT_PATH_KEY: ancestor_checkout_path,
+                _PARENT_PROJECT_ID_KEY: parent_project_id,
+                "base_commit": base_commit or await _source_head_commit(source_root),
+                "ancestor_checkout_path": ancestor_checkout_path,
+                "ancestor_checkout_identity": parent_project_id,
+            }
         marker_bytes = (json.dumps(marker, indent=2) + "\n").encode()
 
         target_project_json = isolated_root / PROJECT_JSON_RELATIVE_PATH

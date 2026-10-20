@@ -35,6 +35,7 @@ const DEFAULT_GIT_STATUS_TIMEOUT_SECS: u64 = 5;
 pub(super) struct IndexedFileState {
     pub(super) content_hash: String,
     pub(super) language: String,
+    pub(super) git_blob_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,13 +328,16 @@ pub(super) fn index_overlay_files(
                 anyhow::bail!("overlay index action selected for non-indexable path `{rel}`")
             }
             OverlayReconcileAction::Skip => {
-                if let Some(hash) = current_hash {
+                let clean_blob = clean_blob_by_rel.get(&rel).map(String::as_str);
+                if let (Some(hash), Some(state)) = (current_hash, overlay)
+                    && (state.content_hash != hash || state.git_blob_id.as_deref() != clean_blob)
+                {
                     selector_blob::record_selector_blob(
                         conn,
                         overlay_project_id,
                         &rel,
                         hash,
-                        clean_blob_by_rel.get(&rel).map(String::as_str),
+                        clean_blob,
                     )?;
                 }
                 outcome.skipped_files += 1;
@@ -474,7 +478,7 @@ fn indexed_file_states(
     let project_id = crate::db::id_param(project_id)?;
     let rows = if let Some(file_paths) = file_paths {
         conn.query(
-            "SELECT s.file_path, s.content_hash, f.language
+            "SELECT s.file_path, s.content_hash, s.git_blob_id, f.language
              FROM code_indexed_file_states s
              JOIN code_indexed_files f
                ON f.project_id = s.project_id
@@ -487,7 +491,7 @@ fn indexed_file_states(
         )?
     } else {
         conn.query(
-            "SELECT s.file_path, s.content_hash, f.language
+            "SELECT s.file_path, s.content_hash, s.git_blob_id, f.language
              FROM code_indexed_file_states s
              JOIN code_indexed_files f
                ON f.project_id = s.project_id
@@ -503,6 +507,7 @@ fn indexed_file_states(
             IndexedFileState {
                 content_hash: row.try_get("content_hash")?,
                 language: row.try_get("language")?,
+                git_blob_id: row.try_get("git_blob_id")?,
             },
         );
     }

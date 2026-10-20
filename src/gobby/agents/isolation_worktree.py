@@ -180,6 +180,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             main_repo_path=str(self._git_manager.repo_path),
             isolated_path=worktree_path,
             provider=config.provider,
+            base_commit=base_commit_sha,
             phase_timings_ms=config.phase_timings_ms,
         )
 

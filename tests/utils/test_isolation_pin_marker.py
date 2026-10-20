@@ -119,6 +119,7 @@ async def test_repair_keeps_recorded_base_after_source_advances(
     isolated.mkdir()
     monkeypatch.setattr(project_context, "link_checkout_cargo_target", lambda *args, **kwargs: None)
     await ensure_project_json_for_isolation(source, isolated, base_commit=selected)
+    marker_bytes = (isolated / ".gobby" / "isolation.json").read_bytes()
     _commit(source, "later.txt")
 
     await ensure_project_json_for_isolation(source, isolated)
@@ -126,6 +127,7 @@ async def test_repair_keeps_recorded_base_after_source_advances(
     marker = read_isolation_marker(isolated)
     assert marker is not None
     assert marker["base_commit"] == selected
+    assert (isolated / ".gobby" / "isolation.json").read_bytes() == marker_bytes
 
 
 def test_reader_returns_complete_pin_provenance(tmp_path: Path) -> None:

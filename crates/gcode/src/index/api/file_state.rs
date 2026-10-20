@@ -225,6 +225,7 @@ pub fn delete_file_state(
 }
 
 /// Sets or clears one selector's Git blob ID while it still names `content_hash`.
+/// Returns whether the blob changed; unchanged or missing selectors are not written.
 pub fn set_selector_git_blob(
     conn: &mut impl GenericClient,
     machine_id: &str,
@@ -239,7 +240,7 @@ pub fn set_selector_git_blob(
         "UPDATE code_indexed_file_states
          SET git_blob_id = $4
          WHERE machine_id = $1 AND project_id = $2 AND file_path = $3
-           AND content_hash = $5",
+           AND content_hash = $5 AND git_blob_id IS DISTINCT FROM $4",
         &[
             &machine_id,
             &project_id,

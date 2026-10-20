@@ -1460,6 +1460,19 @@ mod serial_db {
             )
             .expect("fresh blob")
         );
+        let before = selector_row_xmin(&mut conn, &project_id, rel);
+        assert!(
+            !api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-v1",
+                Some("blob-v1"),
+            )
+            .expect("unchanged blob")
+        );
+        assert_eq!(selector_row_xmin(&mut conn, &project_id, rel), before);
         assert!(
             !api::file_state::set_selector_git_blob(
                 &mut conn,
@@ -1883,6 +1896,18 @@ mod serial_db {
             selector_git_blob(&mut conn, &overlay_project_id, rel),
             Some(head_blob(&overlay_root, &hooks, rel)),
             "the overlay skip path back-fills the clean HEAD blob"
+        );
+        let before = selector_row_xmin(&mut conn, &overlay_project_id, rel);
+        index_files(
+            selector_request(&overlay_root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("unchanged overlay skip run");
+        assert_eq!(
+            selector_row_xmin(&mut conn, &overlay_project_id, rel),
+            before,
+            "an unchanged overlay selector must not be rewritten"
         );
     }
 

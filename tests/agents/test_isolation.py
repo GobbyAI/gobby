@@ -1542,6 +1542,7 @@ class TestWorktreeIsolationHandler:
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/worktrees/stale-branch",
             provider="claude",
+            base_commit="base-sha",
             phase_timings_ms=config.phase_timings_ms,
         )
 
@@ -1944,6 +1945,7 @@ class TestWorktreeIsolationHandler:
             mock_ensure.assert_called_once_with(
                 "/path/to/main/repo",
                 handler._generate_worktree_path("my-branch", "repo"),
+                base_commit="base-sha",
             )
             assert mock_ensure.call_count == 1
             assert mock_ensure.call_args is not None
@@ -2504,6 +2506,7 @@ class TestCloneIsolationHandler:
             mock_ensure.assert_called_once_with(
                 "/path/to/source/repo",
                 clone_path,
+                base_commit="abc123",
             )
             assert mock_ensure.call_count == 1
             assert mock_ensure.call_args is not None

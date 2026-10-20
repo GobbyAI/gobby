@@ -17,6 +17,7 @@ from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.code_index.trigger import CodeIndexTrigger
 from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout
 from gobby.worktrees.git import WorktreeGitManager
+from tests.fixtures.isolated_checkout import init_git_checkout
 
 pytestmark = pytest.mark.unit
 
@@ -273,6 +274,7 @@ async def test_repair_excludes_untracked_project_json(tmp_path: Path) -> None:
         json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
         encoding="utf-8",
     )
+    init_git_checkout(parent)
     _git(isolated, "init", "-b", "main")
     _git(isolated, "config", "user.email", "test@example.com")
     _git(isolated, "config", "user.name", "Test User")
@@ -307,6 +309,7 @@ async def test_repair_excludes_generated_droid_hook_file(tmp_path: Path) -> None
         json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
         encoding="utf-8",
     )
+    init_git_checkout(parent)
     _git(isolated, "init", "-b", "main")
     _git(isolated, "config", "user.email", "test@example.com")
     _git(isolated, "config", "user.name", "Test User")
