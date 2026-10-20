@@ -142,7 +142,7 @@ def test_block_holds_until_named_acceptance_test_is_written(
     tracked, fallback_evaluator, _ = evaluate(track, fallback_variables, fallback_test_path)
     assert tracked is True
     fallback_variables["tdd_tests_written"] = fallback_evaluator.evaluate_value(track_effect.value)
-    assert evaluate(block, fallback_variables, "web/src/app.ts")[0] is False
+    assert evaluate(block, fallback_variables, "web/src/app.ts")[0] is True
 
 
 @pytest.mark.parametrize("absolute", [False, True], ids=["relative", "absolute"])
@@ -378,6 +378,7 @@ def _claim_and_tests(repo: Path, tests: dict[str, str] | None = None) -> list[di
         [{"type": "text", "text": claim}],
     )
     for step, (path, body) in enumerate((tests or {_FEATURE_TEST: _FEATURE_BODY}).items(), 1):
+        (repo / path).write_text(body, encoding="utf-8")
         records += _transcript_pair(
             repo, step, "Write", {"file_path": str(repo / path), "content": body}, ""
         )
@@ -413,7 +414,7 @@ def _gate_blocks(
     repo: Path,
     records: list[dict[str, Any]],
     *,
-    tool_input: dict[str, Any],
+    tool_input: dict[str, Any] | str,
     tool_name: str = "Write",
     criteria: str = _FEATURE_CRITERIA,
     tests_written: tuple[str, ...] = (),
@@ -567,10 +568,17 @@ def test_all_behavior_reds_open_production_gate(
 def test_verified_stub_only_write_can_prepare_red(
     db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
 ) -> None:
+    from gobby.workflows.condition_helpers import tdd_stub_only_write
+
     block = _tdd_block(db, manager)
     records = _claim_and_tests(gate_repo)
     stub = "def feature() -> int:\n    raise NotImplementedError\n"
-    stubs: tuple[tuple[str, dict[str, Any]], ...] = (
+    patch = (
+        f"*** Begin Patch\n*** Add File: {gate_repo / 'src/feature.py'}\n"
+        "+def feature() -> int:\n+    raise NotImplementedError\n*** End Patch\n"
+    )
+    stubs: tuple[tuple[str, dict[str, Any] | str], ...] = (
+        ("apply_patch", patch),
         ("Write", _write(gate_repo, "src/feature.py", stub)),
         ("Write", _write(gate_repo, "src/legacy.py", f"{_LEGACY}\n\n{stub}")),
         (
@@ -604,6 +612,29 @@ def test_verified_stub_only_write_can_prepare_red(
         block, gate_repo, records, tool_input=_write(gate_repo, "src/feature.py", _IMPLEMENTATION)
     )
     assert implementation is True
+    assert tdd_stub_only_write(
+        {}, {"raw": f"text(await tools.apply_patch({json.dumps(patch)}));"}, str(gate_repo)
+    )
+    mixed = patch.replace(
+        "*** End Patch",
+        f"*** Add File: {gate_repo / 'src/behavior.py'}\n"
+        "+def behavior():\n+    return 42\n*** End Patch",
+    )
+    unsafe: tuple[tuple[str, dict[str, Any] | str], ...] = (
+        ("apply_patch", mixed),
+        (
+            "functions.exec",
+            {"raw": f"if (false) {{ text(await tools.apply_patch({json.dumps(patch)})); }}"},
+        ),
+        ("Bash", {"raw": patch, "command": "printf 'VALUE = 42' > src/behavior.py"}),
+    )
+    for tool_name, tool_input in unsafe:
+        assert tdd_stub_only_write({}, tool_input, str(gate_repo)) is False, tool_input
+        if tool_name != "functions.exec":
+            blocked, _ = _gate_blocks(
+                block, gate_repo, records, tool_name=tool_name, tool_input=tool_input
+            )
+            assert blocked is True, tool_input
 
 
 def test_stub_plus_implementation_patch_is_blocked(
@@ -871,8 +902,8 @@ class TestEnforceTddBlockCondition:
     def test_skips_when_enforce_tdd_false(self) -> None:
         assert self._eval("/project/src/main.py", enforce_tdd=False) is False
 
-    def test_skips_init_file(self) -> None:
-        assert self._eval("/project/src/gobby/__init__.py") is False
+    def test_guards_init_file(self) -> None:
+        assert self._eval("/project/src/gobby/__init__.py") is True
 
     def test_skips_conftest(self) -> None:
         assert self._eval("/project/tests/conftest.py") is False
@@ -886,9 +917,9 @@ class TestEnforceTddBlockCondition:
     def test_skips_test_file_by_suffix(self) -> None:
         assert self._eval("/project/src/main_test.py") is False
 
-    def test_skips_after_test_write_opens_gate(self) -> None:
+    def test_test_write_without_named_red_stays_blocked(self) -> None:
         assert (
-            self._eval("/project/src/gobby/new_module.py", tests_written=["tests/test.py"]) is False
+            self._eval("/project/src/gobby/new_module.py", tests_written=["tests/test.py"]) is True
         )
 
     def test_skips_non_source_files(self) -> None:

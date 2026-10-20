@@ -129,6 +129,15 @@ async def resolve_rust_module(
     if key not in cache:
         cache[key] = await _read_declarations(commit_sha, root, repo_path)
     declarations = cache[key]
+    return rust_module_from_declarations(path, declarations)
+
+
+def rust_module_from_declarations(
+    path: str, declarations: RustModuleDeclarations
+) -> tuple[str, ...]:
+    """Resolve one exact module from committed or write-time source declarations."""
+    parts = PurePosixPath(path).parts
+    root = str(PurePosixPath(*parts[:2])) if parts[:1] == ("crates",) else "."
 
     def module_for(source_path: str, seen: frozenset[str]) -> tuple[str, ...]:
         if source_path in seen:
@@ -165,8 +174,16 @@ async def resolve_rust_target(
             ("show", f"{commit_sha}:{manifest_path}"), cwd=repo_path, timeout=30
         )
         cache[manifest_path] = result.stdout if isinstance(result, GitOk) else ""
+    return rust_target_from_manifest(path, cache[manifest_path])
+
+
+def rust_target_from_manifest(path: str, source: str) -> tuple[str, str | None] | None:
+    """Resolve target identity using the same manifest rules at write and close."""
+    parts = PurePosixPath(path).parts
+    root = PurePosixPath(*parts[:2]) if parts[:1] == ("crates",) else PurePosixPath(".")
+    relative = str(PurePosixPath(path).relative_to(root))
     try:
-        manifest = tomllib.loads(cache[manifest_path])
+        manifest = tomllib.loads(source)
     except tomllib.TOMLDecodeError:
         return None
     package = manifest.get("package", {})

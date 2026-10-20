@@ -539,14 +539,14 @@ def _rust_store_file(tmp_path: Path) -> str:
 
 
 class TestTddPathHelpers:
-    def test_tdd_gate_matches_absolute_written_path_to_relative_acceptance_path(self) -> None:
+    def test_absolute_written_path_cannot_forge_named_red(self) -> None:
         variables = {
             "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
             "tdd_tests_written": ["/repo/tests/test_app.py"],
         }
         gate = build_condition_helpers(context={"project": {"path": "/repo"}})["tdd_gate_open"]
 
-        assert gate(variables) is True
+        assert gate(variables) is False
 
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {
@@ -555,7 +555,7 @@ class TestTddPathHelpers:
 
         assert first_tdd_code_path(event_data, {}) == "src/app.py"
 
-    def test_first_tdd_code_path_skips_test_and_special_python_files(self) -> None:
+    def test_first_tdd_code_path_guards_init_and_skips_test_files(self) -> None:
         event_data = {
             "canonical_file_paths": [
                 "src/__init__.py",
@@ -566,7 +566,7 @@ class TestTddPathHelpers:
             ],
         }
 
-        assert first_tdd_code_path(event_data, {}) == ""
+        assert first_tdd_code_path(event_data, {}) == "src/__init__.py"
 
     def test_first_tdd_test_path_uses_canonical_paths(self) -> None:
         event_data = {

@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from gobby.storage.session_models import Session
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.tdd_write_authorization import (
     TddObligation,
     WriteAuthorization,
@@ -17,9 +20,6 @@ from gobby.tasks.tdd_write_authorization import (
     authorize_session_write,
     task_tdd_obligations,
 )
-
-from gobby.storage.session_models import Session
-from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -173,6 +173,20 @@ def test_foreign_claim_red_cannot_authorize_write() -> None:
     assert (allowed.allowed, allowed.missing) == (True, ())
 
 
+def test_claim_switch_during_run_cannot_authorize_write() -> None:
+    obligations = task_tdd_obligations(TASK, FEATURE_CRITERION)
+    run = replace(_red(2, FEATURE, "test_feature"), completed_at=START + timedelta(seconds=5))
+    evidence = TranscriptEvidence(
+        edits=(_edit(FEATURE, 1),),
+        validation_runs=(run,),
+        task_claims=(_claim(TASK, 0), _claim(FOREIGN, 3), _claim(TASK, 4)),
+    )
+
+    refused = _authorize(obligations, evidence)
+
+    assert (refused.allowed, refused.missing) == (False, (FEATURE_REF,))
+
+
 def test_test_edit_invalidates_named_red() -> None:
     obligations = task_tdd_obligations(TASK, FEATURE_CRITERION)
     first = _red(2, FEATURE, "test_feature")
@@ -191,14 +205,29 @@ def test_test_edit_invalidates_named_red() -> None:
     assert dict(fresh.red_runs) == {FEATURE_REF: rerun.command}
 
 
+@pytest.mark.parametrize("test_writer", ["Write", "apply_patch", "functions.exec"])
 def test_compaction_preserves_authenticated_original_red(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_writer: str
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
     repo = tmp_path / "repo"
     (repo / "tests").mkdir(parents=True)
+    original_source = "def test_feature():\n    assert 0\n"
+    (repo / FEATURE).write_text(original_source, encoding="utf-8")
     red = _red(2, FEATURE, "test_feature")
     claimed = json.dumps({"success": True, "result": {"success": True, "task_id": TASK}})
+    write_arguments = (
+        {"file_path": str(repo / FEATURE), "content": original_source}
+        if test_writer == "Write"
+        else {
+            "raw": f"*** Begin Patch\n*** Add File: {repo / FEATURE}\n"
+            "+def test_feature():\n+    assert 0\n*** End Patch\n"
+        }
+    )
+    if test_writer == "functions.exec":
+        write_arguments = {
+            "raw": f"text(await tools.apply_patch({json.dumps(write_arguments['raw'])}));"
+        }
     before_compaction = [
         *_pair(
             repo,
@@ -214,8 +243,8 @@ def test_compaction_preserves_authenticated_original_red(
         *_pair(
             repo,
             1,
-            "Write",
-            {"file_path": str(repo / FEATURE), "content": "def test_feature():\n    assert 0\n"},
+            test_writer,
+            write_arguments,
             "",
         ),
         *_pair(repo, 2, "Bash", {"command": red.command}, red.output),
@@ -256,6 +285,16 @@ def test_compaction_preserves_authenticated_original_red(
 
     assert (preserved.allowed, dict(preserved.red_runs)) == (True, {FEATURE_REF: red.command})
     assert (current_only.allowed, current_only.missing) == (False, (FEATURE_REF,))
+    (repo / FEATURE).write_text("def test_feature():\n    assert 1\n", encoding="utf-8")
+    changed = authorize_session_write(
+        session, obligations, task_refs=TASK_REFS, repo_path=str(repo), archive_dir=str(archives)
+    )
+    (repo / FEATURE).unlink()
+    missing = authorize_session_write(
+        session, obligations, task_refs=TASK_REFS, repo_path=str(repo), archive_dir=str(archives)
+    )
+    assert (changed.allowed, changed.missing) == (False, (FEATURE_REF,))
+    assert (missing.allowed, missing.missing) == (False, (FEATURE_REF,))
 
 
 @pytest.mark.parametrize(
@@ -313,3 +352,75 @@ def test_unchanged_explicit_regression_needs_only_green() -> None:
     assert _authorize(designated, kept_edited).missing == (KEPT_REF,)
     assert close.passed, close.findings
     assert close.regression_tests == (KEPT_REF,)
+
+
+def test_rust_inline_named_red_authorizes_only_its_checkout(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    path = "src/lib.rs"
+    source = (
+        "#[cfg(test)]\nmod tests {\n    #[test]\n    fn test_feature() { assert_eq!(1, 2); }\n}\n"
+    )
+    (repo / path).write_text(source, encoding="utf-8")
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8"
+    )
+    claim = json.dumps({"success": True, "result": {"success": True, "task_id": TASK}})
+    output = (
+        "running 1 test\ntest tests::test_feature ... FAILED\n\nfailures:\n"
+        "---- tests::test_feature stdout ----\n"
+        "thread 'tests::test_feature' panicked at src/lib.rs:4:25:\n"
+        "assertion `left == right` failed\n  left: 1\n right: 2\n"
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored\n"
+    )
+    records = [
+        *_pair(
+            repo,
+            0,
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-tasks",
+                "tool_name": "claim_task",
+                "arguments": {"task_id": "#24746"},
+            },
+            [{"type": "text", "text": claim}],
+        ),
+        *_pair(repo, 1, "Write", {"file_path": str(repo / path), "content": source}, ""),
+        *_pair(
+            repo,
+            2,
+            "Bash",
+            {"command": "cargo test -p demo --lib tests::test_feature -- --exact"},
+            output,
+        ),
+    ]
+    transcript = tmp_path / "rust.jsonl"
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
+    session = Session(
+        id="rust-writer",
+        external_id="rust-writer",
+        machine_id="isolated",
+        source="claude",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=START,
+        updated_at=START,
+    )
+    obligations = task_tdd_obligations(TASK, f"1. The feature works; test: {path}::test_feature")
+    own = authorize_session_write(session, obligations, task_refs=TASK_REFS, repo_path=str(repo))
+    other = tmp_path / "other"
+    (other / "src").mkdir(parents=True)
+    (other / path).write_text(source, encoding="utf-8")
+    (other / "Cargo.toml").write_text((repo / "Cargo.toml").read_text(), encoding="utf-8")
+    foreign = authorize_session_write(
+        session, obligations, task_refs=TASK_REFS, repo_path=str(other)
+    )
+    assert own.allowed, own.missing
+    assert foreign.allowed is False
+    assert foreign.missing == (f"{path}::test_feature",)

@@ -14,6 +14,7 @@ import re
 import tokenize
 from collections.abc import Callable, Iterator, Mapping
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from psycopg.errors import QueryCanceled
@@ -565,6 +566,7 @@ def build_condition_helpers(
     from .condition_helpers import (
         _event_and_tool_paths,
         _is_tdd_code_path,
+        _normalize_condition_path,
         all_tasks_have_label,
         first_tdd_test_path,
         is_validation_command,
@@ -576,7 +578,7 @@ def build_condition_helpers(
         task_needs_human_review,
         task_state_in,
         task_type_in,
-        tdd_gate_open,
+        tdd_stub_only_write,
         touches_claude_memory_path,
         touches_ui_design_path,
         wrapped_validation_command,
@@ -606,12 +608,12 @@ def build_condition_helpers(
         for acceptance_path in acceptance_paths:
             if not isinstance(acceptance_path, str) or not acceptance_path:
                 continue
-            if tdd_gate_open(
-                {
-                    "claimed_task_acceptance_test_paths": [acceptance_path],
-                    "tdd_tests_written": [path],
-                },
-                _tdd_project_path(),
+            project_path = _tdd_project_path()
+            root = Path(project_path).resolve() if project_path else None
+            from .tdd_paths import tdd_path_identity
+
+            if tdd_path_identity(path, root, _normalize_condition_path) == tdd_path_identity(
+                acceptance_path, root, _normalize_condition_path
             ):
                 return acceptance_path
         return ""
@@ -633,15 +635,21 @@ def build_condition_helpers(
             event_data, tool_input
         )
 
+    def _tdd_authorization() -> Any:
+        from .condition_helpers import server_tdd_authorization
+
+        return server_tdd_authorization(task_manager, session_manager, ctx, _tdd_project_path())
+
     funcs = build_agent_workflow_allowed_funcs(ctx)
     funcs.update(
         {
             "normalize_path": lambda p: p.replace("\\", "/"),
             "first_tdd_code_path": _first_tdd_code_path,
             "first_tdd_test_path": _first_tdd_test_path,
-            "tdd_gate_open": lambda variables: tdd_gate_open(
-                variables,
-                _tdd_project_path(),
+            "tdd_gate_open": lambda variables: _tdd_authorization().allowed,
+            "tdd_missing_red": lambda: list(_tdd_authorization().missing),
+            "tdd_stub_only_write": lambda data, tool_input: tdd_stub_only_write(
+                data, tool_input, _tdd_project_path()
             ),
             "is_validation_command": is_validation_command,
             "wrapped_validation_command": lambda command: wrapped_validation_command(

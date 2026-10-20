@@ -32,6 +32,7 @@ prompts:
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
     - Found work. Fix what you find on your lane's surface inside the claimed task and name it in the close summary. Send anything that needs its own task to the Orchestrator with the failing command, diagnostics, paths and impact.
+    - TDD. Before any behavior-bearing production write, resolve every named behavior test across the leaf's stored criteria and retain each exact node's authenticated RED after its relevant test edit. Skill completion permits test/stub preparation; writing one acceptance file never opens this barrier. Only explicitly stored regression-only: criteria proven unchanged against the claim baseline may use GREEN alone. Test-only writes and mechanically verified behavior-free API stubs may prepare RED; shell and mixed implementation writes share the leaf-wide guard. Close needs the same per-test chronology and later GREEN for every named test. Preserve original RED through compaction; never replay it.
 
     ## Task skills
     After claiming, read the task with `gobby-tasks:get_task` and route its skills by the paths it touches:

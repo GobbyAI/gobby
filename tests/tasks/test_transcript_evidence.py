@@ -735,8 +735,11 @@ async def test_tb_line_red_uses_original_transcript_source_not_later_test_lines(
         symbol="test_original",
         body="def test_original():\n    assert feature() == 1\n",
     )
-    result = evaluate_tdd_evidence((test,), evidence)
+    # Check source provenance at the original cycle's boundary. A subsequent
+    # test edit independently invalidates that RED under the leaf-wide barrier.
+    result = evaluate_tdd_evidence((test,), replace(evidence, edits=evidence.edits[:-1]))
     assert result.passed is expected, result
+    assert evaluate_tdd_evidence((test,), evidence).passed is False
 
 
 @pytest.mark.parametrize(

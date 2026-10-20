@@ -27,7 +27,6 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.utils.python_source import parse_agent_source
 from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
 from gobby.workflows.rust_test_evidence import rust_edit_is_test_writing
-from gobby.workflows.tdd_paths import tdd_path_identity
 
 logger = logging.getLogger(__name__)
 
@@ -122,23 +121,170 @@ def first_tdd_test_path(
 
 
 def tdd_gate_open(variables: Mapping[str, Any], project_path: str | None = None) -> bool:
-    """Return whether a qualifying test write has opened the production-write gate."""
-    root = Path(project_path).resolve() if project_path else None
+    """Agent-writable variables carry observability, never authenticated run proof.
 
-    def identity(path: str) -> str:
-        return tdd_path_identity(path, root, _normalize_condition_path)
+    The engine binds the server-derived implementation in build_condition_helpers.
+    Calls without those server dependencies fail closed.
+    """
+    return False
 
-    written = {
-        identity(path)
-        for path in variables.get("tdd_tests_written", [])
-        if isinstance(path, str) and path
-    }
-    acceptance_paths = {
-        identity(path)
-        for path in variables.get("claimed_task_acceptance_test_paths", [])
-        if isinstance(path, str) and path
-    }
-    return bool(written & acceptance_paths) if acceptance_paths else bool(written)
+
+def tdd_stub_only_write(event_data: Any, tool_input: Any, project_path: str | None = None) -> bool:
+    """Verify every production change is an inert structured API-shape addition."""
+    from gobby.tasks.transcript_tool_arguments import (
+        exact_patch,
+        patch_write_input,
+        python_added_source,
+        python_keyword_stub,
+        python_noop_module,
+    )
+    from gobby.workflows.rust_test_evidence import (
+        _iter_changes,
+        _mask_rust_noncode,
+        _read_absolute_text,
+    )
+
+    if exact_patch(tool_input) is not None:
+        tool_input = patch_write_input(tool_input, project_path)
+        event_data = {}
+    if not isinstance(tool_input, Mapping) or any(
+        key in tool_input for key in ("command", "cmd", "script", "patch", "patch_text")
+    ):
+        return False
+    paths = [
+        path
+        for path in _event_and_tool_paths(event_data, tool_input)
+        if _is_tdd_code_path(path, tool_input)
+    ]
+    if not paths:
+        return False
+    for path in paths:
+        if not Path(path).is_absolute():
+            return False
+        before = _read_absolute_text(path)
+        changes = list(_iter_changes(tool_input, path))
+        if not changes:
+            return False
+        for change in changes:
+            if change.old is not None:
+                if before is None or change.old not in before:
+                    return False
+                after = before.replace(change.old, change.new, -1 if change.replace_all else 1)
+            else:
+                after = change.new
+            original = before or ""
+            if path.endswith(".py"):
+                if not (
+                    python_keyword_stub(original, after) is not None
+                    or python_added_source(original, after) is not None
+                    or (not original.strip() and python_noop_module(after) is not None)
+                ):
+                    return False
+            elif path.endswith(".rs") and after.startswith(original):
+                added = _mask_rust_noncode(after[len(original) :]).strip()
+                if not added or not re.fullmatch(
+                    r"(?:(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+"
+                    r"\s*\([^{};]*\)\s*(?:->\s*[^{};]+)?\{\s*"
+                    r"(?:todo|unimplemented)!\s*\(\s*\)\s*;?\s*\}\s*)+",
+                    added,
+                ):
+                    return False
+            else:
+                return False
+            before = after
+    return True
+
+
+def server_tdd_authorization(
+    task_manager: Any,
+    session_manager: Any,
+    context: Mapping[str, Any],
+    project_path: str | None,
+) -> Any:
+    """Re-read authoritative task criteria and original transcripts for this write.
+
+    No agent-set variable or reusable authorization receipt can open the barrier.
+    Transcript snapshots retain source-bound originals across compaction; each
+    request rechecks the task, exact references, checkout and current edit order.
+    """
+    from gobby.tasks.tdd_write_authorization import (
+        WriteAuthorization,
+        authorize_session_write,
+        task_tdd_obligations,
+    )
+    from gobby.tasks.transcript_evidence_models import TranscriptEvidenceUnavailable
+
+    variables = context.get("variables", {})
+    paths = variables.get("claimed_task_acceptance_test_paths", ())
+    denied = WriteAuthorization(
+        False,
+        tuple(path for path in paths if isinstance(path, str)) or ("unresolved claimed TDD tests",),
+        {},
+    )
+    if task_manager is None or session_manager is None or not project_path:
+        return denied
+    event = context.get("event")
+    metadata = getattr(event, "metadata", {}) or {}
+    session_id = metadata.get("_platform_session_id")
+    if not session_id:
+        return denied
+    session = session_manager.get(session_id)
+    if session is None:
+        return denied
+    claims = variables.get("claimed_tasks", {})
+    from gobby.storage.tasks import LocalTaskManager
+
+    if isinstance(task_manager, LocalTaskManager):
+        claims = {}
+        while batch := task_manager.list_tasks(
+            claimed_by_session_id=session.id, closed=False, limit=50, offset=len(claims)
+        ):
+            claims.update({task.id: f"#{task.seq_num}" for task in batch})
+    if not isinstance(claims, dict) or not claims:
+        return denied
+    missing: list[str] = []
+    reds: dict[str, str] = {}
+    checked = False
+    for task_id in claims:
+        task = task_manager.get_task(task_id)
+        if task is None or getattr(task, "claimed_by_session_id", None) != session.id:
+            return denied
+        criteria = getattr(task, "validation_criteria", None)
+        from gobby.tasks.tdd_evidence import task_requires_tdd
+
+        if not task_requires_tdd(
+            labels=getattr(task, "labels", ()),
+            additional_skills=getattr(task, "additional_skills", ()),
+            validation_criteria=criteria,
+            enforce_tdd=bool(variables.get("enforce_tdd")),
+        ):
+            continue
+        obligations = task_tdd_obligations(str(task.id), criteria)
+        checked = True
+        if not obligations:
+            return denied
+        refs = frozenset({str(task.id), f"#{task.seq_num}"})
+        known_files: set[str] = set()
+        if isinstance(task_manager, LocalTaskManager):
+            from gobby.storage.task_affected_files import TaskAffectedFileManager
+
+            known_files = {
+                item.file_path
+                for item in TaskAffectedFileManager(task_manager.db).get_files(task.id)
+            }
+        try:
+            authorization = authorize_session_write(
+                session,
+                obligations,
+                task_refs=refs,
+                repo_path=project_path,
+                task_edited_files=known_files,
+            )
+        except (OSError, ValueError, TranscriptEvidenceUnavailable):
+            return denied
+        missing.extend(authorization.missing)
+        reds.update(authorization.red_runs)
+    return WriteAuthorization(checked and not missing, tuple(dict.fromkeys(missing)), reds)
 
 
 def touches_claude_memory_path(
@@ -257,7 +403,7 @@ def _is_tdd_code_path(path: str, tool_input: Any = None) -> bool:
     name = normalized.rsplit("/", 1)[-1]
     return (
         any(normalized.casefold().endswith(suffix) for suffix in MONOLITH_SOURCE_EXTENSIONS)
-        and name not in {"__init__.py", "conftest.py"}
+        and name != "conftest.py"
         and not _is_tdd_test_path(normalized, tool_input)
     )
 

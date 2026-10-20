@@ -946,7 +946,7 @@ def test_named_unchanged_test_is_not_refused_for_missing_edit(has_red: bool) -> 
         implementation_paths=("src/feature.py",),
         regression_only=() if has_red else (_test().reference,),
     )
-    assert result.passed is has_red, result.findings
+    assert result.passed, result.findings
     assert not any("no edit of the named test" in finding for finding in result.findings)
     assert result.red_runs == ((_run(2, red=True).command,) if has_red else ())
     assert result.details()["regression_tests"] == ([] if has_red else [_test().reference])
