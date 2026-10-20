@@ -31,6 +31,7 @@ PROCEDURE_ROLES = [
     "code-reviewer",
     "lane-manager",
     "merge-worker",
+    "orchestrator",
     "plan-adversary-old",
     "plan-adversary-taskless-old",
     "planner",
@@ -275,7 +276,10 @@ def test_moved_seat_procedures_are_required_in_every_context_epoch(name: str) ->
         assert reference.split(":", 1)[1] in prompt
         assert "after compaction" in prompt
 
-    assert "name:require-seat-procedure" in definition.workflows.rule_selectors.include
+    includes = definition.workflows.rule_selectors.include
+    assert "name:require-seat-procedure" in includes or (
+        "tag:default" in includes and "default" in raw["tags"]
+    )
     if definition.step_workflow and "required_skills" in definition.step_workflow.variables:
         assert reference in definition.step_workflow.variables["required_skills"]
     variables: dict[str, Any] = {"_seat_procedure": reference, "loaded_skill_references": []}
@@ -301,3 +305,21 @@ def test_moved_seat_procedures_are_required_in_every_context_epoch(name: str) ->
     ]:
         event.data = {"mcp_server": server, "mcp_tool": tool}
         assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
+
+
+@pytest.mark.parametrize("name", ["code-reviewer", "lane-manager"])
+def test_extracted_retest_procedures_keep_author_owned_proof(name: str) -> None:
+    shared = get_bundled_agents_path().parents[1]
+    procedure = shared / f"skills/gobby/references/agents/procedures/{name}.md"
+    content = procedure.read_text()
+
+    for protocol in ("PROOF_REQUEST", "PROOF_RESULT", "UNAVAILABLE"):
+        assert protocol in content, f"{name} must retain the current {protocol} proof contract"
+    assert "author" in content
+    assert "run them in the main checkout" not in content
+    assert "the reviewer has run the retest" not in content
+    if name == "code-reviewer":
+        assert "900" in content and "remaining budget" in content
+        assert "do not run anything" in content
+    else:
+        assert "confirm it with the author before raising found work" in content
