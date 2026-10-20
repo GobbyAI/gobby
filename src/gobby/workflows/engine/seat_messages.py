@@ -45,6 +45,42 @@ class CandidateEvent:
     fields: dict[str, str]
 
 
+class CandidateMessageError(ValueError):
+    """A CANDIDATE envelope cannot safely bind a review unit."""
+
+
+def _candidate_fields(line: str) -> dict[str, str]:
+    tokens = line.split()
+    if tokens[0].startswith("LANE="):
+        tokens.pop(0)
+    fields = {"EVENT": tokens.pop(0).partition("=")[2]}
+    if not tokens or not tokens[0].startswith("TASK="):
+        raise CandidateMessageError("missing TASK")
+    fields["TASK"] = tokens.pop(0).partition("=")[2]
+    if tokens and tokens[0].startswith("TASK_TITLE="):
+        # The free title ends at the first required binding field. NOTE ends
+        # authority even if the title has no binding fields after it.
+        while tokens and not tokens[0].startswith(("RUN=", "WT=", "COMMIT=", "NOTE=")):
+            tokens.pop(0)
+    required = {"EVENT", "TASK", "RUN", "WT", "COMMIT"}
+    for token in tokens:
+        key, separator, value = token.partition("=")
+        if key == "NOTE" and separator:
+            break
+        if not separator or not key:
+            raise CandidateMessageError(f"expected KEY=value token: {token}")
+        if key in required and key in fields:
+            raise CandidateMessageError(f"duplicate {key}")
+        fields[key] = value
+    for key in ("TASK", "RUN", "WT", "COMMIT"):
+        if not fields.get(key):
+            raise CandidateMessageError(f"missing {key}")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", fields["COMMIT"]) is None:
+        raise CandidateMessageError("COMMIT must be 40 hex characters")
+    fields["COMMIT"] = fields["COMMIT"].lower()
+    return fields
+
+
 def result_body(output: Any) -> dict[str, Any]:
     """Unwrap the normalized MCP result, without trusting supplied tool arguments."""
     if not isinstance(output, dict):
@@ -86,28 +122,19 @@ def completion_messages(
 def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateEvent | None:
     """Resolve the task and full SHA from a stored protocol line.
 
-    Only the envelope before TASK_TITLE/NOTE is parsed; prose cannot smuggle an
-    EVENT or a second task/SHA into a transition.
+    CANDIDATE accepts keyed metadata after its optional free title. NOTE never
+    carries authority. Other events retain their fixed envelope boundary.
     """
     line = message.content.partition("\n")[0]
-    prefix = _PREFIX.match(line)
-    if prefix is None:
-        return None
-    fields = {"EVENT": prefix[1], "TASK": prefix[2]}
-    tail = line[prefix.end() :]
-    if prefix[1] == "CANDIDATE" and tail.startswith("TASK_TITLE="):
-        # The canonical lane event has a free title followed by these fixed
-        # fields. Reject ambiguous repeated structure, including in prose;
-        # never choose a COMMIT embedded in the free title or note.
-        if re.findall(r" (RUN|WT|COMMIT)=", tail) != ["RUN", "WT", "COMMIT"]:
-            return None
-        match = re.fullmatch(
-            r"TASK_TITLE=.*? RUN=\S* WT=\S* COMMIT=([0-9a-f]{40})(?: NOTE=.*)?", tail
-        )
-        if match is None:
-            return None
-        fields["COMMIT"] = match[1]
+    is_candidate = re.match(r"^(?:LANE=\S+\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
+    if is_candidate:
+        fields = _candidate_fields(line)
     else:
+        prefix = _PREFIX.match(line)
+        if prefix is None:
+            return None
+        fields = {"EVENT": prefix[1], "TASK": prefix[2]}
+        tail = line[prefix.end() :]
         for token in tail.split(" "):
             key, separator, value = token.partition("=")
             if key in {"TASK_TITLE", "NOTE"}:
@@ -117,10 +144,10 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
             if key in fields:
                 return None
             fields[key] = value
-    if "SHA" in fields and "COMMIT" in fields:
+    if not is_candidate and "SHA" in fields and "COMMIT" in fields:
         return None
     task_ref = fields.get("TASK")
-    sha = fields.get("SHA") or fields.get("COMMIT")
+    sha = fields.get("COMMIT") if is_candidate else fields.get("SHA") or fields.get("COMMIT")
     if not task_ref or not sha or not _SHA.fullmatch(sha):
         return None
     caller = SessionManager(db).get(message.to_session)
@@ -131,6 +158,8 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
         task_id = tasks.resolve_task_reference(task_ref, caller.project_id)
         task = tasks.get_task(task_id)
     except (ValueError, TaskNotFoundError):
+        if is_candidate:
+            raise CandidateMessageError("unknown TASK") from None
         return None
     return CandidateEvent(message, task, sha, fields)
 

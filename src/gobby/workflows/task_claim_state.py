@@ -63,7 +63,11 @@ def resolve_edit_pair(
 ) -> tuple[str, str] | None:
     """Resolve the real target to its innermost authorized project checkout."""
     from gobby.hooks._path_scope import checkout_root
+    from gobby.hooks.checkout_reads import node_origin
     from gobby.utils.project_context import find_project_root, get_project_context
+
+    if node_origin():
+        return _resolve_node_edit_pair(file_path, cwd, project_id=project_id, db=db)
 
     target = Path(file_path).expanduser()
     if not target.is_absolute():
@@ -89,6 +93,43 @@ def resolve_edit_pair(
     if nested is not None and nested != root and nested.is_relative_to(root):
         root = nested
     return str(root), os.path.normpath(str(target.relative_to(root)))
+
+
+def _resolve_node_edit_pair(
+    file_path: str, cwd: str | None, *, project_id: str | None, db: HubDatabase | None
+) -> tuple[str, str] | None:
+    """Attribute node paths without consulting the hub's filesystem."""
+    from gobby.hooks.checkout_reads import (
+        CheckoutReadUnavailable,
+        event_machine_id,
+        path_facts,
+    )
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+    try:
+        fact = path_facts([file_path], cwd=cwd).files[0]
+    except CheckoutReadUnavailable:
+        machine_id = event_machine_id()
+        if db is None or project_id is None or machine_id is None:
+            return None
+        checkout = LocalProjectCheckoutManager(db).get(machine_id, project_id)
+        if checkout is None:
+            return None
+        root = Path(checkout.root_path)
+        target = Path(file_path)
+        if not target.is_absolute():
+            if cwd is None:
+                return None
+            target = Path(cwd) / target
+        target = Path(os.path.normpath(target))
+    else:
+        if fact.kind == "outside" or fact.project_root is None or fact.project_id != project_id:
+            return None
+        root = Path(fact.project_root)
+        target = Path(fact.resolved)
+    if not target.is_relative_to(root):
+        return None
+    return str(root), str(target.relative_to(root))
 
 
 def normalize_task_edited_path(value: object) -> str | None:
