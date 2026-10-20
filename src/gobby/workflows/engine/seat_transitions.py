@@ -11,6 +11,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -19,13 +20,14 @@ from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
     CandidateEvent,
+    CandidateMessageError,
     candidate_event,
     completion_messages,
     is_task_coordinator,
     is_task_reviewer,
 )
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.step_instances import AgentStepInstance
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 
 def _approved(db: HubDatabase, reviewer_session_id: str, task_id: str, sha: str) -> bool:
@@ -152,6 +154,45 @@ def _monitor_message(
     return changes
 
 
+def _candidate_rejection(
+    db: HubDatabase, variables: dict[str, Any], event: CandidateEvent
+) -> str | None:
+    if event.message.id in (variables.get("_seat_consumed_messages") or []):
+        return "message already consumed"
+    if event.message.from_session != event.task.claimed_by_session_id:
+        return "sender does not claim task"
+    same_task = _same_task(db, variables.get("candidate_task"), event)
+    if variables.get("candidate_received") and not same_task:
+        return "another candidate task is active"
+    previous = variables.get("candidate_received_at")
+    if same_task and isinstance(previous, str) and event.message.sent_at.isoformat() <= previous:
+        return "candidate is older than or equal to the active message"
+    return None
+
+
+def candidate_binding_error(
+    db: HubDatabase, session_id: str, message: InterSessionMessage
+) -> str | None:
+    """Explain incoming reviewer intake without changing protected seat state."""
+    if message.to_session != session_id or message.from_session == session_id:
+        return None
+    reason = None
+    try:
+        event = candidate_event(db, message)
+    except CandidateMessageError as exc:
+        event = None
+        reason = str(exc)
+    if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
+        return None
+    instance = AgentStepInstanceManager(db).get_for_session(session_id)
+    if instance is None or not instance.enabled or instance.agent_name != "code-reviewer":
+        return None
+    if reason is None and event is not None:
+        state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
+        reason = _candidate_rejection(db, state, event)
+    return f"CANDIDATE not bound: {reason}" if reason else None
+
+
 def _reviewer_message(
     db: HubDatabase, session_id: str, variables: dict[str, Any], event: CandidateEvent
 ) -> dict[str, Any]:
@@ -162,14 +203,9 @@ def _reviewer_message(
     kind = fields.get("EVENT")
     parked = list(variables.get("parked_candidates") or [])
     if incoming and kind == "CANDIDATE":
-        if event.message.from_session != event.task.claimed_by_session_id:
+        if _candidate_rejection(db, variables, event) is not None:
             return {}
-        if variables.get("candidate_received") and not same_task:
-            return {}  # Queued work cannot replace the active task.
         received_at = event.message.sent_at.isoformat()
-        previous = variables.get("candidate_received_at")
-        if same_task and isinstance(previous, str) and received_at <= previous:
-            return {}
         if same_unit:
             return {"candidate_received_at": received_at}
         return {
@@ -293,7 +329,10 @@ def advance_seat(
     for message in completion_messages(db, session_id, mcp_tool[1], tool_input, tool_output):
         if message.id in consumed:
             continue
-        event = candidate_event(db, message)
+        try:
+            event = candidate_event(db, message)
+        except CandidateMessageError:
+            continue
         changes: dict[str, Any] = {}
         if role == "code-reviewer" and event is not None:
             changes = _reviewer_message(db, session_id, state, event)
@@ -314,7 +353,7 @@ def advance_seat(
             if match and step == "review" and match[1] == "CONSENSUS":
                 changes = {"consensus": True, "consensus_sha": match[2], "bounced": False}
             elif match and step == "stamp" and match[1] == "CONSENSUS_WITHDRAWN":
-                if match[2] == state.get("consensus_sha"):
+                if not state.get("consensus_sha") or match[2] == state.get("consensus_sha"):
                     changes = {"bounced": True, "consensus": False}
         elif role == "developer" and step == "submit" and event is not None:
             if (

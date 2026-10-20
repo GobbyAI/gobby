@@ -429,10 +429,16 @@ def add_messaging_tools(
                     "error": "Only the message sender or recipient may retrieve it.",
                     "error_code": "message_access_denied",
                 }
-            return {
+            from gobby.workflows.engine.seat_transitions import candidate_binding_error
+
+            response = {
                 "success": True,
                 "message": _message_delivery_payload(message),
             }
+            binding_error = candidate_binding_error(db, resolved_caller_id, message)
+            if binding_error:
+                response["candidate_binding_error"] = binding_error
+            return response
 
         except Exception as e:
             logger.error("get_inter_session_message failed: %s", e)
