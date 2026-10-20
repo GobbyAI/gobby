@@ -22,6 +22,7 @@ from gobby.hooks.terminal_context import (
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
@@ -216,7 +217,15 @@ class SessionLookupService:
         sent this hook, such as a resumed CLI, rather than the one that left.
         """
         current = self._backfill_terminal_context(platform_session_id, event, current)
-        self._revive_expired_terminal_session(platform_session_id, event, current)
+        current = self._revive_expired_terminal_session(platform_session_id, event, current)
+        if (
+            current is not None
+            and current.source == "codex"
+            and event.event_type != HookEventType.SESSION_END
+        ):
+            # An in-app resume has no argv thread key. Recheck the saved seat instead
+            # of guessing which TUI belongs to a shared app-server's hook.
+            repair_native_terminal_binding(self._session_manager, current)
 
     def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
         """Validate caller-supplied _platform_session_id without side effects.

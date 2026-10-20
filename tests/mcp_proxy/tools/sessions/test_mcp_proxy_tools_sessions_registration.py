@@ -63,13 +63,13 @@ def _make_registry(
 class TestRegisterSession:
     """Tests for register_session tool."""
 
-    def test_tool_is_registered(self) -> None:
+    async def test_tool_is_registered(self) -> None:
         """register_session tool exists in the registry."""
         session_manager = MagicMock()
         registry = _make_registry(session_manager=session_manager)
         assert registry.get_tool("register_session") is not None
 
-    def test_basic_registration(self) -> None:
+    async def test_basic_registration(self) -> None:
         """Registers a session and returns expected fields."""
         session_manager = MagicMock()
         mock_session = MagicMock()
@@ -86,7 +86,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(
+        result = await register(
             external_id="ext-abc",
             source="agent-sdk",
             machine_id="21000000-0000-4000-8000-000000000001",
@@ -112,7 +112,7 @@ class TestRegisterSession:
             sandbox_enabled=None,
         )
 
-    def test_idempotent_returns_existing(self) -> None:
+    async def test_idempotent_returns_existing(self) -> None:
         """Calling twice with same identity returns same session."""
         session_manager = MagicMock()
         mock_session = MagicMock()
@@ -128,13 +128,13 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        r1 = register(
+        r1 = await register(
             external_id="ext-1",
             source="claude",
             machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
         )
-        r2 = register(
+        r2 = await register(
             external_id="ext-1",
             source="claude",
             machine_id="21000000-0000-4000-8000-000000000005",
@@ -144,7 +144,7 @@ class TestRegisterSession:
         assert r1["session_id"] == r2["session_id"]
         assert session_manager.register.call_count == 2
 
-    def test_uuid_ingress_reuses_persisted_machine_neutral_registration(
+    async def test_uuid_ingress_reuses_persisted_machine_neutral_registration(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
@@ -169,7 +169,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(
+        result = await register(
             external_id=external_id,
             source="agent-sdk",
             machine_id=machine_id,
@@ -197,7 +197,7 @@ class TestRegisterSession:
         "gobby.utils.project_context.get_project_context",
         return_value={"id": "auto-proj"},
     )
-    def test_auto_resolves_machine_and_project(
+    async def test_auto_resolves_machine_and_project(
         self, mock_project_ctx: MagicMock, mock_machine_id: MagicMock
     ) -> None:
         """Auto-resolves machine_id and project_id when omitted."""
@@ -215,7 +215,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(external_id="ext-auto", source="agent-sdk")
+        result = await register(external_id="ext-auto", source="agent-sdk")
 
         assert result["session_id"] == "uuid-auto"
         session_manager.register.assert_called_once_with(
@@ -232,7 +232,7 @@ class TestRegisterSession:
         )
 
     @patch("gobby.utils.machine_id.get_machine_id", return_value=None)
-    def test_machine_id_can_remain_unattributed(self, mock_machine_id: MagicMock) -> None:
+    async def test_machine_id_can_remain_unattributed(self, mock_machine_id: MagicMock) -> None:
         session_manager = MagicMock()
         session_manager.register.return_value = MagicMock(
             id="uuid-unattributed",
@@ -246,7 +246,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(
+        result = await register(
             external_id="ext-1",
             source="claude",
             project_id="11111111-1111-4111-8111-111111110001",
@@ -259,7 +259,7 @@ class TestRegisterSession:
         "gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000005"
     )
     @patch("gobby.utils.project_context.get_project_context", return_value=None)
-    def test_error_when_project_id_unresolvable(
+    async def test_error_when_project_id_unresolvable(
         self, mock_project_ctx: MagicMock, mock_machine_id: MagicMock
     ) -> None:
         """Returns error when project_id can't be resolved."""
@@ -268,11 +268,11 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(external_id="ext-1", source="claude")
+        result = await register(external_id="ext-1", source="claude")
         assert "error" in result
         assert "project_id" in result["error"]
 
-    def test_passes_optional_fields(self) -> None:
+    async def test_passes_optional_fields(self) -> None:
         """Optional fields are forwarded to session_manager.register()."""
         session_manager = MagicMock()
         mock_session = MagicMock()
@@ -288,7 +288,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        register(
+        await register(
             external_id="ext-opt",
             source="codex",
             machine_id="21000000-0000-4000-8000-000000000005",
@@ -312,14 +312,14 @@ class TestRegisterSession:
             sandbox_enabled=None,
         )
 
-    def test_register_session_not_registered_when_session_manager_is_none(self) -> None:
+    async def test_register_session_not_registered_when_session_manager_is_none(self) -> None:
         """register_session is omitted when session_manager is None."""
         registry = _make_registry(session_manager=None)
         register = registry.get_tool("register_session")
         # Tool won't be registered if session_manager is None (factory guard)
         assert register is None
 
-    def test_register_exception_returns_error(self) -> None:
+    async def test_register_exception_returns_error(self) -> None:
         """Returns error dict on storage exception."""
         session_manager = MagicMock()
         session_manager.register.side_effect = RuntimeError("DB locked")
@@ -328,7 +328,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(
+        result = await register(
             external_id="ext-1",
             source="claude",
             machine_id="21000000-0000-4000-8000-000000000005",
@@ -338,7 +338,7 @@ class TestRegisterSession:
         assert "error" in result
         assert "DB locked" in result["error"]
 
-    def test_unknown_machine_returns_actionable_stable_error(self) -> None:
+    async def test_unknown_machine_returns_actionable_stable_error(self) -> None:
         session_manager = MagicMock()
         session_manager.register.side_effect = MachineNotRegisteredError(
             "Machine renamed-machine is not registered; run authenticated enrollment first"
@@ -348,7 +348,7 @@ class TestRegisterSession:
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(
+        result = await register(
             external_id="ext-unknown-machine",
             source="claude",
             machine_id="21000000-0000-4000-8000-000000000099",
@@ -362,7 +362,7 @@ class TestRegisterSession:
             "error_code": "machine_not_registered",
         }
 
-    def test_ambient_matching_identity_reactivates_and_rereads_same_row(self) -> None:
+    async def test_ambient_matching_identity_reactivates_and_rereads_same_row(self) -> None:
         session_manager = MagicMock()
         ambient = MagicMock(
             id="uuid-ambient",
@@ -388,7 +388,7 @@ class TestRegisterSession:
         assert register is not None
 
         with session_context_for_test("#42"):
-            result = register(
+            result = await register(
                 external_id="provider-stable-id",
                 source="codex",
                 machine_id="21000000-0000-4000-8000-000000000001",
@@ -403,7 +403,7 @@ class TestRegisterSession:
         )
         session_manager.update_status_from_activity.assert_not_called()
 
-    def test_ambient_conflicting_external_id_returns_identity_mismatch(self) -> None:
+    async def test_ambient_conflicting_external_id_returns_identity_mismatch(self) -> None:
         session_manager = MagicMock()
         ambient = MagicMock(
             id="uuid-ambient",
@@ -419,7 +419,7 @@ class TestRegisterSession:
         assert register is not None
 
         with session_context_for_test("#42"):
-            result = register(
+            result = await register(
                 external_id="conflicting-observed-id",
                 source="codex",
                 machine_id="21000000-0000-4000-8000-000000000001",
@@ -432,14 +432,14 @@ class TestRegisterSession:
         session_manager.update_status_from_activity.assert_not_called()
         session_manager.register.assert_not_called()
 
-    def test_ambient_resolver_failure_returns_not_found(self) -> None:
+    async def test_ambient_resolver_failure_returns_not_found(self) -> None:
         session_manager = MagicMock()
         session_manager.resolve_session_reference.side_effect = ValueError("unknown session")
         register = _make_registry(session_manager=session_manager).get_tool("register_session")
         assert register is not None
 
         with session_context_for_test("#42"):
-            result = register(
+            result = await register(
                 external_id="provider-id",
                 source="codex",
                 machine_id="21000000-0000-4000-8000-000000000001",

@@ -38,7 +38,7 @@ from gobby.storage.terminal_settlement import (
 from gobby.storage.terminal_settlement import (
     UnresolvedWriteCapacityError as UnresolvedWriteCapacityError,
 )
-from gobby.terminal_ownership import recorded_process_is_alive
+from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES, recorded_process_is_alive
 from gobby.utils.datetime import normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
@@ -698,7 +698,7 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
 
         Agent terminals are bound at spawn. Only a ``terminal`` session of the
         row's project binds, and a row bound to another session rebinds only
-        once that session is no longer active or paused or its recorded CLI
+        once that session is no longer live or its recorded CLI
         process is gone, so a nested CLI never takes its parent's pane. The
         terminal id comes from the pane environment, so a malformed one refuses.
         """
@@ -716,7 +716,7 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
         previous_session_id = None
         if previous is not None:
             holder = Session.from_row(previous)
-            if holder.status in ("active", "paused") and recorded_process_is_alive(holder):
+            if holder.status in TERMINAL_OWNER_STATUSES and recorded_process_is_alive(holder):
                 return None
             previous_session_id = holder.id
         row = self.db.fetchone(

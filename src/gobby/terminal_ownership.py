@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -164,7 +165,8 @@ def _recorded_create_time(session: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
-        return float(value)
+        create_time = float(value)
+        return create_time if math.isfinite(create_time) and create_time > 0 else None
     except (TypeError, ValueError):
         return None
 
