@@ -19,7 +19,7 @@ struct CachedState {
     last_preflight: Option<(String, Instant)>,
 }
 
-/// One process's identity and caches. No state lock spans HTTP or preflight I/O.
+/// One process's identity and caches. Identity locks never span HTTP or preflight I/O.
 pub struct Dialer {
     cwd: PathBuf,
     environment_session: Option<String>,
@@ -27,6 +27,7 @@ pub struct Dialer {
     has_tmux_pane: bool,
     agent: ureq::Agent,
     state: Mutex<CachedState>,
+    tool_timeouts: Mutex<Option<BTreeMap<String, Duration>>>,
 }
 
 pub struct RequestOptions<'a> {
@@ -64,6 +65,7 @@ impl Dialer {
                 .get("tmux_pane")
                 .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())),
             agent: ureq::AgentBuilder::new().redirects(0).build(),
+            tool_timeouts: Mutex::new(None),
             state: Mutex::new(CachedState {
                 auth: auth_headers()?,
                 caller_project: caller_project(cwd),
@@ -75,6 +77,37 @@ impl Dialer {
     /// The directory the dialer was created in.
     pub fn cwd(&self) -> &Path {
         &self.cwd
+    }
+
+    /// Capture the daemon's active tool budgets once, without locking target I/O.
+    pub(crate) fn tool_timeout(&self, tool: &str) -> Option<Duration> {
+        let mut cached = self.tool_timeouts.lock().ok()?;
+        if cached.is_none() {
+            let answer = self.request(
+                "GET",
+                "/api/mcp/bridge/tool-timeouts",
+                None,
+                RequestOptions {
+                    timeout: Duration::from_secs(2),
+                    ..RequestOptions::default()
+                },
+            );
+            if answer["success"] != true {
+                return None;
+            }
+            let inventory = answer["tool_timeouts"].as_object()?;
+            *cached = Some(
+                inventory
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        let seconds = value.as_f64().or_else(|| value.as_str()?.parse().ok())?;
+                        let duration = Duration::try_from_secs_f64(seconds).ok()?;
+                        Some((name.clone(), duration))
+                    })
+                    .collect(),
+            );
+        }
+        cached.as_ref()?.get(tool).copied()
     }
 
     /// The caller's project: the cached id, or the one `.gobby/project.json` names under the cwd.

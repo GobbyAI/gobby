@@ -1,14 +1,38 @@
 """Keep the native wrapper's embedded contract equal to its Python peer."""
 
 import json
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from gobby.mcp_proxy import wait_tools
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
 from gobby.prompts.sync import get_bundled_prompts_path
 from gobby.utils.local_token import _AGENT_IDENTITY_ENV_HEADERS
 
 CRATE_DIR = Path(__file__).resolve().parents[2] / "crates/gmcp"
+
+CALL_TOOL_CASES: list[dict[str, Any]] = json.loads(
+    (CRATE_DIR / "contracts/call_tool_wrapper_cases.v1.json").read_text()
+)["cases"]
+
+
+@pytest.mark.parametrize("case", CALL_TOOL_CASES, ids=[case["name"] for case in CALL_TOOL_CASES])
+def test_call_tool_cases_match_python_canonicalizer(case: dict[str, Any]) -> None:
+    fields = {"server_name": None, "tool_name": None, **case["input"]}
+    fields.pop("preflight_enabled", None)
+    if "error" in case:
+        with pytest.raises(CallToolWrapperInputError) as exc:
+            canonicalize_call_tool_wrapper(**fields)
+        assert str(exc.value) == case["error"]
+    else:
+        assert asdict(canonicalize_call_tool_wrapper(**fields)) == case["output"]
 
 
 def test_instructions_copy_matches_bundled_prompt() -> None:
