@@ -23,6 +23,7 @@ from gobby.servers.routes.sessions.lifecycle import (
     register_lifecycle_routes,
 )
 from gobby.servers.routes.sessions.messages import register_message_routes
+from gobby.servers.routes.sessions.terminal_binding import register_terminal_binding_routes
 from gobby.servers.routes.sessions.variables import register_session_variable_routes
 
 if TYPE_CHECKING:
@@ -78,5 +79,6 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
     register_changes_routes(router, server)
     register_acp_routes(router, server, _get_session_manager)
     register_dirty_path_routes(router, server)
+    register_terminal_binding_routes(router, server)
 
     return router

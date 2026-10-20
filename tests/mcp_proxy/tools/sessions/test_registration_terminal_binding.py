@@ -7,15 +7,21 @@ import os
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from gobby import terminal_ownership
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_lookup import SessionLookupService
 from gobby.hooks.session_types import HookSessionManager
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.servers.auth_service import AuthService
+from gobby.servers.routes.sessions import create_sessions_router
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -66,6 +72,7 @@ async def test_register_repairs_existing_unbound_native_pane(
     sample_project: dict[str, Any],
     missing_identity: bool,
     refusal: str | None,
+    tmp_path: Path,
 ) -> None:
     manager = SessionManager(temp_db)
     terminals = TerminalManager(temp_db)
@@ -162,13 +169,21 @@ async def test_register_repairs_existing_unbound_native_pane(
         patch.object(os, "getpgid", return_value=8004 if refusal == "background" else 8001),
         patch("gobby.terminal_ownership.foreground_process_group", return_value=8001),
     ):
-        result = await register(
-            external_id=session.external_id,
-            source="codex",
-            machine_id=LOCAL_MACHINE_ID,
-            project_id=sample_project["id"],
-            native_terminal_id=terminal_id if missing_identity and not refusal else None,
-        )
+        if missing_identity and not refusal:
+            client = _operator_client(manager, tmp_path)
+            response = client.post(
+                f"/api/sessions/{session.id}/native-terminal-binding",
+                json={"terminal_id": terminal_id},
+            )
+            assert response.status_code == 200, response.text
+            result = response.json()
+        else:
+            result = await register(
+                external_id=session.external_id,
+                source="codex",
+                machine_id=LOCAL_MACHINE_ID,
+                project_id=sample_project["id"],
+            )
         if refusal:
             assert result["terminal_binding"]["status"] == "unbound"
             assert result["terminal_binding"]["reason"]
@@ -220,11 +235,28 @@ async def test_register_repairs_existing_unbound_native_pane(
         patch("gobby.terminal_ownership.foreground_process_group", return_value=8001),
     ):
         lookup.apply_session_mutations(event, session.id)
+        first_hook_binding = terminals.get(terminal_id)
+        assert first_hook_binding is not None
+        with (
+            patch.object(TerminalManager, "bind_session", wraps=terminals.bind_session) as bind,
+            patch.object(TerminalManager, "list_live_by_machine") as scan,
+            patch(
+                "gobby.terminal_ownership.inspect_foreground_ownership",
+                wraps=terminal_ownership.inspect_foreground_ownership,
+            ) as inspect,
+        ):
+            lookup.apply_session_mutations(event, session.id)
+        bind.assert_not_called()
+        scan.assert_not_called()
+        assert inspect.call_count == 1
+        second_hook_binding = terminals.get(terminal_id)
+        assert second_hook_binding is not None
+        assert second_hook_binding.updated_at == first_hook_binding.updated_at
     rebound = terminals.get(terminal_id)
     assert rebound is not None and rebound.session_id == session.id
 
 
-async def test_terminal_selector_requires_operator_authentication() -> None:
+async def test_mcp_without_managed_principal_cannot_select_terminal() -> None:
     manager = MagicMock()
     manager.resolve_session_reference.return_value = "current-session"
     manager.get.return_value = MagicMock(
@@ -238,53 +270,127 @@ async def test_terminal_selector_requires_operator_authentication() -> None:
         "register_session"
     )
     assert register is not None
-
-    async def unauthenticated() -> Literal[False]:
-        return False
-
-    token = set_request_principal(unauthenticated)
-    try:
-        with session_context_for_test("current-session"):
-            result = await register(
+    # The autouse principal returns None, as front-door agent callers do.
+    with session_context_for_test("current-session"):
+        with pytest.raises(TypeError, match="native_terminal_id"):
+            await register(
                 external_id="old-thread",
                 source="codex",
                 machine_id=LOCAL_MACHINE_ID,
                 project_id="test-project",
                 native_terminal_id=str(uuid.uuid4()),
             )
-        assert result["error_code"] == "operator_auth_required"
-        manager.register.assert_not_called()
-    finally:
-        reset_request_principal(token)
+    manager.register.assert_not_called()
+
+
+def _operator_client(manager: SessionManager, tmp_path: Path) -> TestClient:
+    key_file = tmp_path / "break_glass"
+    key_file.touch(mode=0o600)
+    key_file.write_text("test-recovery-value")
+    server = MagicMock()
+    server.session_manager = manager
+    server.auth_service = AuthService(lambda: manager.db, break_glass_file=key_file)
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    app = FastAPI()
+    app.include_router(create_sessions_router(server))
+    return TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"X-Gobby-Break-Glass": "test-recovery-value"},
+    )
+
+
+@pytest.mark.parametrize("holder_status", ["active", "awaiting_handoff", "expired"])
+def test_manual_binding_respects_identityless_current_holder(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    holder_status: str,
+) -> None:
+    manager = SessionManager(temp_db)
+    terminals = TerminalManager(temp_db)
+    holder = manager.register(
+        external_id="holder",
+        source="codex",
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=sample_project["id"],
+        terminal_context={},
+    )
+    caller = manager.register(
+        external_id="caller",
+        source="codex",
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=sample_project["id"],
+        terminal_context={},
+    )
+    pane = terminals.create_pending(
+        terminal_id=str(uuid.uuid4()),
+        project_id=sample_project["id"],
+        machine_id=LOCAL_MACHINE_ID,
+        backend="native",
+        ownership="gobby",
+        spawn_key="holder-pane",
+    )
+    terminals.promote_to_live(
+        pane.id,
+        locator={"host_terminal_id": "held"},
+        locator_key="native:current:held",
+        host_epoch="current",
+    )
+    temp_db.execute(
+        "UPDATE terminals SET process=%s::jsonb WHERE id=%s",
+        ('{"pgid": 8000, "start_time": 100.0}', pane.id),
+    )
+    assert terminals.bind_session(pane.id, holder.id, sample_project["id"]) is not None
+    manager.update_status(holder.id, holder_status)
+    shell = MagicMock(pid=8000)
+    shell.create_time.return_value = 100.0
+    shell.terminal.return_value = "/dev/ttys-test"
+    seat = MagicMock(pid=8001)
+    seat.name.return_value = "codex"
+    seat.cmdline.return_value = ["codex"]
+    seat.create_time.return_value = 110.0
+    seat.parents.return_value = [shell]
+    seat.terminal.return_value = "/dev/ttys-test"
+    seat.environ.return_value = {"GOBBY_TERMINAL_ID": pane.id}
+    client = _operator_client(manager, tmp_path)
+    with (
+        patch("psutil.Process", side_effect=lambda pid: {8000: shell, 8001: seat}[pid]),
+        patch.object(os, "getpgid", return_value=8001),
+        patch("gobby.terminal_ownership.foreground_process_group", return_value=8001),
+    ):
+        response = client.post(
+            f"/api/sessions/{caller.id}/native-terminal-binding",
+            json={"terminal_id": pane.id},
+        )
+    assert response.status_code == 200, response.text
+    expected = "bound" if holder_status == "expired" else "unbound"
+    assert response.json()["terminal_binding"]["status"] == expected
+    attached = terminals.get(pane.id)
+    assert attached is not None
+    assert attached.session_id == (caller.id if holder_status == "expired" else holder.id)
 
 
 @pytest.mark.parametrize(
-    "source,external_id", [("grok", "old-thread"), ("codex", "another-thread")]
+    "credentials",
+    [
+        {},
+        {"Cookie": "gobby_session=agent-cookie"},
+        {"Authorization": "Bearer agent-token"},
+        {"X-Gobby-Break-Glass": "wrong"},
+    ],
 )
-async def test_operator_terminal_selector_cannot_change_caller_identity(
-    source: str,
-    external_id: str,
+def test_manual_binding_refuses_nonoperator_credentials(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    credentials: dict[str, str],
 ) -> None:
-    manager = MagicMock()
-    manager.resolve_session_reference.return_value = "current-session"
-    manager.get.return_value = MagicMock(
-        id="current-session",
-        source="codex",
-        external_id="old-thread",
-        machine_id=LOCAL_MACHINE_ID,
-        project_id="test-project",
+    client = _operator_client(SessionManager(temp_db), tmp_path)
+    client.headers.clear()
+    response = client.post(
+        f"/api/sessions/{uuid.uuid4()}/native-terminal-binding",
+        json={"terminal_id": str(uuid.uuid4())},
+        headers=credentials,
     )
-    register = create_session_messages_registry(session_manager=manager).get_tool(
-        "register_session"
-    )
-    assert register is not None
-    with session_context_for_test("current-session"):
-        result = await register(
-            external_id=external_id,
-            source=source,
-            machine_id=LOCAL_MACHINE_ID,
-            project_id="test-project",
-            native_terminal_id=str(uuid.uuid4()),
-        )
-    assert result["error_code"] == "identity_mismatch"
-    manager.register.assert_not_called()
+    assert response.status_code == 403
+    assert "operator" in response.json()["detail"].lower()

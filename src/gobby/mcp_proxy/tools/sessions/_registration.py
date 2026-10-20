@@ -52,7 +52,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
         parent_session_id: str | None = None,
         agent_depth: int = 0,
         sandbox_enabled: bool | None = None,
-        native_terminal_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Register a session for a hookless client.
@@ -67,15 +66,13 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             parent_session_id: Parent session ID for handoff chains
             agent_depth: Depth in agent hierarchy (0 = root session)
             sandbox_enabled: Whether the session runtime was launched sandboxed
-            native_terminal_id: Operator-only native pane selector. The daemon verifies its
-                foreground CLI and shell generation; clients cannot supply process identity.
 
         Returns:
             Session details including session_id, session_ref (<project>#N), and status
         """
         from gobby.utils.machine_id import get_machine_id
         from gobby.utils.project_context import get_project_context
-        from gobby.utils.session_context import get_current_session_id, get_request_principal
+        from gobby.utils.session_context import get_current_session_id
 
         if session_manager is None:
             return {"error": "Session manager not available"}
@@ -130,30 +127,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                         "canonical_external_id": ambient_session.external_id,
                         "observed_external_id": external_id,
                     }
-        if native_terminal_id is not None:
-            try:
-                principal = await get_request_principal()
-            except LookupError:
-                return {
-                    "error": "Terminal selection requires operator authentication.",
-                    "error_code": "operator_auth_required",
-                }
-            if principal is not None:
-                return {
-                    "error": "Terminal selection requires operator authentication.",
-                    "error_code": "operator_auth_required",
-                }
-            if (
-                ambient_session is None
-                or ambient_session.source != source
-                or ambient_session.external_id != external_id
-                or ambient_session.project_id != resolved_project_id
-                or ambient_session.machine_id != resolved_machine_id
-            ):
-                return {
-                    "error": "Terminal repair must target the current MCP session.",
-                    "error_code": "identity_mismatch",
-                }
         try:
             session = await asyncio.to_thread(
                 session_manager.register,
@@ -184,7 +157,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                             repair_native_terminal_binding,
                             session_manager,
                             session,
-                            selected_terminal_id=native_terminal_id,
                         )
                     )
                     if ambient_session is not None and ambient_session.id == session.id

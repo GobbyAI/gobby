@@ -36,23 +36,12 @@ class TerminalBindingResult:
     terminal_id: str | None = None
 
 
-def _native_seat_context(session: Session, terminal: Terminal) -> dict[str, Any] | None:
+def _native_seat_context(
+    session: Session, terminal: Terminal, process: psutil.Process
+) -> dict[str, Any] | None:
     """Verify the CLI, shell generation, foreground group and native environment."""
-    inspection = terminal_ownership.inspect_foreground_ownership(
-        session,
-        process_factory=psutil.Process,
-        process_group_factory=os.getpgid,
-        foreground_group_factory=terminal_ownership.foreground_process_group,
-    )
-    if inspection.state != terminal_ownership.OwnershipState.OWNED:
-        return None
     context = session.terminal_context or {}
-    pid = context.get("parent_pid")
-    if isinstance(pid, bool) or not isinstance(pid, int):
-        return None
-    process = psutil.Process(pid)
-    if process.name() != session.source or "app-server" in process.cmdline():
-        return None
+    pid = process.pid
     environment = process.environ()
     if environment.get("TMUX_PANE") or environment.get("GOBBY_TERMINAL_ID") != terminal.id:
         return None
@@ -106,6 +95,7 @@ def repair_native_terminal_binding(
     terminals = TerminalManager(manager.db)
     try:
         verified_session = session
+        selected: Terminal | None = None
         if selected_terminal_id is not None:
             # This selector is authorized by the operator-authenticated adapter.
             # The daemon, never the caller, supplies the actual process identity.
@@ -133,17 +123,54 @@ def repair_native_terminal_binding(
                     "parent_create_time": foreground.create_time(),
                 },
             )
-        candidates: list[tuple[Terminal, dict[str, Any]]] = []
-        for row in terminals.list_live_by_machine(session.machine_id):
+        # Inspect the CLI once, rather than once per terminal in the scan.
+        inspection = terminal_ownership.inspect_foreground_ownership(
+            verified_session,
+            process_factory=psutil.Process,
+            process_group_factory=os.getpgid,
+            foreground_group_factory=terminal_ownership.foreground_process_group,
+        )
+        if inspection.state != terminal_ownership.OwnershipState.OWNED:
+            return refused
+        process = psutil.Process((verified_session.terminal_context or {})["parent_pid"])
+        observed_name = process.name()
+        if observed_name != session.source or "app-server" in process.cmdline():
+            return TerminalBindingResult(
+                "unbound", f"Expected foreground {session.source} CLI; observed {observed_name!r}."
+            )
+
+        def eligible(row: Terminal) -> bool:
+            return (
+                row.state == "live"
+                and row.backend == "native"
+                and row.machine_id == session.machine_id
+                and row.project_id == session.project_id
+                and row.agent_run_id is None
+                and bool(row.host_epoch)
+            )
+
+        bound_id = context.get("gobby_terminal_id")
+        if selected_terminal_id is None and isinstance(bound_id, str):
+            bound = terminals.get(bound_id)
             if (
-                row.backend != "native"
-                or row.project_id != session.project_id
-                or row.agent_run_id is not None
-                or not row.host_epoch
-                or (selected_terminal_id is not None and row.id != selected_terminal_id)
+                bound is not None
+                and eligible(bound)
+                and bound.session_id == session.id
+                and context.get("gobby_host_epoch") == bound.host_epoch
+                and _native_seat_context(session, bound, process) is not None
             ):
+                # Ordinary hooks verify the saved seat without locks, scans or writes.
+                return TerminalBindingResult("bound", "Existing native binding verified.", bound.id)
+        candidates: list[tuple[Terminal, dict[str, Any]]] = []
+        rows = (
+            [selected]
+            if selected is not None
+            else terminals.list_live_by_machine(session.machine_id)
+        )
+        for row in rows:
+            if not eligible(row):
                 continue
-            verified = _native_seat_context(verified_session, row)
+            verified = _native_seat_context(verified_session, row, process)
             if verified is not None:
                 candidates.append((row, verified))
         if len(candidates) != 1:
@@ -166,6 +193,16 @@ def repair_native_terminal_binding(
             ):
                 return refused
             conn.execute("SELECT id FROM terminals WHERE id = %s FOR UPDATE", (terminal.id,))
+            if selected_terminal_id is not None:
+                holder = conn.execute(
+                    "SELECT s.status FROM sessions s JOIN terminals t ON t.session_id=s.id "
+                    "WHERE t.id=%s AND s.id<>%s FOR UPDATE OF s",
+                    (terminal.id, session.id),
+                ).fetchone()
+                if holder is not None and holder["status"] != "expired":
+                    return TerminalBindingResult(
+                        "unbound", "Operator attachment refuses another non-expired holder."
+                    )
             competitors = conn.execute(
                 """
                 SELECT terminal_context->>'parent_create_time' AS create_time
@@ -195,13 +232,20 @@ def repair_native_terminal_binding(
                         "unbound", "Multiple live sessions claim the CLI process."
                     )
             current_terminal = terminals.get(terminal.id)
+            current_inspection = terminal_ownership.inspect_foreground_ownership(
+                verified_session,
+                process_factory=psutil.Process,
+                process_group_factory=os.getpgid,
+                foreground_group_factory=terminal_ownership.foreground_process_group,
+            )
             if (
                 current_terminal is None
                 or current_terminal.state != "live"
                 or current_terminal.machine_id != session.machine_id
                 or current_terminal.project_id != session.project_id
                 or current_terminal.host_epoch != terminal.host_epoch
-                or _native_seat_context(verified_session, current_terminal) != verified
+                or current_inspection.state != terminal_ownership.OwnershipState.OWNED
+                or _native_seat_context(verified_session, current_terminal, process) != verified
             ):
                 return refused
             if terminals.bind_session(terminal.id, session.id, session.project_id) is None:
