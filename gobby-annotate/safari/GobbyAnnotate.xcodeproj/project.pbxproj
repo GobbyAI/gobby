@@ -445,6 +445,13 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../packages/extension/dist/safari/content.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/background.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/manifest.json",
+				"$(SRCROOT)/../packages/extension/dist/safari/LICENSE",
+				"$(SRCROOT)/../packages/extension/dist/safari/THIRD_PARTY_NOTICES.txt",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo.png",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo-light.png",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -464,6 +471,13 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../packages/extension/dist/safari/content.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/background.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/manifest.json",
+				"$(SRCROOT)/../packages/extension/dist/safari/LICENSE",
+				"$(SRCROOT)/../packages/extension/dist/safari/THIRD_PARTY_NOTICES.txt",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo.png",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo-light.png",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
