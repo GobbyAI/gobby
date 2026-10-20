@@ -15,7 +15,13 @@ rules:
       and not variables.get('context_compact_handoff_unavailable')
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
-        and event.data.get('mcp_tool') in ('set_handoff', 'feedback', 'get_handoff')
+        and event.data.get('mcp_tool') in (
+          'set_handoff', 'feedback', 'get_handoff', 'capture_output', 'release_composer'
+        )
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-results'
+        and event.data.get('mcp_tool') == 'get_tool_result'
       )
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
@@ -93,7 +99,9 @@ rules:
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
         and (
-          event.data.get('mcp_tool') in ('feedback', 'get_handoff')
+          event.data.get('mcp_tool') in (
+            'feedback', 'get_handoff', 'capture_output', 'release_composer'
+          )
           or (
             event.data.get('mcp_tool') == 'set_handoff'
             and not (
@@ -109,6 +117,10 @@ rules:
             )
           )
         )
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-results'
+        and event.data.get('mcp_tool') == 'get_tool_result'
       )
       and not (
         event.data.get('mcp_server') == 'gobby-tasks'
@@ -142,8 +154,9 @@ rules:
           == 'compact_unconfirmed' else
           'Terminal handoff delivery failed after set_handoff returned. Retry
           gobby-sessions:set_handoff. Task close and its review wait remain open. Instruction reads,
-          memory review, feedback, schema discovery, and coordination messages
-          also remain open.' }}
+          memory review and its stored results, feedback, schema discovery, coordination messages,
+          and composer inspection/release for helper recovery also remain open.
+          Confirm the helper composer is empty before release_composer; self-release stays forbidden.' }}
 
   clear-handoff-gate-on-context-loss:
     description: "Release the staged compact gate once the compaction boundary lands"

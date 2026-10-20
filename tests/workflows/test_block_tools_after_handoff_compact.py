@@ -648,7 +648,38 @@ HANDOFF_PREREQUISITE_EVENTS = [
 ]
 
 
-@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS)
+HANDOFF_RECOVERY_EVENTS = [
+    pytest.param(
+        {"mcp_server": "gobby-sessions", "mcp_tool": "capture_output"},
+        id="inspect-helper-composer",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-sessions", "mcp_tool": "release_composer"},
+        id="release-helper-composer",
+    ),
+    pytest.param(
+        {"mcp_server": "gobby-results", "mcp_tool": "get_tool_result"},
+        id="read-offloaded-memory-review",
+    ),
+]
+
+
+@pytest.mark.parametrize("tool_event", HANDOFF_RECOVERY_EVENTS)
+@pytest.mark.asyncio
+async def test_staged_handoff_still_blocks_recovery_tools(
+    handler: WorkflowHookHandler, tool_event: dict[str, str]
+) -> None:
+    await handler._evaluate_rules(_set_handoff_event({"success": True, "result": STAGED_RESULT}))
+
+    response = await handler._evaluate_rules(
+        _arbitrary_tool_event(mcp_server=tool_event["mcp_server"], mcp_tool=tool_event["mcp_tool"])
+    )
+
+    assert response.decision == "block"
+    assert BLOCK_REASON in (response.reason or "")
+
+
+@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS + HANDOFF_RECOVERY_EVENTS)
 @pytest.mark.asyncio
 async def test_context_limit_allows_handoff_prerequisite_tools(
     handler: WorkflowHookHandler,
@@ -670,12 +701,15 @@ async def test_context_limit_allows_handoff_prerequisite_tools(
     assert allowed.decision == "allow"
 
 
-@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS)
+@pytest.mark.parametrize("tool_event", HANDOFF_PREREQUISITE_EVENTS + HANDOFF_RECOVERY_EVENTS)
+@pytest.mark.parametrize("at_context_limit", [False, True])
 @pytest.mark.asyncio
 async def test_armed_retry_gate_allows_handoff_prerequisites(
     handler: WorkflowHookHandler,
     temp_db: HubDatabase,
+    session_manager: Any,
     tool_event: dict[str, str],
+    at_context_limit: bool,
 ) -> None:
     """The armed retry gate must leave a legal move, not just a named one.
 
@@ -685,6 +719,11 @@ async def test_armed_retry_gate_allows_handoff_prerequisites(
     Permitting only `set_handoff` made those demands unsatisfiable and left the
     session with nothing it could legally call.
     """
+    if at_context_limit:
+        session_manager.session.context_window = 1_000_000
+        session_manager.session.context_used_tokens = 300_000
+        await handler._evaluate_rules(_arbitrary_after_tool_event())
+
     SessionVariableManager(temp_db).merge_variables(
         SESSION_ID,
         {
