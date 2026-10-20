@@ -134,6 +134,7 @@ def evaluate_tdd_evidence(
     renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
     task_category: str | None = None,
     implementation_paths: Iterable[str] | None = None,
+    regression_only: Iterable[str] | None = None,
 ) -> TddEvidenceResult:
     """Require a cycle for changed tests and later coverage of every named test.
 
@@ -143,6 +144,7 @@ def evaluate_tdd_evidence(
     Unchanged detection is file-granular: every named test in an edited file is
     treated as changed. Regression listings accompany a genuine task-level cycle.
     """
+    del regression_only
     if not tests:
         return TddEvidenceResult(
             False, False, ("TDD is required but no named test reference resolved.",)

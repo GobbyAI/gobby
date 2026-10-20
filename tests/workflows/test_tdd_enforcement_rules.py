@@ -7,8 +7,10 @@ sync correctly, have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,6 +19,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -125,7 +128,8 @@ def test_block_holds_until_named_acceptance_test_is_written(
     assert track_effect.value is not None
     variables["tdd_tests_written"] = track_evaluator.evaluate_value(track_effect.value)
     assert variables["tdd_tests_written"] == [acceptance_path]
-    assert evaluate(block, variables, source_path)[0] is False
+    # Tracking is observability; only a resolved task's retained named RED opens the gate.
+    assert evaluate(block, variables, source_path)[0] is True
 
     fallback_variables: dict[str, object] = {
         "enforce_tdd": True,
@@ -235,7 +239,7 @@ async def test_named_rust_acceptance_file_is_tracked_before_source_writes(
     after_test = await engine.evaluate(
         source_event(), session_id="test-session", variables=variables
     )
-    assert after_test.decision == "allow"
+    assert after_test.decision == "block"
 
 
 @pytest.mark.asyncio
@@ -300,6 +304,392 @@ def test_named_acceptance_path_overrides_test_convention_classifier() -> None:
 
     assert helpers["first_tdd_code_path"](event_data, {}) == ""
     assert helpers["first_tdd_test_path"](event_data, {}) == acceptance_path
+
+
+# --- Named RED write barrier ---
+
+_GATE_START = datetime(2026, 10, 19, tzinfo=UTC)
+_GATE_SESSION = "0b6f2d51-4a4e-4c55-9d1e-246746000001"
+_GATE_TASK = "0b6f2d51-4a4e-4c55-9d1e-246746000002"
+_FEATURE_TEST = "tests/test_feature.py"
+_OTHER_TEST = "tests/test_other.py"
+_FEATURE_REF = f"{_FEATURE_TEST}::test_feature"
+_OTHER_REF = f"{_OTHER_TEST}::test_other"
+_FEATURE_CRITERIA = f"1. The feature returns two; test: {_FEATURE_REF}"
+_BOTH_CRITERIA = f"{_FEATURE_CRITERIA}\n2. The other path agrees; test: {_OTHER_REF}"
+_FEATURE_BODY = "def test_feature():\n    assert feature() == 2\n"
+_OTHER_BODY = "def test_other():\n    assert other() == 2\n"
+_IMPLEMENTATION = "def feature() -> int:\n    return 2\n"
+_LEGACY = "def legacy(value: int) -> int:\n    return value\n"
+_RUST_LEGACY = "pub fn legacy(value: u32) -> u32 {\n    value\n}\n"
+
+
+@pytest.fixture
+def gate_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src/legacy.py").write_text(_LEGACY, encoding="utf-8")
+    rust = repo / "crates/demo/src/lib.rs"
+    rust.parent.mkdir(parents=True)
+    rust.write_text(_RUST_LEGACY, encoding="utf-8")
+    return repo
+
+
+def _transcript_pair(
+    repo: Path, step: int, name: str, arguments: dict[str, Any], result: object
+) -> list[dict[str, Any]]:
+    call = f"call-{step}"
+    at = _GATE_START + timedelta(seconds=step)
+    return [
+        {
+            "type": "assistant",
+            "timestamp": at.isoformat(),
+            "cwd": str(repo),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": call, "name": name, "input": arguments}],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": (at + timedelta(milliseconds=500)).isoformat(),
+            "cwd": str(repo),
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": call, "content": result}],
+            },
+        },
+    ]
+
+
+def _claim_and_tests(repo: Path, tests: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    claim = json.dumps({"success": True, "result": {"success": True, "task_id": _GATE_TASK}})
+    records = _transcript_pair(
+        repo,
+        0,
+        "mcp__gobby__call_tool",
+        {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+            "arguments": {"task_id": "#24746"},
+        },
+        [{"type": "text", "text": claim}],
+    )
+    for step, (path, body) in enumerate((tests or {_FEATURE_TEST: _FEATURE_BODY}).items(), 1):
+        records += _transcript_pair(
+            repo, step, "Write", {"file_path": str(repo / path), "content": body}, ""
+        )
+    return records
+
+
+def _pytest_records(repo: Path, step: int, output: str, path: str) -> list[dict[str, Any]]:
+    return _transcript_pair(repo, step, "Bash", {"command": f"uv run pytest {path} -q"}, output)
+
+
+def _red_output(path: str, *symbols: str) -> str:
+    sections = "".join(
+        f"________________ {symbol} ________________\nE   assert 1 == 2\n{path}:2: AssertionError\n"
+        for symbol in symbols
+    )
+    summary = "".join(f"FAILED {path}::{symbol} - assert 1 == 2\n" for symbol in symbols)
+    return f"{sections}{summary}{len(symbols)} failed in 0.02s"
+
+
+def _write(repo: Path, path: str, content: str) -> dict[str, Any]:
+    return {"file_path": str(repo / path), "content": content}
+
+
+def _tdd_block(db: HubDatabase, manager: RuleDefinitionManager) -> RuleDefinitionBody:
+    _sync_bundled(db)
+    row = manager.get_by_name("enforce-tdd-block")
+    assert row is not None
+    return RuleDefinitionBody.model_validate(row.definition_json)
+
+
+def _gate_blocks(
+    block: RuleDefinitionBody,
+    repo: Path,
+    records: list[dict[str, Any]],
+    *,
+    tool_input: dict[str, Any],
+    tool_name: str = "Write",
+    criteria: str = _FEATURE_CRITERIA,
+    tests_written: tuple[str, ...] = (),
+) -> tuple[bool, str]:
+    """Evaluate the bundled block rule as the engine would for one write."""
+    transcript = repo.parent / "gate.jsonl"
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
+    session = Session(
+        id=_GATE_SESSION,
+        external_id="gate",
+        machine_id="isolated",
+        source="claude",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=_GATE_START,
+        updated_at=_GATE_START,
+    )
+    task = SimpleNamespace(
+        id=_GATE_TASK,
+        seq_num=24746,
+        labels=["tdd:required"],
+        additional_skills=[],
+        validation_criteria=criteria,
+        claimed_by_session_id=_GATE_SESSION,
+        state=None,
+    )
+    data: dict[str, object] = {"tool_name": tool_name, "tool_input": tool_input}
+    normalize_tool_fields(data)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="gate",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo),
+        data=data,
+        metadata={"project_path": str(repo), "_platform_session_id": _GATE_SESSION},
+    )
+    context: dict[str, object] = {
+        "variables": {
+            "enforce_tdd": False,
+            "claimed_task_requires_tdd": True,
+            "claimed_tasks": {_GATE_TASK: "#24746"},
+            "claimed_task_acceptance_test_paths": re.findall(r"test: ([^:\s]+)::", criteria),
+            "tdd_tests_written": list(tests_written),
+        },
+        "event": event,
+        "tool_input": tool_input,
+        "project": {"path": str(repo)},
+    }
+    helpers = build_condition_helpers(
+        task_manager=SimpleNamespace(get_task=lambda ref: task if ref == _GATE_TASK else None),
+        session_manager=SimpleNamespace(get=lambda ref: session if ref == _GATE_SESSION else None),
+        context=context,
+    )
+    assert block.when is not None
+    if not SafeExpressionEvaluator(context=context, allowed_funcs=helpers).evaluate(block.when):
+        return False, ""
+    reason = block.resolved_effects[0].reason
+    assert reason is not None
+    return True, TemplateEngine().render(reason, {**context, **helpers})
+
+
+def test_acceptance_file_write_without_named_red_stays_blocked(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+
+    blocked, reason = _gate_blocks(
+        block,
+        gate_repo,
+        _claim_and_tests(gate_repo),
+        tool_input=_write(gate_repo, "src/feature.py", _IMPLEMENTATION),
+        tests_written=(_FEATURE_TEST,),
+    )
+
+    assert blocked is True
+    assert _FEATURE_REF in reason
+
+
+def test_same_file_other_test_red_does_not_open_gate(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    records = _claim_and_tests(gate_repo, {_FEATURE_TEST: f"{_FEATURE_BODY}\n\n{_OTHER_BODY}"})
+    records += _pytest_records(
+        gate_repo, 3, _red_output(_FEATURE_TEST, "test_other"), _FEATURE_TEST
+    )
+
+    blocked, reason = _gate_blocks(
+        block,
+        gate_repo,
+        records,
+        tool_input=_write(gate_repo, "src/feature.py", _IMPLEMENTATION),
+        tests_written=(_FEATURE_TEST,),
+    )
+
+    assert blocked is True
+    assert _FEATURE_REF in reason
+
+
+def test_first_green_detector_record_run_stays_blocked(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    # A record-mode detector's first run writes its corpus and passes: no RED ever ran.
+    records = _claim_and_tests(gate_repo)
+    records += _pytest_records(gate_repo, 3, "1 passed in 0.01s", _FEATURE_TEST)
+
+    blocked, reason = _gate_blocks(
+        block,
+        gate_repo,
+        records,
+        tool_input=_write(gate_repo, "src/feature.py", _IMPLEMENTATION),
+        tests_written=(_FEATURE_TEST,),
+    )
+
+    assert blocked is True
+    assert _FEATURE_REF in reason
+
+
+def test_all_behavior_reds_open_production_gate(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    implementation = _write(gate_repo, "src/feature.py", _IMPLEMENTATION)
+    records = _claim_and_tests(gate_repo, {_FEATURE_TEST: _FEATURE_BODY, _OTHER_TEST: _OTHER_BODY})
+    records += _pytest_records(
+        gate_repo, 3, _red_output(_FEATURE_TEST, "test_feature"), _FEATURE_TEST
+    )
+
+    blocked, reason = _gate_blocks(
+        block, gate_repo, records, tool_input=implementation, criteria=_BOTH_CRITERIA
+    )
+    assert blocked is True
+    assert _OTHER_REF in reason
+    assert _FEATURE_REF not in reason
+
+    records += _pytest_records(gate_repo, 4, _red_output(_OTHER_TEST, "test_other"), _OTHER_TEST)
+    opened, _ = _gate_blocks(
+        block, gate_repo, records, tool_input=implementation, criteria=_BOTH_CRITERIA
+    )
+    assert opened is False
+
+
+def test_verified_stub_only_write_can_prepare_red(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    records = _claim_and_tests(gate_repo)
+    stub = "def feature() -> int:\n    raise NotImplementedError\n"
+    stubs: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("Write", _write(gate_repo, "src/feature.py", stub)),
+        ("Write", _write(gate_repo, "src/legacy.py", f"{_LEGACY}\n\n{stub}")),
+        (
+            "Edit",
+            {
+                "file_path": str(gate_repo / "src/legacy.py"),
+                "old_string": _LEGACY,
+                "new_string": (
+                    "def legacy(value: int, *, scale: int = 1) -> int:\n"
+                    "    del scale\n"
+                    "    return value\n"
+                ),
+            },
+        ),
+        (
+            "Edit",
+            {
+                "file_path": str(gate_repo / "crates/demo/src/lib.rs"),
+                "old_string": _RUST_LEGACY,
+                "new_string": f"{_RUST_LEGACY}\npub fn remap(input: u32) -> u32 {{\n    todo!()\n}}\n",
+            },
+        ),
+    )
+
+    for tool_name, tool_input in stubs:
+        blocked, _ = _gate_blocks(
+            block, gate_repo, records, tool_name=tool_name, tool_input=tool_input
+        )
+        assert blocked is False, tool_input
+    implementation, _ = _gate_blocks(
+        block, gate_repo, records, tool_input=_write(gate_repo, "src/feature.py", _IMPLEMENTATION)
+    )
+    assert implementation is True
+
+
+def test_stub_plus_implementation_patch_is_blocked(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    records = _claim_and_tests(gate_repo)
+    stub = "def feature() -> int:\n    raise NotImplementedError\n"
+    mixed: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("Write", _write(gate_repo, "src/feature.py", f"{stub}\n\n{_IMPLEMENTATION}")),
+        ("Write", _write(gate_repo, "src/legacy.py", f"{_LEGACY}\n\n{stub}\n\n{_IMPLEMENTATION}")),
+        (
+            "Write",
+            _write(
+                gate_repo, "src/legacy.py", f"{stub}\n\n{_LEGACY.replace('value\n', 'value + 1\n')}"
+            ),
+        ),
+        (
+            "Edit",
+            {
+                "file_path": str(gate_repo / "src/legacy.py"),
+                "old_string": _LEGACY,
+                "new_string": (
+                    "def legacy(value: int, *, scale: int = 1) -> int:\n    return value * scale\n"
+                ),
+            },
+        ),
+        (
+            "Edit",
+            {
+                "file_path": str(gate_repo / "crates/demo/src/lib.rs"),
+                "old_string": _RUST_LEGACY,
+                "new_string": (
+                    "pub fn legacy(value: u32) -> u32 {\n    value + 1\n}\n"
+                    "\npub fn remap(input: u32) -> u32 {\n    todo!()\n}\n"
+                ),
+            },
+        ),
+    )
+
+    for tool_name, tool_input in mixed:
+        blocked, _ = _gate_blocks(
+            block,
+            gate_repo,
+            records,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tests_written=(_FEATURE_TEST,),
+        )
+        assert blocked is True, tool_input
+
+
+def test_shell_and_structured_write_share_named_red_barrier(
+    db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
+) -> None:
+    block = _tdd_block(db, manager)
+    records = _claim_and_tests(gate_repo)
+    shell = ("Bash", {"command": f"cat > src/feature.py <<'EOF'\n{_IMPLEMENTATION}EOF"})
+    shell_stub = (
+        "Bash",
+        {
+            "command": "printf 'def feature() -> int:\\n    raise NotImplementedError\\n' > src/feature.py"
+        },
+    )
+    structured = ("Write", _write(gate_repo, "src/feature.py", _IMPLEMENTATION))
+
+    for tool_name, tool_input in (shell, shell_stub, structured):
+        blocked, reason = _gate_blocks(
+            block,
+            gate_repo,
+            records,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tests_written=(_FEATURE_TEST,),
+        )
+        assert blocked is True, tool_input
+        assert _FEATURE_REF in reason
+
+    records += _pytest_records(
+        gate_repo, 3, _red_output(_FEATURE_TEST, "test_feature"), _FEATURE_TEST
+    )
+    for tool_name, tool_input in (shell, structured):
+        blocked, _ = _gate_blocks(
+            block, gate_repo, records, tool_name=tool_name, tool_input=tool_input
+        )
+        assert blocked is False, tool_input
 
 
 # --- Sync tests ---
