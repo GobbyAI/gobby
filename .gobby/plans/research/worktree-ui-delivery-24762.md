@@ -36,3 +36,13 @@ only appearing in an uncommitted checkout.
 
 Retain lane-7-close-drain-4 while #24761 still needs it. Task closure alone
 does not authorize deleting this carrier workspace.
+
+The first close review found a stale `~` expectation in the existing
+`a_detached_worktree_row_does_not_latch_exit` integration test. Correction
+a18827db82d15ba11af2a238484e51e70ad9d86a, owned by carrier #24761, expects
+the fixture directory name `detached`. The production behavior is unchanged.
+After that correction, the complete gclient lib, client_loop and parity run
+passed all 531 tests (one skipped). Formatting passed; the touched-file test
+quality audit found zero issues across 132 tests; suppression audit found
+zero new or stale entries. This replaces the narrower filtered Rust evidence
+for closure. The correction changes tests only and needs no binary activation.
