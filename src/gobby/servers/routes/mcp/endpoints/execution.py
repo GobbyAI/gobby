@@ -324,27 +324,7 @@ async def list_mcp_tools(
             )
         server_name = resolved.name
 
-        # Use ensure_connected for lazy loading - connects on-demand if not connected
-        try:
-            await mcp_manager.ensure_connected(resolved.id)
-        except KeyError as e:
-            error, counts = clean_untrusted_value(str(e))
-            log_invisible_counts(counts, "external MCP discovery error")
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            result = {"success": False, "error": error, "response_time_ms": response_time_ms}
-            return result
-        except Exception as e:
-            error, counts = clean_untrusted_value(str(e))
-            log_invisible_counts(counts, "external MCP discovery error")
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            result = {
-                "success": False,
-                "error": f"MCP server '{server_name}' connection failed: {error}",
-                "response_time_ms": response_time_ms,
-            }
-            return result
-
-        # Use the manager's bounded stale-session recovery for discovery.
+        # The manager owns connection + listing + retry under one deadline.
         try:
             tools_by_server = await mcp_manager.list_tools(resolved.id)
             tools = tools_by_server[server_name]

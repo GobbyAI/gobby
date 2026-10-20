@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Protocol, cast
@@ -266,14 +267,19 @@ async def _discover_and_cache_tools(
     manager: Any,
     config: MCPServerConfig,
     session: Any | None,
+    *,
+    started_at: float | None = None,
 ) -> list[dict[str, Any]]:
     """List tools from a connected session and cache their full schemas."""
     if session is None:
         return []
 
     used = manager._connections.get(config.id)
+    timeout = config.connect_timeout + manager.connection_timeout
+    if started_at is not None:
+        timeout = max(0.0, timeout - (time.monotonic() - started_at))
     try:
-        async with asyncio.timeout(manager.connection_timeout):
+        async with asyncio.timeout(timeout):
             tools_result = await session.list_tools()
         tool_schemas = [
             {
@@ -284,11 +290,7 @@ async def _discover_and_cache_tools(
             for tool in tools_result.tools
         ]
     except Exception as exc:
-        detail = (
-            f"TimeoutError after {manager.connection_timeout:.1f}s"
-            if isinstance(exc, TimeoutError)
-            else str(exc)
-        )
+        detail = f"TimeoutError after {timeout:.1f}s" if isinstance(exc, TimeoutError) else str(exc)
         LOGGER.warning("Failed to list tools for %s: %s", config.name, detail)
         if used is not None and used.session is session:
             await discard_connection(
@@ -351,6 +353,7 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     connection_error: str | None = None
     authorization: MCPAuthorizationRequired | None = None
     if config.enabled:
+        started_at = time.monotonic()
         try:
             session = await manager._connect_server(config)
         except MCPAuthorizationRequired as exc:
@@ -360,7 +363,9 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
             LOGGER.warning("Failed to connect newly added MCP server %s: %s", config.name, exc)
         else:
             connected = session is not None
-            tool_schemas = await _discover_and_cache_tools(manager, config, session)
+            tool_schemas = await _discover_and_cache_tools(
+                manager, config, session, started_at=started_at
+            )
 
     result: dict[str, Any] = {
         "success": True,
@@ -803,7 +808,8 @@ async def refresh_server(manager: Any, server_id: str) -> None:
         # owns missing-secret detection: connect_server reports
         # needs_configuration and never starts a transport.
         manager._lazy_connector.register_server(server_id)
+        started_at = time.monotonic()
         session = await _connect_with_retries(manager, server_id, config)
-        await _discover_and_cache_tools(manager, config, session)
+        await _discover_and_cache_tools(manager, config, session, started_at=started_at)
     finally:
         lock.release()

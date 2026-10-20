@@ -207,6 +207,7 @@ async def test_schema_lookup_reports_reconnect_failure_not_missing_tool() -> Non
 async def test_schema_lookup_recovers_hung_session(cleanup_times_out: bool) -> None:
     manager, config = make_manager()
     manager.connection_timeout = 0.01
+    config.connect_timeout = 0.01
     stale_connection = FakeConnection(
         HangingSession(),
         disconnect_error=TimeoutError("owner cleanup timed out") if cleanup_times_out else None,
@@ -247,6 +248,7 @@ async def test_schema_lookup_recovers_hung_session(cleanup_times_out: bool) -> N
 async def test_schema_lookup_discards_hung_session_after_retry(initial_times_out: bool) -> None:
     manager, config = make_manager()
     manager.connection_timeout = 0.01
+    config.connect_timeout = 0.01
     stale_connection = FakeConnection(HangingSession() if initial_times_out else ClosedSession())
     manager._connections[config.id] = stale_connection
     retry_connection = FakeConnection(HangingSession())
@@ -262,9 +264,10 @@ async def test_schema_lookup_discards_hung_session_after_retry(initial_times_out
             with pytest.raises(MCPError) as exc_info:
                 await lookup
             message = str(exc_info.value)
-            assert "reconnect retry failed: Tool discovery timeout after 0.01s" in message
             if initial_times_out:
-                assert "initial listing failed: Tool discovery timeout after 0.01s" in message
+                assert "Tool discovery timeout after 0.02s" in message
+            else:
+                assert "reconnect retry failed: Tool discovery timeout after 0.01s" in message
         finally:
             lookup.cancel()
             with suppress(asyncio.CancelledError, MCPError):
@@ -281,6 +284,7 @@ async def test_schema_lookup_discards_hung_session_after_retry(initial_times_out
 async def test_registry_discovery_discards_hung_sibling_session() -> None:
     manager, config = make_manager()
     manager.connection_timeout = 0.01
+    config.connect_timeout = 0.01
     stale_connection = FakeConnection(HangingSession())
     manager._connections[config.id] = stale_connection
     lock = manager._lazy_connector.get_connection_lock(config.id)
@@ -312,6 +316,7 @@ async def test_http_discovery_recovers_hung_sibling_session(endpoint: str) -> No
 
     manager, config = make_manager()
     manager.connection_timeout = 0.01
+    config.connect_timeout = 0.01
     stale_connection = FakeConnection(HangingSession())
     manager._connections[config.id] = stale_connection
     fresh_connection = FakeConnection(
