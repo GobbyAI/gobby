@@ -56,8 +56,9 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_wi
 @pytest.fixture(autouse=True)
 def _isolate_daemon_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
-    # A supervised seat inherits GOBBY_SUPERVISOR_FD; run_gobby would then skip the PID claim.
+    # main() consumes the launch environment; run_gobby() uses captured module state.
     monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
 
 
 @pytest.fixture

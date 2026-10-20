@@ -11,16 +11,34 @@ import pytest
 
 from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig, FrontDoorRouteBackend
 from gobby.runner_backend import (
+    SUPERVISOR_FD_ENV,
     BackendBind,
     backend_bind,
     require_latched_terminal_route,
+    supervisor_fd,
     supervisor_write_token,
+    take_supervisor_fd,
     watch_supervisor,
 )
 from gobby.runner_init import StartRefusal
 from gobby.shutdown_intent import ShutdownIntent
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("fd", [0, 123])
+def test_take_supervisor_fd_consumes_environment_once(
+    monkeypatch: pytest.MonkeyPatch, fd: int
+) -> None:
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
+    monkeypatch.setenv(SUPERVISOR_FD_ENV, str(fd))
+
+    take_supervisor_fd()
+    assert supervisor_fd() == fd
+    assert os.environ.get(SUPERVISOR_FD_ENV) is None
+
+    take_supervisor_fd()
+    assert supervisor_fd() == fd
 
 
 def test_windows_keeps_python_public_bind() -> None:
@@ -33,9 +51,9 @@ def test_windows_keeps_python_public_bind() -> None:
 def test_native_backend_uses_private_loopback_ports(
     monkeypatch: pytest.MonkeyPatch, supervised: bool
 ) -> None:
-    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
     if supervised:
-        monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "123")
+        monkeypatch.setattr("gobby.runner_backend._supervisor_fd", 123)
     bootstrap = BootstrapConfig(
         bind_host="0.0.0.0",
         daemon_port=20000,
@@ -54,7 +72,7 @@ async def test_supervisor_eof_writes_stop_and_requests_drain(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     read_fd, write_fd = os.pipe()
-    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", read_fd)
     drained = asyncio.Event()
     with patch("gobby.runner_backend.write_shutdown_intent") as marker:
         task = asyncio.create_task(watch_supervisor(drained.set))
@@ -112,12 +130,12 @@ def test_terminal_route_flip_requires_a_gdaemon_restart(
 async def test_write_token_travels_only_over_the_supervisor_pipe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
     await watch_supervisor(lambda: None)
     assert supervisor_write_token() is None
 
     read_fd, write_fd = os.pipe()
-    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", read_fd)
     drained = asyncio.Event()
     with patch("gobby.runner_backend.write_shutdown_intent"):
         task = asyncio.create_task(watch_supervisor(drained.set))
@@ -151,7 +169,7 @@ async def test_watcher_cancellation_closes_pipe_without_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     read_fd, write_fd = os.pipe()
-    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", read_fd)
     drained = asyncio.Event()
     with patch("gobby.runner_backend.write_shutdown_intent") as marker:
         task = asyncio.create_task(watch_supervisor(drained.set))

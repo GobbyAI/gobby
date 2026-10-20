@@ -683,17 +683,17 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`landed_by_session_id` equals your current session ID" in prompt
     assert "equals your current session ID or is `unknown`, send" in prompt
     assert "Report an unknown lander as unknown." not in prompt
-    assert (
-        "recovery or replay of your own landing; when retest is required, wait for the author's "
-        "`EVENT=PROOF_RESULT` before reporting it"
-    ) in prompt
+    assert "Send EVENT=LANDED immediately" in prompt
+    assert "report `RETEST=UNAVAILABLE` while the closing seat's retest is pending" in prompt
     status = str(verdict.status_message)
     assert "send EVENT=ALREADY_LANDED" in status
     assert "otherwise send EVENT=LANDED" in status
     assert "landed_by_session_id names another session" in status
     assert "current session ID nor unknown" in status
     assert "your own landing or an unknown lander" in status
-    assert "full field set and required retest" in status
+    assert "full field set immediately" in status
+    assert "RETEST=UNAVAILABLE" in status
+    assert "wait for its" not in status
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
     assert (
@@ -883,8 +883,12 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
     assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
     assert "`EVENT=LANDED` line that carries a `RECEIPT` value" in prompt
     assert "git merge-base --is-ancestor <LANDED_TIP> <BRANCH>" in prompt
-    assert "`MODE=merge` landing must carry `RETEST=PASS`" in prompt
-    assert "`RETEST=FAIL` or `RETEST=UNAVAILABLE` withholds the release" in prompt
+    assert (
+        "a `MODE=merge` landing needs the closing seat's `EVENT=PROOF_RESULT` with `RETEST=PASS`"
+    ) in prompt
+    assert "A pending, unavailable or failed author retest withholds the release" in prompt
+    assert "landed merge SHA and the same test set" in prompt
+    assert "A failing `EVENT=PROOF_RESULT` reopens the task" in prompt
     assert "`ACTIVATION=unknown` withholds the release" in prompt
     assert "`PROJECT_SYNC_REQUIRED=true` holds the release until project sync is verified" in prompt
     assert (

@@ -615,6 +615,7 @@ def test_tdd_paths_cover_every_source_language() -> None:
         "crates/gclient/src/ui/sidebar/agents.rs",
         "web/src/app.ts",
         "scripts/run.sh",
+        "src/gobby/__init__.py",
     ]
     for path in source_paths:
         event_data = {"canonical_file_paths": [path]}
@@ -632,7 +633,7 @@ def test_tdd_paths_cover_every_source_language() -> None:
         assert first_tdd_code_path(event_data, {}) == ""
         assert first_tdd_test_path(event_data, {}) == path
 
-    for path in ["docs/x.md", "src/gobby/__init__.py", "src/gobby/conftest.py"]:
+    for path in ["docs/x.md", "src/gobby/conftest.py"]:
         assert first_tdd_code_path({"canonical_file_paths": [path]}, {}) == ""
 
 

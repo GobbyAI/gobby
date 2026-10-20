@@ -786,6 +786,14 @@ def _executable_name(executable: str) -> str:
     return executable.rsplit("/", 1)[-1]
 
 
+def task_has_no_commits(task_manager: TaskProvider | None, task_id: TaskIdRef | None) -> bool:
+    """Admit no-commit work only when the stored task proves it has no linked commits."""
+    if not task_manager or not task_id:
+        return False
+    task = _get_task(task_manager, _normalize_task_id(task_id))
+    return task is not None and not task.commits
+
+
 def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRef | None) -> bool:
     """Check if a task has been escalated for human review.
 

@@ -69,6 +69,19 @@ def _instant_owner_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spawn_in_doubt_owner, "_sleep", no_wait)
 
 
+def _srt_launch() -> SandboxLaunch:
+    """An enforced SRT launch as prepare_sandbox_launch returns it: preflighted, complete."""
+    return SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        provider_executable="/managed/provider",
+        policy_path="/policy/settings.json",
+        violation_path="/policy/violations.jsonl",
+        node_path="/managed/node",
+        runner_path="/managed/runner.mjs",
+    )
+
+
 @pytest.fixture
 def finalize(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncMock:
     """Stub the resume side effects outside the placed launch; return the handoff spy."""
@@ -82,7 +95,7 @@ def finalize(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncMock:
     monkeypatch.setattr(
         resume_executor,
         "prepare_sandbox_launch",
-        AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True)),
+        AsyncMock(return_value=_srt_launch()),
     )
     return handoff
 
@@ -336,7 +349,7 @@ async def test_sandbox_failure_restores_expired_seat_for_retry(
         AsyncMock(
             side_effect=[
                 error_type("sandbox preparation refused"),
-                SandboxLaunch(backend="srt", enforced=True),
+                _srt_launch(),
             ]
         ),
     )
