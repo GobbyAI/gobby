@@ -1,7 +1,7 @@
 """Capability renewal stays bounded by the managed principal's live owner."""
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -9,9 +9,12 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from starlette.requests import Request
 
 from gobby.runtime_grants.launch import materialize_managed_launch, rewrite_managed_grant_file
 from gobby.runtime_grants.schema import GrantPrincipal
+from gobby.servers.auth_service import AuthService
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Row
 from gobby.storage.managed_credential_types import CredentialIssuanceError
 from gobby.storage.managed_credentials import ManagedCredential
@@ -19,28 +22,69 @@ from gobby.utils import local_token
 from tests.runtime_grants.support import DEPLOYMENT_TOKEN
 from tests.runtime_grants.test_launch import _grant
 from tests.storage.test_managed_credentials import _manager
-from tests.storage.test_postgres_agent_authorization import AUTH_SCHEMA, AuthorizationFixture
+from tests.storage.test_postgres_agent_authorization import (
+    AUTH_SCHEMA,
+    AuthorizationFixture,
+    _authorization_fixture,
+)
 
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture
+def renewal_authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
+    with _authorization_fixture(postgres_database_url) as fixture:
+        yield fixture
+
+
 @pytest.mark.parametrize("owner_state", ["live", "expired", "ended_run"])
 def test_renewal_is_gated_by_live_owner(
-    authorization_fixture: AuthorizationFixture,
+    renewal_authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     owner_state: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    fixture = authorization_fixture
+    fixture = renewal_authorization_fixture
     manager = _manager(fixture, tmp_path)
-    execution = uuid4()
+    execution = fixture.agent_run_id
     now = int(datetime.now(UTC).timestamp())
     clock = now - 23 * 3600
-    key = b"isolated-test-renewal-key"
+    api_key = "isolated-test-renewal-api-key"
+    key = local_token.derive_managed_signing_key(api_key)
     monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: clock)
     monkeypatch.setattr(local_token, "read_managed_signing_key", lambda: key)
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    database = PostgresHubDatabase(fixture.database_url)
+    service = AuthService(
+        lambda: database,
+        bootstrap_file=bootstrap,
+        break_glass_file=tmp_path / "absent-break-glass",
+    )
+
+    def authenticated(token: str) -> bool:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Gobby-Agent-Run-Id": str(fixture.agent_run_id),
+            "X-Gobby-Session-Id": str(fixture.session_id),
+            "X-Gobby-Project-Id": str(fixture.project_id),
+        }
+        return service.is_request_authenticated(
+            Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/api/mcp/tools/call",
+                    "headers": [
+                        (name.lower().encode(), value.encode()) for name, value in headers.items()
+                    ],
+                }
+            )
+        )
+
     try:
+        database.open()
         initial = manager.issue(
             managed_execution_id=execution,
             owner_kind="agent_run",
@@ -62,7 +106,9 @@ def test_renewal_is_gated_by_live_owner(
         launch = materialize_managed_launch(
             grant, dest_dir=initial.bootstrap_path.parent, signing_key=key, deadline_seconds=86400
         )
-        original_token = launch.env["GOBBY_AGENT_API_TOKEN"]
+        original_token = local_token.read_managed_api_token(launch.env)
+        assert original_token is not None
+        assert authenticated(original_token)
         clock = now
 
         def rewrite(credential: ManagedCredential, dsn: str) -> None:
@@ -96,8 +142,9 @@ def test_renewal_is_gated_by_live_owner(
                     (fixture.agent_run_id,),
                 )
         rotated = manager.rotate_due()
-        current = json.loads(launch.grant_path.read_bytes())["managed_api_token"]
         clock = now + 2 * 3600
+        current = local_token.read_managed_api_token(launch.env)
+        assert current is not None
         assert local_token.verify_agent_api_token(original_token, key) is None
         if owner_state == "live":
             assert [item.managed_execution_id for item in rotated] == [execution]
@@ -108,6 +155,8 @@ def test_renewal_is_gated_by_live_owner(
             assert current == original_token
             assert local_token.verify_agent_api_token(current, key) is None
             assert manager.get_live_binding_generation(execution) == initial.credential_generation
+        assert authenticated(current) is (owner_state == "live")
+        assert not authenticated(original_token)
         assert current not in caplog.text and original_token not in caplog.text
     finally:
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
@@ -119,6 +168,7 @@ def test_renewal_is_gated_by_live_owner(
             )
         manager.revoke(execution, reason="test-cleanup")
         manager.close()
+        database.close()
 
 
 @pytest.mark.parametrize("owner_state", ["live", "expired_session", "ended_run"])
