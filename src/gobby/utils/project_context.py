@@ -306,7 +306,10 @@ class ProjectSandboxConfigError(ValueError):
 
 
 def read_isolation_marker(root: Path) -> dict[str, str] | None:
-    """Read parent isolation fields from the gitignored sidecar only."""
+    """Read parent isolation fields and pin provenance from the sidecar only.
+
+    Returns None when the parent fields are missing or the pin provenance is partial.
+    """
     path = Path(root) / ISOLATION_MARKER_RELATIVE_PATH
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -320,10 +323,39 @@ def read_isolation_marker(root: Path) -> dict[str, str] | None:
         return None
     if not isinstance(parent_id, str) or not parent_id:
         return None
-    return {
+    marker = {
         _PARENT_PROJECT_PATH_KEY: parent_path,
         _PARENT_PROJECT_ID_KEY: parent_id,
     }
+    try:
+        pin = validate_isolation_pin_provenance(payload)
+    except ValueError as exc:
+        logger.warning("Ignoring isolation marker in %s: %s", root, exc)
+        return None
+    if pin is not None:
+        marker.update(pin)
+    return marker
+
+
+def validate_isolation_pin_provenance(marker: dict[str, Any]) -> dict[str, str] | None:
+    """Return complete pin provenance, None when absent, and raise when partial.
+
+    An empty or non-string value counts as missing.
+    """
+    keys = ("base_commit", "ancestor_checkout_path", "ancestor_checkout_identity")
+    pin: dict[str, str] = {}
+    missing: list[str] = []
+    for key in keys:
+        value = marker.get(key)
+        if isinstance(value, str) and value:
+            pin[key] = value
+        else:
+            missing.append(key)
+    if len(missing) == len(keys):
+        return None
+    if missing:
+        raise ValueError(f"isolation pin provenance is incomplete; missing {', '.join(missing)}")
+    return pin
 
 
 def _with_isolation_marker(data: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -389,9 +421,20 @@ async def _restore_generated_tracked_project_json(
         )
 
 
+async def _source_head_commit(source_root: Path) -> str:
+    """Return the source checkout's HEAD commit, the pin an isolated copy starts from."""
+    result = await daemon_git.run(("rev-parse", "HEAD"), cwd=source_root)
+    commit = result.stdout.strip() if isinstance(result, GitOk) else ""
+    if not commit:
+        raise IsolationProjectJsonError(f"Failed to read HEAD commit of {source_root}")
+    return commit
+
+
 async def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
+    *,
+    base_commit: str | None = None,
 ) -> None:
     """Write the isolation sidecar without rewriting tracked project metadata.
 
@@ -414,9 +457,13 @@ async def ensure_project_json_for_isolation(
         if not isinstance(parent_project_id, str) or not parent_project_id:
             raise KeyError("id")
 
+        ancestor_checkout_path = str(source_root.resolve())
         marker = {
-            _PARENT_PROJECT_PATH_KEY: str(source_root.resolve()),
+            _PARENT_PROJECT_PATH_KEY: ancestor_checkout_path,
             _PARENT_PROJECT_ID_KEY: parent_project_id,
+            "base_commit": await _source_head_commit(source_root),
+            "ancestor_checkout_path": ancestor_checkout_path,
+            "ancestor_checkout_identity": parent_project_id,
         }
         marker_bytes = (json.dumps(marker, indent=2) + "\n").encode()
 

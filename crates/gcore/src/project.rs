@@ -17,11 +17,21 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
     0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
 
-/// Parent linkage written into a worktree's or clone's `.gobby/project.json`.
+/// Parent linkage and pin provenance written into a worktree's or clone's
+/// `.gobby/isolation.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IsolationMarker {
     pub parent_project_path: Option<String>,
     pub parent_project_id: Option<String>,
+    pub pin: Option<IsolationPin>,
+}
+
+/// Complete pin provenance: the ancestor commit and where the ancestor checkout lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolationPin {
+    pub base_commit: String,
+    pub ancestor_checkout_path: String,
+    pub ancestor_checkout_identity: String,
 }
 
 /// Walk up from `start` looking for a `.gobby` directory containing either
@@ -80,30 +90,50 @@ pub fn code_index_id_for_root(root: &Path) -> String {
     .to_string()
 }
 
-/// Read the isolated-root marker from `.gobby/project.json`, if present.
+/// Read the isolated-root marker from `.gobby/isolation.json`, if present.
+///
+/// Pin provenance is all-or-nothing: a marker that carries some but not all of
+/// `base_commit`, `ancestor_checkout_path` and `ancestor_checkout_identity` is
+/// rejected as a whole. A marker with none of them is a legacy overlay with no pin.
 pub fn read_isolation_marker(project_root: &Path) -> Option<IsolationMarker> {
     let path = project_root.join(".gobby").join("isolation.json");
     let contents = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    let parent_project_path = json
-        .get("parent_project_path")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
-    let parent_project_id = json
-        .get("parent_project_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
+    let parent_project_path = string_field(&json, "parent_project_path");
+    let parent_project_id = string_field(&json, "parent_project_id");
+    let pin = match (
+        string_field(&json, "base_commit"),
+        string_field(&json, "ancestor_checkout_path"),
+        string_field(&json, "ancestor_checkout_identity"),
+    ) {
+        (None, None, None) => None,
+        (Some(base_commit), Some(ancestor_checkout_path), Some(ancestor_checkout_identity)) => {
+            Some(IsolationPin {
+                base_commit,
+                ancestor_checkout_path,
+                ancestor_checkout_identity,
+            })
+        }
+        _ => return None,
+    };
 
     if parent_project_path.is_some() || parent_project_id.is_some() {
         Some(IsolationMarker {
             parent_project_path,
             parent_project_id,
+            pin,
         })
     } else {
         None
     }
+}
+
+/// A non-empty string field of the isolation marker, or `None` when absent or empty.
+fn string_field(json: &serde_json::Value, key: &str) -> Option<String> {
+    json.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// Resolve a marker's `parent_project_path` relative to the isolated root.
@@ -261,6 +291,58 @@ mod tests {
             Some(code_index_id_for_root(dir.path()))
         );
         assert_eq!(read_project_id(dir.path()).unwrap(), "parent-id");
+    }
+
+    #[test]
+    fn isolation_marker_exposes_complete_pin_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let gobby = dir.path().join(".gobby");
+        fs::create_dir_all(&gobby).unwrap();
+        fs::write(
+            gobby.join("isolation.json"),
+            r#"{
+  "parent_project_path": "/parent",
+  "parent_project_id": "parent-id",
+  "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ancestor_checkout_path": "/parent",
+  "ancestor_checkout_identity": "parent-id"
+}"#,
+        )
+        .unwrap();
+
+        let marker = read_isolation_marker(dir.path()).expect("complete marker");
+
+        assert_eq!(
+            marker.pin,
+            Some(IsolationPin {
+                base_commit: "a".repeat(40),
+                ancestor_checkout_path: "/parent".to_string(),
+                ancestor_checkout_identity: "parent-id".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn isolation_marker_rejects_partial_pin_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let gobby = dir.path().join(".gobby");
+        fs::create_dir_all(&gobby).unwrap();
+        fs::write(
+            gobby.join("isolation.json"),
+            r#"{"parent_project_path": "/parent", "parent_project_id": "parent-id", "base_commit": "aaaa"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_isolation_marker(dir.path()),
+            None,
+            "partial pin provenance"
+        );
+        assert_eq!(
+            code_overlay_project_id(dir.path()),
+            None,
+            "partial pin provenance"
+        );
     }
 
     #[test]

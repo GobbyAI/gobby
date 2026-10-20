@@ -7,10 +7,11 @@ use postgres::Client;
 use crate::communities;
 use crate::config::Context;
 use crate::db::id_param;
-use crate::index::{api, hasher};
+use crate::index::api;
 use crate::models::IndexedProject;
 use crate::projection::sync::{self, ProjectionSyncRequest, ProjectionTarget};
 
+use super::selector_blob::{self, HeadBlobs};
 use super::types::{IndexDegradation, IndexOutcome, IndexRequest, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
 
@@ -166,6 +167,7 @@ pub(super) fn get_stale_files(
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct CurrentFileState {
     pub(super) hashes: HashMap<String, String>,
+    pub(super) clean_blobs: HashMap<String, String>,
     pub(super) present_paths: HashSet<String>,
 }
 
@@ -173,14 +175,18 @@ pub(super) fn current_file_state(
     root_path: &Path,
     candidates: &[std::path::PathBuf],
     content_only: &[std::path::PathBuf],
+    head_blobs: &HeadBlobs,
 ) -> CurrentFileState {
     let mut state = CurrentFileState::default();
     for path in candidates.iter().chain(content_only.iter()) {
         if let Ok(rel) = relative_path(path, root_path) {
             state.present_paths.insert(rel.clone());
-            match hasher::file_content_hash(path) {
-                Ok(hash) => {
-                    state.hashes.insert(rel, hash);
+            match selector_blob::read_snapshot(path, &rel, head_blobs) {
+                Ok(snapshot) => {
+                    if let Some(clean_blob) = snapshot.clean_blob {
+                        state.clean_blobs.insert(rel.clone(), clean_blob);
+                    }
+                    state.hashes.insert(rel, snapshot.content_hash);
                 }
                 Err(error) => {
                     eprintln!(

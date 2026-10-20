@@ -10,7 +10,7 @@ use wait_timeout::ChildExt;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::index::api;
-use crate::index::{hasher, parser, walker};
+use crate::index::{parser, walker};
 use crate::models::IndexedFile;
 use crate::visibility;
 
@@ -20,6 +20,7 @@ use super::file::{
 use super::lifecycle::{attach_projection_sync, refresh_communities, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
 use super::pipeline::explicit_route_with_discovery_options;
+use super::selector_blob::{self, HeadBlobs};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
 use super::util::{
@@ -106,10 +107,12 @@ pub(super) fn index_overlay_files(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let head_blobs = HeadBlobs::read(root_path);
     let target = IndexTarget {
         project_id: overlay_project_id,
         root_path,
         mode: api::IndexWriteMode::Overlay,
+        head_blobs: &head_blobs,
     };
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     api::upsert_project_seed(
@@ -197,12 +200,16 @@ pub(super) fn index_overlay_files(
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
     let mut hash_by_rel = HashMap::new();
+    let mut clean_blob_by_rel = HashMap::new();
     for rel in &rels {
         let abs = root_path.join(rel);
         if abs.exists()
-            && let Ok(hash) = hasher::file_content_hash(&abs)
+            && let Ok(snapshot) = selector_blob::read_snapshot(&abs, rel, &head_blobs)
         {
-            hash_by_rel.insert(rel.clone(), hash);
+            if let Some(clean_blob) = snapshot.clean_blob {
+                clean_blob_by_rel.insert(rel.clone(), clean_blob);
+            }
+            hash_by_rel.insert(rel.clone(), snapshot.content_hash);
         }
     }
 
@@ -260,6 +267,13 @@ pub(super) fn index_overlay_files(
                 api::IndexWriteMode::Overlay,
             )?
         {
+            selector_blob::record_selector_blob(
+                conn,
+                overlay_project_id,
+                &rel,
+                hash,
+                clean_blob_by_rel.get(&rel).map(String::as_str),
+            )?;
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             continue;
@@ -313,6 +327,15 @@ pub(super) fn index_overlay_files(
                 anyhow::bail!("overlay index action selected for non-indexable path `{rel}`")
             }
             OverlayReconcileAction::Skip => {
+                if let Some(hash) = current_hash {
+                    selector_blob::record_selector_blob(
+                        conn,
+                        overlay_project_id,
+                        &rel,
+                        hash,
+                        clean_blob_by_rel.get(&rel).map(String::as_str),
+                    )?;
+                }
                 outcome.skipped_files += 1;
             }
         }

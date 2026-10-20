@@ -28,6 +28,7 @@ from gobby.utils.project_context import (
     set_project_context_from_session,
 )
 from tests.fixtures.isolated_checkout import (
+    init_git_checkout,
     insert_isolated_machine,
     install_isolated_checkout_project,
     patch_local_machine_id,
@@ -838,6 +839,7 @@ class TestEnsureProjectJsonForIsolation:
         target = tmp_path / "worktree"
         target.mkdir()
 
+        init_git_checkout(repo)
         await ensure_project_json_for_isolation(repo, target)
 
         result = json.loads((target / ".gobby" / "project.json").read_text())
@@ -859,6 +861,7 @@ class TestEnsureProjectJsonForIsolation:
         original = '{"id": "proj-1", "name": "test"}'
         (target / ".gobby" / "project.json").write_text(original)
 
+        init_git_checkout(repo)
         await ensure_project_json_for_isolation(repo, target)
 
         assert (target / ".gobby" / "project.json").read_text() == original
@@ -903,6 +906,7 @@ class TestEnsureProjectJsonForIsolation:
         target_project_json = target / ".gobby" / "project.json"
         target_project_json.write_text('{"id": "old"}')
 
+        init_git_checkout(repo)
         with patch("gobby.utils.project_context.os.replace", wraps=os.replace) as mock_replace:
             await ensure_project_json_for_isolation(repo, target)
 
@@ -924,6 +928,7 @@ class TestEnsureProjectJsonForIsolation:
         original = b'{"id": "old"}'
         target_project_json.write_bytes(original)
 
+        init_git_checkout(repo)
         with (
             patch("gobby.utils.project_context.os.replace", side_effect=OSError("replace failed")),
             pytest.raises(IsolationProjectJsonError) as exc_info,
@@ -945,6 +950,7 @@ class TestEnsureProjectJsonForIsolation:
         target = tmp_path / "worktree"
         target.mkdir()
         (target / "Cargo.toml").write_text("[workspace]\n")
+        init_git_checkout(repo)
 
         await ensure_project_json_for_isolation(repo, target)
 
@@ -963,6 +969,7 @@ class TestEnsureProjectJsonForIsolation:
         (repo / ".gobby" / "project.json").write_text('{"id": "proj-1", "name": "test"}')
         target = tmp_path / "worktree"
         target.mkdir()
+        init_git_checkout(repo)
 
         await ensure_project_json_for_isolation(repo, target)
 

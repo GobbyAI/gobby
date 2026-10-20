@@ -115,6 +115,59 @@ fn catalog_pins_project_checkouts_and_drops_projects_repo_path() {
 }
 
 #[test]
+fn code_overlay_pin_schema_contract() {
+    let catalog: serde_json::Value =
+        serde_json::from_str(CATALOG_MANIFEST_JSON).expect("catalog manifest must be valid JSON");
+    let names = |kind: &str| -> Vec<&str> {
+        catalog[kind]
+            .as_array()
+            .unwrap_or_else(|| panic!("{kind} must be an array"))
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect()
+    };
+    let columns = names("columns");
+    for column in [
+        "code_overlay_pins.machine_id",
+        "code_overlay_pins.overlay_project_id",
+        "code_overlay_pins.file_path",
+        "code_overlay_pins.source_project_id",
+        "code_overlay_pins.content_hash",
+        "code_overlay_pins.git_blob_id",
+        "code_overlay_pins.graph_projected",
+        "code_overlay_pins.vector_projected",
+    ] {
+        assert!(
+            columns.contains(&column),
+            "catalog columns missing {column}"
+        );
+    }
+    let constraints = names("constraints");
+    for constraint in [
+        "code_overlay_pins.code_overlay_pins_pkey",
+        "code_overlay_pins.code_overlay_pins_source_content_fkey",
+    ] {
+        assert!(
+            constraints.contains(&constraint),
+            "catalog constraints missing {constraint}"
+        );
+    }
+    let source_fk = catalog["constraints"]
+        .as_array()
+        .expect("catalog constraints")
+        .iter()
+        .find(|entry| entry["name"] == "code_overlay_pins.code_overlay_pins_source_content_fkey")
+        .expect("source content foreign key");
+    assert!(
+        source_fk["definition"].as_str().is_some_and(|definition| {
+            definition
+                .contains("REFERENCES code_indexed_files(project_id, file_path, content_hash)")
+        }),
+        "pin source must reference the immutable content version"
+    );
+}
+
+#[test]
 fn embedded_seed_preserves_project_without_machine_less_system_session() {
     let manifest: serde_json::Value =
         serde_json::from_str(SEED_MANIFEST_JSON).expect("seed manifest must be valid JSON");

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::index::api::IndexWriteMode;
 use crate::projection::sync::{ProjectionSyncStatus, ProjectionTarget};
 
+use super::selector_blob::HeadBlobs;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexRequest {
     pub project_root: PathBuf,
@@ -127,6 +129,7 @@ pub(super) struct IndexTarget<'a> {
     pub project_id: &'a str,
     pub root_path: &'a Path,
     pub mode: IndexWriteMode,
+    pub head_blobs: &'a HeadBlobs,
 }
 
 impl IndexOutcome {
