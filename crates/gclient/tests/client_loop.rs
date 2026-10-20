@@ -11296,7 +11296,7 @@ async fn new_project_dialog_inits_and_focuses() {
 
 /// A detached worktree row (`branch_name: null`, valid on the daemon side)
 /// decodes at startup: the loop stays live and the sidebar lists the row
-/// with `~` for its branch beside a row that has one.
+/// by its checkout directory beside a row that has a branch.
 #[tokio::test]
 async fn a_detached_worktree_row_does_not_latch_exit() {
     let mock = MockDaemon::start("local-token").await;
@@ -11314,7 +11314,7 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
             },
             {
                 "id": "wt-detached", "project_id": "project-1", "branch_name": null,
-                "worktree_path": "/repo-wt/detached", "status": "active",
+                "worktree_path": "/repo-wt/scratch", "status": "active",
                 "workspace_role": "task",
             },
         ]}),
@@ -11380,7 +11380,7 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
             .collect()
     };
     assert_eq!(label_after("├─"), ["feature"], "{rows:#?}");
-    assert_eq!(label_after("└─"), ["detached"], "{rows:#?}");
+    assert_eq!(label_after("└─"), ["scratch"], "{rows:#?}");
     mock.shutdown().await;
 }
 
