@@ -170,7 +170,9 @@ def monitor_harness(
             f"appendFileSync({json.dumps(str(root / 'starts'))}, 'start\\n');\n"
             f"const events = {json.dumps(str(event_file))};\n"
             "const fd = openSync(events, 'r'); let offset = 0; let pending = '';\n"
+            "const owner = process.ppid;\n"
             "const timer = setInterval(() => {\n"
+            " if (process.ppid === 1 || process.ppid !== owner) { clearInterval(timer); closeSync(fd); return; }\n"
             " const size = fstatSync(fd).size; if (size > offset) {\n"
             "  const bytes = Buffer.alloc(size-offset); const count = readSync(fd, bytes, 0, bytes.length, offset);\n"
             "  offset += count; pending += bytes.subarray(0,count).toString();\n"
@@ -241,6 +243,25 @@ def monitor_harness(
         finally:
             monitor.terminate()
             monitor.wait(timeout=5)
+
+
+def test_monitor_fixture_log_exits_when_monitor_is_killed(
+    monitor_harness: MonitorHarness,
+) -> None:
+    _wait_path(monitor_harness.root / "starts")
+    monitor = srt_monitor._children[-1]
+    children = psutil.Process(monitor.pid).children()
+    assert children
+    try:
+        monitor.kill()
+        monitor.wait(timeout=5)
+        _, alive = psutil.wait_procs(children, timeout=2)
+        assert not alive, "fixture log child survived its monitor"
+    finally:
+        for child in children:
+            if child.is_running():
+                child.kill()
+        psutil.wait_procs(children, timeout=2)
 
 
 def _subscribe(path: str, suffix: str) -> tuple[socket.socket, IO[bytes]]:

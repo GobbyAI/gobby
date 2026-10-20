@@ -279,7 +279,9 @@ async def _delete_git_worktree(
             force=True if request.surface is DeletionSurface.HTTP else request.force,
             delete_branch=True,
             force_delete_branch=request.force_delete_branch,
-            branch_name=worktree.branch_name,
+            # Reused seats may have switched branches since registration. Git
+            # must prove and delete the branch currently attached to this tree.
+            branch_name=None if Path(worktree.worktree_path).exists() else worktree.branch_name,
             base_branch=worktree.base_branch,
             merged_into=request.merged_into,
         )

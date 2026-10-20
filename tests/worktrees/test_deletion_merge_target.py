@@ -235,6 +235,67 @@ async def test_explicit_target_cannot_delete_a_detached_worktree(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("registered_branch", ["main", "old-unmerged", "missing"])
+async def test_reused_tree_deletes_actual_landed_branch_and_preserves_registered_branch(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    registered_branch: str,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    if registered_branch == "old-unmerged":
+        _git(repo, "switch", "-c", registered_branch)
+        _git(repo, "commit", "--allow-empty", "-m", "unlanded old branch")
+        _git(repo, "switch", "0.5.0")
+    old_tip = _git(
+        repo, "for-each-ref", "--format=%(objectname)", f"refs/heads/{registered_branch}"
+    )
+    worktree.branch_name = registered_branch
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="0.5.0")
+
+    assert result["success"] is True
+    assert not Path(worktree.worktree_path).exists()
+    assert _git(repo, "branch", "--list", "child") == ""
+    assert (
+        _git(repo, "for-each-ref", "--format=%(objectname)", f"refs/heads/{registered_branch}")
+        == old_tip
+    )
+    storage.delete.assert_called_once_with(worktree.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detached", [False, True])
+async def test_stale_merged_registry_branch_cannot_authorize_unlanded_or_detached_tree(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    detached: bool,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    child = Path(worktree.worktree_path)
+    worktree.branch_name = "main"
+    if detached:
+        _git(child, "checkout", "--detach")
+    else:
+        _git(child, "commit", "--allow-empty", "-m", "not landed")
+    main_tip = _git(repo, "rev-parse", "refs/heads/main")
+    child_tip = _git(repo, "rev-parse", "refs/heads/child")
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="0.5.0")
+
+    assert result["success"] is False
+    assert child.exists()
+    assert _git(repo, "rev-parse", "refs/heads/main") == main_tip
+    assert _git(repo, "rev-parse", "refs/heads/child") == child_tip
+    storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_explicit_target_requires_git_context(
     landed_worktree: tuple[Path, Worktree],
 ) -> None:
