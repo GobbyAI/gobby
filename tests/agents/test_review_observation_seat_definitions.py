@@ -60,7 +60,7 @@ READ_ONLY_BLOCKED_TOOLS = frozenset(
         "write_file",
     }
 )
-READ_ONLY_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor", "researcher")
+READ_ONLY_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor")
 # Sync metadata keys `validate_workflow_definition_data` strips before the body.
 SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
 OBSERVATION_SELECTORS = frozenset(

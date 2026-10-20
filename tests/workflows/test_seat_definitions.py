@@ -71,7 +71,6 @@ READ_ONLY_SEATS = {
     "code-reviewer",
     "log-monitor",
     "metrics-monitor",
-    "researcher",
     "inbox-manager",
     "reporter",
     "security-reviewer",
@@ -310,6 +309,10 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     if name in WRITE_SCOPE_RULES:
         assert not blocked & READ_ONLY_BLOCKED_TOOLS
         assert WRITE_SCOPE_RULES[name] in prompt
+    if name == "researcher":
+        assert blocked == {"KillShell"}
+        assert "researcher-write-scope" in prompt
+        assert ".gobby/plans/research/" in prompt
 
     _assert_step_workflow(name, seat)
 

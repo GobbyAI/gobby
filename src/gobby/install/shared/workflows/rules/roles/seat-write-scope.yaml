@@ -3,6 +3,21 @@ tags: [roles, seat, enforcement, gobby, default]
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
+  researcher-write-scope:
+    description: "The Researcher writes only research artifacts"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      variables.get('_agent_type') == 'researcher'
+      and event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, ['.gobby/plans/research/'])
+    effects:
+      - type: block
+        reason: >-
+          The Researcher writes only under `<project>/.gobby/plans/research/`.
+          Name the target with a literal path inside it. Source code remains read-only.
+
   assistant-write-scope:
     description: "The Assistant writes only under docs/"
     event: before_tool

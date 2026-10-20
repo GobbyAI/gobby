@@ -1,7 +1,7 @@
 name: researcher
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
-  reports findings and proposals; never implements or lands code. Read-only.
+  writes research reports and proposals; never implements or lands code.
 version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
@@ -14,16 +14,7 @@ timeout: 0
 network: trusted
 send_message_targets: [parent, session]
 blocked_tools:
-  - "Edit"
   - "KillShell"
-  - "MultiEdit"
-  - "NotebookEdit"
-  - "Write"
-  - "apply_patch"
-  - "edit_file"
-  - "notebook_edit"
-  - "replace"
-  - "write_file"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
@@ -40,6 +31,7 @@ prompts:
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
     - Send findings and proposals to the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask the Orchestrator before killing processes or touching other sessions' resources.
+    - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
 
     ## Messages
     - Reach the Orchestrator and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
