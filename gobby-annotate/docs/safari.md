@@ -28,12 +28,13 @@ Select Xcode per command instead of changing the machine's global developer path
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   -project safari/GobbyAnnotate.xcodeproj -scheme 'GobbyAnnotate (macOS)' \
   -destination 'platform=macOS,arch=arm64' -configuration Debug \
-  -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath safari/build build
 ```
 
-This checks compilation only. For development installation, create
-`Signing.local.xcconfig` as above, select your Mac/iPhone/iPad destination in
-Xcode and Run a signed build. Enable the extension
+This builds signed app and extension targets, so run it only after creating
+`Signing.local.xcconfig` as above. Never add `CODE_SIGNING_ALLOWED=NO`: it drops
+the `group.ai.gobby.annotate` App Group. For development installation, select
+your Mac/iPhone/iPad destination in Xcode and Run a signed build. Enable the extension
 in Safari Settings on Mac or Settings → Apps → Safari → Extensions on iOS/iPadOS.
 Grant access to the site you want to annotate, then activate from Safari's
 extension controls. Developer-mode/unsigned-extension options on Mac may help

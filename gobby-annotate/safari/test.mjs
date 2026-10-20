@@ -45,6 +45,7 @@ try {
     DEVELOPER_DIR: developer,
     ANNOTATE_TEST_BUNDLE: input,
     ANNOTATE_TEST_RESULT: output,
+    ANNOTATE_TEST_ROOT: temporary,
   };
   execFileSync(
     "xcrun",

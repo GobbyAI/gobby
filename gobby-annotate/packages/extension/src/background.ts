@@ -2,7 +2,12 @@ import { z } from "zod";
 import { annotationSchema, id, pngDimensions } from "@gobby/annotate-core";
 import { Drafts, isExported } from "./drafts";
 import { sameCapture, base64, type Fingerprint } from "./screenshots";
-import { deleteBatches, exportSnapshot, stageSafari } from "./export";
+import {
+  applyAppDeletions,
+  deleteBatches,
+  exportSnapshot,
+  stageSafari,
+} from "./export";
 
 const drafts = new Drafts();
 let captureQueue: Promise<unknown> = Promise.resolve();
@@ -91,6 +96,15 @@ async function dispatch(
   const command = commands.parse(raw);
   switch (command.type) {
     case "list":
+      // Safari only: the app's ZIP deletions reach the batch list here. A failure is logged and
+      // the app's record stays for the next list, so the batches still load.
+      if (!chrome.downloads?.download)
+        await applyAppDeletions(drafts).catch((error: unknown) =>
+          console.warn(
+            "Gobby Annotate could not apply app deletions yet",
+            error,
+          ),
+        );
       return drafts.list();
     case "create":
       return drafts.create();
