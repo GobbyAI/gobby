@@ -894,13 +894,10 @@ async def test_delete_worktree_retries_cargo_target_before_record_delete(
         return MagicMock(success=True)
 
     mock_git_manager.delete_worktree.side_effect = delete_once
-    mock_git_manager.run_git_command.side_effect = None
-    mock_git_manager.run_git_command.return_value = MagicMock(
-        returncode=1,
-        stdout="",
-        stderr="",
-    )
-    mock_git_manager.prune_worktrees.return_value = MagicMock(success=True, error=None)
+    mock_git_manager.run_git_command.side_effect = [
+        MagicMock(returncode=1, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="worktree /tmp/repo\0HEAD abc\0\0", stderr=""),
+    ]
     mock_worktree_storage.delete.return_value = True
 
     with patch(
@@ -917,11 +914,15 @@ async def test_delete_worktree_retries_cargo_target_before_record_delete(
     assert retried["success"] is True
     assert cleanup_target.call_count == 2
     mock_git_manager.delete_worktree.assert_awaited_once()
-    mock_git_manager.run_git_command.assert_awaited_once_with(
+    assert mock_git_manager.run_git_command.await_count == 2
+    mock_git_manager.run_git_command.assert_any_await(
         ["show-ref", "--verify", "--quiet", "refs/heads/b1"],
         timeout=5,
     )
-    mock_git_manager.prune_worktrees.assert_awaited_once_with()
+    mock_git_manager.run_git_command.assert_any_await(
+        ["worktree", "list", "--porcelain", "-z"], timeout=5
+    )
+    mock_git_manager.prune_worktrees.assert_not_awaited()
     mock_worktree_storage.delete.assert_called_once_with(wt.id)
 
 
@@ -1025,7 +1026,7 @@ async def test_delete_worktree_path_not_exists(
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_missing_path_prune_failure_preserves_record(
+async def test_delete_worktree_missing_path_listing_failure_preserves_record(
     registry: InternalToolRegistry, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     wt = Worktree(
@@ -1042,22 +1043,18 @@ async def test_delete_worktree_missing_path_prune_failure_preserves_record(
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager.run_git_command.side_effect = None
-    mock_git_manager.run_git_command.return_value = MagicMock(
-        returncode=1,
-        stdout="",
-        stderr="",
-    )
-    mock_git_manager.prune_worktrees.return_value.success = False
-    mock_git_manager.prune_worktrees.return_value.error = "Prune failed"
+    mock_git_manager.run_git_command.side_effect = [
+        MagicMock(returncode=1, stdout="", stderr=""),
+        MagicMock(returncode=128, stdout="", stderr="Listing failed"),
+    ]
 
     with patch("pathlib.Path.exists", return_value=False):
         result = await registry.call("delete_worktree", {"worktree_id": wt.id})
 
     assert result["success"] is False
-    assert result["error"] == "Prune failed"
+    assert result["error"] == "Listing failed"
     mock_git_manager.delete_worktree.assert_not_called()
-    mock_git_manager.prune_worktrees.assert_awaited_once_with()
+    mock_git_manager.prune_worktrees.assert_not_awaited()
     mock_worktree_storage.delete.assert_not_called()
 
 
@@ -1223,12 +1220,15 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
         return MagicMock(success=False, error="Git delete failed after unlink")
 
     mock_git_manager.delete_worktree.side_effect = delete_after_unlink
+    mock_git_manager.run_git_command.side_effect = [
+        MagicMock(returncode=0, stdout="worktree /tmp/repo\0HEAD abc\0\0", stderr=""),
+    ]
     result = await registry.call(
         "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
     )
 
     assert result["success"] is True
-    mock_git_manager.prune_worktrees.assert_called_once()
+    mock_git_manager.prune_worktrees.assert_not_awaited()
     mock_worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
 
 

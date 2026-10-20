@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -324,6 +325,88 @@ async def test_missing_detached_checkout_preserves_locked_registration(
     assert result["success"] is False
     storage.delete.assert_not_called()
     assert worktree.worktree_path in _git(repo, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_after_remove", [False, True])
+async def test_missing_cleanup_preserves_unrelated_unlanded_registration(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    failure_after_remove: bool,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    other = repo.parent / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "0.5.0")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unlanded = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    worktree.base_branch = "0.5.0"
+
+    def remove_target() -> None:
+        _git(repo, "worktree", "remove", worktree.worktree_path)
+        _git(repo, "branch", "-d", "child")
+
+    async def failed_after_remove(*_args: object, **_kwargs: object) -> MagicMock:
+        remove_target()
+        return MagicMock(success=False, error="failure after cleanup")
+
+    if not failure_after_remove:
+        remove_target()
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+    with patch.object(WorktreeGitManager, "delete_worktree", new=failed_after_remove):
+        result = await delete(worktree_id=worktree.id)
+
+    assert result["success"] is True, result
+    storage.delete.assert_called_once_with(worktree.id)
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(other) in remaining
+    assert unlanded in remaining
+    assert worktree.worktree_path not in remaining
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_state", ["missing", "unlinked", "force"])
+async def test_git_remove_failure_preserves_unrelated_unlanded_registration(
+    landed_worktree: tuple[Path, Worktree], failure_state: str
+) -> None:
+    repo, worktree = landed_worktree
+    other = repo.parent / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "0.5.0")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unlanded = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    if failure_state == "missing":
+        shutil.rmtree(worktree.worktree_path)
+    manager = WorktreeGitManager(repo)
+    run_git = manager._run_git
+    remove_calls = 0
+
+    async def fail_first_remove(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal remove_calls
+        if args[:2] == ["worktree", "remove"]:
+            remove_calls += 1
+            if remove_calls == 1:
+                if failure_state == "unlinked":
+                    shutil.rmtree(worktree.worktree_path)
+                return subprocess.CompletedProcess(args, 128, "", "injected removal failure")
+        return await run_git(args, **kwargs)
+
+    with patch.object(manager, "_run_git", side_effect=fail_first_remove):
+        result = await manager.delete_worktree(
+            worktree.worktree_path, force=failure_state == "force"
+        )
+
+    assert result.success is (failure_state == "force"), result
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(other) in remaining
+    assert unlanded in remaining
+    assert (worktree.worktree_path in remaining) is (failure_state != "force")
 
 
 @pytest.mark.asyncio

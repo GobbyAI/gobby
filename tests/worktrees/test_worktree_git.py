@@ -667,8 +667,10 @@ class TestWorktreeGitManagerDeleteWorktree:
                     stdout="",
                     stderr="fatal: validation failed after removing path",
                 )
-            if args[:2] == ["worktree", "prune"]:
-                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            if args[:2] == ["worktree", "list"]:
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout="worktree /repo\0HEAD abc\0\0", stderr=""
+                )
             return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = run_side_effect
@@ -678,7 +680,9 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert result.success is True
         assert not worktree_path.exists()
         assert "git remove reported" in result.message
-        assert ["worktree", "prune"] in [call.args[0] for call in mock_run.call_args_list]
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        assert ["worktree", "list", "--porcelain", "-z"] in commands
+        assert ["worktree", "prune"] not in commands
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_delete_force_fallback_on_untracked_files(
@@ -691,7 +695,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         (worktree_path / ".mypy_cache").mkdir()
         (worktree_path / ".mypy_cache" / "data.json").write_text("{}")
 
-        # git worktree remove --force fails, then git worktree prune succeeds
+        # After the forced filesystem cleanup, remove only this registration.
         mock_run.side_effect = [
             subprocess.CompletedProcess(
                 args=["worktree", "remove", "--force"],
@@ -700,9 +704,9 @@ class TestWorktreeGitManagerDeleteWorktree:
                 stderr="fatal: cannot remove: Directory not empty",
             ),
             subprocess.CompletedProcess(
-                args=["worktree", "prune"],
+                args=["worktree", "remove", str(worktree_path)],
                 returncode=0,
-                stdout="pruned stale entry\n",
+                stdout="removed target entry\n",
                 stderr="",
             ),
         ]
@@ -710,7 +714,8 @@ class TestWorktreeGitManagerDeleteWorktree:
         result = await manager.delete_worktree(worktree_path, force=True)
 
         assert result.success is True
-        assert result.output == "pruned stale entry\n"
+        assert result.output == "removed target entry\n"
+        assert mock_run.call_args_list[-1].args[0] == ["worktree", "remove", str(worktree_path)]
         assert not worktree_path.exists()
 
 
@@ -1341,10 +1346,10 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         )
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_delete_missing_path_prunes_and_deletes_explicit_branch(
+    async def test_delete_missing_path_verifies_absence_and_deletes_explicit_branch(
         self, mock_run, manager, tmp_path
     ) -> None:
-        """Delete missing worktree paths by pruning the stale registration and branch."""
+        """Delete the branch only after Git confirms the registration is already gone."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
@@ -1360,9 +1365,9 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
                 stderr="fatal: not a working tree",
             ),
             subprocess.CompletedProcess(
-                args=["worktree", "prune"],
+                args=["worktree", "list", "--porcelain", "-z"],
                 returncode=0,
-                stdout="",
+                stdout="worktree /repo\0HEAD abc\0\0",
                 stderr="",
             ),
             subprocess.CompletedProcess(
@@ -1383,7 +1388,7 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
         assert result.success is True
         assert "and branch feature/test" in result.message
-        assert mock_run.call_args_list[2].args[0][-2:] == ["worktree", "prune"]
+        assert mock_run.call_args_list[2].args[0] == ["worktree", "list", "--porcelain", "-z"]
         assert mock_run.call_args_list[3].args[0][-3:] == ["branch", "-D", "feature/test"]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)

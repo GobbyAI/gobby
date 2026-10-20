@@ -14,7 +14,11 @@ from typing import Literal, NoReturn
 from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
 from gobby.worktrees.git._models import GitOperationResult, WorktreeInfo
 from gobby.worktrees.git._runner import GitRunner
-from gobby.worktrees.git._status import get_worktree_status, list_worktrees
+from gobby.worktrees.git._status import (
+    get_worktree_status,
+    list_worktrees,
+    worktree_registration_is_absent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,36 @@ async def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) 
         )
 
     raise ValueError(f"Path is not a linked worktree: {canonical_path}")
+
+
+async def remove_missing_branch_registration(
+    runner: GitRunner, branch_name: str, base_commit_sha: str
+) -> str | None:
+    """Release only a missing, unlocked checkout of the selected branch commit."""
+    listed = await runner.run_git_command(["worktree", "list", "--porcelain", "-z"], timeout=5)
+    if listed.returncode != 0:
+        return listed.stderr.strip() or "Cannot verify Git worktree registrations"
+    records = [record.split("\0") for record in listed.stdout.split("\0\0") if record]
+    if not records or not all(record[0].startswith("worktree ") for record in records):
+        return "Git returned no authoritative worktree registrations"
+    branch_ref = f"branch refs/heads/{branch_name.removeprefix('refs/heads/')}"
+    matches = [record for record in records if branch_ref in record]
+    if len(matches) > 1:
+        return "Git returned ambiguous branch registrations"
+    if not matches:
+        return None
+    record = matches[0]
+    path = Path(record[0].removeprefix("worktree "))
+    if path.exists() or path.is_symlink():
+        return "Branch checkout is still present; registration was preserved"
+    if f"HEAD {base_commit_sha}" not in record or any(
+        field == "bare" or field == "locked" or field.startswith("locked ") for field in record
+    ):
+        return "Branch registration differs from the selected commit or is locked"
+    removed = await runner.run_git_command(["worktree", "remove", str(path)], timeout=10)
+    if removed.returncode != 0:
+        return removed.stderr.strip() or "Cannot remove missing branch registration"
+    return None
 
 
 async def create_worktree(
@@ -409,7 +443,6 @@ async def delete_worktree(
             args.append("--force")
         args.append(str(worktree_path))
 
-        path_existed_before_remove = worktree_path.exists()
         # `git worktree remove` unlinks the tree file by file; a worktree that
         # carries a build directory (cargo target/, node_modules) needs minutes,
         # and a timeout here kills git mid-deletion, leaving a prunable stub
@@ -419,52 +452,35 @@ async def delete_worktree(
         remove_warning = ""
 
         if result.returncode != 0:
-            if not path_existed_before_remove:
-                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
-                output = prune_result.stdout
-                detail = result.stderr.strip() or result.stdout.strip()
-                remove_warning = f"; git remove reported: {detail}" if detail else ""
-                if prune_result.returncode != 0:
-                    prune_detail = prune_result.stderr.strip() or prune_result.stdout.strip()
-                    return GitOperationResult(
-                        success=False,
-                        message=f"Failed to prune missing worktree: {prune_detail}",
-                        error=prune_detail,
-                    )
-            elif path_existed_before_remove and not worktree_path.exists():
-                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
-                output = prune_result.stdout
-                detail = result.stderr.strip() or result.stdout.strip()
-                remove_warning = f"; git remove reported: {detail}" if detail else ""
-                if prune_result.returncode != 0:
-                    prune_detail = prune_result.stderr.strip() or prune_result.stdout.strip()
-                    remove_warning += f"; prune reported: {prune_detail}"
-            # git worktree remove --force only handles modified tracked files,
-            # not untracked files (.mypy_cache, .ruff_cache, __pycache__, etc).
-            # Fall back to manual removal + prune when force is requested.
-            elif force and worktree_path.exists():
+            detail = result.stderr.strip() or result.stdout.strip()
+            remove_warning = f"; git remove reported: {detail}" if detail else ""
+            if force and worktree_path.exists():
                 logger.warning(
-                    "git worktree remove failed for %s; falling back to shutil.rmtree + worktree prune. stderr=%s",
+                    "git worktree remove failed for %s; falling back to shutil.rmtree "
+                    "and targeted Git removal. stderr=%s",
                     worktree_path,
                     result.stderr.strip(),
                 )
                 await asyncio.to_thread(shutil.rmtree, worktree_path, ignore_errors=True)
-                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
-                output = prune_result.stdout
                 if not worktree_path.exists():
-                    logger.info("Removed worktree via fallback (rmtree + prune): %s", worktree_path)
-                else:
-                    return GitOperationResult(
-                        success=False,
-                        message=f"Failed to remove worktree even with fallback: {result.stderr}",
-                        error=result.stderr,
+                    result = await runner._run_git(
+                        ["worktree", "remove", str(worktree_path)], timeout=10
                     )
-            else:
+                    output = result.stdout
+            if worktree_path.exists():
                 return GitOperationResult(
                     success=False,
                     message=f"Failed to remove worktree: {result.stderr}",
                     error=result.stderr,
                 )
+            if result.returncode != 0:
+                absent, probe_error = await worktree_registration_is_absent(runner, worktree_path)
+                if not absent:
+                    return GitOperationResult(
+                        success=False,
+                        message=probe_error or "Git worktree registration was preserved",
+                        error=probe_error or result.stderr,
+                    )
 
         # Optionally delete the branch. The ordinary path already passed the
         # stored-base preflight above, so -D is used unconditionally here:

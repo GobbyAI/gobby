@@ -16,6 +16,7 @@ from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
+from gobby.worktrees.git import worktree_registration_is_absent
 from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 if TYPE_CHECKING:
@@ -323,20 +324,15 @@ async def _delete_git_worktree(
             message=result.message,
         )
 
-    prune = getattr(git_manager, "prune_worktrees", None)
-    if not callable(prune):
-        return WorktreeDeletionResult(
-            success=False,
-            git_deleted=False,
-            error=result.error or "Failed to prune missing git worktree",
-        )
-    prune_result = await prune()
-    if prune_result.success:
+    registration_gone, probe_error = await worktree_registration_is_absent(
+        git_manager, Path(worktree.worktree_path)
+    )
+    if registration_gone:
         return None
     return WorktreeDeletionResult(
         success=False,
         git_deleted=False,
-        error=prune_result.error or result.error or "Failed to prune missing git worktree",
+        error=probe_error or result.error or "Git worktree registration was preserved",
     )
 
 
@@ -349,7 +345,7 @@ async def probe_missing_worktree_git_state(
 ) -> tuple[bool, str | None]:
     """Confirm a missing checkout and branch need no repeated Git deletion.
 
-    Returns ``(True, None)`` only after removing a missing worktree registration.
+    Returns ``(True, None)`` only after confirming the Git registration is gone.
     A detached registration needs an explicit landing target and Git's recorded HEAD.
     A present path or branch returns ``(False, None)`` so normal deletion still runs.
     """
@@ -372,10 +368,7 @@ async def probe_missing_worktree_git_state(
         return False, None
     if branch_result.returncode != 1:
         return False, branch_result.stderr.strip() or "Failed to verify missing worktree branch"
-    prune_result = await git_manager.prune_worktrees()
-    if not prune_result.success:
-        return False, prune_result.error or "Failed to prune missing git worktree"
-    return True, None
+    return await worktree_registration_is_absent(git_manager, Path(worktree_path))
 
 
 async def _remove_missing_detached_worktree(

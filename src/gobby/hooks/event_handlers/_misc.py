@@ -37,7 +37,7 @@ from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import WorktreeGitManager, remove_missing_branch_registration
 from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 MAX_PROVIDER_ERROR_RESUMES = 3
@@ -591,12 +591,17 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 decision="block", reason=f"Cannot create branch '{worktree_name}': {exc}"
             )
 
-        if existing or not create_branch:
-            prune_result = await git_manager.prune_worktrees()
-            if not prune_result.success:
+        if not create_branch:
+            try:
+                registration_error = await remove_missing_branch_registration(
+                    git_manager, worktree_name, base_commit_sha
+                )
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                registration_error = str(exc)
+            if registration_error is not None:
                 return HookResponse(
                     decision="block",
-                    reason=f"Cannot recreate branch '{worktree_name}': {prune_result.message}",
+                    reason=f"Cannot recreate branch '{worktree_name}': {registration_error}",
                 )
         worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
         result = await git_manager.create_worktree(

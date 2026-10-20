@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -614,6 +615,13 @@ class TestWorktreeHandlers:
             git("switch", "main")
         branch_tip = git("rev-parse", "refs/heads/feature-auth")
         base_tip = git("rev-parse", "refs/heads/main")
+        other = tmp_path / "unrelated-detached"
+        git("worktree", "add", "--detach", str(other), base_tip)
+        git("-C", str(other), "commit", "--allow-empty", "-m", "unlanded unrelated work")
+        unlanded = git("-C", str(other), "rev-parse", "HEAD")
+        admin = Path(git("-C", str(other), "rev-parse", "--git-dir"))
+        shutil.rmtree(other)
+        os.utime(admin / "gitdir", (0, 0))
         missing_path = tmp_path / "missing"
         if registered:
             git("worktree", "add", str(missing_path), "feature-auth")
@@ -704,6 +712,10 @@ class TestWorktreeHandlers:
             assert response.worktree_path is None
             assert not worktree_path.exists()
             worktree_manager.create.assert_not_called()
+
+        remaining = git("worktree", "list", "--porcelain")
+        assert str(other) in remaining
+        assert unlanded in remaining
 
     async def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
@@ -803,7 +815,7 @@ class TestWorktreeHandlers:
         worktree_manager.delete.assert_not_called()
         worktree_manager.create.assert_not_called()
 
-    async def test_worktree_create_retains_stale_record_when_git_prune_fails(
+    async def test_worktree_create_preserves_registration_when_git_creation_fails(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
@@ -814,10 +826,11 @@ class TestWorktreeHandlers:
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
         git_manager.run_git_command = AsyncMock(
-            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+            return_value=subprocess.CompletedProcess([], 1, "", "")
         )
-        git_manager.prune_worktrees = AsyncMock(
-            return_value=SimpleNamespace(success=False, message="prune failed")
+        git_manager.prune_worktrees = AsyncMock(return_value=SimpleNamespace(success=True))
+        git_manager.create_worktree = AsyncMock(
+            return_value=SimpleNamespace(success=False, message="registration still present")
         )
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -837,10 +850,10 @@ class TestWorktreeHandlers:
 
         assert response.decision == "block"
         assert response.reason is not None and "feature-auth" in response.reason
-        assert "prune failed" in response.reason
+        assert "registration still present" in response.reason
         assert response.worktree_path is None
-        git_manager.prune_worktrees.assert_awaited_once()
-        git_manager.create_worktree.assert_not_called()
+        git_manager.prune_worktrees.assert_not_awaited()
+        git_manager.create_worktree.assert_awaited_once()
         worktree_manager.delete.assert_not_called()
         worktree_manager.create.assert_not_called()
 
@@ -1046,7 +1059,10 @@ class TestWorktreeHandlers:
                 return_value=MagicMock(success=True, message="ok")
             )
             mock_git_manager.run_git_command = AsyncMock(
-                return_value=MagicMock(returncode=1, stderr="")
+                side_effect=[
+                    subprocess.CompletedProcess([], 1, "", ""),
+                    subprocess.CompletedProcess([], 0, "worktree /repo\0HEAD abc\0\0", ""),
+                ]
             )
             mock_git_manager.prune_worktrees = AsyncMock(
                 return_value=MagicMock(success=True, error=None)
@@ -1058,11 +1074,15 @@ class TestWorktreeHandlers:
         assert failed.worktree_path is None
         assert retried.decision == "allow"
         assert mock_git_manager.delete_worktree.await_count == 1
-        mock_git_manager.run_git_command.assert_awaited_once_with(
+        assert mock_git_manager.run_git_command.await_count == 2
+        mock_git_manager.run_git_command.assert_any_await(
             ["show-ref", "--verify", "--quiet", "refs/heads/feature-auth"],
             timeout=5,
         )
-        mock_git_manager.prune_worktrees.assert_awaited_once_with()
+        mock_git_manager.run_git_command.assert_any_await(
+            ["worktree", "list", "--porcelain", "-z"], timeout=5
+        )
+        mock_git_manager.prune_worktrees.assert_not_awaited()
         assert cleanup_target.call_count == 2
         assert worktree_manager.get_by_path.call_count == 2
         worktree_manager.delete.assert_called_once_with("wt-123")

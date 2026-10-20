@@ -1561,8 +1561,10 @@ class TestWorktreeIsolationHandler:
             return MagicMock(success=True, error=None)
 
         git_manager.delete_worktree.side_effect = delete_once
-        git_manager.run_git_command.return_value = MagicMock(returncode=1, stderr="")
-        git_manager.prune_worktrees.return_value = MagicMock(success=True, error=None)
+        git_manager.run_git_command.side_effect = [
+            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, "worktree /path/to/main/repo\0HEAD abc\0\0", ""),
+        ]
         storage = MagicMock()
         worktree = SimpleNamespace(
             id="stale-wt",
@@ -1582,11 +1584,15 @@ class TestWorktreeIsolationHandler:
 
         assert "permission denied" in str(error_info.value)
         assert git_manager.delete_worktree.await_count == 1
-        git_manager.run_git_command.assert_awaited_once_with(
+        assert git_manager.run_git_command.await_count == 2
+        git_manager.run_git_command.assert_any_await(
             ["show-ref", "--verify", "--quiet", "refs/heads/stale"],
             timeout=5,
         )
-        git_manager.prune_worktrees.assert_awaited_once_with()
+        git_manager.run_git_command.assert_any_await(
+            ["worktree", "list", "--porcelain", "-z"], timeout=5
+        )
+        git_manager.prune_worktrees.assert_not_awaited()
         assert cleanup_target.call_count == 2
         storage.delete.assert_called_once_with("stale-wt")
 

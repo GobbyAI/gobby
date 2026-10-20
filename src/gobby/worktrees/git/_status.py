@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 
 from gobby.worktrees.git._models import GitOperationResult, WorktreeInfo, WorktreeStatus
 from gobby.worktrees.git._runner import GitRunner
 
 logger = logging.getLogger(__name__)
+
+
+async def worktree_registration_is_absent(
+    runner: GitRunner, worktree_path: Path
+) -> tuple[bool, str | None]:
+    """Confirm completed Git cleanup without pruning unrelated registrations."""
+    try:
+        listed = await runner.run_git_command(["worktree", "list", "--porcelain", "-z"], timeout=5)
+        if listed.returncode != 0:
+            return False, listed.stderr.strip() or "Cannot verify Git worktree registrations"
+        paths = [
+            Path(field.removeprefix("worktree ")).resolve()
+            for field in listed.stdout.split("\0")
+            if field.startswith("worktree ")
+        ]
+        if not paths:
+            return False, "Git returned no authoritative worktree registrations"
+        return worktree_path.resolve() not in paths, None
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return False, f"Cannot verify Git worktree registrations: {exc}"
 
 
 async def get_worktree_status(
