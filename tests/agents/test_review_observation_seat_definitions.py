@@ -74,7 +74,7 @@ OBSERVATION_SELECTORS = frozenset(
 )
 RULE_SELECTORS = {
     # The operator's hold: never tag:review-learning.
-    "code-reviewer": frozenset({"tag:default", "name:no-send-keys"}),
+    "code-reviewer": frozenset({"tag:default", "name:no-send-keys", "name:require-seat-procedure"}),
     "archivist": OBSERVATION_SELECTORS,
     "log-monitor": OBSERVATION_SELECTORS,
     "metrics-monitor": OBSERVATION_SELECTORS,
@@ -98,9 +98,16 @@ def _load(name: str) -> AgentDefinitionBody:
 
 
 def _prompt(name: str) -> str:
-    prompts = _load(name).prompts
+    body = _load(name)
+    prompts = body.prompts
     assert prompts is not None, name
-    return flat(prompts.agent)
+    prompt = prompts.agent or ""
+    reference = body.workflows.variables.get("_seat_procedure")
+    if reference:
+        assert reference in prompt
+        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
+        prompt += "\n" + path.read_text()
+    return flat(prompt)
 
 
 def _section(text: str, heading: str) -> str:
@@ -182,7 +189,11 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     assert body.prompts.persona == body.prompts.agent
     assert body.workflows.rule_selectors is not None
     assert set(body.workflows.rule_selectors.include) == RULE_SELECTORS[name]
-    assert body.workflows.variables == {}
+    assert body.workflows.variables == (
+        {"_seat_procedure": "gobby:references/agents/procedures/code-reviewer.md"}
+        if name == "code-reviewer"
+        else {}
+    )
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == {"parent", "session"}
     for section in _baseline_sections():
@@ -467,7 +478,11 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     steps = _steps("code-reviewer")
     prompt = _prompt("code-reviewer")
 
-    assert variables["required_skills"] == ["code-review", "restraint"]
+    assert variables["required_skills"] == [
+        "gobby:references/agents/procedures/code-reviewer.md",
+        "code-review",
+        "restraint",
+    ]
     assert {key: variables[key] for key in ("candidate_received", "verdict_ready")} == {
         "candidate_received": False,
         "verdict_ready": False,

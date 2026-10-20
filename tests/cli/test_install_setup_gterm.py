@@ -640,7 +640,7 @@ def test_force_refetches_published_satisfying_binary(
 
 
 def test_managed_native_binary_install_inventory() -> None:
-    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gterm", "gclient")
+    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gterm", "gclient", "gmcp")
 
 
 def test_release_workflows_gate_stage0_and_gclient_preflight() -> None:

@@ -9,9 +9,10 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "gdaemon": "0.4.79",
     "gterm": "0.1.12",
     "gclient": "0.1.63",
+    "gmcp": "0.1.1",
 }
 
-UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient"})
+UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient", "gmcp"})
 
 
 def is_published(name: str) -> bool:

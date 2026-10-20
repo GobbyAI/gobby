@@ -1,0 +1,131 @@
+{
+  "provenance": "Retained #24270 tool shapes via get_session_messages offsets1025/1027/1029; UTC envelope times supplied by source owner16911. Fixture-only Git repository and test baseline setup are synthetic; RED/restore/GREEN output is retained.",
+  "recall_provenance": {
+    "source": "16911 retained rtk recall 45d9703c9157, stub-red-recall.txt",
+    "original_bytes": 87465,
+    "original_sha256": "00ccc64440a438a4ea18c5eaf3fde822d8281f0ac44104d321260e081e1cc659",
+    "derived_copy": "bash_checkout_recall.txt",
+    "redaction": "Replaced /Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/ with <python-stdlib>/. No secret, token or credential detected; remaining absolute paths are worktree paths."
+  },
+  "root": "/Users/josh/.gobby/worktrees/gobby/lane-8-client-ui",
+  "calls": [
+    {
+      "id": "toolu_01KeMPLDhMxGXeNiJUd5vLpA",
+      "name": "Edit",
+      "arguments": {
+        "replace_all": false,
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-8-client-ui/src/gobby/servers/routes/nodes.py",
+        "old_string": "    async def register_checkout(request: Request) -> dict[str, Any]:\n",
+        "new_string": "    async def register_checkout(request: Request) -> dict[str, Any]:\n        raise NotImplementedError(\"POST /api/nodes/checkouts is staged for the #24270 test-first RED\")\n"
+      },
+      "result": {
+        "content": "The file /Users/josh/.gobby/worktrees/gobby/lane-8-client-ui/src/gobby/servers/routes/nodes.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T18:44:41.515Z",
+      "completed_at": "2026-10-18T18:44:46.240Z"
+    },
+    {
+      "id": "toolu_01JWj3auxfrD9S1huLGYmzT4",
+      "name": "Edit",
+      "arguments": {
+        "replace_all": false,
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-8-client-ui/src/gobby/servers/routes/nodes.py",
+        "old_string": "    async def report(request: Request) -> dict[str, Any] | JSONResponse:\n",
+        "new_string": "    async def report(request: Request) -> dict[str, Any] | JSONResponse:\n        raise NotImplementedError(\"POST /api/nodes/report is staged for the #24270 test-first RED\")\n"
+      },
+      "result": {
+        "content": "The file /Users/josh/.gobby/worktrees/gobby/lane-8-client-ui/src/gobby/servers/routes/nodes.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T18:44:42.078Z",
+      "completed_at": "2026-10-18T18:44:48.910Z"
+    },
+    {
+      "id": "toolu_01WDyj1DGAyxnJNNj2aYqRnB",
+      "name": "Bash",
+      "arguments": {
+        "command": "pwd && git rev-parse --abbrev-ref HEAD && git rev-parse HEAD && git status --short",
+        "description": "Verify worktree, branch, HEAD, and clean status before the RED run"
+      },
+      "result": {
+        "content": "/Users/josh/.gobby/worktrees/gobby/lane-8-client-ui\nlane-8-node-routes-redo\n08f161662aefa541d18a54eb36defcbead34ee3d",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T18:50:59.878Z",
+      "completed_at": "2026-10-18T18:51:06.676Z"
+    },
+    {
+      "id": "toolu_012F4Ek4BrBq9H7swYD6QhoE",
+      "name": "Bash",
+      "arguments": {
+        "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_routes.py",
+        "description": "Run the node routes test file once as the stub RED",
+        "timeout": 600000
+      },
+      "result": {
+        "content": "Exit code 1\nPytest: 1 passed, 18 failed in 67.54s\n\nFailures:\n1. [FAIL] test_checkout_registration_uses_key_machine\n     tests/servers/test_node_routes.py:240: in test_checkout_registration_uses_key_machine\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n2. [FAIL] test_checkout_registration_refusals\n     tests/servers/test_node_routes.py:269: in test_checkout_registration_refusals\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n3. [FAIL] test_report_inbox_replaces_snapshot_and_merges_exits\n     tests/servers/test_node_routes.py:301: in test_report_inbox_replaces_snapshot_and_merges_exits\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n4. [FAIL] test_report_order_and_epoch_barrier\n     tests/servers/test_node_routes.py:388: in test_report_order_and_epoch_barrier\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n5. [FAIL] test_reported_workspace_is_durable_before_200\n     tests/servers/test_node_routes.py:456: in test_reported_workspace_is_durable_before_200\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n6. [FAIL] test_reported_workspace_moves_updated_at\n     tests/servers/test_node_routes.py:504: in test_reported_workspace_moves_updated_at\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n7. [FAIL] test_report_byte_budgets\n     tests/servers/test_node_routes.py:539: in test_report_byte_budgets\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n\n8. [FAIL] test_checkout_body_is_capped_before_parse_or_write\n     tests/servers/test_node_routes.py:619: in test_checkout_body_is_capped_before_parse_or_write\n     tests/servers/test_node_routes.py:209: in _post\n     .venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n[full output: rtk recall 45d9703c9157]",
+        "is_error": true
+      },
+      "started_at": "2026-10-18T18:51:31.096Z",
+      "completed_at": "2026-10-18T18:54:13.195Z"
+    },
+    {
+      "id": "toolu_01SzFLzv6WoC9Pf8duW3znCc",
+      "name": "Bash",
+      "arguments": {
+        "command": "rtk recall 45d9703c9157",
+        "description": "Recall the full saved pytest output for attribution"
+      },
+      "result": {
+        "content": "<persisted-output>\nOutput too large (85.4KB). Full output saved to: /Users/josh/.claude/projects/-Users-josh--gobby-worktrees-gobby-lane-8-client-ui/38cbeb6f-5e49-4ba2-908f-81a19d7af28e/tool-results/bnv9wvgne.txt\n\nPreview (first 2KB):\n============================= test session starts ==============================\nplatform darwin -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0\nrootdir: /Users/josh/.gobby/worktrees/gobby/lane-8-client-ui\nconfigfile: pyproject.toml\nplugins: mock-3.15.1, xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, asyncio-1.3.0, cov-7.0.0\nasyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 19 items\n\ntests/servers/test_node_routes.py FFFFFFFFFFFFFFFFFF.                    [100%]\n\n=================================== FAILURES ===================================\n_________________ test_checkout_registration_uses_key_machine __________________\ntests/servers/test_node_routes.py:240: in test_checkout_registration_uses_key_machine\n    first = _post(client, \"checkouts\", body)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/servers/test_node_routes.py:209: in _post\n    response = client.post(f\"/api/nodes/{route}\", headers=_headers(machine), json=body)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.14/site-packages/starlette/testclient.py:555: in post\n    return super().post(\n.venv/lib/python3.14/site-packages/httpx2/_client.py:1204: in post\n    return self.request(\n.venv/lib/python3.14/site-packages/starlette/testclient.py:454: in request\n    return super().request(\n.venv/lib/python3.14/site-packages/httpx2/_client.py:797: in request\n    return self.send(request, auth=auth, follow_redirects=follow_redirects)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.14/site-packages/httpx2/_client.py:980: in send\n    response = self._send_handling_auth(\n.venv/lib/python3.14/site-packages/httpx2/_client.py:1008: in _send_handling_auth\n    response = self._send_handling_redirects(\n.venv/lib/python3.14/site-packages/httpx2/_client.py:1043: in _send_handling_redirects\n    response = self._send_single_request(request)\n...\n</persisted-output>",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T18:54:23.831Z",
+      "completed_at": "2026-10-18T18:54:36.585Z"
+    },
+    {
+      "id": "toolu_0173cexngzjmVhToQLNsi7Vw",
+      "name": "Bash",
+      "arguments": {
+        "command": "git checkout 485b7c140e -- src/gobby/servers/routes/nodes.py && git diff --cached --stat && git diff 485b7c140e -- src/gobby/servers/routes/nodes.py | wc -l && git diff --cached 485b7c140e --stat -- src/gobby/servers/routes/nodes.py",
+        "description": "Restore the route file from 485b7c140e and confirm it matches that commit"
+      },
+      "result": {
+        "content": " src/gobby/servers/routes/nodes.py | 4 ----\n 1 file changed, 4 deletions(-)\n       0",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T18:56:11.884Z",
+      "completed_at": "2026-10-18T18:56:25.095Z"
+    },
+    {
+      "id": "toolu_01BRZNu9unA4XbY9QsscAFrv",
+      "name": "Bash",
+      "arguments": {
+        "command": "pwd && git rev-parse --abbrev-ref HEAD && git rev-parse HEAD && git status --short && git diff --stat 485b7c140e -- src/gobby/servers/routes/nodes.py && echo \"handler diff vs 485b7c140e lines: $(git diff 485b7c140e -- src/gobby/servers/routes/nodes.py | wc -l)\"",
+        "description": "Verify worktree, branch, HEAD, clean status, and handler identity before the GREEN run"
+      },
+      "result": {
+        "content": "/Users/josh/.gobby/worktrees/gobby/lane-8-client-ui\nlane-8-node-routes-redo\n6b9d2af0e01a8ac6331792179d82dfbac0056557\nhandler diff vs 485b7c140e lines:        0",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T19:17:17.522Z",
+      "completed_at": "2026-10-18T19:17:21.890Z"
+    },
+    {
+      "id": "toolu_01KZUNHGhbnvDMq4bBS8LKVJ",
+      "name": "Bash",
+      "arguments": {
+        "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_routes.py",
+        "description": "Run the node routes test file once as the GREEN run",
+        "timeout": 600000
+      },
+      "result": {
+        "content": "Pytest: 19 passed in 22.85s",
+        "is_error": false
+      },
+      "started_at": "2026-10-18T19:17:36.622Z",
+      "completed_at": "2026-10-18T19:18:59.462Z"
+    }
+  ]
+}

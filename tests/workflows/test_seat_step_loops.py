@@ -716,7 +716,9 @@ async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabas
         "send_message",
         {"target": "session", "target_id": OWNER_ID, "content": request},
     )
-    source = (AGENTS_DIR / "code-reviewer.yaml").read_text()
+    source = (
+        AGENTS_DIR.parents[1] / "skills/gobby/references/agents/procedures/code-reviewer.md"
+    ).read_text()
     retest = next(line for line in source.splitlines() if "- Retest." in line)
     assert "EVENT=PROOF_REQUEST" in retest
     assert "EVENT=PROOF_RESULT" in retest

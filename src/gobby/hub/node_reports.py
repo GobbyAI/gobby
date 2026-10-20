@@ -128,8 +128,11 @@ def node_report_inbox() -> NodeReportInbox:
 
 
 def record_remote_workspaces(db: HubDatabase, machine_id: str, report: ReportBody) -> None:
-    """Record every reported workspace whose terminal is this machine's and names its run."""
-    entries: list[ReportExit | ReportAgent] = [*report.exits, *report.agents]
+    """Record launched exits' and agents' workspaces for matching machine-owned runs."""
+    entries: list[ReportExit | ReportAgent] = [
+        *(exit_report for exit_report in report.exits if exit_report.launched),
+        *report.agents,
+    ]
     with db.transaction() as conn:
         for entry in entries:
             if entry.workspace is not None:

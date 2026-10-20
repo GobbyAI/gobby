@@ -1,0 +1,193 @@
+name: Release gmcp
+
+# A successful gobby-core publication of version V must precede the gmcp-v*
+# tag that depends on V. cargo publish rewrites the workspace path to that
+# crates.io version; tagging gmcp first fails this workflow's dry-run in the
+# test job before any binary is built or published.
+
+on:
+  push:
+    tags:
+      - "gmcp-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#gmcp-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'gmcp-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-mcp | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/gmcp/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/gmcp/Cargo.toml version '$cargo_version'."
+
+      - name: Clippy
+        run: cargo clippy -p gobby-mcp --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run --profile ci -p gobby-mcp
+
+      - name: Package gobby-mcp and assert contract and asset inputs
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/gobby-mcp-package.list"
+          cargo package -p gobby-mcp --list --no-verify > "$list"
+          shopt -s nullglob
+          required=(crates/gmcp/contracts/*.json crates/gmcp/assets/*)
+          if [ "${#required[@]}" -eq 0 ]; then
+            echo "::error::No contract or asset files found under crates/gmcp." >&2
+            exit 1
+          fi
+          for file in "${required[@]}"; do
+            rel="${file#crates/gmcp/}"
+            if ! grep -Fxq "$rel" "$list"; then
+              echo "::error::packaged gobby-mcp is missing $rel" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build unpacked gobby-mcp package
+        run: |
+          set -euo pipefail
+          cargo package -p gobby-mcp --no-verify
+          cargo_version="$(cargo pkgid -p gobby-mcp | sed 's/.*@//')"
+          cd "target/package/gobby-mcp-${cargo_version}"
+          cargo build --release
+
+      - name: Dry-run crates.io publish
+        run: cargo publish -p gobby-mcp --dry-run --no-verify
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.cross && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build gmcp
+        run: cargo build --release --target ${{ matrix.target }} -p gobby-mcp
+
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../gmcp-${{ matrix.target }}.tar.gz gmcp
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gmcp-${{ matrix.target }}
+          path: gmcp-${{ matrix.target }}.tar.gz
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Publish gobby-mcp to crates.io
+        run: cargo publish -p gobby-mcp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in gmcp-*.tar.gz; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=(gmcp-*.tar.gz gmcp-*.tar.gz.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No gmcp release assets found." >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag --latest=false

@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Capture the operator location before pytest or individual tests isolate home.
+# Host guards only compare paths here; tests never read or mutate this directory.
+OPERATOR_GOBBY_HOME = Path.home() / ".gobby"
+
 # Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
 # postgres_db). Tests that don't use them pay no runtime cost; the session
 # fixtures only fire on first request.

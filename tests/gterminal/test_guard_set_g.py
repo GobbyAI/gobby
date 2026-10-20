@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psutil
 import pytest
@@ -34,8 +35,15 @@ from gobby.guard_set_g import (
     terminal_nextest_run_argv,
     wrap_command,
 )
+from tests.conftest import OPERATOR_GOBBY_HOME
+from tests.terminals import conftest as terminal_fixtures
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolated_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home" / ".gobby"))
 
 
 def _host_cmd(socket_dir: Path) -> list[str]:
@@ -168,6 +176,77 @@ def test_unrelated_host_outside_run_roots_is_not_a_leak(tmp_path: Path) -> None:
     assert leaked_hosts(before, after, (run_root,)) == {}
     assert path_under(durable, run_root) is False
     assert path_under(stranger, run_root) is False
+
+
+def test_foreign_temp_host_ending_is_not_durable_loss(tmp_path: Path) -> None:
+    foreign = Path("/foreign-seat/private-temp/gterm")
+    outcome = wrap_command(
+        ["true"],
+        run_roots=(tmp_path / "run",),
+        runner=lambda argv, env: 0,
+        snapshot=ScriptedSnapshot([{81: foreign}, {}, {}]),
+        finalize=RecordingFinalize(),
+    )
+    assert outcome.ended_durable == {}
+    assert outcome.exit_code == 0
+
+
+def test_gobby_home_host_ending_fails_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    production = home / "gterm"
+    outcome = wrap_command(
+        ["true"],
+        run_roots=(tmp_path / "run",),
+        runner=lambda argv, env: 0,
+        snapshot=ScriptedSnapshot([{82: production}, {}, {}]),
+        finalize=RecordingFinalize(),
+    )
+    assert outcome.ended_durable == {82: production}
+    assert outcome.exit_code == 1
+
+
+@pytest.mark.parametrize("host_kind", ["foreign", "production", "owned"])
+def test_terminal_fixture_host_ownership(
+    host_kind: str,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CODE_TMPDIR", str(run_root))
+    socket_dir = {
+        "foreign": Path("/foreign-seat/private-temp/gterm"),
+        "production": OPERATOR_GOBBY_HOME / "gterm",
+        "owned": run_root / "gterm",
+    }[host_kind]
+    before = {} if host_kind == "owned" else {83: socket_dir}
+    after = {83: socket_dir} if host_kind == "owned" else {}
+    snapshot = ScriptedSnapshot([before, after, after])
+    finalize = RecordingFinalize()
+    monkeypatch.setattr(terminal_fixtures, "_gterm_hosts", snapshot)
+    monkeypatch.setattr(terminal_fixtures, "_finalize_pidfile_host", finalize)
+    # Invoke the actual fixture so this test also checks its ownership wiring.
+    fixture_body = cast(
+        Callable[[pytest.TempPathFactory], Iterator[None]],
+        inspect.unwrap(terminal_fixtures._assert_no_leaked_hosts),
+    )
+    guard = fixture_body(tmp_path_factory)
+    next(guard)
+    if host_kind == "foreign":
+        with pytest.raises(StopIteration):
+            next(guard)
+        assert finalize.calls == []
+    else:
+        message = "ended durable" if host_kind == "production" else "leaked gterm"
+        with pytest.raises(AssertionError, match=message):
+            next(guard)
+        if host_kind == "owned":
+            assert finalize.calls == [(83, socket_dir, (tmp_path_factory.getbasetemp(), run_root))]
 
 
 def test_wrap_records_deliberate_leak_and_prints_pid_socket(

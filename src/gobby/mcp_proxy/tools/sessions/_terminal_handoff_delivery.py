@@ -34,7 +34,10 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_handoff_compact_continuation_readiness,
     unregister_compact_boundary_waiter,
 )
-from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.sessions.handoff import (
+    build_handoff_continue_prompt,
+    clear_handoff_turn_end_pending,
+)
 from gobby.sessions.transcript_cursor import (
     CodexRolloutCursor,
     TranscriptObservationError,
@@ -304,6 +307,8 @@ async def deliver_staged_compact_handoff(
             "compacted": False,
             "reason": "compact boundary receipt is missing",
         }
+    # The receipt settles this attempt; SessionStart rules may never run (#24755).
+    clear_handoff_turn_end_pending(db, session_id, attempt_id=attempt_id)
     if source == "codex" and not schedule_codex_handoff_compact_continuation_readiness(
         db,
         pane=pane,

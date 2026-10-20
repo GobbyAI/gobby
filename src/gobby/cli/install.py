@@ -319,8 +319,8 @@ def install(
     runs only those components, in order.
 
     Components: claude, codex, grok, droid, agy, git-hooks, rtk,
-    impeccable, voice, embedding, ide-settings, gclient, gterm, srt. gclient and
-    gterm promote that binary only and do not claim the daemon singleton. srt
+    impeccable, voice, embedding, ide-settings, gclient, gmcp, gterm, srt. gclient,
+    gmcp, and gterm promote that binary only and do not claim the daemon singleton. srt
     restages the managed SRT runner after a runner change without claiming the
     daemon singleton, so it is safe while the daemon runs.
     """

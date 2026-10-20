@@ -90,9 +90,16 @@ def _load(name: str) -> AgentDefinitionBody:
 
 
 def _prompt(name: str) -> str:
-    prompts = _load(name).prompts
+    body = _load(name)
+    prompts = body.prompts
     assert prompts is not None, name
-    return flat(prompts.agent)
+    prompt = prompts.agent or ""
+    reference = body.workflows.variables.get("_seat_procedure")
+    if reference:
+        assert reference in prompt
+        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
+        prompt += "\n" + path.read_text()
+    return flat(prompt)
 
 
 def _section(text: str, heading: str) -> str:
@@ -144,7 +151,11 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     include = body.workflows.rule_selectors.include
     assert "tag:default" in include
     assert "tag:review-learning" not in include
-    assert body.workflows.variables == {}
+    assert body.workflows.variables == (
+        {"_seat_procedure": f"gobby:references/agents/procedures/{name}.md"}
+        if name in ("lane-manager", "orchestrator")
+        else {}
+    )
     assert body.step_workflow is None
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]

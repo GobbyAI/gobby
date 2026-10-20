@@ -143,8 +143,9 @@ def recalled_pytest_sections(
     """Bind RTK's dedented short reports without treating repr text as boundaries.
 
     A recall receipt binds the report to its original run. Each section must consist
-    entirely of short frames and one terminal exception, with no locals, metadata,
-    or exception continuations. Historical source proves its test and final frame;
+    entirely of short frames and terminal E rows, with no locals or metadata.
+    A counted full report may skip well-formed non-stub failures. Historical source
+    proves each credited section's test and final frame;
     intermediate library frames provide no attribution. Captured output is cut off
     by the caller before parsing.
     """
@@ -154,7 +155,29 @@ def recalled_pytest_sections(
     ):
         return ()
     rows = output.splitlines()
+    full_report = bool(rows and re.fullmatch(r"=+ test session starts =+", rows[0]))
+    expected_failures: int | None = None
+    if full_report:
+        banners = [index for index, row in enumerate(rows) if re.fullmatch(r"=+ FAILURES =+", row)]
+        summary = re.fullmatch(
+            r"=+ (\d+) failed(?:, \d+ passed)? in \d+(?:\.\d+)?s(?: \([\d:]+\))? =+",
+            rows[-1],
+        )
+        if len(banners) != 1 or summary is None:
+            return ()
+        start = banners[0]
+        # A complete pytest envelope cannot carry earlier traceback/exception rows.
+        if any(
+            _PYTEST_FAILURE_HEADER_RE.fullmatch(row)
+            or _SHORT.fullmatch(row)
+            or row.startswith(("E ", "E\t"))
+            for row in rows[:start]
+        ):
+            return ()
+        expected_failures = int(summary[1])
+        rows = rows[start + 1 : -1]
     sections: list[tuple[str, str]] = []
+    failure_count = 0
     index = 0
     while index < len(rows):
         if not rows[index]:
@@ -164,27 +187,46 @@ def recalled_pytest_sections(
         if header is None:
             return ()
         section = [rows[index]]
+        failure_count += 1
         index += 1
         frames: list[tuple[re.Match[str], str]] = []
         while index < len(rows) and (frame := _SHORT.fullmatch(rows[index])) is not None:
             if index + 1 == len(rows):
                 return ()
             source = rows[index + 1]
-            if not source or source != source.strip() or source.startswith(("E ", "E\t")):
+            rendered = source[4:] if full_report and source.startswith("    ") else source
+            if (
+                not rendered
+                or rendered != rendered.strip()
+                or rendered.startswith(("E ", "E\t"))
+                or (full_report and not source.startswith("    "))
+            ):
                 return ()
-            frames.append((frame, "    " + source))
-            section.extend((rows[index], "    " + source))
+            frames.append((frame, "    " + rendered))
+            section.extend((rows[index], "    " + rendered))
             index += 2
-            if index < len(rows) and re.fullmatch(r"\^+", rows[index]):
+            if index < len(rows) and re.fullmatch(
+                r"[ \t]+\^+" if full_report else r"\^+", rows[index]
+            ):
                 index += 1
-        if (
-            len(frames) < 2
-            or index == len(rows)
-            or not re.fullmatch(r"E[ \t]+NotImplementedError(?::[^\n]*)?", rows[index])
-        ):
+        if not frames:
             return ()
-        section.append(rows[index])
-        index += 1
+        exceptions: list[str] = []
+        while index < len(rows) and rows[index].startswith(("E ", "E\t")):
+            exceptions.append(rows[index])
+            index += 1
+        if not exceptions:
+            return ()
+        creditable = (
+            len(frames) >= 2
+            and len(exceptions) == 1
+            and re.fullmatch(r"E[ \t]+NotImplementedError(?::[^\n]*)?", exceptions[0]) is not None
+        )
+        if not creditable:
+            if not full_report:
+                return ()
+            continue
+        section.append(exceptions[0])
         first, last = frames[0], frames[-1]
         name = header["name"].split("[", 1)[0].rsplit(".", 1)[-1]
         if (
@@ -192,10 +234,12 @@ def recalled_pytest_sections(
             and _short_source_matches(*first, evidence, run, cache)
             and _short_source_matches(*last, evidence, run, cache)
         ):
-            terminal = "\n".join((last[0][0], last[1], rows[index - 1]))
+            terminal = "\n".join((last[0][0], last[1], exceptions[0]))
             # Only the first frame establishes node identity; a helper deeper in
             # a sibling's traceback cannot lend its path to the section header.
             sections.append(("\n".join(section[:3]), terminal))
+    if expected_failures is not None and failure_count != expected_failures:
+        return ()
     return tuple(sections)
 
 

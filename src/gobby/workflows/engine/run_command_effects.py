@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
     BlockingEffectDeadline,
@@ -64,6 +65,9 @@ class RunCommandEffectsMixin:
         """Execute a bounded detector command and fail open on every failure."""
         event = ctx.get("event")
         if not isinstance(event, HookEvent):
+            return
+        if node_origin():
+            # A detector spawns on the hub, so a node-origin event runs nothing.
             return
 
         try:

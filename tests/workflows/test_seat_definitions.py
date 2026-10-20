@@ -294,6 +294,11 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
         assert include == ROOT_PANE_INCLUDES
         assert selectors["exclude"] == ROOT_PANE_EXCLUDES
 
+    reference = (seat.get("workflows") or {}).get("variables", {}).get("_seat_procedure")
+    if reference:
+        assert reference in prompt
+        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
+        prompt += "\n" + path.read_text()
     assert "## Platform Context" in prompt
     assert "## Skills" in prompt
     assert "gobby-agents:send_message" in prompt

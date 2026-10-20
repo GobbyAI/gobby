@@ -106,13 +106,19 @@ def event_machine_id() -> str | None:
 def path_facts(
     paths: Sequence[str], *, cwd: str | None = None, read_limit: int | None = None
 ) -> CheckoutFacts:
-    """Facts for `paths` on the delivery's node. Only paths the memo lacks are queried."""
+    """Facts for `paths` on the delivery's node. Only paths the memo lacks are queried.
+
+    The node fills one reply budget in request order, so entries it cut are asked again
+    in a later query until every path is answered.
+    """
     delivery = _require_node_delivery()
     target = delivery.cwd if cwd is None else cwd
     missing = list(dict.fromkeys(p for p in paths if (target, read_limit, p) not in delivery.files))
     header = delivery.headers.get(target)
-    if missing or header is None:
+    while missing or header is None:
         header = _read_files(delivery, target, read_limit, missing)
+        # The first path is always answered, so each query shrinks the remainder.
+        missing = [p for p in missing[1:] if (target, read_limit, p) not in delivery.files]
     return replace(header, files=tuple(delivery.files[(target, read_limit, p)] for p in paths))
 
 
@@ -159,8 +165,11 @@ def _read_files(
 ) -> CheckoutFacts:
     query = {"kind": "files", "paths": paths, "read_limit": read_limit}
     reply = _send(delivery, {"cwd": cwd, "query": query}, _FILES_TIMEOUT_MS)
-    for entry in reply["files"]:
-        delivery.files[(cwd, read_limit, entry["path"])] = _path_fact(entry)
+    for index, entry in enumerate(reply["files"]):
+        fact = _path_fact(entry)
+        if index and _budget_cut(fact, read_limit):
+            continue
+        delivery.files[(cwd, read_limit, entry["path"])] = fact
     header = CheckoutFacts(
         root=reply["root"],
         project_id=reply["project_id"],
@@ -170,6 +179,16 @@ def _read_files(
     )
     delivery.headers[cwd] = header
     return header
+
+
+def _budget_cut(fact: PathFact, read_limit: int | None) -> bool:
+    """Whether the shared reply budget, not `read_limit`, cut this entry.
+
+    The first entry of a reply always gets the whole `read_limit`, so callers skip it.
+    """
+    if not fact.truncated or read_limit is None:
+        return False
+    return len(fact.data or b"") < read_limit
 
 
 def _path_fact(entry: dict[str, Any]) -> PathFact:

@@ -187,6 +187,7 @@ def _transcript_with_test_types_audit() -> TranscriptEvidence:
     )
 
 
+# FIXME(#24760): Remove this helper's gate-12 override when enforcement is restored.
 async def _evaluate(
     task: Task,
     *,
@@ -249,6 +250,7 @@ async def _evaluate(
         # The fake /repo has no objects, so the explicit candidate's full identity is given.
         patch.multiple(
             lifecycle,
+            _TEMPORARILY_SKIP_TDD_EVIDENCE=False,
             resolve_close_commit_shas=AsyncMock(return_value=(["abc123"], None)),
             select_close_candidate=AsyncMock(return_value=(CANDIDATE_SHA, None)),
         ),

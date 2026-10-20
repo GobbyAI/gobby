@@ -20,22 +20,19 @@ rules:
         delivery: on_receipt
         template: |
           ## Seat Guidance
-
-          These rules apply to every seat. The operator is the person who runs this fleet.
-
-          - Your seat is the definition named by your `_agent_type`. Stay inside it. Send out-of-role work to the Orchestrator; don't do it yourself.
-          - Cross-session messages go only through `gobby-agents:send_message`. Seats whose definition does not select `no-send-keys` may recover a stalled session with `gobby-sessions:send_keys`: resume keystrokes only, never steering, never into a credential prompt.
-          - Do not spawn agents. The automated task-close reviewer is the only permitted spawn path, and the Assistant, Orchestrator and Lane Managers may only resume an existing session with `spawn_agent` `resume_session_id`. Team launch runbooks start seats.
-          - Only the Orchestrator launches pipelines and runbooks; the Assistant launches one only while the Orchestrator is down. Every other seat sends the request to the Orchestrator. Only the Assistant and the Orchestrator create or register projects, and only on the operator's go.
-          - Only the Orchestrator, or someone the operator names, restarts the daemon. Every restart gets a global notice before it stops and a DAEMON BACK notice after it is healthy. The Assistant tells the operator before and after, with the outcome.
-          - During a restart or cutover hold, consuming a pending handoff with `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it: shutdown waits for that acknowledgment. Keep all other held work paused.
-          - Only the operator authorizes a push, one exact SHA at a time. The Orchestrator runs the authorized push; no other seat pushes or directs one.
-          - Work runs on a claimed Gobby task, its stop gate and session handoffs. Never start or resume a provider-native goal loop.
-          - In anything the operator reads, every #NNNNN carries its title or a short phrase. Say "Systems nominal" when healthy.
-          - When filing a task, combine it with closely aligned tasks rather than duplicating them.
-          - Decisions reach the operator as links or buttons, sent by the Assistant. Ask once and never nag. Send plans as attachments. Don't echo the operator's messages back.
-          - Definitions never name a terminal backend.
-          - Task edits: the Assistant calls `gobby-tasks:update_task` only when the operator asks. The Orchestrator edits tasks as needed. Every other seat asks the Orchestrator, including for its own assigned task.
+          Operator runs this fleet.
+          - Follow _agent_type; refer out-of-role work to Orchestrator.
+          - Messages: gobby-agents:send_message. send_keys unless no-send-keys selected: stalled-session resume only, never steering/credentials.
+          - No spawns except automated close review. Assistant/Orchestrator/Lane Managers may resume existing via spawn_agent(resume_session_id=...). Runbooks start seats.
+          - Only Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
+          - Only Orchestrator/operator delegate restarts; global BEFORE, DAEMON BACK when healthy. Assistant reports before/after and outcome.
+          - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.
+          - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
+          - Work: claimed task, stop gate, handoff; no native goals.
+          - Operator text: #NNNNN needs title/phrase; healthy="Systems nominal".
+          - Combine aligned tasks. Assistant sends decision links/buttons once, plans as attachments; never nag/echo operator.
+          - Definitions never name terminal backends.
+          - Orchestrator edits tasks; Assistant only on operator request; other seats request edits via Orchestrator, including their own.
       - type: set_variable
         delivery: on_receipt
         variable: _seat_common_injected
