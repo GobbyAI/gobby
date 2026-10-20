@@ -72,9 +72,14 @@ def test_persisted_sandbox_metadata_carries_wrap_prefix(
         prepared_spawn=prepared_spawn(),
     )
 
-    _record_resume_launch_details(request, agent_run_id="run", sandbox_launch=enforced)
+    for launch in (enforced, unenforced, native):
+        _record_resume_launch_details(request, agent_run_id="run", sandbox_launch=launch)
 
-    assert [metadata["sandbox"] for metadata in persisted] == [expected]
+    assert [metadata["sandbox"] for metadata in persisted] == [
+        expected,
+        {**unenforced.metadata(), "wrap_prefix": []},
+        {**native.metadata(), "wrap_prefix": []},
+    ]
 
 
 def test_codex_shell_tmpdir_points_at_sandbox_scratchpad() -> None:

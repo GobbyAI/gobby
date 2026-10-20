@@ -17,8 +17,23 @@ if TYPE_CHECKING:
 
 
 FRONT_DOOR_SECRET_FD_ENV = "GOBBY_FRONT_DOOR_SECRET_FD"
+SUPERVISOR_FD_ENV = "GOBBY_SUPERVISOR_FD"
 
 _front_door_secret: str | None = None
+_supervisor_fd: int | None = None
+
+
+def take_supervisor_fd() -> None:
+    """Keep the inherited liveness pipe's number private to this runner."""
+    global _supervisor_fd
+    raw_fd = os.environ.pop(SUPERVISOR_FD_ENV, None)
+    if raw_fd is not None:
+        _supervisor_fd = int(raw_fd)
+
+
+def supervisor_fd() -> int | None:
+    """Return the supervisor pipe captured at process startup."""
+    return _supervisor_fd
 
 
 def take_front_door_secret() -> None:
@@ -54,9 +69,9 @@ class BackendBind:
 
 
 def backend_bind(bootstrap: BootstrapConfig) -> BackendBind:
-    if os.name == "nt" and "GOBBY_SUPERVISOR_FD" not in os.environ:
+    if os.name == "nt" and supervisor_fd() is None:
         return BackendBind(bootstrap.bind_host, bootstrap.daemon_port, bootstrap.websocket_port)
-    if bootstrap.front_door.enabled or "GOBBY_SUPERVISOR_FD" in os.environ:
+    if bootstrap.front_door.enabled or supervisor_fd() is not None:
         http, ws = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)
         return BackendBind("127.0.0.1", http, ws)
     return BackendBind(bootstrap.bind_host, bootstrap.daemon_port, bootstrap.websocket_port)
@@ -117,10 +132,9 @@ def supervisor_write_token() -> str | None:
 
 async def watch_supervisor(on_eof: Callable[[], None]) -> None:
     _token.reset()
-    value = os.environ.get("GOBBY_SUPERVISOR_FD")
-    if value is None:
+    fd = supervisor_fd()
+    if fd is None:
         return
-    fd = int(value)
     if os.name == "nt":
         import msvcrt
 

@@ -925,6 +925,31 @@ async def test_resume_non_codex_endpoint_uses_provider_specific_environment(
     assert spawn_env[token_env] == "resume-secret"
 
 
+@pytest.mark.parametrize(("backend", "enforced"), [("srt", False), ("provider-native", True)])
+@pytest.mark.asyncio
+async def test_resume_persists_empty_wrap_prefix_for_inactive_srt(
+    monkeypatch: pytest.MonkeyPatch, backend: str, enforced: bool
+) -> None:
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    launch = SandboxLaunch(backend=backend, enforced=enforced)
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", AsyncMock(return_value=launch))
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=_resume_metadata(),
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert launch_updates["sandbox"] == {**launch.metadata(), "wrap_prefix": []}
+
+
 @pytest.mark.asyncio
 async def test_resume_reuses_persisted_claude_mcp_config(
     monkeypatch: pytest.MonkeyPatch,

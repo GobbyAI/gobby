@@ -27,6 +27,30 @@ fn hello(stream: &mut std::os::unix::net::UnixStream, token: &str) -> serde_json
     recv_json(stream)
 }
 
+#[test]
+fn panes_do_not_inherit_supervisor_fd_from_host() {
+    let dir = temp_socket_dir();
+    let token = "supervisor-env-scrub";
+    write_token(dir.path(), token);
+    let mut host =
+        host_support::spawn_host_with_env(dir.path(), &[], &[("GOBBY_SUPERVISOR_FD", "123")], &[]);
+    wait_socket(&dir.path().join(CONTROL_SOCKET));
+    let mut stream = connect(&dir.path().join(CONTROL_SOCKET));
+    assert_eq!(hello(&mut stream, token)["ok"], true);
+    host_support::committed_pane(
+        &mut host,
+        &mut stream,
+        1,
+        "supervisor-env",
+        "printf '%s' \"${GOBBY_SUPERVISOR_FD-unset}\" > pane-env; exec sleep 30",
+    );
+    let captured = dir.path().join("pane-env");
+    wait_until("pane environment recorded", || {
+        std::fs::read_to_string(&captured).is_ok_and(|value| !value.is_empty())
+    });
+    assert_eq!(std::fs::read_to_string(captured).unwrap(), "unset");
+}
+
 fn test_host(
     token: &str,
 ) -> (
