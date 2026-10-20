@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
+from gobby.tasks.acceptance_python import _live_scope_nodes
 from gobby.tasks.tdd_paths import is_production_edit_path
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -22,11 +23,136 @@ from gobby.tasks.transcript_evidence_models import (
 from gobby.tasks.transcript_tool_arguments import (
     PythonModuleCache,
     parse_python_module,
+    python_declaration_insertion,
+    python_declaration_module,
     python_edit_tokens,
     python_noop_module,
 )
 
 PythonBindingCache = dict[ast.Module, dict[str, int]]
+
+
+def _has_python_declaration_stub(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    closing_edit: TranscriptEdit | None,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    """Bind a reached declaration to a later behavioral edit of that same API."""
+    module = _original_test_module(test, evidence, run, parse_cache)
+    node = _original_test_node(test, evidence, run, parse_cache)
+    if module is None or node is None or closing_edit is None:
+        return False
+    if closing_edit.session_id != run.session_id or not closing_edit.task_attributed:
+        return False
+    declarations: dict[str, dict[str, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    sources: dict[str, list[str]] = {}
+    for edit in sorted(evidence.edits, key=lambda item: item.order):
+        if edit.order >= run.order or edit.timestamp >= run.started_at:
+            continue
+        if not is_production_edit_path(edit.path) or edit.source_unchanged:
+            continue
+        if (
+            edit.session_id != run.session_id
+            or not edit.task_attributed
+            or not _source_confirmed_before(edit, run)
+        ):
+            return False
+        source = edit.source_after if edit.source_created else None
+        if source is None and edit.source_replaced is not None and edit.source_fragment is not None:
+            source = python_declaration_insertion(edit.source_replaced, edit.source_fragment)
+        shapes = python_declaration_module(source, parse_cache) if source is not None else None
+        if shapes is None:
+            return False
+        prior = declarations.setdefault(edit.path, {})
+        if prior.keys() & shapes.keys():
+            return False
+        prior.update(shapes)
+        if source is not None:
+            sources.setdefault(edit.path, []).append(source)
+    shapes = declarations.get(closing_edit.path)
+    if not shapes:
+        return False
+    baseline = "\n".join(sources[closing_edit.path])
+    before = parse_python_module(baseline, parse_cache)
+    after_source = closing_edit.source_after
+    if after_source is None:
+        replaced, fragment = closing_edit.source_replaced, closing_edit.source_fragment
+        if not replaced or fragment is None or baseline.count(replaced) != 1:
+            return False
+        after_source = baseline.replace(replaced, fragment, 1)
+    after = parse_python_module(after_source, parse_cache) if after_source is not None else None
+    if before is None or after is None:
+        return False
+    old = {
+        item.name: item
+        for item in before.body
+        if isinstance(item, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    new = {
+        item.name: item
+        for item in after.body
+        if isinstance(item, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    changed = {
+        name
+        for name, shape in shapes.items()
+        if name in old
+        and name in new
+        and _binding_count(before, name) == 1
+        and _binding_count(after, name) == 1
+        and ast.dump(old[name]) == ast.dump(shape)
+        and python_declaration_module(ast.unparse(new[name]), parse_cache) is None
+    }
+    if not changed:
+        return False
+    aliases = {
+        alias.asname or alias.name
+        for statement in (*module.body, *node.body)
+        if isinstance(statement, ast.ImportFrom)
+        and not statement.level
+        and statement.module == _python_module_name(closing_edit.path)
+        for alias in statement.names
+        if alias.name in changed
+    }
+    reachable = _declaration_reachable_nodes(module, node)
+    shadowed = {
+        item.id
+        for item in reachable
+        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store)
+    } | {item.arg for item in reachable if isinstance(item, ast.arg)}
+    return any(
+        isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id in aliases - shadowed
+        and _binding_count(module, item.func.id) == 1
+        for item in reachable
+    )
+
+
+def _declaration_reachable_nodes(
+    module: ast.Module, node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> tuple[ast.AST, ...]:
+    """Use the existing live-scope walker, following only unambiguous helper calls."""
+    helpers = {
+        item.name: item
+        for item in module.body
+        if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) and not item.decorator_list
+    }
+    pending = [node]
+    visited = {node.name}
+    result: list[ast.AST] = []
+    while pending:
+        for item in _live_scope_nodes(pending.pop().body):
+            result.append(item)
+            if not isinstance(item, ast.Call) or not isinstance(item.func, ast.Name):
+                continue
+            name = item.func.id
+            if name in helpers and name not in visited and _binding_count(module, name) == 1:
+                visited.add(name)
+                pending.append(helpers[name])
+    return tuple(result)
 
 
 def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:

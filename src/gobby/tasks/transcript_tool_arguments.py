@@ -201,6 +201,94 @@ def python_added_source(old: str, new: str) -> str | None:
     return added if python_noop_module(added) is not None else None
 
 
+def python_declaration_insertion(old: str, new: str) -> str | None:
+    """Extract a pure insertion, retaining both sides of a mid-file edit's anchor."""
+    before, after = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    start = 0
+    while start < min(len(before), len(after)) and before[start] == after[start]:
+        start += 1
+    end = 0
+    while end < min(len(before), len(after)) - start and before[-end - 1] == after[-end - 1]:
+        end += 1
+    if start + end != len(before):
+        return None
+    return "".join(after[start : len(after) - end if end else len(after)])
+
+
+def python_declaration_module(
+    source: str, parse_cache: PythonModuleCache | None = None
+) -> dict[str, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] | None:
+    """Recognize declaration-only API shape; calls and constraints are behavior."""
+    module = parse_python_module(source, parse_cache)
+    if module is None:
+        return None
+    declarations: dict[str, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for statement in module.body:
+        if isinstance(statement, ast.Import | ast.ImportFrom) or _is_docstring(statement):
+            continue
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+            valid = _declaration_method(statement)
+        elif isinstance(statement, ast.ClassDef):
+            valid = (
+                not statement.decorator_list
+                and not statement.keywords
+                and all(isinstance(base, ast.Name) for base in statement.bases)
+                and all(_declaration_member(member) for member in statement.body)
+            )
+        else:
+            return None
+        if not valid or statement.name in declarations:
+            return None
+        declarations[statement.name] = statement
+    return declarations
+
+
+def _declaration_member(member: ast.stmt) -> bool:
+    if _is_docstring(member) or isinstance(member, ast.Pass):
+        return True
+    if isinstance(member, ast.Expr) and isinstance(member.value, ast.Constant):
+        return member.value.value is Ellipsis
+    if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name):
+        return (
+            _shape_expression(member.annotation)
+            and not any(
+                isinstance(item, ast.Name) and item.id in {"Literal", "Annotated"}
+                for item in ast.walk(member.annotation)
+            )
+            and _literal_expression(member.value)
+        )
+    return isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and _declaration_method(
+        member
+    )
+
+
+def _declaration_method(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if node.decorator_list:
+        return False
+    # The existing shape checker validates annotations and defaults. Substitute a
+    # pass body so its broader constructor/return allowances cannot earn credit.
+    shape = ast.FunctionDef(
+        name="stub", args=node.args, body=[ast.Pass()], decorator_list=[], returns=node.returns
+    )
+    if not _noop_method(shape):
+        return False
+    for statement in node.body:
+        if _is_docstring(statement) or isinstance(statement, ast.Pass):
+            continue
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+            if statement.value.value is Ellipsis:
+                continue
+        if (
+            isinstance(statement, ast.Raise)
+            and statement.cause is None
+            and isinstance(statement.exc, ast.Name)
+            and statement.exc.id == "NotImplementedError"
+        ):
+            continue
+        return False
+    return True
+
+
 PythonModuleCache = dict[str, ast.Module | None]
 
 

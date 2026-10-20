@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, Implementation, InitializeResult, ListToolsResult,
-    PaginatedRequestParams, PromptsCapability, ProtocolVersion, ResourcesCapability,
-    ServerCapabilities, ServerConfig, ToolsCapability,
+    PaginatedRequestParams, ProgressNotificationParam, PromptsCapability, ProtocolVersion,
+    ResourcesCapability, ServerCapabilities, ServerConfig, ToolsCapability,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
@@ -100,11 +100,31 @@ impl ServerHandler for WrapperServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let dialer = Arc::clone(&self.dialer);
         let name = request.name.into_owned();
         let arguments = request.arguments.unwrap_or_default();
+        if name == "call_tool" {
+            let peer = context.peer;
+            let progress = context.meta.get_progress_token().map(|token| {
+                move |value: Value| {
+                    let peer = peer.clone();
+                    let token = token.clone();
+                    async move {
+                        let mut notification = ProgressNotificationParam::new(
+                            token,
+                            value["progress"].as_f64().unwrap_or_default(),
+                        );
+                        notification.total = value["total"].as_f64();
+                        notification.message = value["message"].as_str().map(str::to_owned);
+                        let _ = peer.notify_progress(notification).await;
+                    }
+                }
+            });
+            let answer = crate::call_tool::call(dialer, Value::Object(arguments), progress).await;
+            return Ok(CallToolResponse::from(tools::envelope(answer)));
+        }
         let answer = tokio::task::spawn_blocking(move || tools::call(&dialer, &name, &arguments))
             .await
             .map_err(|error| ErrorData::internal_error(error.to_string(), None))??;

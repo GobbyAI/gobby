@@ -1,0 +1,1109 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "nested-empty",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-agents",
+          "tool_name": "end_agent_run",
+          "arguments": {}
+        }
+      },
+      "output": {
+        "server_name": "gobby-agents",
+        "tool_name": "end_agent_run",
+        "arguments": {},
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "intent",
+      "input": {
+        "server_name": "example",
+        "tool_name": "summarize",
+        "arguments": {
+          "intent": "target-value"
+        },
+        "intent": "wrapper-summary"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "summarize",
+        "arguments": {
+          "intent": "target-value"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": "wrapper-summary"
+      }
+    },
+    {
+      "name": "nested-intent",
+      "input": {
+        "arguments": {
+          "server_name": "example",
+          "tool_name": "summarize",
+          "intent": "wrapper-summary",
+          "arguments": {
+            "intent": "target-value"
+          }
+        }
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "summarize",
+        "arguments": {
+          "intent": "target-value"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": "wrapper-summary"
+      }
+    },
+    {
+      "name": "nested-args",
+      "input": {
+        "args": {
+          "server_name": "gobby-tasks",
+          "tool_name": "create_task",
+          "args": {
+            "title": "Fix bug",
+            "category": "code"
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-tasks",
+        "tool_name": "create_task",
+        "arguments": {
+          "title": "Fix bug",
+          "category": "code"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "target-arguments",
+      "input": {
+        "server_name": "example",
+        "tool_name": "echo",
+        "arguments": {
+          "arguments": {
+            "value": "target-owned"
+          }
+        }
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "echo",
+        "arguments": {
+          "arguments": {
+            "value": "target-owned"
+          }
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "target-project-null",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "session_stats",
+        "arguments": {
+          "project_id": "target-project"
+        },
+        "project_id": null
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "session_stats",
+        "arguments": {
+          "project_id": "target-project"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "target-project-wrapper-project",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "session_stats",
+        "arguments": {
+          "project_id": "target-project"
+        },
+        "project_id": "wrapper-project"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "session_stats",
+        "arguments": {
+          "project_id": "target-project"
+        },
+        "session_id": null,
+        "project_id": "wrapper-project",
+        "intent": null
+      }
+    },
+    {
+      "name": "target-route",
+      "input": {
+        "server_name": "outer-server",
+        "tool_name": "outer-tool",
+        "arguments": {
+          "server_name": "inner-server",
+          "tool_name": "inner-tool",
+          "session_id": "inner-session",
+          "project_id": "inner-project",
+          "value": "ok"
+        },
+        "session_id": "outer-session",
+        "project_id": "outer-project"
+      },
+      "output": {
+        "server_name": "outer-server",
+        "tool_name": "outer-tool",
+        "arguments": {
+          "server_name": "inner-server",
+          "tool_name": "inner-tool",
+          "session_id": "inner-session",
+          "project_id": "inner-project",
+          "value": "ok"
+        },
+        "session_id": "outer-session",
+        "project_id": "outer-project",
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-target-project",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "session_stats",
+          "project_id": "wrapper-project",
+          "arguments": {
+            "project_id": "target-project"
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "session_stats",
+        "arguments": {
+          "project_id": "target-project"
+        },
+        "session_id": null,
+        "project_id": "wrapper-project",
+        "intent": null
+      }
+    },
+    {
+      "name": "invalid-json",
+      "input": {
+        "arguments": "{not-json"
+      },
+      "error": "Invalid JSON in 'arguments' parameter: {not-json"
+    },
+    {
+      "name": "invalid-unrouted-args",
+      "input": {
+        "args": "{not-json",
+        "preflight_enabled": true
+      },
+      "error": "Invalid JSON in 'args' parameter: {not-json"
+    },
+    {
+      "name": "hook-fields",
+      "input": {
+        "args": "{\"server_name\":\"gobby-tasks\",\"tool_name\":\"add_label\",\"intent\":\"label it\",\"args\":{\"task_id\":\"#1\"}}",
+        "session_id": "#7",
+        "preflight_enabled": true
+      },
+      "output": {
+        "server_name": "gobby-tasks",
+        "tool_name": "add_label",
+        "arguments": {
+          "task_id": "#1"
+        },
+        "session_id": "#7",
+        "project_id": null,
+        "intent": "label it"
+      }
+    },
+    {
+      "name": "nonobject",
+      "input": {
+        "server_name": "gobby-tasks",
+        "tool_name": "add_label",
+        "arguments": [
+          "task"
+        ]
+      },
+      "output": {
+        "server_name": "gobby-tasks",
+        "tool_name": "add_label",
+        "arguments": [
+          "task"
+        ],
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-string-arguments",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": "{\"clear_session\": false}"
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": false
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-string-args",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "args": "{\"clear_session\": false}"
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": false
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "invalid-nested-{not-json",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": "{not-json"
+        }
+      },
+      "error": "Invalid JSON in 'arguments.arguments' parameter: {not-json"
+    },
+    {
+      "name": "invalid-nested-[1, 2]",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": "[1, 2]"
+        }
+      },
+      "error": "Invalid JSON in 'arguments.arguments' parameter: [1, 2]"
+    },
+    {
+      "name": "invalid-nested-\"text\"",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": "\"text\""
+        }
+      },
+      "error": "Invalid JSON in 'arguments.arguments' parameter: \"text\""
+    },
+    {
+      "name": "ambiguous-true-different",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": false
+        },
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-true-identical",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-true-empty",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {},
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-true-strings",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": "placeholder",
+        "args": "{\"content\": \"real\"}"
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-false-different",
+      "input": {
+        "arguments": {
+          "clear_session": false
+        },
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-false-identical",
+      "input": {
+        "arguments": {
+          "clear_session": true
+        },
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-false-empty",
+      "input": {
+        "arguments": {},
+        "args": {
+          "clear_session": true
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-false-strings",
+      "input": {
+        "arguments": "placeholder",
+        "args": "{\"content\": \"real\"}"
+      },
+      "error": "Ambiguous call_tool input in 'arguments,args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "ambiguous-nested",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": {},
+          "args": {
+            "clear_session": true
+          }
+        }
+      },
+      "error": "Ambiguous call_tool input in 'arguments.arguments,arguments.args': both 'arguments' and 'args' were provided; pass exactly one."
+    },
+    {
+      "name": "null-arguments",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": null,
+          "args": {
+            "clear_session": false
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": false
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "null-args",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "args": null,
+          "arguments": {
+            "clear_session": false
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": false
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "null-nested",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": null,
+          "args": null
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {},
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "top-arguments-str",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": "{\"clear_session\": true}"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "top-args-str",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "args": "{\"clear_session\": true}"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-arguments-str",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": "{\"clear_session\": true}"
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-args-str",
+      "input": {
+        "args": "{\"server_name\":\"gobby-sessions\",\"tool_name\":\"set_handoff\",\"args\":\"{\\\"clear_session\\\": true}\"}"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "nested-dict",
+      "input": {
+        "arguments": {
+          "server_name": "gobby-sessions",
+          "tool_name": "set_handoff",
+          "arguments": {
+            "clear_session": true
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "clear_session": true
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "bad-target-end-agent",
+      "input": {
+        "server_name": "gobby-agents",
+        "tool_name": "end_agent_run",
+        "arguments": {
+          "arguments": {
+            "status": "success"
+          }
+        }
+      },
+      "output": {
+        "server_name": "gobby-agents",
+        "tool_name": "end_agent_run",
+        "arguments": {
+          "arguments": {
+            "status": "success"
+          }
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "missing-all",
+      "input": {},
+      "output": {
+        "server_name": null,
+        "tool_name": null,
+        "arguments": null,
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "top-malformed-preserved",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": "{not-json"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": "{not-json",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "partial-top-wins",
+      "input": {
+        "server_name": "outer",
+        "arguments": {
+          "server_name": "ignored",
+          "tool_name": "echo",
+          "project_id": "project",
+          "session_id": "target",
+          "value": 1
+        }
+      },
+      "output": {
+        "server_name": "outer",
+        "tool_name": "echo",
+        "arguments": {
+          "session_id": "target",
+          "value": 1
+        },
+        "session_id": null,
+        "project_id": "project",
+        "intent": null
+      }
+    },
+    {
+      "name": "escaped-json",
+      "input": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": "{\\\"value\\\": \\\"hello\\\"}"
+      },
+      "output": {
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+        "arguments": {
+          "value": "hello"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hex-number",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\x31}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": 1
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hex-text",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\x41\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "A"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-octal-text",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\101\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "A"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-unicode-number",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\u0031}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": 1
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-long-unicode",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\U0001f680\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "🚀"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-named-unicode",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{LATIN CAPITAL LETTER A}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "A"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-newline-whitespace",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\n1}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": 1
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-line-continuation",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\n1}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": 1
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-nonascii-bytes",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"é\\x41\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "Ã©A"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-named-alias",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{BOM}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "﻿"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-named-case",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{latin capital letter a}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "A"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-octal-limit",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\777\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "ǿ"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-named-loose-rejected",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{latincapitallettera}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{latincapitallettera}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-bad-hex",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\xG1\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\xG1\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-truncated-unicode",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\u01}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\u01}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-out-of-range",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\U00110000\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\U00110000\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-unknown-escape",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\q\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\q\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-bad-name",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{NOT A CHARACTER}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{NOT A CHARACTER}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-leading-zero",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-04E00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "一"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk unified ideograph-4E00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk unified ideograph-4E00}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-lower-hex",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-4e00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-4e00}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hangul-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{hangul syllable ga}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{hangul syllable ga}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hangul",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{HANGUL SYLLABLE GA}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "가"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-compat-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk compatibility ideograph-2f800}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "丽"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    }
+  ]
+}
