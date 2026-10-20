@@ -27,6 +27,7 @@ from gobby.tasks import (
     transcript_exclusions,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_pytest_collection import collection_target
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
 from gobby.tasks.transcript_evidence_snapshots import (
@@ -43,6 +44,7 @@ from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
     LOCAL_MACHINE_ID,
     _claude_tool_pair,
+    _codex_direct_exec_pair,
     _codex_response_item,
     _session,
     _write_jsonl,
@@ -377,6 +379,41 @@ async def _derive(
         str(repo_path),
         **kwargs,
     )
+
+
+@pytest.mark.parametrize("collection_flag", ["--collect-only", "--co"])
+async def test_collection_receipt_survives_parser_and_settled_resume(
+    tmp_path: Path, parse_counts: list[int], collection_flag: str
+) -> None:
+    target = "tests/e2e/test_terminal_client_stack.py"
+    command = f"GOBBY_TEST_PROTECT=1 uv run pytest {target} {collection_flag} -q"
+    output = "28 tests collected in 0.12s"
+    transcript = tmp_path / "collection.jsonl"
+    initial = _codex_direct_exec_pair(
+        command=command,
+        call_id="collect",
+        result={"exit_code": 0, "output": output},
+    )
+    _write_jsonl(transcript, initial)
+    session = _session("codex", transcript)
+    first = await _derive(session, BASE_TIME, {target}, tmp_path)
+    assert first.command_runs[0].output == output
+    assert collection_target(first.command_runs[0]) == target
+
+    for index in (1, 2):
+        _append_jsonl(
+            transcript,
+            _codex_direct_exec_pair(
+                command="git status --short",
+                call_id=f"review-{index}",
+                result={"exit_code": 0, "output": "ordinary review-only output"},
+            ),
+        )
+        resumed = await _derive(session, BASE_TIME, {target}, tmp_path)
+        assert resumed.command_runs[0].output == output
+        assert collection_target(resumed.command_runs[0]) == target
+        assert all(run.output is None for run in resumed.command_runs[1:])
+    assert parse_counts == [len(initial)] * 3
 
 
 async def test_second_derivation_parses_only_appended_lines(
