@@ -1212,6 +1212,86 @@ def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) 
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
 
+@pytest.mark.parametrize("later_input", [None, "draft", "submitted"])
+@pytest.mark.parametrize(("source", "command"), [("codex", "/compact"), ("droid", "/compress")])
+def test_confirmed_compact_accounts_for_submit_before_continuation(
+    session_db: HubDatabase,
+    composer_ledger: ComposerLedger,
+    later_input: str | None,
+    source: str,
+    command: str,
+) -> None:
+    target = "compact-submit-terminal"
+    composer_ledger.record_spawn(target, "")
+    composer_ledger.observe_write(
+        target, origin="daemon", kind="text", payload=f"{command}\r", submit=True
+    )
+    if later_input:
+        composer_ledger.observe_write(
+            target,
+            origin="operator",
+            kind="text",
+            payload="keep this draft",
+            submit=later_input == "submitted",
+        )
+    mark_handoff_compact_continuation_pending(session_db, SESSION_ID)
+    observed: list[str] = []
+
+    def schedule(*args: Any, **kwargs: Any) -> bool:
+        observed.append(composer_ledger.read(target).state)
+        return True
+
+    with (
+        patch(
+            "gobby.sessions.compact_continuation._continuation_pane",
+            return_value=SimpleNamespace(target=target),
+        ),
+        patch(
+            "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
+            side_effect=schedule,
+        ),
+    ):
+        scheduled = consume_and_schedule_handoff_compact_continuation(
+            session_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(id=SESSION_ID, source=source),
+        )
+
+    assert scheduled is True
+    assert observed == ["draft" if later_input else "empty"]
+
+
+@pytest.mark.parametrize("marker", [False, True])
+def test_compact_does_not_acknowledge_unrelated_held_text(
+    session_db: HubDatabase, composer_ledger: ComposerLedger, marker: bool
+) -> None:
+    target = "unrelated-held-terminal"
+    composer_ledger.record_spawn(target, "")
+    composer_ledger.observe_write(
+        target, origin="daemon", kind="text", payload="other prompt", submit=True
+    )
+    before = composer_ledger.read(target)
+    if marker:
+        mark_handoff_compact_continuation_pending(session_db, SESSION_ID)
+    with (
+        patch(
+            "gobby.sessions.compact_continuation._continuation_pane",
+            return_value=SimpleNamespace(target=target),
+        ),
+        patch(
+            "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
+            return_value=True,
+        ),
+    ):
+        scheduled = consume_and_schedule_handoff_compact_continuation(
+            session_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(id=SESSION_ID, source="codex"),
+        )
+    assert scheduled is marker
+    assert composer_ledger.read(target) == before
+
+
 def test_failed_schedule_restores_exact_pending_marker(session_db: HubDatabase) -> None:
     created_at = datetime.now(UTC).isoformat()
     sv_mgr = SessionVariableManager(session_db)

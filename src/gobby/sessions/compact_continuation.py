@@ -40,6 +40,7 @@ from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
+from gobby.terminals.composer_ledger import record_composer_command_consumed
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     COMPOSER_UNKNOWN_ERROR_CODE,
@@ -454,6 +455,17 @@ def consume_and_schedule_handoff_compact_continuation(
     attempt_id = payload.get("attempt_id") if isinstance(payload, dict) else None
     target_session_id = str(getattr(target_session, "id", source_session_id))
     try:
+        # A confirmed compact consumed its submitted command. Codex's rollout
+        # boundary need not emit PRE_COMPACT. Acknowledge only the known daemon
+        # command; even a submitted human prompt typed afterward remains protected.
+        pane = _continuation_pane(
+            target_session, target_session_id, terminal_manager, terminal_runtime_registry
+        )
+        if pane is not None:
+            command = (
+                "/compress" if getattr(target_session, "source", None) == "droid" else "/compact"
+            )
+            record_composer_command_consumed(pane.target, command)
         scheduled = schedule_handoff_compact_continuation(
             target_session,
             prompt,

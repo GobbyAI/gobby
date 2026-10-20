@@ -55,6 +55,7 @@ __all__ = [
     "read_composer",
     "record_composer_drain",
     "record_composer_submit",
+    "record_composer_command_consumed",
     "release_composer",
     "write_ledger",
 ]
@@ -261,6 +262,19 @@ class ComposerLedger:
             if entry is not None:
                 entry.pending_seq, entry.pending_text = 0, None
 
+    def record_command_consumed(self, terminal_id: str, command: str) -> None:
+        """A provider boundary consumed this exact daemon command, preserving later input."""
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if (
+                entry is not None
+                and entry.pending_text is not None
+                and entry.pending_text.rstrip("\r\n") == command
+                and entry.pending_seq > entry.clean_seq
+            ):
+                entry.clean_seq = entry.pending_seq
+                self._next()
+
     def record_submit(self, terminal_id: str, *, adopt: bool = False) -> None:
         """A provider recorded a submit: flagged input up to now left the composer.
 
@@ -465,6 +479,12 @@ def record_composer_submit(terminal_id: str) -> None:
     """Record on the bound ledger that the provider consumed the flagged input."""
     if _bound is not None:
         _bound.record_submit(terminal_id)
+
+
+def record_composer_command_consumed(terminal_id: str, command: str) -> None:
+    """Acknowledge only a matching daemon command on the bound ledger."""
+    if _bound is not None:
+        _bound.record_command_consumed(terminal_id, command)
 
 
 class LiveTerminalLookup(Protocol):
