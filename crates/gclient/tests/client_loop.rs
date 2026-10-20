@@ -11380,7 +11380,7 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
             .collect()
     };
     assert_eq!(label_after("├─"), ["feature"], "{rows:#?}");
-    assert_eq!(label_after("└─"), ["~"], "{rows:#?}");
+    assert_eq!(label_after("└─"), ["detached"], "{rows:#?}");
     mock.shutdown().await;
 }
 
