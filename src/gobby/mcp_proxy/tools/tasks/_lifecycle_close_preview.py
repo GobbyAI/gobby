@@ -445,11 +445,8 @@ async def _close_tagged_roots(cwd: str, candidate: str | None) -> tuple[str, str
     if not isinstance(common, GitOk) or not common.stdout.strip():
         raise RuntimeError("Integration checkout could not be resolved.")
     main = Path(common.stdout.strip()).parent
-    branch = await daemon_git.run(("symbolic-ref", "--quiet", "HEAD"), cwd=main)
-    if not isinstance(branch, GitOk) or not branch.stdout.strip():
-        raise RuntimeError("Integration branch could not be resolved.")
     roots: list[str] = []
-    for root, directory in ((candidate or "HEAD", cwd), (branch.stdout.strip(), main)):
+    for root, directory in ((candidate or "HEAD", cwd), ("HEAD", main)):
         result = await daemon_git.run(
             ("rev-parse", "--verify", "--end-of-options", f"{root}^{{commit}}"), cwd=directory
         )
