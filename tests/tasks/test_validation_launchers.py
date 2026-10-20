@@ -22,7 +22,7 @@ def test_uv_run_module_with_directory_does_not_return_directory(options: str) ->
         directories=directories,
     )
 
-    assert resolved == ("pytest", ("tests/example.py",))
+    assert resolved == ("python", ("-m", "pytest", "tests/example.py"))
     assert directories == ["/repo"]
 
 
