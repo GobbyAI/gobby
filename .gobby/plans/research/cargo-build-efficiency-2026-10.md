@@ -5,12 +5,14 @@ this machine, and fix the setup), under #22801 (Lane 4). Author: lane 4
 developer gobby#16907. Started 2026-10-15 21:00 CDT. Source binding: worktree
 `lane-4-rust-4` at `81f7f5e683` on 0.5.0 `3ae83e1a2c`.
 
-Status: draft. Sections 1 and 3 hold the read-only findings and section 5
+Status: incomplete research, recovered on 2026-10-20 by gobby#17265. Historical
+observations remain attributed to their original sessions; they have not been
+rerun or reconstructed from raw logs. Sections 1 and 3 hold the findings and section 5
 the test-hub window. Sections 2 and 4 fill in as the Release Manager grants
 the cargo runs. Every number below names its source. Nothing in this task
 changes shared config, spawn policy or the test hub.
 
-Seat limits: the seat runs under SRT, which denies `ps`/`pgrep` process
+Historical seat limits: the seat ran under SRT, which denied `ps`/`pgrep` process
 listing and the Docker socket, and a Gobby shell-write hook blocks
 `/usr/bin/time -l` (filed as #24588, shell-write classifier), so peak RSS is
 not recorded. Build progress is read
@@ -56,9 +58,9 @@ created; the hub window used no Cargo target.
 
 ## Summary so far
 
-The host is an 18-core MacBook Pro (`getconf _NPROCESSORS_ONLN` = 18). The
-load does not come from a slow machine. It comes from three multipliers that
-stack:
+The host is an 18-core MacBook Pro (`getconf _NPROCESSORS_ONLN` = 18).
+Historical observations suggest three possible multipliers; controlled
+measurements are still needed to separate their costs:
 
 1. **Every checkout compiles the whole dependency graph cold, up to three
    times.** Each checkout gets its own operator, agent and sandbox Cargo
@@ -69,17 +71,17 @@ stack:
    load near 30.
 2. **Parallelism is capped per command, not per machine.** `CARGO_BUILD_JOBS`
    bounds rustc jobs inside one cargo invocation. Nothing bounds the number
-   of invocations or nextest's test processes (default: one per CPU, so 18
-   per run). In the ungated window 20:41-20:50 the five-minute load reached
+   of invocations or nextest's test processes (default: one per CPU, so up to
+   18 per run before test-group limits). In the ungated window 20:41-20:50 the five-minute load reached
    71/41/22 with health checks at 9.5 s (RM gobby#15991).
-3. **A fixed job cap does not fit the host.** `CARGO_BUILD_JOBS=3` was sized
-   for six concurrent heavy slots (6 x 3 = 18 cores); with one shared slot
-   it leaves most cores idle. R1, a single cold build at 18 jobs started at
+3. **A fixed job cap needs a controlled comparison.** `CARGO_BUILD_JOBS=3` was sized
+   for six concurrent heavy slots (6 x 3 = 18 cores). This arithmetic does
+   not measure idle cores or account for background work. R1 started at
    load1 13-16, held load1 at 40-42 and saw `/api/health` reach 5.59 s, and
    the watcher stopped it (section 2.1). Load1 stayed high even when only
-   one rustc was live, because one rustc's codegen threads can take every
-   job token. Any cap has to start from the host's measured load at grant
-   time, and the codegen threads count against it.
+   one rustc was live, but those samples do not establish which process
+   supplied that load. Codegen parallelism and background work both need
+   consideration when comparing job caps.
 
 ## 1. Baseline
 
@@ -122,10 +124,10 @@ peak RSS is not recorded here either.
 | `uv run gobby cutover` (coherent-set release build of gcode, gdaemon, ghook, plus gclient, promotion and daemon restart) | warm main-checkout target; `gobby-core` 0.10.10 and dependents changed since the last build | 316.14 s | 571.38 s + 22.68 s (187% CPU) | 4.75 / 8.85 / 17.30 | 8.43 / 9.91 / 15.23 | 0 / 0 | exit 0 |
 
 Daemon stop took 17.3 s and the health wait 11.3 s; the remaining ~287 s
-is build and promotion. 187% CPU over 316 s means the release build used
-under two cores on average on an 18-core host: the warm build is dominated
-by serial work, with fat LTO (section 3.3) the leading candidate. A per-phase
-split needs `--timings`, which the cutover does not pass.
+includes build and promotion. The whole command averaged 187% CPU, including
+stop, health wait and promotion. This does not isolate the build's CPU use
+or prove a serial LTO bottleneck. A build-only observation with `--timings`
+and a paired fat/thin LTO comparison are still needed.
 
 ### 1.2 Host and toolchain
 
@@ -199,34 +201,44 @@ target and did not run.
 
 | Option | What it changes | Spreads load or removes work | Run |
 | --- | --- | --- | --- |
-| Job cap (`CARGO_BUILD_JOBS` 18 vs 6 vs 3) | rustc processes per invocation | Spreads only: total CPU stays the same | R1 vs R2 |
+| Job cap (`CARGO_BUILD_JOBS` 18 vs 6 vs 3) | Cargo jobserver parallelism | Primarily spreads work; CPU and memory deltas require measurement | R1 vs R2 |
 | Dev debuginfo `line-tables-only` | DWARF emitted and linked per crate | Removes work and disk | R3 vs R1 |
 | Warm incremental rebuild | Reuses a checkout's warm target | Removes work | R4 |
-| Release `lto = "thin"` instead of fat `lto = true` | Final link optimisation | Removes serial work at the end of every release build | R5 vs R6 |
+| Release `lto = "thin"` instead of fat `lto = true` | Cross-crate optimisation | Can reduce link work; local benefit unmeasured | R5 vs R6 |
 | `nice` / `taskpolicy -b` | Scheduling priority | Spreads only; protects the daemon's latency | paper |
 | nextest `test-threads` cap | Test processes per run | Spreads only | paper |
-| Linker | Default Apple linker (ld-prime) is already fast | Little to gain | paper |
+| Linker | External final linking | Actual linker invocation and local benefit unmeasured; no replacement installed | paper |
 
 ## 3. Causes
 
 ### 3.1 Who sets `CARGO_BUILD_JOBS=3`, and why
 
-No code sets it. `gcode grep -w CARGO_BUILD_JOBS src/ crates/` finds nothing.
+The original source audit found no code setting it:
+`gcode grep -w CARGO_BUILD_JOBS src/ crates/` found nothing.
+The same scoped search completed with no hits on 2026-10-20 at recovery HEAD.
 It is policy text in `.gobby/workflows/rules/project-operating-policy.yaml`
 ("Every granted cargo run sets CARGO_BUILD_JOBS=3"), added by `be77687bb6`
 (#24319, 2026-10-13) next to the six-slot heavy-run cap: six slots of three
 jobs fill 18 cores. Seats type it into each command, and plans copy it.
 
-The arithmetic holds only while six slots are live. With one shared slot
-(the 20:50 fallback) it leaves 15 cores idle during every granted build.
+The arithmetic describes a full six-slot fleet. With one slot it permits
+three Cargo jobs; it does not establish that the other 15 cores are idle.
 It also misses two sources of parallelism:
 
-- nextest runs one test process per logical CPU by default. Only three test
-  groups are capped in `.config/nextest.toml` (`ghook-process` 2,
-  `serial-db` 1, `gterm-pty` 1). Three concurrent nextest runs can hold 54
-  test processes regardless of `CARGO_BUILD_JOBS`.
+- nextest defaults to one test process per logical CPU, subject to configured
+  test-group limits. The original three groups were `ghook-process` 2,
+  `serial-db` 1 and `gterm-pty` 1; the recovery checkout also has a
+  `gdaemon-lease` group capped at 1. The 18-per-run default is an upper bound,
+  not a measured count or a claim that group-capped ghook tests run 18 at once.
+  Cargo's build-job cap does not set nextest's test-process budget.
 - The `gclient-test-gterm` setup script builds `gterm` inside a nextest run,
   outside the run's own build step.
+
+Current group limits were read directly from `.config/nextest.toml:37-41`:
+`gcode evidence` returned `invalid_selector` because that config path is not
+visible in the caller's index. The fallback `rg -n` returned
+`38:ghook-process = { max-threads = 2 }`, `39:serial-db = { max-threads = 1 }`,
+`40:gterm-pty = { max-threads = 1 }`, `41:gdaemon-lease = { max-threads = 1 }`.
 
 Measured cost: R1 (18 jobs, load1 13-16 at start) held load1 at 40-42 and
 was stopped when `/api/health` reached 5.59 s (section 2.1). The j6
@@ -241,6 +253,13 @@ comparison (R2) is pending.
 | Operator | `~/.gobby/cache/cargo-target-v2/<project>/<checkout>` via the `target` symlink | interactive shells | #22532: a shared target let concurrent builds of different revisions reuse each other's workspace-crate artifacts |
 | Agent | `.../<checkout>-agent` | unsandboxed spawned agents (shared Gobby `CARGO_HOME`) | #23198: fingerprints embed `$CARGO_HOME/registry/src`, so alternating homes rebuild every dependency |
 | Sandbox | `~/.gobby/cache/sandbox/cargo-target/<checkout>` | sandboxed seats (sandbox `CARGO_HOME`) | same fingerprint reason; sandboxed runs may not write outside the sandbox cache (#24313 keys it by the built workspace) |
+
+Recovery audit of `src/gobby/agents/cargo_target.py:91-110` confirms the
+home split remains documented in code: `94| Sandboxed runs build with their
+own ``CARGO_HOME``, and fingerprints embed` and `99| return
+_sandbox_target_root() / _checkout_component(checkout)` (wrapped here), excerpt
+hash `4ee4f9fca27938f98d1120c3c92f5aca8ec71d469e4c84f1c304d1cbe5e629c3`
+at recovery HEAD `0f9054f7ed7286b7568e4ebdbdf7f76ec1ec346a`.
 
 The isolation is correct. #22532 and #24313 record a real hazard: Cargo
 checks workspace-member freshness by dep-info mtimes with paths relative to
@@ -264,18 +283,26 @@ cold dependency build did not finish inside 1200 s (section 1.1).
 ### 3.3 Release profile
 
 `Cargo.toml` sets `[profile.release] lto = true` (fat LTO) and `strip = true`,
-with `opt-level = 3` for gcode and gdaemon and `"z"` for ghook. Fat LTO
-merges every crate into one module before code generation, so the end of
-each release build is a long, memory-heavy, mostly single-threaded step.
-Every cutover pays it for four binaries. The 06:45 cutover (section 1.3)
-averaged 187% CPU over 316 s on a warm target, consistent with a long
-serial tail. The LTO share itself is pending R5 vs R6.
+with `opt-level = 3` for gcode and gdaemon and `"z"` for ghook. Current-source
+evidence at recovery HEAD `0f9054f7ed7286b7568e4ebdbdf7f76ec1ec346a`:
+`Cargo.toml:16-30`, `17| lto = true`, excerpt hash
+`861a78a31522588a754edf6fd71d8236b79fd87fba5f8823b5d1b68408bfa5f0`
+(the evidence range includes lines 16-34).
+
+[Cargo's profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html#lto)
+describes cross-crate optimization and additional link-time cost. It does
+not establish this machine's LTO CPU, memory, or wall-time share. Those remain
+pending R5/R6. The same reference documents line-table debuginfo, macOS's
+unpacked split-debuginfo default, incremental reuse for workspace/path
+dependencies, and the codegen-units throughput tradeoff. These are candidate
+variables, not measured local improvements.
 
 ## 4. Compiler caching and containers
 
 ### 4.1 sccache-style caching
 
-Recommendation pending measurement, leaning **recommend for dependencies**.
+Recommendation: **recommend a bounded dependency-cache pilot**, conditional
+on Josh approving an install; expected local saving is unmeasured.
 
 - It removes work instead of spreading it. sccache keys each rustc
   invocation by a hash of its inputs, so a crate compiled once is reused by
@@ -283,15 +310,24 @@ Recommendation pending measurement, leaning **recommend for dependencies**.
 - It fits the hazard in 3.2. sccache does not cache incremental
   compilations, and dev builds compile workspace members incrementally, so
   workspace crates stay per checkout while third-party crates are shared.
-- Cache hits need identical source paths. Dependencies live under the shared
+- Cache reuse depends on compiler inputs and path handling. Dependencies live under the shared
   `CARGO_HOME` registry (one for sandboxed seats, one for unsandboxed agents),
-  so seats in the same home share paths. The operator home, agent home and
-  sandbox home would fill three separate caches unless they are unified.
+  so seats in the same home share paths. Different homes may reduce cross-class
+  hits; three separate caches are not an established requirement. Test actual
+  hit/miss reasons before proposing home unification.
 - Under SRT the sccache server needs a writable cache directory inside the
   sandbox cache and a local socket. Both need a policy entry; this is a
   follow-up, not a config change made here.
 - Install: `sccache` (Homebrew or `cargo install sccache`). Needs Josh's go;
   nothing was installed.
+
+[sccache's Rust support contract](https://github.com/mozilla/sccache/blob/main/docs/Rust.md)
+requires incremental compilation disabled for cacheable invocations and
+excludes crates invoking the system linker, including binaries and proc macros.
+It also warns about proc macros reading files. Thus it cannot eliminate the
+release binary link and is not automatically a safe cross-checkout cache.
+The pilot must prove hits for dependencies, current-checkout workspace output,
+SRT server/cache access, and correct misses after changed inputs.
 
 ### 4.2 Containers on macOS
 
@@ -301,12 +337,17 @@ Recommendation: **reject** for Rust builds.
   gcode, gdaemon, ghook and gclient ship as macOS binaries, so every
   shipped build would still run natively.
 - Bind-mounted source trees cross the VM file-sharing layer, which is slower
-  than native APFS for Cargo's many small-file reads and writes.
+  than native APFS in some workloads. No local bind-mount comparison was run;
+  Docker's VMM documentation describes file-I/O improvements, so a universal
+  slowdown claim would be unjustified.
 - The VM's CPU cap only moves the contention; it does not remove compile
   work.
 
 The test hub already runs in a container (`gobby-postgres-test-1`); section
 5 covers it. Docker Desktop was not started, stopped or reconfigured.
+[Docker documents the Linux VM boundary and VMM options](https://docs.docker.com/desktop/features/vmm/).
+The recommendation rests on the required macOS artifacts and additional VM
+complexity; it does not claim a measured container performance delta.
 
 ## 5. Test hub
 
@@ -326,6 +367,16 @@ every test a clean schema:
 
 Process isolation is therefore already in place. "More test databases" would
 not separate runs any further; each run already has one.
+
+Reconfirmed at recovery HEAD `0f9054f7ed7286b7568e4ebdbdf7f76ec1ec346a`:
+`tests/fixtures/postgres.py:273-323`, `276| database_name =
+f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"` (wrapped here),
+`280| _reap_dead_process_databases(connection, url)`, excerpt hash
+`8c0cb1927164cd5020d35500ca6bc70b357fed9b9d9a8345a05b87389428e043`.
+The same excerpt shows forced drop on teardown and dead-PID reaping limited
+to normalized loopback server identities. A multi-server design would have
+to run that cleanup against each selected server; it does not currently
+discover other servers.
 
 ### 5.2 Measurement window
 
@@ -373,9 +424,10 @@ under load. Both need another operator-approved window.
 
 ## 6. Recommendation
 
-Draft; items 1 and 2 firm up when R2 lands. Ranked by load removed per unit
-of work. Each item is a follow-up for the Orchestrator to file; this task
-changes no shared config.
+Draft hypotheses; ranking must be revisited after paired measurements. The
+historical order below does not establish a measured reduction in load or CPU.
+Each item is a follow-up for the Orchestrator to file; this task changes no
+shared config, concurrency thresholds or admission policy.
 
 1. **Admit heavy work by host load, and size the job cap from it.** The RM
    heavy slot counts cargo runs, but the daemon cares about total runnable
@@ -407,6 +459,21 @@ changing it.
 
 Rejected: Rust builds in containers (section 4.2).
 
+Proposed follow-up task titles and costs (no task has been filed here):
+
+| Rank for further evaluation | Proposed implementation task | Expected effect | Cost and decision boundary |
+| --- | --- | --- | --- |
+| 1 | Pilot sccache dependency reuse under SRT with per-checkout workspace provenance | Removes repeated cacheable dependency compilation on hits; local CPU/wall/RSS reduction unmeasured | Medium: Josh-approved installation, sandbox permissions, cache correctness and hit-rate proof |
+| 2 | Compare and adopt thin release LTO if runtime/size checks hold | Potentially removes release optimization work; local saving unmeasured | Low config cost, medium validation cost; depends on R5/R6 |
+| 3 | Reduce development/test debuginfo while retaining backtraces | Potentially reduces debug generation, linking and disk writes; magnitude unmeasured | Low config cost; debugger/backtrace tradeoff needs paired proof |
+| 4 | Set a measured per-run nextest process budget | Spreads concurrent tests over time; no intrinsic reduction in test work | Low config cost; compare duration and load, retain serial groups |
+| 5 | Apply measured background priority to Cargo validation commands | Scheduling preference; no intrinsic reduction in compilation | Low spawn-env/wrapper cost; only adopt if responsiveness improves |
+| 6 | Reconcile fleet job budgets with measured Cargo parallelism | Spreads work; jobserver tokens are not a complete host resource model | Medium policy/spawn cost; Orchestrator/Josh own any threshold or admission change |
+
+These are candidate titles, not authority to install or change policy. Shared
+configuration changes remain outside this research deliverable. No extra test
+databases are proposed from the existing four-live-run evidence.
+
 ## 7. Coverage against the task's validation criteria
 
 | Item | Status | Gap |
@@ -415,7 +482,125 @@ Rejected: Rust builds in containers (section 4.2).
 | 2. Causes of `CARGO_BUILD_JOBS=3` and per-worktree targets, with cost | Done for cause; cost partial | R1 gives the cold dependency cost at 18 jobs; the j6 comparison is R2. |
 | 3. At least three native options measured, with deltas | Open | R1 void; R2 (j6) queued behind cutover-critical runs; R3-R6 need a quiet window. |
 | 4. sccache and containers assessed | Done on paper | sccache unmeasured (install needs Josh's go). |
-| 5. Test-hub table at 1, 3 and 6 runs, yes/no on more databases | Done | Peak was about four live runs; package-scope runs unmeasured. |
+| 5. Test-hub table at 1, 3 and 6 runs, yes/no on more databases | Partial | Six starts peaked at about four live runs. True simultaneous 3/6-run measurements and per-run end-to-end wall times remain missing; package-scope runs unmeasured. |
 | 6. Ranked recommendation naming follow-ups | Draft | Items 1-2 firm up with R2. |
 
-_Last verified: 2026-10-16_
+## 8. Recovery and remaining measurement protocol (2026-10-20)
+
+Recovery ledger: `/Users/josh/.gobby/backups/worktree-cleanup/20261020T212057Z/migration-23902/result.json`.
+It records original report commit `7ca90e970954e1ca7e5972025b601d2036d1e321`
+applied into checkpoint `0f9054f7ed7286b7568e4ebdbdf7f76ec1ec346a`.
+No dirty paths were recovered. The checkpoint is WIP, without validation,
+review, or completion credit. Historical raw logs/review receipt IDs have not
+been supplied in the recovery ledger. Original narrative measurements are
+preserved with that provenance limitation.
+
+On 2026-10-20 Orchestrator gobby#17164 deferred the three-command cold packet
+until completion-fleet validations drain (message
+`25e69896-bdec-4a25-beef-6c9cbdec7b6c` is the request; the reply arrived as
+pending P2P context). Host-shell counterparts belong to the Orchestrator.
+This report remains incomplete until measurements meet the criteria.
+
+### Recorder and commands
+
+`cargo-build-efficiency/measure.py` records a single observation, with an
+1800-second limit plus up to 10 seconds to terminate its process group. It
+records exact SHA, checkout, command, Cargo home, overrides, toolchain,
+wall/user/sys time, `wait4` child high-water RSS, load1/load5 samples every
+0.25 seconds, exit status, timeout, and interruption. RSS is the child-process
+high-water value, not aggregate simultaneous compiler memory. Host aggregate
+RSS, if sampled separately, must have its own label and sampling interval.
+`/usr/bin/time -l /usr/bin/true` was still blocked by the shell-write scope
+hook during recovery; this script uses OS accounting directly.
+
+Each cold target must be absent; each warm target must have a passing cold
+observation with matching source/context/variant. The script never cleans a
+target or overwrites an observation. "Cold" means a cold Cargo target, with
+registry downloads and the OS filesystem cache left warm/uncontrolled. It
+does not mean a rebooted machine. No source/profile/shared-config edit occurs.
+Context is supplied by the launcher and must be corroborated by its actual
+sandbox or host run; the flag alone does not prove a sandbox boundary.
+
+Initial requested packet, **one command at a time**, from this worktree:
+
+```bash
+uv run python .gobby/plans/research/cargo-build-efficiency/measure.py --context sandbox --root .gobby/research-runs/23902-a --workload coherent --variant baseline --cache cold --seconds 1800
+uv run python .gobby/plans/research/cargo-build-efficiency/measure.py --context sandbox --root .gobby/research-runs/23902-a --workload gclient --variant baseline --cache cold --seconds 1800
+uv run python .gobby/plans/research/cargo-build-efficiency/measure.py --context sandbox --root .gobby/research-runs/23902-a --workload nextest --variant baseline --cache cold --seconds 1800
+```
+
+These commands are prepared, **not executed**. Add `--dry-run` to inspect a
+command without creating output or launching Cargo. Host counterpart uses
+the same source tree, operator Cargo home and `--context operator`, plus
+a distinct research-only `--root`; it must not use the main cutover target.
+Only Orchestrator runs the host counterpart. No promotion or daemon restart.
+
+Recorder verification (synthetic shims, no Rust compilation):
+
+```bash
+uv run python .gobby/plans/research/cargo-build-efficiency/smoke_measure.py
+uv run ruff check --no-force-exclude .gobby/plans/research/cargo-build-efficiency/measure.py .gobby/plans/research/cargo-build-efficiency/smoke_measure.py
+uv run ruff format --check --no-force-exclude .gobby/plans/research/cargo-build-efficiency/measure.py .gobby/plans/research/cargo-build-efficiency/smoke_measure.py
+```
+
+The lifecycle smoke check passed cold/warm recording, metric presence,
+overwrite/missing-warm guards, timeout and TERM interruption. It uses temporary
+fake Cargo/rustc executables and discards its synthetic output. This validates
+the recorder, and supplies **no baseline or option-performance evidence**.
+
+### Full matrix, retained until measured
+
+For every valid cell below, run both `--cache cold` and then `--cache warm`
+using the same root and variant. Run baseline first. Baseline must cover
+both sandbox and operator contexts; option deltas must identify their context
+and compare the same workload/cache state. Each invocation needs its window;
+the table does not authorize an automatic whole-matrix run.
+
+| Variant flag | Coherent release | Standalone gclient release | ghook nextest | Purpose |
+| --- | --- | --- | --- | --- |
+| `baseline` | pending | pending | pending | Cargo jobs 3; repository-default nextest concurrency |
+| `jobs1` | pending | pending | pending | Measure job-cap cost without exceeding current jobs-3 ceiling |
+| `nice10` | pending | pending | pending | Same jobs/flags, background CPU priority; spreading, not avoided compilation |
+| `thin-lto` | pending | pending | n/a | Fat versus thin, including warm final-link/no-op distinction |
+| `line-tables` | n/a | n/a | pending | Full versus line-table dev/test debug info |
+| `test-threads1` | n/a | n/a | pending | Test-process cap isolated from Cargo build-job cap |
+
+A no-change warm run measures freshness/no-op reuse, not an incremental
+edit rebuild or a new final link. Preserve that distinction in final tables.
+R5/R6 need a completed release comparison; a warm no-op cannot establish an
+LTO saving. Jobs 6/18 remain ungranted; the historical stopped R1 is not a
+replacement for a paired comparison. Incremental/codegen-units/split-debug
+and linker remain paper options unless their own paired packet is measured.
+Shared target directories remain rejected for workspace artifacts because
+of the recorded cross-checkout hazard; a dependency-cache pilot needs install
+approval and separate correctness evidence.
+
+For each pair report absolute values and `100 * (variant / baseline - 1)`
+for wall, CPU user+sys and RSS, plus load1/load5 maxima and contemporaneous
+fleet activity. At least three native options need successful comparable
+observations; a timeout is censored evidence, not a passing result or speedup.
+If background load differs materially, retain both observations and repeat
+in a matched window rather than ascribe the difference to the option.
+
+### Hub window still required
+
+Run `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_hook_receipts.py -q
+-p no:cacheprovider --durations=10` in groups of 1, 3, and 6 simultaneous
+processes, with the six-process exception explicitly coordinated. Record
+each subprocess's end-to-end wall time and test duration separately. The
+Orchestrator samples `docker stats` for `gobby-postgres-test-1` and queries
+`pg_stat_activity` on the isolated test server for connection counts, distinct
+active test databases, and lock waits; record host load1/load5 throughout.
+Keep timestamps and maximum overlapping live pytest processes to prove the
+requested concurrency was reached. No Docker configuration changes.
+
+Current provisional answer on more databases: **no additional databases
+recommended**, because existing fixtures already create one per pytest
+process. This says nothing definitive about same-server CPU/I/O capacity at
+six live runs. If a controlled window finds server resource saturation,
+more databases on that server do not add resources; evaluate separately capped
+servers with per-run DSN selection and reaping on each selected server.
+Do not claim that design is necessary until measurements justify it.
+
+_Last verified: 2026-10-20 (recovery audit; historical measurements dated above)_
