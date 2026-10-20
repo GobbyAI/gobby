@@ -573,6 +573,7 @@ def build_condition_helpers(
         shell_command_invokes_gcode,
         shell_command_runs_ocr_review,
         task_commit_project_path_allowlist_violation,
+        task_has_no_commits,
         task_needs_human_review,
         task_state_in,
         task_type_in,
@@ -672,6 +673,7 @@ def build_condition_helpers(
     # --- Task helpers ---
 
     if task_manager:
+        funcs["task_has_no_commits"] = lambda task_id: task_has_no_commits(task_manager, task_id)
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: all_tasks_have_label(
             task_manager, task_id_or_ids, label
         )
@@ -694,6 +696,7 @@ def build_condition_helpers(
             event_data=getattr(ctx.get("event"), "data", None),
         )
     else:
+        funcs["task_has_no_commits"] = lambda task_id: False
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False

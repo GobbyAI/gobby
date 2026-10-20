@@ -81,7 +81,9 @@ class SeatRun:
         self.db = db
         self.project_id = project_id
         self.sessions = SessionManager(db)
-        self.engine = RuleEngine(db, session_manager=self.sessions)
+        self.engine = RuleEngine(
+            db, session_manager=self.sessions, task_manager=LocalTaskManager(db)
+        )
         self.instances = AgentStepInstanceManager(db)
         self.session_vars: dict[str, Any] = {
             "loaded_skills": [],
@@ -818,6 +820,32 @@ async def test_developer_closes_unsubmitted_no_commit_research(
     foreign = run.task(owner=PEER_ID)
     assert not await run.admits("gobby-tasks", "close_task", {**arguments, "task_id": foreign.id})
     assert not await run.admits("gobby-tasks", "close_task", {"preview": preview})
+
+
+@pytest.mark.parametrize("linked_commit", [False, True], ids=["supplied", "previously-linked"])
+@pytest.mark.parametrize("use_ref", [False, True], ids=["uuid", "ref"])
+async def test_developer_refuses_unsubmitted_commit_close(
+    temp_db: HubDatabase, linked_commit: bool, use_ref: bool
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    if linked_commit:
+        LocalTaskManager(temp_db).link_commit(task.id, SHA)
+    task_ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": task_ref}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert not run.vars["candidate_sent"]
+    arguments: dict[str, Any] = {"task_id": task_ref if use_ref else task.id}
+    if not linked_commit:
+        arguments["commit_sha"] = SHA
+    assert not await run.admits("gobby-tasks", "close_task", arguments)
 
 
 def test_developer_submit_releases_only_after_reviewer_landed() -> None:

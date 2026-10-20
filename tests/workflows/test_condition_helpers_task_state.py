@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.condition_helpers import task_state_in
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
 
-def _manager(temp_db) -> LocalTaskManager:
+def _manager(temp_db: HubDatabase) -> LocalTaskManager:
     """Create a task manager over the test database."""
     return LocalTaskManager(temp_db)
 
 
-def _task(manager: LocalTaskManager, sample_project: dict):
+def _task(manager: LocalTaskManager, sample_project: dict[str, Any]) -> Task:
     """Create a minimal task for state-helper assertions."""
     return manager.create_task(
         project_id=sample_project["id"],
@@ -30,7 +33,9 @@ def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
     manager.stage_states.start_stage(task_id, "development", by_session_id=None)
 
 
-def test_task_state_in_matches_current_stage_state(temp_db, sample_project) -> None:
+def test_task_state_in_matches_current_stage_state(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
     _start_development_stage(manager, task.id)
@@ -41,7 +46,9 @@ def test_task_state_in_matches_current_stage_state(temp_db, sample_project) -> N
     assert task_state_in(manager, task.id, "ready", "review_approved") is False
 
 
-def test_task_state_in_projects_closed_and_escalated(temp_db, sample_project) -> None:
+def test_task_state_in_projects_closed_and_escalated(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = _manager(temp_db)
     closed = _task(manager, sample_project)
     escalated = _task(manager, sample_project)
@@ -52,7 +59,9 @@ def test_task_state_in_projects_closed_and_escalated(temp_db, sample_project) ->
     assert task_state_in(manager, escalated.id, "escalated") is True
 
 
-def test_task_state_in_uses_real_stage_native_task_fields(temp_db, sample_project) -> None:
+def test_task_state_in_uses_real_stage_native_task_fields(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
 
@@ -73,7 +82,9 @@ def test_task_state_in_uses_real_stage_native_task_fields(temp_db, sample_projec
     assert task_state_in(manager, task.id, "escalated") is True
 
 
-def test_task_state_in_defaults_to_ready_without_current_stage(temp_db, sample_project) -> None:
+def test_task_state_in_defaults_to_ready_without_current_stage(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
@@ -85,15 +96,17 @@ def test_helpers_return_false_without_task_manager() -> None:
     assert task_state_in(None, "#42", "ready") is False
 
 
-def test_task_state_in_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+def test_task_state_in_returns_false_for_invalid_uuid_bytes(temp_db: HubDatabase) -> None:
     """Invalid UUID bytes normalize safely and fail closed."""
     assert task_state_in(_manager(temp_db), b"short", "ready") is False
 
 
-def test_safe_evaluator_exposes_task_state_in(temp_db, sample_project) -> None:
+def test_safe_evaluator_exposes_task_state_in(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
-    ctx = {"variables": {"task_id": task.id}}
+    ctx: dict[str, Any] = {"variables": {"task_id": task.id}}
     helpers = build_condition_helpers(task_manager=manager, context=ctx)
     evaluator = SafeExpressionEvaluator(ctx, helpers)
 
@@ -101,8 +114,15 @@ def test_safe_evaluator_exposes_task_state_in(temp_db, sample_project) -> None:
 
 
 def test_safe_evaluator_stubs_task_state_helpers_without_manager() -> None:
-    ctx = {"variables": {}}
+    ctx: dict[str, Any] = {"variables": {}}
     helpers = build_condition_helpers(task_manager=None, context=ctx)
     evaluator = SafeExpressionEvaluator(ctx, helpers)
 
     assert evaluator.evaluate("task_state_in('#42', 'ready')") is False
+
+
+def test_no_commit_close_requires_a_task_manager() -> None:
+    helpers = build_condition_helpers(task_manager=None)
+    evaluator = SafeExpressionEvaluator({}, helpers)
+
+    assert evaluator.evaluate("task_has_no_commits('#42')") is False
