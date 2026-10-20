@@ -287,7 +287,17 @@ async def test_resumed_opt_out_run_skips_pre_commit_prewarm(
     expected: bool,
 ) -> None:
     _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
-    prepare_sandbox = AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True))
+    prepare_sandbox = AsyncMock(
+        return_value=SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            provider_executable="/managed/provider",
+            policy_path="/policy/settings.json",
+            violation_path="/policy/violations.jsonl",
+            node_path="/managed/node",
+            runner_path="/managed/runner.mjs",
+        )
+    )
     monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     metadata = _resume_metadata()
     metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
@@ -949,6 +959,7 @@ async def test_resume_reuses_persisted_claude_mcp_config(
     assert successor_metadata["mcp_path"] == "/persisted/.mcp.json"
     assert successor_metadata["strict_mcp"] is True
     launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert launch_updates["sandbox"]["wrap_prefix"] == wrapped[: wrapped.index("--") + 1]
     assert "mcp_path" not in launch_updates
     assert "strict_mcp" not in launch_updates
     # Claude Code connects `--mcp-config` servers without blocking the session and

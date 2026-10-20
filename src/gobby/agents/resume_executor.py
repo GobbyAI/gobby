@@ -50,6 +50,7 @@ from gobby.agents.sandbox_gate import SandboxRequiredError, resolve_resume_sandb
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawn_executor_support import (
     _codex_runtime_config_overrides,
+    persisted_sandbox_metadata,
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawners.command_builder import build_cli_command
@@ -458,7 +459,7 @@ async def resume_agent_run(
     launch_updates["env"] = merge_resume_metadata_env(env)
     launch_updates["sandbox_args"] = list(launch.provider_args)
     launch_updates["sandbox_env"] = dict(launch.provider_env)
-    launch_updates["sandbox"] = launch.metadata()
+    launch_updates["sandbox"] = persisted_sandbox_metadata(launch)
     launch_updates["config_overrides"] = config_overrides
     runner.run_storage.merge_resume_metadata(run_id, launch_updates)
     launched = runner.run_storage.transition_resume_phase(

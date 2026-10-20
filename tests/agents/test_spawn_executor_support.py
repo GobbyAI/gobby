@@ -1,6 +1,80 @@
 """Focused tests for provider-specific spawn configuration."""
 
-from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+
+import pytest
+
+from gobby.agents.spawn_executor_support import (
+    _codex_mcp_config_overrides,
+    _record_resume_launch_details,
+    persisted_sandbox_metadata,
+)
+from gobby.agents.spawn_models import SpawnRequest
+from gobby.agents.srt_runtime import SandboxLaunch
+from tests.agents.prepared_spawn import prepared_spawn
+
+if TYPE_CHECKING:
+    from gobby.agents.session import ChildSessionManager
+
+
+def test_persisted_sandbox_metadata_carries_wrap_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enforced = SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        provider_executable="/managed/provider",
+        policy_path="/run/policy.json",
+        violation_path="/run/violations.jsonl",
+        node_path="/managed/node",
+        runner_path="/managed/srt_runner.mjs",
+    )
+    prefix = [
+        "/managed/node",
+        "/managed/srt_runner.mjs",
+        "--settings",
+        "/run/policy.json",
+        "--violations",
+        "/run/violations.jsonl",
+        "--",
+    ]
+    expected = {**enforced.metadata(), "wrap_prefix": prefix}
+
+    assert persisted_sandbox_metadata(enforced) == expected
+    assert enforced.wrap(["provider", "--flag"]) == [*prefix, "/managed/provider", "--flag"]
+    unenforced = SandboxLaunch(backend="srt", enforced=False)
+    assert persisted_sandbox_metadata(unenforced) == {**unenforced.metadata(), "wrap_prefix": []}
+    native = SandboxLaunch(backend="provider-native", enforced=True)
+    assert persisted_sandbox_metadata(native)["wrap_prefix"] == []
+
+    persisted: list[dict[str, object]] = []
+
+    class FakeAgentRunManager:
+        def __init__(self, database: object) -> None:
+            self.database = database
+
+        def update_resume_metadata(self, agent_run_id: str, metadata: dict[str, object]) -> None:
+            persisted.append(metadata)
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", FakeAgentRunManager)
+    session_manager = SimpleNamespace(_storage=SimpleNamespace(db=object()))
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="codex",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=cast("ChildSessionManager", session_manager),
+        resume_metadata_json={"provider": "codex"},
+        prepared_spawn=prepared_spawn(),
+    )
+
+    _record_resume_launch_details(request, agent_run_id="run", sandbox_launch=enforced)
+
+    assert [metadata["sandbox"] for metadata in persisted] == [expected]
 
 
 def test_codex_shell_tmpdir_points_at_sandbox_scratchpad() -> None:
