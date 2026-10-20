@@ -84,7 +84,12 @@ def test_guarded_collection_credits_changed_file(root: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "marker", ["pytest.mark.seat_refusal", "[pytest.mark.e2e, pytest.mark.seat_refusal]"]
+    "marker",
+    [
+        "pytest.mark.seat_refusal",
+        "[pytest.mark.e2e, pytest.mark.seat_refusal]",
+        "(pytest.mark.e2e, pytest.mark.seat_refusal)",
+    ],
 )
 @pytest.mark.parametrize(
     ("prefix", "output"),
@@ -93,10 +98,27 @@ def test_guarded_collection_credits_changed_file(root: Path) -> None:
 def test_seat_refusal_marker_earns_collection_credit(
     root: Path, marker: str, prefix: str, output: str
 ) -> None:
-    source = f"import pytest\npytestmark = {marker}\ndef test_live():\n    assert True\n"
+    source = (
+        "import pytest\nfrom tests.e2e.conftest import link_spawning_operator_srt\n"
+        f"pytestmark = {marker}\ndef test_live():\n"
+        "    link_spawning_operator_srt(None)\n    assert True\n"
+    )
     gate = _gate(root, _run(f"{prefix} pytest {TEST} --collect-only -q", output), source)
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_collection_credited_paths"] == [TEST]
+
+
+@pytest.mark.parametrize(
+    "body", ["pass", "link_spawning_operator_srt", "'link_spawning_operator_srt()'"]
+)
+def test_seat_refusal_marker_requires_srt_call(root: Path, body: str) -> None:
+    source = (
+        "import pytest\nfrom tests.e2e.conftest import link_spawning_operator_srt\n"
+        f"pytestmark = pytest.mark.seat_refusal\ndef test_live():\n    {body}\n"
+    )
+    gate = _gate(root, _run(f"uv run pytest {TEST} --collect-only -q", "1 test collected"), source)
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == [TEST]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +148,8 @@ def test_seat_refusal_requires_successful_positive_collection(
     gate = _gate(
         root,
         _run(f"uv run pytest {TEST} --collect-only -q", output, exit_code=exit_code),
-        "import pytest\npytestmark = pytest.mark.seat_refusal\n",
+        "import pytest\npytestmark = pytest.mark.seat_refusal\n"
+        "def fixture():\n    link_spawning_operator_srt(None)\n",
     )
     assert gate.status == "failed"
     assert gate.details["pytest_uncovered_paths"] == [TEST]

@@ -75,7 +75,8 @@ def declares_operator_guard(source: str) -> bool:
     """Recognize declared module-wide operator execution constraints.
 
     ``pytestmark = pytest.mark.seat_refusal`` (alone or in a list/tuple)
-    declares SRT-spawning fixtures that use ``link_spawning_operator_srt``:
+    declares SRT-spawning fixtures only with a same-module call to
+    ``link_spawning_operator_srt``:
     they refuse execution inside a seat because nested Seatbelt is unavailable.
     Keep this declaration in step with that fixture use. It admits collection
     proof only; real execution requires the operator host harness. Neither
@@ -108,7 +109,16 @@ def declares_operator_guard(source: str) -> bool:
     marker = declaration.value
     values = marker.elts if isinstance(marker, (ast.List, ast.Tuple)) else [marker]
     for value in values:
-        if isinstance(value, ast.Attribute) and ast.unparse(value) == "pytest.mark.seat_refusal":
+        if (
+            isinstance(value, ast.Attribute)
+            and ast.unparse(value) == "pytest.mark.seat_refusal"
+            and any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "link_spawning_operator_srt"
+                for node in ast.walk(module)
+            )
+        ):
             return True
         if not isinstance(value, ast.Call) or ast.unparse(value.func) != "pytest.mark.skipif":
             continue
