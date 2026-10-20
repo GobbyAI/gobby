@@ -34,6 +34,16 @@ def _agent(name: str) -> dict[str, Any]:
     return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
+def _instructions(agent: dict[str, Any]) -> str:
+    prompt = agent["prompts"]["agent"]
+    reference = agent.get("workflows", {}).get("variables", {}).get("_seat_procedure")
+    if reference:
+        assert reference in prompt
+        shared = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
+        prompt += "\n" + (shared / "skills/gobby" / reference.split(":", 1)[1]).read_text()
+    return " ".join(prompt.split())
+
+
 def _allowed_mcp_tools(agent: dict[str, Any]) -> set[str]:
     tools: set[str] = set()
     for step in agent.get("step_workflow", {}).get("steps", []):
@@ -194,7 +204,7 @@ def test_merge_worker_retry_cap_guidance_continues_remaining_conflicts() -> None
     block_handler = next(
         handler for handler in merge["on_mcp_before"] if handler["action"] == "block"
     )
-    workflow_text = str(agent)
+    workflow_text = f"{agent} {_instructions(agent)}"
     retry_reason = block_handler["reason"]
 
     assert "skip that conflict_id and continue" in workflow_text
@@ -207,7 +217,7 @@ def test_merge_worker_retry_cap_guidance_continues_remaining_conflicts() -> None
 
 def test_merge_worker_resolves_conflicts_sequentially() -> None:
     agent = _agent("merge-worker")
-    workflow_text = " ".join(str(agent).split())
+    workflow_text = " ".join(f"{agent} {_instructions(agent)}".split())
     merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
     assert "Resolve conflicts sequentially" in workflow_text
@@ -220,7 +230,7 @@ def test_merge_worker_resolves_conflicts_sequentially() -> None:
 
 def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     agent = _agent("merge-worker")
-    instructions = agent["prompts"]["agent"]
+    instructions = _instructions(agent)
     normalized_instructions = " ".join(instructions.split())
     merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
@@ -239,7 +249,7 @@ def test_merge_worker_preserves_guarded_verification_commands() -> None:
     agent = _agent("merge-worker")
     text = " ".join(
         [
-            agent["prompts"]["agent"],
+            _instructions(agent),
             _step(agent, "merge")["status_message"],
         ]
     )
