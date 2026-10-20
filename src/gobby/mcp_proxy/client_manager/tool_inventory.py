@@ -137,6 +137,9 @@ async def list_tools_for_server(
                 logger.warning("Failed to list tools for %s: %s", label, error_message)
                 if server_id in manager.health:
                     manager.health[server_id].record_failure(error_message)
+                if session is None:
+                    # Connection retries already consumed their own connect budget.
+                    raise MCPError(error_message) from initial_error
                 return await manager._retry_list_tools_after_failure(server_id, initial_error)
     except TimeoutError as exc:
         if not deadline.expired():

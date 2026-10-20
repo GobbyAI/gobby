@@ -1780,10 +1780,11 @@ class TestMCPClientManagerListTools:
                 manager,
                 "ensure_connected",
                 side_effect=ConnectionError("reconnect refused"),
-            ),
-            pytest.raises(MCPError, match="reconnect retry failed: reconnect refused"),
+            ) as reconnect,
+            pytest.raises(MCPError, match="initial connection lost"),
         ):
             await manager.list_tools(_id(manager, "test-server"))
+        reconnect.assert_not_awaited()
 
 
 class TestMCPClientManagerGetToolInputSchema:

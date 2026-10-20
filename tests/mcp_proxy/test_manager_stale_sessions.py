@@ -106,6 +106,32 @@ def make_manager() -> tuple[MCPClientManager, MCPServerConfig]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("schema_lookup", [False, True])
+async def test_first_contact_timeout_does_not_retry_as_a_stale_session(
+    monkeypatch: pytest.MonkeyPatch, schema_lookup: bool
+) -> None:
+    manager, config = make_manager()
+    config.connect_timeout = 0.01
+    manager.connection_timeout = 0.05
+
+    async def hang_connect(_: MCPServerConfig) -> None:
+        await asyncio.Event().wait()
+
+    connect = AsyncMock(side_effect=hang_connect)
+    monkeypatch.setattr(manager, "_connect_server", connect)
+    with pytest.raises(MCPError, match="Failed to connect") as exc_info:
+        if schema_lookup:
+            await manager.get_tool_input_schema(config.id, "fresh_tool")
+        else:
+            await manager.list_tools(config.id)
+
+    connect.assert_awaited_once_with(config)
+    assert "reconnect retry failed" not in str(exc_info.value)
+    assert "Tool discovery timeout" not in str(exc_info.value)
+    assert config.id not in manager._connections
+
+
+@pytest.mark.asyncio
 async def test_single_server_list_tools_reconnects_after_closed_session() -> None:
     manager, config = make_manager()
     stale_connection = FakeConnection(ClosedSession())
