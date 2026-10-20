@@ -79,6 +79,7 @@ from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
+from gobby.tasks.tdd_write_authorization import task_tdd_obligations
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -770,6 +771,11 @@ async def _evaluate_close(
                     renamed_test_paths=rename_aliases,
                     task_category=task.category,
                     implementation_paths=validation_paths,
+                    regression_only=tuple(
+                        obligation.test.reference
+                        for obligation in task_tdd_obligations(task.id, task.validation_criteria)
+                        if obligation.regression_only
+                    ),
                 )
                 tdd_details = tdd.details()
                 # Gate 12 and gate 13 both ask whether the loop was followed rather than

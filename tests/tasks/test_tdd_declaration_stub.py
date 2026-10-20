@@ -10,6 +10,7 @@ from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
+    TranscriptTaskClaim,
     TranscriptValidationRun,
 )
 
@@ -210,6 +211,55 @@ def test_declaration_stub_credits_a_red_on_test_body_assertions(decisions: str) 
     assert result.passed, result.findings
     assert result.red_runs == (COMMAND,)
     assert result.green_runs == (COMMAND,)
+
+
+@pytest.mark.parametrize(
+    "member,expected",
+    [
+        ("", True),
+        (
+            "    @field_validator('model')\n    def validate_model(cls, value):\n        return value\n",
+            False,
+        ),
+        ("    def resolve(self):\n        if self.model:\n            return self.model\n", False),
+        ("    model = resolve_model()\n", False),
+    ],
+)
+def test_write_and_close_share_declaration_stub_red(member: str, expected: bool) -> None:
+    from gobby.tasks.tdd_write_authorization import (
+        authorize_production_write,
+        task_tdd_obligations,
+    )
+
+    complete = _stub_cycle(DECISIONS + member)
+    pending = complete.edits[-1]
+    prepared = replace(
+        complete,
+        edits=complete.edits[:-1],
+        validation_runs=complete.validation_runs[:1],
+        task_claims=(TranscriptTaskClaim(task_ref="task", claimed_at=START),),
+    )
+    obligations = task_tdd_obligations(
+        "task", f"1. Defaults are validated; test: {INVARIANTS.reference}"
+    )
+    write = authorize_production_write(
+        obligations, prepared, task_refs=frozenset({"task"}), pending_writes=(pending,)
+    )
+    close = evaluate_tdd_evidence((INVARIANTS,), complete)
+
+    assert (write.allowed, close.passed) == (expected, expected)
+    assert dict(write.red_runs) == ({INVARIANTS.reference: COMMAND} if expected else {})
+    assert close.red_runs == ((COMMAND,) if expected else ())
+    if expected:
+        for invalid in (
+            replace(pending, session_id="another-session"),
+            replace(pending, path=WIRING),
+            replace(pending, source_after=_stub()),
+        ):
+            refused = authorize_production_write(
+                obligations, prepared, task_refs=frozenset({"task"}), pending_writes=(invalid,)
+            )
+            assert refused.allowed is False
 
 
 @pytest.mark.parametrize(

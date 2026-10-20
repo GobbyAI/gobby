@@ -5,8 +5,11 @@ from __future__ import annotations
 import ast
 import builtins
 import io
+import json
 import os
+import re
 import tokenize
+from pathlib import Path
 from typing import Any
 
 _COMMAND_KEYS = ("cmd", "command", "script")
@@ -22,11 +25,139 @@ def extract_command(arguments: dict[str, Any]) -> str:
     return ""
 
 
-def edited_source(tool_name: str, arguments: dict[str, Any], previous: str | None) -> str | None:
+def exact_patch(arguments: Any) -> str | None:
+    """Extract a literal patch, never infer execution of arbitrary wrapper code."""
+    if isinstance(arguments, str):
+        return arguments if arguments.startswith("*** Begin Patch\n") else None
+    if not isinstance(arguments, dict):
+        return None
+    arguments = {key: value for key, value in arguments.items() if key not in {"cwd", "workdir"}}
+    if len(arguments) != 1:
+        return None
+    for key in ("raw", "patch", "input"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.startswith("*** Begin Patch\n"):
+            return value
+    code = arguments.get("code") or arguments.get("raw")
+    if isinstance(code, str):
+        match = re.fullmatch(
+            r'\s*text\(await tools\.apply_patch\(("(?:[^"\\]|\\.)*")\)\);?\s*', code
+        )
+        if match:
+            try:
+                return exact_patch(json.loads(match[1]))
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def patch_sources(
+    arguments: Any, root: str | None, sources: dict[str, str | None]
+) -> dict[str, str] | None:
+    """Reconstruct only exact additions or uniquely matched ordered update hunks."""
+    patch = exact_patch(arguments)
+    if patch is None:
+        return None
+    lines = patch.splitlines(keepends=True)
+    if not lines or lines.pop(0).rstrip("\r\n") != "*** Begin Patch":
+        return None
+    if not lines or lines.pop().rstrip("\r\n") != "*** End Patch":
+        return None
+    result: dict[str, str] = {}
+    while lines:
+        header = lines.pop(0).rstrip("\r\n")
+        if not header.startswith(("*** Add File: ", "*** Update File: ")):
+            return None
+        path = Path(header.split(": ", 1)[1])
+        if not path.is_absolute():
+            if root is None:
+                return None
+            path = Path(root, path)
+        path = path.resolve()
+        if root is not None and not path.is_relative_to(Path(root).resolve()):
+            return None
+        key = str(path)
+        if key in result:
+            return None
+        body: list[str] = []
+        while lines and not lines[0].startswith("*** "):
+            body.append(lines.pop(0))
+        if header.startswith("*** Add File: "):
+            if (
+                sources.get(key) is not None
+                or not body
+                or any(not line.startswith("+") for line in body)
+            ):
+                return None
+            result[key] = "".join(line[1:] for line in body)
+            continue
+        before = sources.get(key)
+        if before is None or not body:
+            return None
+        after, offset = before, 0
+        while body:
+            marker = body.pop(0).rstrip("\r\n")
+            if marker != "@@":
+                return None
+            old: list[str] = []
+            new: list[str] = []
+            while body and not body[0].startswith("@@"):
+                line = body.pop(0)
+                if not line or line[0] not in " +-":
+                    return None
+                if line[0] in " -":
+                    old.append(line[1:])
+                if line[0] in " +":
+                    new.append(line[1:])
+            original, replacement = "".join(old), "".join(new)
+            if not original or after.count(original) != 1:
+                return None
+            index = after.find(original)
+            if index < offset:
+                return None
+            after = after[:index] + replacement + after[index + len(original) :]
+            offset = index + len(replacement)
+        result[key] = after
+    return result or None
+
+
+def patch_write_input(arguments: Any, root: str | None) -> dict[str, Any] | None:
+    """Project an exact patch against current bytes for the pre-write stub check."""
+    patch = exact_patch(arguments)
+    if patch is None:
+        return None
+    sources: dict[str, str | None] = {}
+    for name in re.findall(r"^\*\*\* (?:Add|Update) File: (.+)$", patch, re.MULTILINE):
+        path = Path(name)
+        if not path.is_absolute():
+            if root is None:
+                return None
+            path = Path(root, path)
+        try:
+            sources[str(path.resolve())] = path.read_text() if path.exists() else None
+        except (OSError, UnicodeError):
+            return None
+    projected = patch_sources(arguments, root, sources)
+    if projected is None:
+        return None
+    return {"changes": [{"file_path": path, "content": text} for path, text in projected.items()]}
+
+
+def edited_source(
+    tool_name: str,
+    arguments: dict[str, Any],
+    previous: str | None,
+    path: str | None = None,
+    root: str | None = None,
+) -> str | None:
     """Replay a structured source edit; unknown or ambiguous changes lose the snapshot."""
     if tool_name == "write":
         content = arguments.get("content")
         return content if isinstance(content, str) else None
+    if tool_name in {"apply_patch", "exec"} and path is not None:
+        key = str(Path(path).resolve())
+        projected = patch_sources(arguments, root, {key: previous})
+        return projected.get(key) if projected is not None else None
     if previous is None or tool_name not in {"edit", "multiedit", "search_replace"}:
         return None
     changes = arguments.get("edits") if tool_name == "multiedit" else [arguments]
@@ -527,9 +658,10 @@ def extract_edit_paths(
             if resolved is not None:
                 values.add(resolved)
     if tool_name in {"apply_patch", "exec"}:
-        raw = arguments.get("raw") or arguments.get("patch") or arguments.get("input")
+        literal = exact_patch(arguments)
+        raw = literal or arguments.get("raw") or arguments.get("patch") or arguments.get("input")
         if isinstance(raw, str):
-            if tool_name == "exec":
+            if tool_name == "exec" and literal is None:
                 if "tools.apply_patch" not in raw:
                     return values
                 raw = raw.replace(r"\r", "\r").replace(r"\n", "\n")

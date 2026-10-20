@@ -2,7 +2,7 @@ tags: [tdd-enforcement, enforcement, gobby, default]
 
 rules:
   enforce-tdd-track-tests:
-    description: "Track test files written for TDD observability"
+    description: "Observe test writes; this ledger never authorizes production writes or run proof"
     event: after_tool
     enabled: true
     priority: 30

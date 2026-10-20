@@ -870,16 +870,12 @@ def _record_edit(
         if task_file is None:
             continue
         previous = next((edit for edit in reversed(state.edits) if edit.path == task_file), None)
-        source_after = (
-            edited_source(
-                basename,
-                arguments,
-                previous.source_after
-                if previous is not None and previous.source_confirmed
-                else None,
-            )
-            if task_file.endswith(".py")
-            else None
+        source_after = edited_source(
+            basename,
+            arguments,
+            previous.source_after if previous is not None and previous.source_confirmed else None,
+            path,
+            str(state.repo_path) if state.repo_path is not None else None,
         )
         old, new = arguments.get("old_string"), arguments.get("new_string")
         python_edit = basename in {"edit", "search_replace"} and task_file.endswith(".py")

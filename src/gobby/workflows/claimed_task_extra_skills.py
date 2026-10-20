@@ -14,6 +14,7 @@ from gobby.skills.instruction_requirements import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import extract_artifact_references, parse_test_reference
 from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
+from gobby.tasks.tdd_write_authorization import task_tdd_obligations
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -43,6 +44,7 @@ def build_claimed_task_extra_skill_state(
     extras: list[str] = []
     requires_tdd = False
     acceptance_test_paths: list[str] = []
+    tdd_obligations: dict[str, list[dict[str, Any]]] = {}
     is_source_work = False
 
     if isinstance(claimed_tasks, dict) and task_manager is not None:
@@ -69,6 +71,15 @@ def build_claimed_task_extra_skill_state(
             if task_needs_tdd:
                 requires_tdd = True
                 _append_unique(extras, TDD_SKILL)
+                tdd_obligations[str(task_id)] = [
+                    {
+                        "task_id": obligation.task_id,
+                        "criterion": obligation.criterion,
+                        "reference": obligation.test.reference,
+                        "regression_only": obligation.regression_only,
+                    }
+                    for obligation in task_tdd_obligations(str(task_id), validation_criteria)
+                ]
 
             if validation_criteria:
                 for reference in extract_artifact_references(validation_criteria, "test"):
@@ -84,6 +95,7 @@ def build_claimed_task_extra_skill_state(
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
         CLAIMED_TASK_REQUIRES_TDD_VARIABLE: requires_tdd,
         CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE: acceptance_test_paths,
+        "claimed_task_tdd_obligations": tdd_obligations,
         CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE: is_source_work,
     }
 
