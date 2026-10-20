@@ -75,6 +75,24 @@ pub struct WorktreeEntry {
     pub state: Option<RowState>,
 }
 
+impl WorktreeEntry {
+    pub fn display_name(&self) -> String {
+        if let Some(branch) = self
+            .branch
+            .as_deref()
+            .filter(|branch| !branch.trim().is_empty())
+        {
+            return branch.to_owned();
+        }
+        let name = self
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_else(|| self.worktree_id.as_str().into());
+        format!("{name} (detached)")
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentEntry {
     pub entry_id: String,

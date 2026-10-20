@@ -150,14 +150,10 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                 .enumerate()
                 .map(|(index, worktree)| SidebarRow {
                     id: worktree.worktree_id.clone(),
-                    // A detached worktree has no branch; `~` as on its card.
-                    label: worktree
-                        .branch
-                        .as_deref()
-                        .map_or("~", |branch| {
-                            branch.strip_prefix("worktree/").unwrap_or(branch)
-                        })
-                        .to_string(),
+                    label: {
+                        let name = worktree.display_name();
+                        name.strip_prefix("worktree/").unwrap_or(&name).to_owned()
+                    },
                     kind: RowKind::Worktree,
                     // Rollups never yield Unknown, so here it marks a
                     // worktree with no agent bound, drawn without a glyph.

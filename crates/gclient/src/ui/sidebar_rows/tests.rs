@@ -60,6 +60,38 @@ fn scripted_workspace() -> Workspace {
     ws
 }
 
+#[test]
+fn branchless_worktree_names_its_checkout_while_home_project_keeps_tilde() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "personal".into(),
+            name: "Personal".into(),
+            display_name: "Personal".into(),
+            checkout: Some(Checkout {
+                machine_id: "local".into(),
+                root_path: "/Users/josh".into(),
+            }),
+            ..ProjectRow::default()
+        }],
+        worktrees: vec![WorktreeRow {
+            id: "scratch".into(),
+            project_id: "personal".into(),
+            worktree_path: "/private/tmp/gate10-24270/".into(),
+            ..WorktreeRow::default()
+        }],
+        ..SidebarRows::default()
+    });
+    ws.select_project("personal");
+    ws.reconcile_subscribe_first().unwrap();
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.toggle_group("personal");
+    let rows = project_rows(&ws, &chrome);
+    assert_eq!(rows[0].branch.as_deref(), Some("~"));
+    assert_eq!(rows[1].id, "scratch");
+    assert_eq!(rows[1].label, "gate10-24270 (detached)");
+}
+
 fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
