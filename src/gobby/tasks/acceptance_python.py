@@ -8,10 +8,17 @@ including a helper that anything other than an unshadowed ``staticmethod`` or
 ``classmethod`` decorates, and one the module rebinds anywhere: as an attribute,
 through ``global``/``nonlocal``, or by a string literal a call passes or a
 subscript indexes, where a dotted path counts by its last part. An attribute
-call with no committed definition of its name, in its module or one it imports
-from, counts only as a Mock assertion method or a ``unittest.TestCase`` instance
-assertion. Computed names, ``exec`` and metaclass forms beyond literal keys are
-outside what the resolver can see.
+call with no committed definition or write of its name, in its module, a ``conftest.py`` on
+its directory chain, or a module one hop away that any of those imports, counts
+only as a Mock assertion method or a ``unittest.TestCase`` instance assertion. Fakes
+defined where the resolver cannot map an import to a repository file (plugins,
+``pytest_plugins`` strings, installed packages, src-layout absolute imports) are
+outside what it can see. An assertion counts only where it can run: statements after
+``return``, ``raise``, ``continue`` or ``break`` in their block, and branches a
+constant test rules out, are dead. A ``TestCase`` base reached through a local class
+counts only when that class is bound once, undecorated, at module top level; a base
+imported from another module stays a finding. Computed names, ``exec`` and metaclass
+forms beyond literal keys are outside what the resolver can see.
 """
 
 from __future__ import annotations
@@ -50,6 +57,8 @@ _MOCK_ASSERTIONS = frozenset(
     }
 )
 _TESTCASE_ORIGINS = frozenset({"unittest.TestCase", "unittest.IsolatedAsyncioTestCase"})
+_STATEMENT_BLOCKS = ("body", "orelse", "finalbody", "handlers", "cases")
+_TERMINATORS = (ast.Return, ast.Raise, ast.Continue, ast.Break)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +110,7 @@ async def resolve_assertion_helpers(
     test = _Function(module, node, owners[-1] if owners else None)
     resolver = _HelperResolver(read, module)
     proven = False
-    for call in _scope_nodes(node.body):
+    for call in _live_scope_nodes(node.body):
         if (
             isinstance(call, ast.Call)
             and _is_assert_name(called_name(call.func))
@@ -121,6 +130,7 @@ def python_test_findings(reference: str, body: str, helper_asserts: bool) -> lis
         scope = tree.body[0].body
     findings: list[str] = []
     has_assertion = helper_asserts
+    live = {id(node) for node in _live_scope_nodes(scope)}
     for node in _scope_nodes(scope):
         if isinstance(node, ast.Call):
             called = called_name(node.func)
@@ -128,11 +138,12 @@ def python_test_findings(reference: str, body: str, helper_asserts: bool) -> lis
                 is_static_expression(arg) for arg in node.args
             ):
                 findings.append(f"{reference}: assertion compares only constant values")
-            if called in {"fail", "raises"}:
+            if called in {"fail", "raises"} and id(node) in live:
                 has_assertion = True
         if not isinstance(node, ast.Assert):
             continue
-        has_assertion = True
+        if id(node) in live:
+            has_assertion = True
         if is_tautological_assert(node.test) or is_static_expression(node.test):
             findings.append(f"{reference}: contains a constant or tautological assertion")
     if not has_assertion:
@@ -187,7 +198,7 @@ class _HelperResolver:
         return proven
 
     async def _asserts(self, function: _Function, depth: int) -> bool:
-        for node in _scope_nodes(function.node.body):
+        for node in _live_scope_nodes(function.node.body):
             if isinstance(node, ast.Assert):
                 if not is_tautological_assert(node.test) and not is_static_expression(node.test):
                     return True
@@ -235,7 +246,7 @@ class _HelperResolver:
 
     async def _imported_module(self, path: str, node: ast.ImportFrom) -> _Module | None:
         loaded: list[_Module] = []
-        for candidate in _module_candidates(path, node):
+        for candidate in _module_candidates(path, node.level, node.module):
             if candidate not in self._modules:
                 self._modules[candidate] = await self._load(candidate)
             module = self._modules[candidate]
@@ -245,15 +256,53 @@ class _HelperResolver:
         return loaded[0] if len(loaded) == 1 else None
 
     async def _defined_nearby(self, module: _Module, name: str) -> bool:
-        """Whether ``module``, or a module it imports from, defines ``name``."""
-        if _defines(module.tree, name):
-            return True
-        for node in ast.walk(module.tree):
-            if isinstance(node, ast.ImportFrom):
-                imported = await self._imported_module(module.path, node)
-                if imported is not None and _defines(imported.tree, name):
+        """Whether a scanned module defines or writes ``name``, or a module one hop away imports it.
+
+        Scanned modules are the test module and every conftest.py on its directory chain.
+        """
+        for scanned in await self._scanned_modules(module):
+            if _binds_nearby(scanned, name):
+                return True
+            for node in ast.walk(scanned.tree):
+                targets: list[_Module] = []
+                if isinstance(node, ast.ImportFrom):
+                    targets = await self._loaded_candidates(scanned.path, node.level, node.module)
+                    # ``from pkg import submodule`` binds the submodule, so it is checked too.
+                    for alias in node.names:
+                        if alias.name != "*":
+                            dotted = f"{node.module}.{alias.name}" if node.module else alias.name
+                            targets += await self._loaded_candidates(
+                                scanned.path, node.level, dotted
+                            )
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        targets += await self._loaded_candidates(scanned.path, 0, alias.name)
+                if any(_binds_nearby(target, name) for target in targets):
                     return True
         return False
+
+    async def _scanned_modules(self, module: _Module) -> list[_Module]:
+        """The test module, then each conftest.py from its directory up to the repository root."""
+        scanned = [module]
+        for directory in PurePosixPath(module.path).parents:
+            loaded = await self._cached((directory / "conftest.py").as_posix())
+            if loaded is not None:
+                scanned.append(loaded)
+        return scanned
+
+    async def _loaded_candidates(self, path: str, level: int, name: str | None) -> list[_Module]:
+        """Every candidate file an import names that loads: the module file and the package."""
+        loaded: list[_Module] = []
+        for candidate in _module_candidates(path, level, name):
+            found = await self._cached(candidate)
+            if found is not None:
+                loaded.append(found)
+        return loaded
+
+    async def _cached(self, path: str) -> _Module | None:
+        if path not in self._modules:
+            self._modules[path] = await self._load(path)
+        return self._modules[path]
 
     async def _load(self, path: str) -> _Module | None:
         try:
@@ -329,6 +378,11 @@ def _defines(tree: ast.Module, name: str) -> bool:
     )
 
 
+def _binds_nearby(module: _Module, name: str) -> bool:
+    """Whether a module defines ``name`` or writes it as an attribute, keyword or literal."""
+    return name in module.written or _defines(module.tree, name)
+
+
 def _library_assertion(caller: _Function, target: ast.Attribute) -> bool:
     """Whether an attribute call with no committed definition is a library assertion."""
     if target.attr in _MOCK_ASSERTIONS:
@@ -342,11 +396,15 @@ def _library_assertion(caller: _Function, target: ast.Attribute) -> bool:
     )
 
 
-def _is_testcase(module: _Module, base: ast.expr) -> bool:
-    """Whether a class base names unittest's TestCase through the module's own imports."""
+def _is_testcase(module: _Module, base: ast.expr, depth: int = 0) -> bool:
+    """Whether a class base is unittest's TestCase, through imports or a local base class."""
+    if depth >= MAX_HELPER_DEPTH:
+        return False
     if isinstance(base, ast.Name):
         origins = _import_origins(module, base.id)
-        return len(origins) == 1 and origins <= _TESTCASE_ORIGINS
+        if origins:
+            return len(origins) == 1 and origins <= _TESTCASE_ORIGINS
+        return _local_testcase(module, base.id, depth)
     return (
         isinstance(base, ast.Attribute)
         and isinstance(base.value, ast.Name)
@@ -394,13 +452,13 @@ def _receiver_is_instance(function: _Def, receiver: str) -> bool:
     )
 
 
-def _module_candidates(path: str, node: ast.ImportFrom) -> tuple[str, ...]:
+def _module_candidates(path: str, level: int, name: str | None) -> tuple[str, ...]:
     """Repository files an import can name; none when it climbs past the top package."""
     package = PurePosixPath(path).parent.parts
-    if node.level > len(package):
+    if level > len(package):
         return ()
-    base = package[: len(package) - node.level + 1] if node.level else ()
-    parts = (*base, *(node.module.split(".") if node.module else ()))
+    base = package[: len(package) - level + 1] if level else ()
+    parts = (*base, *(name.split(".") if name else ()))
     if not parts or not all(part.isidentifier() for part in parts):
         return ()
     module = "/".join(parts)
@@ -452,6 +510,257 @@ def _scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
         yield node
         if not isinstance(node, _DECLARATIONS):
             queue.extend(ast.iter_child_nodes(node))
+
+
+def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
+    """Nodes a scope can run: ``_scope_nodes`` minus code no run reaches.
+
+    Skipped: statements after a block-ending statement, branches a constant test rules out,
+    short-circuit operands after the operand that decides the result, loop bodies over a
+    statically empty iterable, and handlers of a try whose body returns a literal. Comprehension
+    bodies are declined outright; only the first iterable is kept, so an unconsumed generator
+    body never counts as executed.
+    """
+    queue: deque[ast.AST] = deque(_live_block(body))
+    while queue:
+        node = queue.popleft()
+        yield node
+        if isinstance(node, _DECLARATIONS):
+            continue
+        if isinstance(node, ast.If):
+            truth = _static_truth(node.test)
+            if truth is not None:
+                queue.append(node.test)
+                queue.extend(_live_block(node.body if truth else node.orelse))
+                continue
+        elif isinstance(node, ast.IfExp):
+            truth = _static_truth(node.test)
+            if truth is not None:
+                queue.append(node.test)
+                queue.append(node.body if truth else node.orelse)
+                continue
+        elif isinstance(node, ast.While) and _static_truth(node.test) is False:
+            queue.append(node.test)
+            queue.extend(_live_block(node.orelse))
+            continue
+        elif isinstance(node, ast.BoolOp):
+            queue.extend(_live_operands(node))
+            continue
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and _raises_at_iterator(node.iter):
+            # The iterator raises before any item, so neither the body nor the else clause runs.
+            queue.append(node.iter)
+            continue
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and _is_empty_literal(node.iter):
+            queue.append(node.iter)
+            queue.extend(_live_block(node.orelse))
+            continue
+        elif isinstance(node, (ast.Try, ast.TryStar)):
+            queue.extend(_live_block(node.body))
+            # The else clause runs only when the body completes normally.
+            if not _block_ends(node.body):
+                queue.extend(_live_block(node.orelse))
+            # A literal return cannot raise, so no handler runs.
+            if not _returns_literal(node.body):
+                queue.extend(node.handlers)
+            queue.extend(_live_block(node.finalbody))
+            continue
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            queue.append(node.generators[0].iter)
+            continue
+        queue.extend(_live_children(node))
+
+
+def _live_block(statements: Iterable[ast.AST]) -> list[ast.AST]:
+    """A block's statements up to and including the first one that ends the block."""
+    live: list[ast.AST] = []
+    for statement in statements:
+        live.append(statement)
+        if _ends_block(statement):
+            break
+    return live
+
+
+def _ends_block(node: ast.AST) -> bool:
+    """Whether control never reaches the statement after ``node`` in its block.
+
+    Loops never end the block around them: a loop body can run zero times, and break or
+    continue ends only one iteration. A for over a literal zero-step range is the exception:
+    its iterator raises before any item, so the block ends as it does at raise. A with statement
+    ends it when its body ends by return, since a return itself is never suppressed. A body
+    ending in raise does not, because a context manager can suppress that raise. A try whose body
+    returns a literal, after only pass statements, ends the block too: nothing in that body can
+    raise, so no handler runs.
+    """
+    if isinstance(node, _TERMINATORS):
+        return True
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return _raises_at_iterator(node.iter)
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return _returns_block(node.body)
+    if isinstance(node, ast.If):
+        truth = _static_truth(node.test)
+        if truth is None:
+            return _block_ends(node.body) and _block_ends(node.orelse)
+        return _block_ends(node.body if truth else node.orelse)
+    if isinstance(node, (ast.Try, ast.TryStar)):
+        if _block_ends(node.finalbody):
+            return True
+        # A literal return cannot raise, so no handler runs and control leaves the block.
+        if _returns_literal(node.body):
+            return True
+        normal_ends = _block_ends(node.body) or _block_ends(node.orelse)
+        return normal_ends and all(_block_ends(handler.body) for handler in node.handlers)
+    return False
+
+
+def _block_ends(statements: Iterable[ast.AST]) -> bool:
+    return any(_ends_block(statement) for statement in statements)
+
+
+def _returns_block(statements: Iterable[ast.AST]) -> bool:
+    """Whether a block ends, and every path that ends it does so with a return."""
+    live = _live_block(statements)
+    return bool(live) and _returns_statement(live[-1])
+
+
+def _returns_statement(node: ast.AST) -> bool:
+    if isinstance(node, ast.Return):
+        return True
+    if isinstance(node, ast.If):
+        truth = _static_truth(node.test)
+        if truth is None:
+            return _returns_block(node.body) and _returns_block(node.orelse)
+        return _returns_block(node.body if truth else node.orelse)
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return _returns_block(node.body)
+    return False
+
+
+def _returns_literal(statements: Iterable[ast.AST]) -> bool:
+    """Whether a block is only pass statements ending in a return of a literal: nothing raises."""
+    live = _live_block(statements)
+    last = live[-1] if live else None
+    if not isinstance(last, ast.Return):
+        return False
+    only_passes = all(isinstance(statement, ast.Pass) for statement in live[:-1])
+    return only_passes and _is_literal(last.value)
+
+
+def _is_literal(node: ast.expr | None) -> bool:
+    """Whether a return value is a literal that builds without raising; bare return is None."""
+    if node is None:
+        return True
+    try:
+        ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _live_operands(node: ast.BoolOp) -> list[ast.expr]:
+    """Operands a boolean operator evaluates: up to the first one that decides its result."""
+    decisive = isinstance(node.op, ast.Or)
+    live: list[ast.expr] = []
+    for operand in node.values:
+        live.append(operand)
+        if _static_truth(operand) is decisive:
+            break
+    return live
+
+
+_EMPTY_BUILDERS = frozenset({"dict", "frozenset", "list", "set", "tuple"})
+
+
+def _literal_range(args: list[ast.expr]) -> tuple[int, int, int] | None:
+    """Start, stop and step of a ``range`` call whose arguments are all literal integers."""
+    if not 1 <= len(args) <= 3:
+        return None
+    try:
+        values = [ast.literal_eval(arg) for arg in args]
+    except (TypeError, ValueError):
+        return None
+    if not all(isinstance(value, int) for value in values):
+        return None
+    if len(values) == 1:
+        return 0, values[0], 1
+    if len(values) == 2:
+        return values[0], values[1], 1
+    return values[0], values[1], values[2]
+
+
+def _is_empty_range(args: list[ast.expr]) -> bool:
+    """Whether ``range`` over literal integers yields nothing, decided by comparing bounds.
+
+    Bounds are compared rather than measured, so a span wider than a machine word never
+    overflows. A zero step is not empty: its iterator raises (see ``_raises_at_iterator``).
+    """
+    bounds = _literal_range(args)
+    if bounds is None or bounds[2] == 0:
+        return False
+    start, stop, step = bounds
+    return start >= stop if step > 0 else start <= stop
+
+
+def _raises_at_iterator(node: ast.expr) -> bool:
+    """Whether iterating ``node`` raises before any item: a literal ``range`` with step zero."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "range"
+        and not node.keywords
+    ):
+        return False
+    bounds = _literal_range(node.args)
+    return bounds is not None and bounds[2] == 0
+
+
+def _is_empty_literal(node: ast.expr) -> bool:
+    """Whether a literal or builtin call yields no items, so a loop over it never runs its body."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return not node.elts
+    if isinstance(node, ast.Dict):
+        return not node.keys
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+        if node.func.id in _EMPTY_BUILDERS:
+            return not node.args
+        return node.func.id == "range" and _is_empty_range(node.args)
+    return (
+        isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and not node.value
+    )
+
+
+def _live_children(node: ast.AST) -> Iterator[ast.AST]:
+    for field, value in ast.iter_fields(node):
+        if field in _STATEMENT_BLOCKS and isinstance(value, list):
+            yield from _live_block(value)
+        elif isinstance(value, list):
+            yield from (item for item in value if isinstance(item, ast.AST))
+        elif isinstance(value, ast.AST):
+            yield value
+
+
+def _static_truth(node: ast.expr) -> bool | None:
+    """Truth value of a constant test, or None when the test is not a constant."""
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inner = _static_truth(node.operand)
+        return None if inner is None else not inner
+    return None
+
+
+def _local_testcase(module: _Module, name: str, depth: int) -> bool:
+    """Whether ``name`` is one undecorated class bound once at module top level, whose bases
+    are TestCase."""
+    if name in module.written:
+        return False
+    binders = _binders(_scope_nodes(module.tree.body), name)
+    if len(binders) != 1 or not isinstance(binders[0], ast.ClassDef):
+        return False
+    definition = binders[0]
+    if definition.decorator_list or not any(definition is node for node in module.tree.body):
+        return False
+    return any(_is_testcase(module, base, depth + 1) for base in definition.bases)
 
 
 def _defined_once(tree: ast.Module, name: str) -> bool:
