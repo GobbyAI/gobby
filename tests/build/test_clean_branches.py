@@ -190,6 +190,82 @@ async def test_artifact_cleanup_recovers_missing_registered_checkout(
     assert unrelated_head in remaining
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initially_missing", [False, True])
+@pytest.mark.parametrize("stored_branch", [None, "task/landed"])
+@pytest.mark.parametrize("actual_branch", [None, "task/other"])
+async def test_artifact_cleanup_preserves_reused_unlanded_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initially_missing: bool,
+    stored_branch: str | None,
+    actual_branch: str | None,
+) -> None:
+    from gobby.build.control_artifacts import BuildArtifactSummary, delete_artifacts
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    project = _checkout_project(temp_db, repo, monkeypatch, name="reused-checkout-clean")
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=project.id, title="Reused checkout", validation_criteria="Preserve current HEAD."
+    )
+    target = tmp_path / "target"
+    _git(repo, "worktree", "add", "-b", "task/landed", str(target), "main")
+    if actual_branch is None:
+        _git(target, "switch", "--detach")
+    else:
+        _git(target, "switch", "-c", actual_branch)
+    _git(target, "commit", "--allow-empty", "-m", "unlanded reused work")
+    unlanded_head = _git(target, "rev-parse", "HEAD")
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name=stored_branch,
+        worktree_path=str(target),
+        base_branch="main",
+        task_id=task.id,
+    )
+    tasks.artifacts.set_artifacts_atomic(
+        task.id,
+        worktree_id=worktree.id,
+        worktree_path=str(target),
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+    )
+    other = tmp_path / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "main")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unrelated_head = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    if initially_missing:
+        shutil.rmtree(target)
+    artifact = BuildArtifactSummary(
+        family="worktree", task_id=task.id, path=str(target), artifact_id=worktree.id
+    )
+
+    await delete_artifacts(temp_db, project.id, [artifact], force=False)
+
+    assert artifact.error is not None
+    assert not artifact.deleted
+    assert worktrees.get(worktree.id) is not None
+    refs = tasks.artifacts.get_artifacts(task.id)
+    assert refs.worktree_id == worktree.id
+    assert refs.worktree_path == str(target)
+    assert "task/landed" in _branches(repo)
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(target) in remaining
+    assert unlanded_head in remaining
+    assert str(other) in remaining
+    assert unrelated_head in remaining
+    assert target.exists() is not initially_missing
+
+
 def _checkout_project(
     temp_db: HubDatabase,
     root: Path,

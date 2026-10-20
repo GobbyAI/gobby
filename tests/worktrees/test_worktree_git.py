@@ -437,6 +437,7 @@ class TestWorktreeGitManagerDeleteWorktree:
     async def test_delete_success(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree successfully."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
         mock_run.return_value = subprocess.CompletedProcess(
             args=["worktree", "remove"],
             returncode=0,
@@ -453,6 +454,7 @@ class TestWorktreeGitManagerDeleteWorktree:
     async def test_delete_with_force(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree with force option."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
         mock_run.return_value = subprocess.CompletedProcess(
             args=["worktree", "remove", "--force"],
             returncode=0,
@@ -612,6 +614,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         self, mock_run, manager, tmp_path
     ) -> None:
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
         mock_run.side_effect = [
             subprocess.CompletedProcess(
                 args=["worktree", "remove", "--force"],
@@ -1327,7 +1330,7 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:
-        """Delete worktree with delete_branch=True but no status found."""
+        """Missing branch authority must preserve a missing registration."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         # Path doesn't exist, so get_worktree_status returns None
 
@@ -1337,13 +1340,10 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
         result = await manager.delete_worktree(worktree_path, delete_branch=True)
 
-        assert result.success is True
-        # No branch was deleted since we couldn't determine the branch
-        assert "branch" not in result.message.lower() or "and branch" not in result.message
-        # Strictly verify we didn't try to delete a branch
-        assert (
-            "Deleted worktree" in result.message and "deleted branch" not in result.message.lower()
-        )
+        assert result.success is False
+        assert result.error == "worktree_registration_branch_mismatch"
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.args[0][-4:] == ["worktree", "list", "--porcelain", "-z"]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_delete_missing_path_verifies_absence_and_deletes_explicit_branch(
@@ -1352,6 +1352,12 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         """Delete the branch only after Git confirms the registration is already gone."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["worktree", "list", "--porcelain", "-z"],
+                returncode=0,
+                stdout=f"worktree {worktree_path}\0HEAD abc\0branch refs/heads/feature/test\0\0",
+                stderr="",
+            ),
             subprocess.CompletedProcess(
                 args=["merge-base"],
                 returncode=0,
@@ -1388,8 +1394,8 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
 
         assert result.success is True
         assert "and branch feature/test" in result.message
-        assert mock_run.call_args_list[2].args[0] == ["worktree", "list", "--porcelain", "-z"]
-        assert mock_run.call_args_list[3].args[0][-3:] == ["branch", "-D", "feature/test"]
+        assert mock_run.call_args_list[3].args[0] == ["worktree", "list", "--porcelain", "-z"]
+        assert mock_run.call_args_list[4].args[0][-3:] == ["branch", "-D", "feature/test"]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:

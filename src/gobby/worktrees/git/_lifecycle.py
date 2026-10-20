@@ -356,6 +356,41 @@ def _check_worktree_removable(worktree_path: Path) -> None:
             raise PermissionError(f"Directory is not writable/searchable: {root}")
 
 
+async def _refuse_missing_registration_mismatch(
+    runner: GitRunner, worktree_path: Path, branch_name: str | None
+) -> GitOperationResult | None:
+    """A missing checkout's recorded branch must match the branch being proved."""
+    listed = await runner.run_git_command(["worktree", "list", "--porcelain", "-z"], timeout=5)
+    records = [record.split("\0") for record in listed.stdout.split("\0\0") if record]
+    authoritative = (
+        listed.returncode == 0
+        and bool(records)
+        and all(record[0].startswith("worktree ") for record in records)
+    )
+    matches = [
+        record
+        for record in records
+        if authoritative
+        and Path(record[0].removeprefix("worktree ")).resolve() == worktree_path.resolve()
+    ]
+    expected = (
+        f"branch refs/heads/{branch_name.removeprefix('refs/heads/')}" if branch_name else None
+    )
+    if len(matches) == 1 and expected is not None and not worktree_path.is_symlink():
+        record = matches[0]
+        branches = [field for field in record if field.startswith("branch ")]
+        if branches == [expected] and not any(
+            field in {"bare", "detached", "locked"} or field.startswith("locked ")
+            for field in record
+        ):
+            return None
+    return GitOperationResult(
+        success=False,
+        message="Cannot verify the missing checkout's recorded branch; registration was preserved",
+        error="worktree_registration_branch_mismatch",
+    )
+
+
 async def delete_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
@@ -392,23 +427,31 @@ async def delete_worktree(
                 message="merged_into requires branch deletion without force_delete_branch",
                 error="merged_into_requires_verified_branch_deletion",
             )
-        # Get branch name before removal (for optional branch deletion)
-        if delete_branch and not branch_name:
+        if not worktree_path.exists():
+            refusal = await _refuse_missing_registration_mismatch(
+                runner, worktree_path, branch_name
+            )
+            if refusal is not None:
+                return refusal
+
+        # A reused checkout may no longer hold its DB-recorded branch. Prove
+        # the current branch before ordinary deletion, including detached HEADs.
+        requested_branch = branch_name
+        if worktree_path.exists() and delete_branch and not branch_name:
             status = await get_worktree_status(runner, worktree_path)
-            if status is None and worktree_path.exists():
+            if status is None:
                 return GitOperationResult(
                     success=False,
                     message="Cannot verify the worktree branch; the worktree was preserved",
                     error="worktree_status_unavailable",
                 )
-            if status is not None:
-                branch_name = status.branch
-            if not branch_name:
-                logger.warning(
-                    "Branch deletion skipped: branch_name could not be resolved from get_worktree_status for worktree '%s'",
-                    worktree_path,
-                    extra={"worktree_path": str(worktree_path), "delete_branch": True},
+            if not force_delete_branch and not status.branch and merged_into is None:
+                return GitOperationResult(
+                    success=False,
+                    message="The current worktree branch differs or is detached; worktree was preserved",
+                    error="worktree_branch_mismatch",
                 )
+            branch_name = status.branch
 
         if merged_into is not None and not branch_name:
             return GitOperationResult(
@@ -425,6 +468,20 @@ async def delete_worktree(
             )
             if refusal is not None:
                 return refusal
+
+        if (
+            worktree_path.exists()
+            and delete_branch
+            and requested_branch
+            and not force_delete_branch
+        ):
+            status = await get_worktree_status(runner, worktree_path)
+            if status is None or status.branch != requested_branch:
+                return GitOperationResult(
+                    success=False,
+                    message="The current worktree branch differs or is unavailable; worktree was preserved",
+                    error="worktree_branch_mismatch",
+                )
 
         # Git can discard registration even when directory deletion fails.
         # Refuse predictable permission failures first, including with force.
