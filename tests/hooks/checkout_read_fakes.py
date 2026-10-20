@@ -68,6 +68,21 @@ class FakeNode:
         }
         self.files.setdefault(machine_id, {})[path] = entry
 
+    def add_outside(self, machine_id: str, path: str) -> None:
+        """A path the node withholds: it reports the kind with no content or checkout facts."""
+        entry = {
+            "path": path,
+            "resolved": path,
+            "kind": "outside",
+            "checkout_root": None,
+            "git_common_dir": None,
+            "project_root": None,
+            "project_id": None,
+            "data": None,
+            "truncated": False,
+        }
+        self.files.setdefault(machine_id, {})[path] = entry
+
     def set_git(
         self,
         machine_id: str,

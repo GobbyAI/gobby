@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+from gobby.hooks import checkout_reads
 from gobby.utils.git import git_subprocess_env
 from gobby.utils.spawn import SpawnedSession, can_posix_spawn, resolve_executable
 
@@ -73,6 +74,7 @@ type _StatusKey = tuple[
     tuple[str, ...],
     float,
     tuple[tuple[str, str], ...] | None,
+    str | None,
 ]
 
 _STREAM_CHUNK_BYTES = 64 * 1024
@@ -371,7 +373,16 @@ class DaemonGitService:
             return GitFailed("failed", argv, None, "", str(exc))
         effective_env = dict(env) if env is not None else None
         env_key = tuple(sorted(effective_env.items())) if effective_env is not None else None
-        key: _StatusKey = (asyncio.get_running_loop(), resolved_cwd, argv, timeout, env_key)
+        # The machine is part of the key: identical calls from two nodes are two checkouts.
+        machine = checkout_reads.event_machine_id()
+        key: _StatusKey = (
+            asyncio.get_running_loop(),
+            resolved_cwd,
+            argv,
+            timeout,
+            env_key,
+            machine,
+        )
 
         with self._status_lock:
             flight = self._status_inflight.get(key)
@@ -416,6 +427,11 @@ class DaemonGitService:
         env: dict[str, str] | None,
         input_text: str | None,
     ) -> GitResult:
+        if checkout_reads.node_origin():
+            return await self._execute_node(
+                argv, cwd=cwd, timeout=timeout, env=env, input_text=input_text
+            )
+
         def spawn(input_bytes: bytes | None) -> _GitProcess:
             return _spawn_git(argv, cwd=cwd, env=env, input_bytes=input_bytes)
 
@@ -434,6 +450,41 @@ class DaemonGitService:
             )
 
         return await self._execute_worker(argv, cwd=cwd, timeout=timeout, worker=worker)
+
+    async def _execute_node(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        timeout: float,
+        env: dict[str, str] | None,
+        input_text: str | None,
+    ) -> GitResult:
+        """Run one Git command on the node that owns a node-origin delivery's checkout."""
+        if env is not None:
+            # The node cannot apply a daemon-side environment; fail before sending anything.
+            return GitFailed(
+                "failed",
+                argv,
+                None,
+                "",
+                "checkout_read_unavailable: env_unsupported "
+                f"(machine {checkout_reads.event_machine_id()})",
+            )
+        input_bytes = None if input_text is None else input_text.encode()
+        try:
+            done = await checkout_reads.run_git_async(
+                list(argv[1:]), cwd=cwd, timeout=timeout, input_bytes=input_bytes
+            )
+        except subprocess.TimeoutExpired:
+            return GitTimeout("timeout", argv, timeout, stderr="Git timed out on the node")
+        except checkout_reads.CheckoutReadUnavailable as exc:
+            return GitFailed("failed", argv, None, "", str(exc))
+        stdout = done.stdout.decode(errors="replace")
+        stderr = done.stderr.decode(errors="replace")
+        if done.returncode == 0:
+            return GitOk("ok", argv, stdout, stderr, 0)
+        return GitFailed("failed", argv, done.returncode, stdout, stderr)
 
     async def _execute_worker(
         self,

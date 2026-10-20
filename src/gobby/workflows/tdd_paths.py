@@ -7,6 +7,7 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
+from gobby.hooks import checkout_reads
 from gobby.utils import spawn
 
 
@@ -61,6 +62,8 @@ def _git_identity(directory: str) -> tuple[str | None, str | None]:
 
 
 def _git_out(cwd: Path, *args: str) -> str | None:
+    if checkout_reads.node_origin():
+        return _node_git_out(cwd, args)
     try:
         completed = spawn.run(
             ["git", "-C", str(cwd), *args],
@@ -74,3 +77,14 @@ def _git_out(cwd: Path, *args: str) -> str | None:
     if completed.returncode != 0:
         return None
     return completed.stdout.strip() or None
+
+
+def _node_git_out(cwd: Path, args: tuple[str, ...]) -> str | None:
+    """`_git_out` for a node-origin delivery: the same answer, read from the node's checkout."""
+    try:
+        completed = checkout_reads.run_git(list(args), cwd=str(cwd), timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _GitLookupFailed from exc
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.decode(errors="replace").strip() or None

@@ -347,6 +347,11 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # derives shell metadata on the hook worker (tests/adapters/test_adapters_codex.py
     # test_item_completed_shell_write_marks_had_edits_without_rule_pass).
     ("src/gobby/hooks/_normalization_git.py", "_positional_checkout_is_path"),
+    # checkout_reads.run_git spawns git only for a local delivery, from the sync callers above
+    # (_git_ignored, _git_out, _positional_checkout_is_path) on worker threads. run_git_async
+    # runs it through asyncio.to_thread (tests/hooks/test_node_origin_git.py
+    # test_local_git_spawn_runs_off_the_event_loop).
+    ("src/gobby/hooks/checkout_reads.py", "run_git"),
     # Sync plan tools run through InternalToolRegistry.call's worker; async plan
     # tools resolve projects inside _run_db_call or their complete review-evidence
     # service worker (test_plans_tools covers sync and async checkout forms).
@@ -413,6 +418,14 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
     (
         "src/gobby/workflows/task_dirty_state.py",
         "has_committable_edits",
+        "task_dirty_paths",
+    ),
+    # release_task_claim is a sync tool, so InternalToolRegistry.call runs it through
+    # asyncio.to_thread (tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py
+    # test_release_dirty_check_runs_off_the_event_loop).
+    (
+        "src/gobby/mcp_proxy/tools/tasks/_claim_release.py",
+        "register_release_task_claim.release_task_claim",
         "task_dirty_paths",
     ),
     # Daemon startup runs the refusal through asyncio.to_thread before any bundled
