@@ -1903,6 +1903,16 @@ def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: 
             def test_feature(self):
                 self.assertEqual(make_receipt(), "ok")
         """,
+        """
+        import unittest
+
+        class Base(unittest.TestCase):
+            assertEqual = lambda self, *args, **kwargs: None
+
+        class TestFeature(Base):
+            def test_feature(self):
+                self.assertEqual(make_receipt(), "ok")
+        """,
     ],
     ids=[
         "noop_method",
@@ -1911,6 +1921,7 @@ def test_library_assertion_without_committed_def_counts(tmp_path: Path, source: 
         "assert_equal_noop_override",
         "decorated_local_base",
         "base_bound_twice",
+        "assert_equal_class_attribute",
     ],
 )
 def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: str) -> None:
@@ -1973,6 +1984,48 @@ def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: st
         def test_feature():
             _assert_ok("ok")
         """,
+        """
+        def _assert_ok(receipt):
+            while True:
+                return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            while True:
+                break
+            else:
+                assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            while True:
+                for _ in [1]:
+                    break
+                return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
+        """
+        def _assert_ok(receipt):
+            while True:
+                try:
+                    break
+                finally:
+                    return None
+            assert receipt == "ok"
+
+        def test_feature():
+            _assert_ok("ok")
+        """,
     ],
     ids=[
         "after_return",
@@ -1981,6 +2034,10 @@ def test_library_assertion_name_is_not_credited_alone(tmp_path: Path, source: st
         "under_not_true",
         "else_of_true",
         "while_false",
+        "after_while_true_return",
+        "while_true_else",
+        "after_while_true_nested_break",
+        "after_while_true_overridden_break",
     ],
 )
 def test_assert_helper_unreachable_assertion_is_not_credited(tmp_path: Path, source: str) -> None:
@@ -2045,8 +2102,15 @@ def test_assert_helper_reachable_assertion_is_credited(tmp_path: Path, source: s
             return None
             assert make_receipt() == "ok"
         """,
+        """
+        def test_feature():
+            while True:
+                break
+            else:
+                assert make_receipt() == "ok"
+        """,
     ],
-    ids=["test_body_call_after_return", "test_body_assert_after_return"],
+    ids=["test_body_call_after_return", "test_body_assert_after_return", "while_true_else"],
 )
 def test_test_body_unreachable_assertion_is_not_credited(tmp_path: Path, source: str) -> None:
     result = _committed_python_result(tmp_path, source)
@@ -2590,12 +2654,37 @@ def test_literal_return_does_not_credit_unreachable_handler_or_following_asserti
                 pass
             assert make_receipt() == "ok"
         """,
+        """
+        def test_feature():
+            try:
+                return set()
+            except ValueError:
+                assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                return set()
+            except ValueError:
+                pass
+            assert make_receipt() == "ok"
+        """,
+        """
+        def test_feature():
+            try:
+                return (set(),)
+            except ValueError:
+                assert make_receipt() == "ok"
+        """,
     ],
     ids=[
         "finally_assert_after_literal_return",
         "assert_after_call_return_falls_through",
         "handler_assert_after_call_return",
         "assert_after_preceding_work_falls_through",
+        "handler_assert_after_set_call_return",
+        "assert_after_set_call_return_falls_through",
+        "handler_assert_after_nested_set_call_return",
     ],
 )
 def test_literal_return_keeps_reachable_assertions(tmp_path: Path, source: str) -> None:
@@ -2814,6 +2903,12 @@ def test_try_termination_is_not_credited(tmp_path: Path, source: str) -> None:
                     return None
             assert make_receipt() == "ok"
         """,
+        """
+        def test_feature():
+            while True:
+                break
+            assert make_receipt() == "ok"
+        """,
     ],
     ids=[
         "true_if_then_assert",
@@ -2831,6 +2926,7 @@ def test_try_termination_is_not_credited(tmp_path: Path, source: str) -> None:
         "with_raise_then_assert",
         "with_raise_then_helper",
         "with_if_return_no_else_then_assert",
+        "after_while_true_break",
     ],
 )
 def test_live_assertion_after_constant_control_is_credited(tmp_path: Path, source: str) -> None:
@@ -2928,6 +3024,34 @@ def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None
             """,
             {"fakes.py": "def assert_called_once_with(*args):\n    pass\n"},
         ),
+        (
+            """
+            def test_feature(fake):
+                fake.assert_called_once_with(1)
+            """,
+            {
+                "tests/conftest.py": (
+                    "import pytest\n\nclass _Fake:\n"
+                    "    assert_called_once_with = lambda self, *args: None\n\n"
+                    "@pytest.fixture\ndef fake():\n    return _Fake()\n"
+                )
+            },
+        ),
+        (
+            """
+            class Fake:
+                assert_called_once_with = staticmethod(print)
+
+            def test_feature():
+                sink = Fake()
+                sink.assert_called_once_with(1)
+            """,
+            {},
+        ),
+        (
+            MOCK_CALL_TEST,
+            {"tests/conftest.py": "from .support import noop as assert_called_once_with\n"},
+        ),
     ],
     ids=[
         "fakes_module",
@@ -2938,6 +3062,9 @@ def test_mock_assertion_beside_unrelated_conftest_counts(tmp_path: Path) -> None
         "from_pkg_import_submodule",
         "from_dot_import_submodule",
         "import_module_attribute",
+        "conftest_class_attribute_lambda",
+        "same_file_class_attribute",
+        "conftest_import_alias",
     ],
 )
 def test_mock_assertion_defined_nearby_is_not_credited(

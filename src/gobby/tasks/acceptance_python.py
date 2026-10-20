@@ -8,7 +8,7 @@ including a helper that anything other than an unshadowed ``staticmethod`` or
 ``classmethod`` decorates, and one the module rebinds anywhere: as an attribute,
 through ``global``/``nonlocal``, or by a string literal a call passes or a
 subscript indexes, where a dotted path counts by its last part. An attribute
-call with no committed definition or write of its name, in its module, a ``conftest.py`` on
+call with no committed binding or write of its name, in its module, a ``conftest.py`` on
 its directory chain, or a module one hop away that any of those imports, counts
 only as a Mock assertion method or a ``unittest.TestCase`` instance assertion. Fakes
 defined where the resolver cannot map an import to a repository file (plugins,
@@ -371,16 +371,9 @@ def _written_names(tree: ast.Module) -> frozenset[str]:
     return frozenset(written)
 
 
-def _defines(tree: ast.Module, name: str) -> bool:
-    return any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
-        for node in ast.walk(tree)
-    )
-
-
 def _binds_nearby(module: _Module, name: str) -> bool:
-    """Whether a module defines ``name`` or writes it as an attribute, keyword or literal."""
-    return name in module.written or _defines(module.tree, name)
+    """Whether a module binds ``name`` or writes it as an attribute, keyword or literal."""
+    return _shadowed(module, name)
 
 
 def _library_assertion(caller: _Function, target: ast.Attribute) -> bool:
@@ -512,20 +505,23 @@ def _scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
             queue.extend(ast.iter_child_nodes(node))
 
 
-def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
+def _live_scope_nodes(body: Iterable[ast.stmt], *, break_scope: bool = False) -> Iterator[ast.AST]:
     """Nodes a scope can run: ``_scope_nodes`` minus code no run reaches.
 
     Skipped: statements after a block-ending statement, branches a constant test rules out,
     short-circuit operands after the operand that decides the result, loop bodies over a
     statically empty iterable, and handlers of a try whose body returns a literal. Comprehension
     bodies are declined outright; only the first iterable is kept, so an unconsumed generator
-    body never counts as executed.
+    body never counts as executed. A break-scope walk excludes nested loops and breaks
+    overridden by a terminating finally block.
     """
     queue: deque[ast.AST] = deque(_live_block(body))
     while queue:
         node = queue.popleft()
         yield node
-        if isinstance(node, _DECLARATIONS):
+        if isinstance(node, _DECLARATIONS) or (
+            break_scope and isinstance(node, (ast.For, ast.AsyncFor, ast.While))
+        ):
             continue
         if isinstance(node, ast.If):
             truth = _static_truth(node.test)
@@ -543,6 +539,10 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
             queue.append(node.test)
             queue.extend(_live_block(node.orelse))
             continue
+        elif isinstance(node, ast.While) and _static_truth(node.test) is True:
+            queue.append(node.test)
+            queue.extend(_live_block(node.body))
+            continue
         elif isinstance(node, ast.BoolOp):
             queue.extend(_live_operands(node))
             continue
@@ -555,6 +555,9 @@ def _live_scope_nodes(body: Iterable[ast.stmt]) -> Iterator[ast.AST]:
             queue.extend(_live_block(node.orelse))
             continue
         elif isinstance(node, (ast.Try, ast.TryStar)):
+            if break_scope and _block_ends(node.finalbody):
+                queue.extend(_live_block(node.finalbody))
+                continue
             queue.extend(_live_block(node.body))
             # The else clause runs only when the body completes normally.
             if not _block_ends(node.body):
@@ -583,8 +586,9 @@ def _live_block(statements: Iterable[ast.AST]) -> list[ast.AST]:
 def _ends_block(node: ast.AST) -> bool:
     """Whether control never reaches the statement after ``node`` in its block.
 
-    Loops never end the block around them: a loop body can run zero times, and break or
-    continue ends only one iteration. A for over a literal zero-step range is the exception:
+    A truthy-constant while without a reachable break ends the block around it. Other loops
+    can run zero times, and break or continue ends only one iteration. A for over a literal
+    zero-step range is another exception:
     its iterator raises before any item, so the block ends as it does at raise. A with statement
     ends it when its body ends by return, since a return itself is never suppressed. A body
     ending in raise does not, because a context manager can suppress that raise. A try whose body
@@ -595,6 +599,8 @@ def _ends_block(node: ast.AST) -> bool:
         return True
     if isinstance(node, (ast.For, ast.AsyncFor)):
         return _raises_at_iterator(node.iter)
+    if isinstance(node, ast.While):
+        return _static_truth(node.test) is True and not _breaks_loop(node.body)
     if isinstance(node, (ast.With, ast.AsyncWith)):
         return _returns_block(node.body)
     if isinstance(node, ast.If):
@@ -611,6 +617,11 @@ def _ends_block(node: ast.AST) -> bool:
         normal_ends = _block_ends(node.body) or _block_ends(node.orelse)
         return normal_ends and all(_block_ends(handler.body) for handler in node.handlers)
     return False
+
+
+def _breaks_loop(body: Iterable[ast.stmt]) -> bool:
+    """Whether a reachable break leaves this loop, excluding nested loops and declarations."""
+    return any(isinstance(node, ast.Break) for node in _live_scope_nodes(body, break_scope=True))
 
 
 def _block_ends(statements: Iterable[ast.AST]) -> bool:
@@ -650,6 +661,8 @@ def _is_literal(node: ast.expr | None) -> bool:
     """Whether a return value is a literal that builds without raising; bare return is None."""
     if node is None:
         return True
+    if any(isinstance(child, ast.Call) for child in ast.walk(node)):
+        return False
     try:
         ast.literal_eval(node)
     except (TypeError, ValueError):
