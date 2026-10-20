@@ -1002,6 +1002,108 @@
         "project_id": null,
         "intent": null
       }
+    },
+    {
+      "name": "legacy-cjk-leading-zero",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-04E00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "一"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk unified ideograph-4E00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk unified ideograph-4E00}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-lower-hex",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-4e00}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{CJK UNIFIED IDEOGRAPH-4e00}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hangul-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{hangul syllable ga}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{hangul syllable ga}\\\"}",
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-hangul",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{HANGUL SYLLABLE GA}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "가"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "name": "legacy-cjk-compat-lowercase",
+      "input": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": "{\\\"x\\\":\\\"\\N{cjk compatibility ideograph-2f800}\\\"}"
+      },
+      "output": {
+        "server_name": "example",
+        "tool_name": "run",
+        "arguments": {
+          "x": "丽"
+        },
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
     }
   ]
 }

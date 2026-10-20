@@ -215,7 +215,13 @@ fn ordinary_call_completes_during_wait() -> Result<()> {
 fn canonicalization_matches_shared_cases() -> Result<()> {
     let corpus: Value =
         serde_json::from_str(include_str!("../contracts/call_tool_wrapper_cases.v1.json"))?;
-    for case in corpus["cases"].as_array().expect("case array") {
+    assert_eq!(corpus["version"], 1, "supported shared corpus version");
+    let cases = corpus["cases"].as_array().expect("case array");
+    assert!(
+        !cases.is_empty(),
+        "shared corpus must exercise canonicalization"
+    );
+    for case in cases {
         let actual = canonicalize(&case["input"]);
         if let Some(error) = case.get("error") {
             assert_eq!(

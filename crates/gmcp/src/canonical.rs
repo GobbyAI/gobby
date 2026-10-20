@@ -14,10 +14,24 @@ fn ambiguity(field: &str) -> String {
 
 fn named_character(name: &str) -> Option<char> {
     let character = unicode_names2::character(name)?;
-    if unicode_names2::name(character)
-        .is_some_and(|canonical| canonical.to_string().eq_ignore_ascii_case(name))
-    {
-        return Some(character);
+    if let Some(canonical) = unicode_names2::name(character) {
+        let canonical = canonical.to_string();
+        // CPython's algorithmic names are case-sensitive. CJK hex names also
+        // accept a leading zero when the suffix still fits in five digits.
+        if canonical.starts_with("CJK UNIFIED IDEOGRAPH-") {
+            let suffix = name.strip_prefix("CJK UNIFIED IDEOGRAPH-")?;
+            return ((4..=5).contains(&suffix.len())
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'A'..=b'F')))
+            .then_some(character);
+        }
+        if canonical.starts_with("HANGUL SYLLABLE ") {
+            return (canonical == name).then_some(character);
+        }
+        if canonical.eq_ignore_ascii_case(name) {
+            return Some(character);
+        }
     }
     let aliases: Value =
         serde_json::from_str(include_str!("../contracts/unicode_name_aliases.v16.json")).ok()?;
