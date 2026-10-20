@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from gobby.tasks.command_equivalence import pytest_collection_target
 from gobby.tasks.transcript_background import deliver_output
 from gobby.tasks.transcript_evidence_models import (
     OutputDelivery,
@@ -13,7 +14,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationSegment,
 )
 from gobby.tasks.transcript_git_sources import CLEAN_HEAD_COMMAND
-from gobby.tasks.transcript_outcomes import extract_outcome
+from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence, extract_outcome
 
 # The general exit-preserving normalizer strips the `rtk` executable itself.
 _RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})(?: --full)?")
@@ -70,6 +71,12 @@ def recover_rtk_output(runs: list[TranscriptValidationRun], result: Any) -> None
     )
 
 
+def _collection_receipt(command: str) -> bool:
+    """Gate 10 reads collection output even though collection is not test execution."""
+    core = classify_validation_command_equivalence(command).core_command or command
+    return pytest_collection_target(core) is not None
+
+
 def _retained_output(
     command: str,
     segments: tuple[TranscriptValidationSegment, ...],
@@ -83,6 +90,7 @@ def _retained_output(
     """
     if (
         segments
+        or _collection_receipt(command)
         or _RTK_RECALL_RE.fullmatch(command.strip())
         or command.strip() == CLEAN_HEAD_COMMAND
     ):
@@ -109,6 +117,7 @@ def _drop_settled_command_output(
         and not run.categories
         and not run.validation_segments
         and run.command.strip() != CLEAN_HEAD_COMMAND
+        and not _collection_receipt(run.command)
         else run
         for index, run in enumerate(runs)
     ]
