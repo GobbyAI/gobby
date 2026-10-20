@@ -1,695 +1,447 @@
 Plan artifact: `.gobby/plans/gdaemon-web-session-cookie.md`
 
-# gdaemon verifies the web UI session cookie; Python's code-index web UI reads retire
+# Native browser authentication for the code graph
 
 **Plan ID:** gdaemon-web-session-cookie
 
-**Task:** #24659 (cfc60361-8271-4419-ba7c-626d7bef1e03), parent family plan #21586 (`.gobby/plans/code-index-family.md`, D15 and the former section 9.8).
-**Status:** Draft 5, 2026-10-18. Narrative only. Draft 2 closed the Plan Adversary's first NEEDS REPAIR verdict (gobby#16993). Draft 3 applied the follow-up's blocking items R1 to R4 and its nit. Draft 4 applied R5. Draft 5 applies R6, the Adversary's factual correction on the gdaemon dependency, and records the Security verdict on Draft 3. The Orchestrator accepted decisions (a) to (c) on 2026-10-18 at 12:06 CDT, and operator approval comes with the plan as a whole. Grok's Security review of Draft 3, gobby#17126, found no findings, and its verdict is recorded in V1. The Plan Adversary derives M1 after consensus, the Writer commits the rendered bytes, and the operator approves before any expansion.
+**Task:** #24659 Cookie plan. **Status:** fresh narrative draft, 2026-10-20;
+awaiting fresh Security review, Plan Adversary consensus and Josh approval.
+No historical stamp or approval applies to this revision. No expansion is authorized.
 
 ## Overview
 `kind: framing`
 
-The web UI's code-graph view signs in with the `gobby_session` cookie
-(`web/src/hooks/useCodeGraph.ts`). Only Python verifies that cookie, through
-`AuthStore.session_user_id`. The code-index family's native routes therefore admit
-API-key callers only, and Python keeps the five graph read routes that browser
-callers use: overview, file, symbol neighbors, blast radius and search.
+A browser signed in with `gobby_session` must load the five code-graph reads through
+hub gdaemon. Rust owns verification and route admission; TypeScript proves the real
+browser flow. After the native proof passes, delete the Python routes and their dead
+context/gateway methods, and reconcile the parity ledger and reference audit.
+This is necessary: the current front door resolves API keys but no browser cookie.
 
-This plan moves cookie verification into gdaemon's front door, lets the code-index
-family serve the five GET routes to browser sessions, proves the web UI's five
-requests return the same shapes through gdaemon, and then deletes the Python routes,
-the `CodeIndexContext` and `GcodeGateway` read methods that only they call, and the
-five ledger rows that describe them. When this plan closes, the web UI's code-graph
-view loads through gdaemon with a cookie and no Python code-index route remains for
-browser callers.
+This replaces the historical Python-oriented draft from scratch. It retains the
+three explicit obligations from code-index-family D15/former 9.8: delete the five
+Python reads and context methods (9.8.1); delete the unused gateway methods and two
+version floors plus maintenance-floor wording (9.8.2); move the five ledger entries
+out of proxied and point the five audit entries to native handlers (9.8.3).
 
 ## Constraints
 `kind: framing`
 
-- **Cookie callers outside the five routes keep reaching Python.** Python's
-  `AuthStore.session_user_id` stays the verifier for every route gdaemon proxies.
-  gdaemon acts on a verified cookie only where a gdaemon-served row claims it.
-- **No backward compatibility.** 0.5.0 has not shipped. Each leaf lands as one commit,
-  with no dual-accept window.
-- **Family rules.** D15 settles the callers, D16 settles the projection operations
-  (not touched here), and D17 and D18 settle the mutation routes and the trigger.
-  `POST /api/code-index/prune` and the graph path, clear, rebuild and invalidate routes
-  belong to family phases P8 and P9 (9.3 and 9.4), not to this plan.
-- **Release.** `gdaemon` is a shipped binary, and this plan changes its crate in two
-  leaves, 1.1 and 2.1. Each shipping commit bumps its patch version by 0.0.1, updates
-  `Cargo.lock`, and updates the managed `gdaemon` pin in
-  `src/gobby/install/version_pins.py`. At the 0.5.0 tip `6ff393368a` the crate and the
-  pin both read 0.4.61, so 1.1 lands 0.4.62 and 2.1 lands 0.4.63, if the base does not
-  move. `gruntime` and `gcodeindex` are not shipped binaries and take no bump of their own.
-- **Monolith ceiling.** `src/gobby/code_index/gcode_gateway.py` is 969 lines at the
-  0.5.0 tip (blob `e77a70429a3774b3325b2eb848f2a692b8093add`). Deliverable 4.3 shrinks
-  it. Because it stays at or above 850 lines until then, deliverable 4.3 carries a
-  pure-deletion proof rather than a split (see Research context in 4.3).
-- **Dependencies on other work.** This plan depends on #24665 (P5, the family seam),
-  #24666 (P6, graph read routes), #24694 (5.1, `GET /graph/search`), #24670 (1.1,
-  version floors move to `gcode_versions.py`) and #24710 (9.4, graph path, clear,
-  rebuild and invalidate routes deleted). Each is a `(depends: #N)` edge in the
-  headings below.
-- **Floor wording and cross-plan effect.** The gcode maintenance floor goes in 4.3.
-  The release leaves in `remove-gobby-build.md` (lines 513 and 1887) and
-  `node-install-enrollment.md` (lines 378 to 393) each raise `MIN_GCODE_PRUNE_BUDGET_VERSION`.
-  Once 4.3 lands, those leaves have no floor to raise, and they must not recreate it.
-  Coordination with those plans goes through the Orchestrator.
+- Planning is authorized now by Orchestrator gobby#17164, message
+  `8d65292e-775d-4eb2-b8dc-9b5dc55719bf` (2026-10-20). Hub-node completion remains an
+  implementation and expansion prerequisite. #21575 Hub mode remains open: P2
+  #24266, P3 #24267, P4 #24592 and P5 #24593 were open at inspection. P1 #24265 is
+  closed. No statement in this plan claims those remaining phases completed.
+- The coordinator must verify #21575 and its required phases have landed before
+  expansion. Phase P1 also carries #21575 as an enforceable external dependency.
+- Family prerequisites remain open: #24665 P5 family seam, #24666 P6 graph reads,
+  #24694 native search, #24710 Python mutation/path retirement and #24670 version
+  floor extraction. The headings retain these external dependencies.
+- No new Python runtime, tests, generators or helpers. Python edits are deletion-only,
+  except minimal literal `MANAGED_BIN_VERSION_PINS` synchronization permitted by the
+  Orchestrator's ruling above. Existing Python validation/generation commands may run.
+- No new schema, session issuer, login UX, cookie name, cookie flags or auth migration.
+  Existing login/logout remain authoritative. This plan only reads `auth_sessions`.
+- Each commit changing a shipped Rust binary or its recursive dependencies bumps every
+  affected shipped binary by 0.0.1, updates Cargo.lock and synchronizes existing pins.
+  In this plan gdaemon depends on gruntime; gruntime is not independently shipped.
+  Re-evaluate the recursive dependency graph at implementation tip. No fixed future
+  version numbers. Promotion/restart/cutover belongs to Orchestrator alone.
+- Production files remain below 1,000 lines. Prefer a focused new Rust cookie module
+  and separate test files. No security feature is weakened to reduce line count.
+- Targets for prerequisite-created files are new relative to this checkout. Before
+  expansion the coordinator refreshes symbol scopes and the deletion proof against
+  the landed prerequisites, validates again and obtains fresh reviews for changed
+  bytes. The current draft's hash never certifies a later artifact.
 
 ## Decision Record
 `kind: framing`
 
-Operator decisions. The Orchestrator accepted them on 2026-10-18 at 12:06 CDT, and
-operator approval comes with the plan as a whole. The answers, quoted:
+These are the proposed decisions for fresh Security, adversary and Josh approval;
+historical accepted-a-c receipts are not approval of this design.
 
-- **(a) Cookie scope.** "Browser sessions reach the five GET routes only. Any unexpired
-  session user may read them, as Python does today. No mutation route, and no other
-  route, admits a session."
-- **(b) Verification path.** "gdaemon queries `auth_sessions` through its own pool, the
-  same way `PostgresKeyResolver` queries `api_keys`."
-- **(c) Plan ID.** "`gdaemon-web-session-cookie`, as the Plan ID above."
+1. An unexpired session user may read exactly five GET routes: graph overview, file,
+   symbol neighbors, blast radius and search. Preserve today's project visibility
+   and payload rules; add no user-specific authorization model in this migration.
+2. Only the hub/standalone front door queries its own PostgreSQL pool. Node doors
+   relay the request to the hub; node-local cookie verification and credential
+   forwarding through newly invented identity headers are excluded.
+3. Scope verification to an exact method/path allowlist shared with the five native
+   family rows. Proxied routes, mutations, lease admin, machines, node channel,
+   runtime grants and browser WebSockets retain their existing auth contracts.
+4. On the five reads, presence of Authorization selects the existing bearer path
+   alone. Never fall back to a cookie after invalid, agent or non-bearer credentials.
+   Absent Authorization, a valid session is required for browser admission.
+5. Collect all Cookie header fields and all case-sensitive `gobby_session` pairs.
+   Reject distinct duplicates, empty values, malformed session pairs and non-UTF8
+   cookie headers on these five paths with 401 `missing_auth`; equal repeated values
+   count as one. Do not URL-decode, unquote or trim token bytes beyond cookie-pair
+   separator whitespace. Never log cookie bytes, bearer bytes or token hashes.
+6. Query by lowercase SHA-256 token hash with `expires_at >= CURRENT_TIMESTAMP`.
+   Query per request, with no positive or negative cache; logout/deletion and expiry
+   affect the next request. Unknown/expired credentials yield 401. Missing resolver,
+   pool acquisition failure, query failure or bounded timeout yields 503
+   `auth_resolver_unavailable`, never Python fallback or an empty successful graph.
+7. Carry `BrowserSession { user_id }` as a typed request extension. Always strip
+   client identity headers before authentication. No cookie-derived identity header
+   is sent to Python. Only five explicitly opted-in rows admit Caller::Browser;
+   Caller::ALL continues to mean existing callers rather than widening all routes.
+8. Require proof through the actual front door, through a relaying node, and through
+   the TypeScript graph consumer before deletion. New tests are Rust/TypeScript.
+   No production graph UI change is necessary: same-origin fetch already sends the
+   browser cookie. Do not add a JavaScript-readable token or Authorization header.
+9. Native claims deliberately exclude legacy break-glass/agent-token access to these
+   five reads after Python retirement, matching family D15. They receive 401 on the
+   five reads; unrelated routes keep their existing behavior. Security and Josh must
+   approve this explicit caller loss with the rest of the plan.
 
-Mechanism decisions settled by this plan:
-
-- The verified cookie travels as a request extension, `gruntime::BrowserSession { user_id }`,
-  inserted by `AuthState::authenticate`. It never travels as an identity header.
-  Identity headers are stripped from client input and reach Python, so a browser
-  identity must not reach Python as a header.
-- `AuthState::authenticate` takes the request, `&mut Request<Body>`, instead of the
-  header map, so that it can insert the extension. Its two call sites in
-  `FrontDoor::handle` pass the request. The lease-admin branch stays API-key-only: it
-  still requires `x-gobby-key-id`, which a cookie never sets, so a cookie never admits there.
-- `Caller` gains a `Browser` variant. `Caller::of` returns `Browser` when the extension
-  is present. Family rows list the callers they serve.
-- On gdaemon-served routes, `Authorization` decides the request alone. A request with an
-  `Authorization` header never reads the cookie there, so the ambiguity rules below never
-  apply to it. On proxied routes Python's handling is unchanged: a non-bearer
-  `Authorization` header still reaches Python's cookie check (`auth_service.py` 399 to 409).
-- Duplicate `gobby_session` values split by route:
-  - Two or more distinct values in the request's `Cookie` headers insert the marker
-    `gruntime::AmbiguousBrowserSession` and no `BrowserSession`.
-  - On a gdaemon-served route, the front door answers `401 missing_auth` before the
-    route's handler runs. Gdaemon-served routes are the lease-admin route, the machines
-    API and the node channel from 1.1, and each native family row that admits
-    `Caller::Browser` from 2.1. Ambiguous credentials fail closed.
-  - On a proxied route, the request passes through unchanged, both `Cookie` headers
-    intact, and Python decides as today. Python's verifier reads one value.
-  - One value sent more than once is accepted as that value.
-- A native row cannot see the ambiguity itself, because `Caller::of` returns no
-  `Browser` for an ambiguous request. The 2.1 refusal therefore reads the code-index
-  row list and asks whether the method and path admit browser callers, through
-  `gruntime::admits_browser(rows, method, path)`.
-- The token hash is `gobby_core::api_key_format::hash` (SHA-256, lowercase hex). It
-  equals Python's `hash_token`.
-- Expiry is `expires_at >= now()` in SQL. Python returns no user when `now > expires_at`.
-- The lookup runs on every request that carries a cookie and no `Authorization` header.
-  Proxied routes ignore its result. Gating the lookup by the route table, so that proxied
-  routes skip it, is not taken. The route table would answer only the 2.1 refusal, and
-  the lookup stays one query by token hash. A lookup error leaves the request
-  unauthenticated, as Python's cookie check returns no user on an exception.
-- No schema change. `auth_sessions` stays Python-owned, and gdaemon only reads it.
-- Node doors relay to the hub, so verification runs on the hub door only.
-- Loss under D15: Python's `_legacy_rejection` admits break-glass and `gobby-agent-v1.`
-  agent tokens on these five routes. gdaemon passes agent tokens through, and the native
-  rows admit Operator and Browser callers only. After 4.1, those callers get 404 on the
-  five paths. No client in the repo sends agent tokens to these routes. The only consumer
-  is `web/src/hooks/useCodeGraph.ts`, which sends the cookie.
-
-## P1: Cookie verification in gdaemon
+## P1: Native browser admission (depends: #21575)
 `kind: framing`
 
-Deliverable 1.1 gives gdaemon the verifier and its version bump. Its only change to a
-route's answer is the duplicate-cookie rule on gdaemon-served routes. Nothing in P1
-changes a route's claim.
-
-### 1.1 Verify the browser session cookie in the front door, and bump gdaemon [category: code]
+### 1.1 Verify the cookie only for the five graph reads [category: code] (depends: #24694, #24666)
 `kind: deliverable`
 
-Add a session lookup beside the key lookup. `KeyResolver` gains a defaulted method
-`resolve_session`, which returns a future of `Result<Option<String>>` (the user id). The
-default resolves to `Ok(None)`, so every existing resolver and test double compiles
-unchanged. `PostgresKeyResolver` implements it with one query against `auth_sessions`.
-`AuthState::authenticate` takes `&mut Request<Body>`. It removes the identity headers
-first. Without an `Authorization` header it collects every `gobby_session` value from
-the `Cookie` headers. Zero values does nothing. One distinct value is hashed, resolved,
-and inserted as `BrowserSession` on success. Two or more distinct values insert
-`AmbiguousBrowserSession`. The bearer path is unchanged.
-
-After each `authenticate` call in `FrontDoor::handle`, the request is answered
-`401 missing_auth` when it carries `AmbiguousBrowserSession` and its path is the
-lease-admin route, the machines API or the node channel. The check sits before any
-route handler runs.
-
-The same change bumps `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and
-the managed pin in `src/gobby/install/version_pins.py`, in the same commit.
-
-**Granularity:** 1.1 carries ten acceptance items because one behavior, browser-session
-admission at the front door, has its verifier, its duplicate-cookie split, its lease-admin
-guard and its version bump in one commit. A split would ship a verifier without its
-duplicate-cookie rule, or a gdaemon source change without its bump, which the shared
-promotion guard refuses.
-
 Targets:
-- `crates/gdaemon/src/front_door/auth.rs::KeyResolver`
-- `crates/gdaemon/src/front_door/auth.rs::PostgresKeyResolver`
-- `crates/gdaemon/src/front_door/auth.rs::AuthState::authenticate`
-- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle` — the two `authenticate` call sites pass the request, and the ambiguous-cookie 401 applies on gdaemon-served routes.
-- `crates/gruntime/src/lib.rs::*` — scope-reason: adds the public `BrowserSession { user_id }` struct and the `AmbiguousBrowserSession` marker that the front door inserts; `Caller` changes in 2.1.
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: adds the cookie-verification and duplicate-cookie cases.
+- `crates/gdaemon/src/front_door/auth.rs::*` — scope-reason: extend the existing resolver and request authentication boundary without changing key behavior.
+- `crates/gdaemon/src/front_door/cookie.rs`
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gruntime/src/lib.rs::*` — scope-reason: declare the typed BrowserSession extension shared by front door and family.
+- `crates/gcodeindex/src/family.rs`
+- `crates/gdaemon/tests/browser_cookie.rs`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: implement the required session method in FixedResolver and FailedResolver test doubles.
+- `crates/gdaemon/tests/lease.rs::*` — scope-reason: implement the required session method in StandbyKeyResolver without granting browser lease access.
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
-- `src/gobby/install/version_pins.py::*` — scope-reason: updates the managed `gdaemon` pin to the bumped version.
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
 
-Research context:
-- `crates/gdaemon/src/front_door/auth.rs`: `ResolveFuture` (line 23), `KeyResolver` (26-28),
-  `PostgresKeyResolver` (30-33), `PostgresKeyResolver::resolve` (45-90, query
-  `SELECT k.user_id::text, m.id::text, k.id::text FROM api_keys k JOIN machines m ...
-  WHERE k.key_hash = $1 AND k.revoked_at IS NULL`), `AuthState::authenticate`
-  (115-153 at the tip, signature `headers: &mut HeaderMap`), `IDENTITY_HEADERS` (156-161),
-  `missing_auth` (163-169).
-- Call sites that change: `crates/gdaemon/src/front_door/mod.rs` line 145 (lease admin,
-  which then checks `x-gobby-key-id` at line 148) and line 191 (every other request).
-  No test calls `authenticate` directly.
-- Ambiguity refusal sites: the lease-admin route is `admin_api::is_route` (line 144), the
-  machines API is `machines_api::is_route` (line 199), and the node channel is the literal
-  path `/api/nodes/channel` (line 194). All three follow the line 191 `authenticate` call
-  or sit inside its branch.
-- The version at the 0.5.0 tip: `crates/gdaemon/Cargo.toml` line 3 reads `0.4.61`, and
-  `src/gobby/install/version_pins.py` line 9 pins `"gdaemon": "0.4.61"`. The bump is
-  taken from the merged base when the leaf lands, not from this text.
-- Python reference: `src/gobby/storage/auth.py::hash_token` (line 18, SHA-256 hex),
-  `AuthStore.session_user_id` (line 72, `SELECT user_id, expires_at FROM auth_sessions
-  WHERE token_hash = %s`, `None` once `utc_now() > expires_at`), and the cookie check in
-  `src/gobby/servers/auth_service.py` (line 384), which returns no user on an exception.
-- Consumers of the constructors stay unchanged: `AuthState::new` has callers in
-  `crates/gdaemon/src/serve.rs` and the gdaemon tests, and `PostgresKeyResolver::new`
-  is called from `serve.rs:156` and the tests. The trait default keeps them compiling.
-- Rejected: a new resolver type wired through `AuthState::new`. It changes about ten
-  constructor call sites for no gain, and the trait default covers the same ground.
-- Rejected: identity headers for the cookie. Headers reach Python, and a forged
-  header would become an identity there.
+**Research context:** At the inspected checkout, AuthState::authenticate in
+`crates/gdaemon/src/front_door/auth.rs` strips identity headers and returns immediately
+without Authorization. `PostgresKeyResolver::resolve` owns a shared pool and an
+existing five-second query timeout; reuse that pool and error response helpers.
+Its session method is new and returns a typed optional user, separate from API-key
+machine/key identity. Add a required resolver method and update Rust test doubles;
+do not install a default silently masking missing session support.
+
+`FrontDoor::handle` relays Node requests before backend authentication. Its backend
+branch authenticates lease admin separately and ordinary requests before dispatch.
+Keep lease-admin's call credential behavior unchanged. The ordinary call accepts a
+mutable request and an allow-browser decision from the family allowlist. The new
+cookie module owns parsing/hash/query logic; the front door owns HTTP decisions.
+Use the exact same method/path matcher as family claims, including wildcard and
+percent-encoded paths, so a handler cannot run outside the verified allowlist.
+`crates/gcodeindex/src/family.rs` is created by #24694 and contains NATIVE_ROUTES.
+Expose a read-only browser-read predicate there; do not duplicate five path strings
+in gdaemon. The predicate excludes GET paths that do not match a row and all HEAD,
+OPTIONS and mutation methods. Version/pin changes ship with this source change.
+
+The SQL query is `SELECT user_id::text FROM auth_sessions WHERE token_hash = $1 AND
+expires_at >= CURRENT_TIMESTAMP`. Bound pool acquisition and query together to five
+seconds. The hash uses `gobby_core::api_key_format::hash`; session tokens are opaque,
+so do not pass them through API-key parsing. Existing `AuthStore.session_user_id`
+in `src/gobby/storage/auth.py` is the compatibility reference, not an edit target.
+Existing session row deletion is the revocation mechanism. The typed extension is
+in-process only; clear any prior BrowserSession before authentication.
+
+**Granularity:** more than six production Targets; verifier, its request boundary,
+shared extension/allowlist and release carriers must ship atomically. Route claim
+activation is independently testable and stays in 1.2. No second session lifecycle
+is introduced; the existing issuer/logout retain ownership.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test browser_cookie`.
+Run database cases only against isolated fixture schemas in the test hub; a missing
+test database is a failure for the acceptance run. Exact row-expiry boundary,
+logout, malformed headers and resolver failure are table-driven Rust cases.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/install/distribution.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/install/test_distribution.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/install/test_version_pins.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
 
 **Acceptance:**
+- 1.1.1 - Valid cookies insert only the verified user's BrowserSession; absent, unknown, expired, deleted and malformed credentials cannot insert it. test: `crates/gdaemon/tests/browser_cookie.rs::session_verification_and_revocation`.
+- 1.1.2 - All header fields and duplicate pairs obey Decision 5, including equal duplicates and distinct duplicates split across header fields. test: `crates/gdaemon/tests/browser_cookie.rs::cookie_ambiguity_fails_closed`.
+- 1.1.3 - Authorization takes precedence; cookie-only requests never gain key/machine identity or access to other route classes; spoofed identity headers are removed. test: `crates/gdaemon/tests/browser_cookie.rs::credentials_do_not_cross_auth_boundaries`.
+- 1.1.4 - Database failures and five-second total resolution timeout return 503 with no native handler or Python fallback; invalid cookies on the five reads return 401. test: `crates/gdaemon/tests/browser_cookie.rs::resolver_failure_is_unavailable`.
+- 1.1.5 - Hash fixture, SQL expiry boundary and absence of cache match the documented contract. test: `crates/gdaemon/tests/browser_cookie.rs::postgres_cookie_contract`.
+- 1.1.6 - Affected shipped Rust version, lockfile and existing pin advance together. file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.
 
-- 1.1.1 - An unexpired `gobby_session` cookie resolves through `KeyResolver::resolve_session` to its `user_id`, and the request carries `BrowserSession { user_id }` in its extensions. test: `crates/gdaemon/tests/front_door.rs::cookie_session_resolves_unexpired_user`.
-- 1.1.2 - An expired, unknown or empty cookie, and a request without one, carries no `BrowserSession` and proceeds as unauthenticated does today. test: `crates/gdaemon/tests/front_door.rs::cookie_session_rejects_expired_and_unknown`.
-- 1.1.3 - A request with an `Authorization` header is decided by the bearer path alone, and its `gobby_session` cookie is ignored. test: `crates/gdaemon/tests/front_door.rs::bearer_takes_precedence_over_cookie`.
-- 1.1.4 - Two distinct `gobby_session` values on the lease-admin route, the machines API or the node channel are answered `401 missing_auth` before the route's handler runs. test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_fail_closed_on_hub_routes`.
-- 1.1.5 - Two distinct `gobby_session` values on a proxied route reach the backend with both `Cookie` values unchanged, and carry no `BrowserSession`. test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_pass_through_on_proxied_routes`.
-- 1.1.6 - The same `gobby_session` value sent twice is accepted as that session. test: `crates/gdaemon/tests/front_door.rs::same_session_cookie_sent_twice_is_accepted`.
-- 1.1.7 - Client identity headers are removed before the cookie branch runs, and no cookie-derived value is written to any identity header. test: `crates/gdaemon/tests/front_door.rs::cookie_session_sets_no_identity_headers`.
-- 1.1.8 - `resolve_session` hashes the cookie with `api_key_format::hash` and filters `expires_at >= now()`. The Rust test pins the digest that Python's `hash_token` returns for a fixture token. test: `crates/gdaemon/tests/front_door.rs::session_hash_matches_python_hash_token`.
-- 1.1.9 - The lease-admin route stays API-key-only: a request whose only credential is a `gobby_session` cookie is refused as before. test: `crates/gdaemon/tests/front_door.rs::cookie_never_admits_lease_admin`.
-- 1.1.10 - `crates/gdaemon/Cargo.toml` and the `Cargo.lock` entry for gdaemon carry the merged-base version plus 0.0.1, and the managed `gdaemon` pin in `version_pins.py` matches. The existing pin test checks the pair. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-## P2: The code-index family serves browser sessions on five GET routes
-`kind: framing`
-
-P2 changes which callers the five native rows admit, and adds the front-door refusal
-that ambiguous cookies need on those rows. It changes no handler.
-
-### 2.1 Family claims browser-session callers on the five graph read rows [category: code] (depends: 1.1, #24665, #24666, #24694)
+### 1.2 Claim cookie callers on exactly five native rows [category: code] (depends: 1.1, #24665, #24666)
 `kind: deliverable`
 
-`Caller::of` gains the `Browser` branch. Each of the five native rows adds `Caller::Browser`
-to its `callers` list. Those rows are overview, file, symbol neighbors, blast radius and
-search. Path is not in the list, because the web UI never calls it. The method stays
-`GET` on every row, so a session caller cannot mutate through any row. This leaf also
-bumps gdaemon again, because its crate's recursive path dependencies change.
-
-Ambiguous cookies on the five paths need a refusal at the front door. `Caller::of` sees
-no browser caller on an ambiguous request, so no row claims it, and `table.dispatch`
-would proxy it to Python, where it passes through. `FrontDoor::handle` therefore answers
-`401 missing_auth` before `table.dispatch` when the request carries
-`AmbiguousBrowserSession` and `gruntime::admits_browser(rows, method, path)` is true.
-`rows` is the code-index family's public `NATIVE_ROUTES`. `admits_browser` returns true
-when a row matching the method and path lists `Caller::Browser`. Any path that no row
-admits to browser callers is unaffected.
-
-The front door holds families only as `RouteFamily` trait objects, which expose no row
-list, so it cannot read the code-index rows through the trait. It names `NATIVE_ROUTES`
-through the code-index crate instead. gdaemon already depends on that crate, package
-`gobby-codeindex`, because the family plan links it into gdaemon (D5 and 1.9.1, lines 230
-and 1273 of `.gobby/plans/code-index-family.md`). So 2.1 adds no dependency. The edge
-stays acyclic: `gcodeindex` depends on `gruntime`, and `gruntime` does not depend on
-`gdaemon`.
-
 Targets:
-- `crates/gruntime/src/lib.rs::*` — scope-reason: adds the `Browser` variant to `Caller`, `Caller::of` reads the `BrowserSession` extension that 1.1 adds, and `admits_browser(rows, method, path)`, the row lookup the front door uses for the ambiguous-cookie 401.
-- `crates/gruntime/tests/caller.rs` — new file, the browser-caller cases.
-- `crates/gcodeindex/src/family.rs` — created by #24665; the NATIVE_ROUTES rows for the five GET reads gain the Browser caller, and `NATIVE_ROUTES` is `pub` for the front door's ambiguous-cookie lookup if #24665 has not made it so.
-- `crates/gcodeindex/tests/family_claims.rs` — new file, the API-key claim cases.
-- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle` — adds the ambiguous-cookie refusal before `table.dispatch`.
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: adds the browser-session claim case and the ambiguous-cookie case on the five paths.
+- `crates/gruntime/src/lib.rs::*` — scope-reason: add Caller::Browser classification without widening other native rows.
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gcodeindex/src/family.rs`
+- `crates/gcodeindex/tests/family_browser.rs`
+- `crates/gdaemon/tests/browser_cookie.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
-- `src/gobby/install/version_pins.py::*` — scope-reason: moves the managed `gdaemon` pin to the 2.1 version.
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
 
-Research context:
-- At the 0.5.0 tip, `crates/gruntime/src/lib.rs::Caller` (lines 17-21) has one variant,
-  `Operator`, documented as "an API key the front door resolved: the request carries
-  `x-gobby-key-id`". `Caller::of` (lines 26-31) returns `Option<Self>`. `NativeRoute`
-  (35-40) holds `callers: &'static [Caller]`, and `NATIVE_ROUTES` (43-48) is the family's
-  row list.
-- `RuntimeFamily.claims` (`lib.rs` 113-123) calls `Caller::of(parts)` and matches
-  `row.method`, `row.path`, `row.callers` and the optional gate. P5's `claims_native`
-  moves that match into a shared `pub fn`, so one change covers every family.
-- The five rows are: `GET /api/code-index/graph` (6.1), `GET /graph/file/*` (6.1),
-  `GET /graph/symbol/*/neighbors` (6.1), `GET /graph/blast-radius` (6.1), and
-  `GET /graph/search` (5.1, `crates/gcodeindex/src/family/search.rs`).
-- `claims_native` and `family.rs` do not exist at the 0.5.0 tip. #24665 creates them.
-  This deliverable's Targets resolve after #24665 lands.
-- The front door holds families only as `RouteFamily` trait objects (`serve.rs` 169,
-  `front_door/routes.rs` 40). `RouteFamily` (`crates/gcore/src/route_family.rs` 20-47)
-  exposes name, prefixes, router, default_backend, claims and check_proxied, with no row list.
-- Rejected: a `RouteFamily` method that exposes rows. `gcore` is a recursive dependency
-  of gcode, gdaemon and ghook, so the change would add three release bumps for one consumer.
-- Rejected: a per-request ambiguity flag on the native rows. The row list already holds
-  the method, the path and the callers, so one lookup answers the question without a
-  second field to keep in step.
+**Research context:** Existing gruntime Caller::of recognizes x-gobby-key-id only,
+and RuntimeFamily::claims matches row method, path, caller and gate. #24694 extracts
+claims_native for code_index reuse and creates operator-only family rows; #24666
+adds native graph reads. Classify Browser only from the verified extension after
+Operator precedence. Add Browser explicitly on overview, file, neighbors,
+blast-radius and search rows; keep every other row's caller list unchanged.
+Use the five-row predicate from 1.1 to reject unauthenticated/unsupported callers
+with 401 before dispatch, avoiding claims=false proxy fallback on the retired reads.
+The shared allowlist is the sole admission inventory. Keep gate evaluation,
+project/machine visibility and all handler payloads unchanged. Existing API-key
+requests retain the family contract. Changing gruntime affects gdaemon, so release
+bookkeeping belongs in this commit too.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-codeindex --test family_browser`
+and the browser_cookie test binary. Tests compose real FrontDoor + CodeIndexFamily
+with a backend stub counting calls: zero for native successes and auth refusals.
+
+**Granularity:** seven production Targets are coupled by shared caller/row activation
+and required release metadata; the same cookie lifecycle is owned by 1.1.
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `src/gobby/install/distribution.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/install/test_distribution.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
+- `tests/install/test_version_pins.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
 
 **Acceptance:**
+- 1.2.1 - Every five-row GET is claimed for a verified browser and returns native payload/error shapes; POST, HEAD, runtime, node and unlisted paths gain no browser claim. test: `crates/gcodeindex/tests/family_browser.rs::only_graph_reads_claim_browser`.
+- 1.2.2 - Unknown/expired/missing cookies and unsupported bearer callers receive 401 on the five reads with zero backend hits; valid API keys retain native behavior. test: `crates/gdaemon/tests/browser_cookie.rs::graph_reads_never_fall_back_to_python`.
+- 1.2.3 - Existing caller lists and gates outside the five rows remain identical, including Caller::ALL. test: `crates/gcodeindex/tests/family_browser.rs::other_native_authority_is_unchanged`.
+- 1.2.4 - Affected shipped Rust versions, lockfile and literal pins match the incremented merged-base versions. file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.
 
-- 2.1.1 - `Caller::of` returns `Caller::Browser` for a request carrying `BrowserSession`, and `Caller::Operator` for a request carrying `x-gobby-key-id`, as before. test: `crates/gruntime/tests/caller.rs::browser_session_maps_to_browser_caller`.
-- 2.1.2 - A `GET` with a browser session to each of the five paths is served natively, and a browser session on any other path, or on any other method, reaches Python unchanged. test: `crates/gdaemon/tests/front_door.rs::browser_session_claims_only_listed_graph_reads`.
-- 2.1.3 - An API-key caller's claims on every row are unchanged. test: `crates/gcodeindex/tests/family_claims.rs::api_key_callers_keep_listed_row_claims`.
-- 2.1.4 - `crates/gdaemon/Cargo.toml`, `Cargo.lock` and the managed `gdaemon` pin carry the 1.1 version plus 0.0.1. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-- 2.1.5 - Two distinct `gobby_session` values on each of the five GET paths are answered `401 missing_auth` before dispatch, and the same two values on a path that no row admits to browser callers reach Python with both `Cookie` values unchanged. test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_fail_closed_on_graph_reads`.
-
-## P3: Parity proof before deletion
+## P2: Real browser and node proof
 `kind: framing`
 
-P3 proves that the web UI's five requests return the same shapes through gdaemon,
-while Python still serves them. P4 deletes nothing until P3 is green.
-
-### 3.1 The web UI code-graph view loads through gdaemon with a cookie [category: test] (depends: 2.1)
+### 2.1 Prove the graph consumer through hub and node doors [category: test] (depends: 1.2)
 `kind: deliverable`
 
-A new end-to-end file drives the five requests exactly as `useCodeGraph.ts` builds
-them, with a `gobby_session` cookie minted through `AuthStore.create_session` against
-the isolated test hub. Its bootstrap enables the code index through a `ConfigPatch`, as
-`tests/e2e/test_restart_responsiveness.py` does (line 31), which overrides the disabled
-value the harness sets at `tests/e2e/conftest.py` line 609. The file indexes one fixture
-project with the installed `gcode`. Python's response for that project comes from the
-Python backend port, the comparison origin, since the front door proxies to
-`127.0.0.1:<port + 100>`. The file asserts that gdaemon's responses match Python's in
-status and in JSON keys.
-
-The file needs an authenticated FalkorDB, the same prerequisite as
-`tests/e2e/test_memory_dream_gc_e2e.py` (lines 68 to 120): the `GOBBY_FALKORDB_HOST`,
-`GOBBY_FALKORDB_PORT` and `GOBBY_FALKORDB_PASSWORD` variables, and a `falkordb:` block
-written into the isolated daemon config (line 117). The memory test skips when all three
-variables are unset (lines 80 to 84). The new file does not skip. It fails when any of
-the variables is missing, when the FalkorDB is unreachable, or when authentication is
-rejected, so a run without a graph backend cannot pass vacuously. The cases are not
-narrowed without a re-stamp.
-
 Targets:
-- `tests/e2e/test_code_graph_session_cookie.py` — new file.
+- `crates/gdaemon/tests/browser_graph.rs`
+- `web/tests/code-graph-cookie.spec.ts`
+- `web/tests/support/code-graph-fixture.ts`
 
-Research context:
-- `web/src/hooks/useCodeGraph.ts` builds five URLs on `getBaseUrl()`:
-  `/api/code-index/graph`, `/api/code-index/graph/file/{path}`,
-  `/api/code-index/graph/symbol/{id}/neighbors`, `/api/code-index/graph/blast-radius`
-  and `/api/code-index/graph/search`. Its fetch calls (lines 89 to 173) set no
-  `credentials` option, so the browser sends the same-origin cookie.
-- The e2e fixtures in `tests/e2e/test_daemon_auth.py` cover cookie sign-in. This file
-  reuses them, and it runs against the isolated test hub, never the operator daemon.
+**Research context:** `web/src/hooks/useCodeGraph.ts::useCodeGraph` performs five
+same-origin fetches and returns null/empty on failures. Its consumer is
+`web/src/components/code-graph/CodeGraphExplorer.tsx::CodeGraphExplorer`. Therefore
+asserting only that the page renders can hide an auth/routing failure. Drive the
+actual consumer and inspect all five network responses and visible graph/search
+results. The hook and UI require no production edit. The new support file owns only
+isolated fixture startup/seeding and cleanup, not mock route interception.
+`web/playwright.config.ts` already sets testDir to tests and supports
+PLAYWRIGHT_BASE_URL. Supply the isolated running fixture URL explicitly so Playwright
+does not silently start a frontend against Josh's daemon.
+
+Rust fixture creates temporary state, ephemeral ports, a test project/checkout and
+machine-visible symbols plus graph edges; starts an isolated hub gdaemon and relaying
+node; inserts an auth session through fixture SQL. Use test-hub PostgreSQL and
+isolated Falkor data/graph identifiers; clean up only those identifiers on exit.
+Enable code_index and graph through fixture configuration and index the fixture
+with the Rust library. No production database, real login password, stored browser
+profile or installed daemon mutation is used. Fail fixture setup when graph/database
+services are unavailable; never skip required proof. Rust proof verifies direct hub
+and node relay requests, cookie forwarding, logout and foreign-machine exclusion.
+The browser receives its HttpOnly session through fixture setup; never expose it to
+page JavaScript. It loads real CodeGraphExplorer and exercises overview, file,
+neighbors, blast radius and search. Save exact commands and test output.
+
+Planned verification (heavy slots required): `CARGO_BUILD_JOBS=3 cargo test -p
+gobby-daemon --test browser_graph`, then from web, with PLAYWRIGHT_BASE_URL set to the
+fixture URL, `npx playwright test tests/code-graph-cookie.spec.ts --workers=1`.
+No Python test harness or new dependencies. Rust test setup and TypeScript fixtures
+are kept together as one cross-process acceptance outcome.
 
 **Acceptance:**
+- 2.1.1 - Hub and relaying-node requests return fixture symbols/edges for all five reads with a valid cookie and zero backend graph-route hits; foreign machine symbols remain invisible. test: `crates/gdaemon/tests/browser_graph.rs::hub_and_node_cookie_graph_reads`.
+- 2.1.2 - Real browser graph load, file expansion, neighbors, blast radius and search succeed through gdaemon; removing/revoking the session makes fresh requests fail with 401 and no stale-success assertion. test: `web/tests/code-graph-cookie.spec.ts::code_graph_uses_native_cookie_reads`.
+- 2.1.3 - The fixture uses isolated state/ports/data and fails on missing prerequisites; response payload checks cannot pass against mocked API routes or an empty graph. test: `crates/gdaemon/tests/browser_graph.rs::fixture_is_isolated_and_requires_graph_data`.
 
-- 3.1.1 - Each of the five requests returns 200 through gdaemon for a valid cookie, with the same top-level JSON keys as Python's response from the Python backend port for the same project. test: `tests/e2e/test_code_graph_session_cookie.py::test_code_graph_views_load_through_gdaemon_with_cookie`.
-- 3.1.2 - The same requests with no cookie, or with an expired cookie, receive the same 401 that Python answers today. test: `tests/e2e/test_code_graph_session_cookie.py::test_unauthenticated_graph_reads_stay_401`.
-
-## P4: Retire Python's five read routes and their callers
+## P3: Retire Python and reconcile public evidence
 `kind: framing`
 
-P4 deletes what the five routes called and nothing else. Each deletion needs a caller
-proof recorded in the leaf's close summary.
-
-### 4.1 Delete the five Python graph read routes, their router and their ledger keys [category: code] (depends: 3.1, #24710)
+### 3.1 Delete the five routes and their context consumers atomically [category: refactor] (depends: 2.1, #24710, #24713)
 `kind: deliverable`
 
-After 9.3 and 9.4, `create_code_index_router` serves only the five read routes. The
-module goes with them. Its one mount in `_app_routes.py` and its re-export in
-`routes/__init__.py` go too. The five parity-ledger status keys for those routes go in
-the same commit, and the generated ledger is regenerated, so the generator's stale-surface
-check passes. The HTTP corpus's `code_index` family flips to gdaemon origin, so the corpus
-stops recording the deleted routes.
-
 Targets:
-- `src/gobby/servers/routes/code_index.py::*` — operation: delete — scope-reason: after 9.3 and 9.4 the router serves only the five browser read routes, so the whole module goes.
-- `src/gobby/servers/_app_routes.py::*` — scope-reason: drops the `create_code_index_router` import and its `include_router` call (line 82).
-- `src/gobby/servers/routes/__init__.py::*` — scope-reason: drops the `create_code_index_router` re-export and its `__all__` entry (lines 13 and 56).
-- `tests/servers/routes/test_code_index_routes.py::*` — operation: delete — scope-reason: its only remaining tests exercise the five deleted routes.
-- `tests/servers/routes/test_code_index_retirement.py` — new file, the retirement, ledger and corpus cases.
-- `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: drops the five graph keys.
-- `docs/contracts/parity-ledger.md` — regenerated by `scripts/generate_parity_ledger.py`.
-- `tests/contracts/http/manifest.json::*` — scope-reason: flips the `code_index` family to gdaemon origin.
-- `tests/contracts/http/README.md` — states the new origin.
+- `src/gobby/servers/routes/code_index.py::*` — operation: delete — scope-reason: prerequisites remove mutations/path; these five reads are the last routes.
+- `src/gobby/servers/_app_routes.py::register_routes`
+- `src/gobby/servers/routes/__init__.py::*` — scope-reason: delete only the code-index router import/export.
+- `src/gobby/code_index/context.py::*` — scope-reason: delete four read methods and helpers/imports with no surviving callers.
+- `tests/servers/routes/test_code_index_routes.py::*` — operation: delete — scope-reason: only tests deleted Python routes after prerequisite retirement.
+- `tests/code_index/test_code_index_context.py::*` — scope-reason: delete tests and fixtures of the retired methods only.
+- `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: delete status keys for exactly the five retired graph reads.
+- `docs/contracts/parity-ledger.md`
+- `docs/reference-audit/code-index.json::*` — scope-reason: point five graph-read implementation records at native handlers.
+- `tests/contracts/http/manifest.json::*` — scope-reason: retain cases and set code_index origin to gdaemon.
+- `tests/contracts/http/README.md`
+- `crates/gdaemon/tests/code_graph_retirement.rs`
 
-Research context:
-- `create_code_index_router` (`src/gobby/servers/routes/code_index.py` 102-465) holds
-  the five routes: `graph_overview` (107), `graph_file` (139), `graph_symbol_neighbors`
-  (175), `graph_blast_radius` (213) and `graph_search` (295). `graph_path` (257) belongs to 9.4.
-- `graph_search` reads `code_indexer.storage.search_symbols_fts` and
-  `search_symbols_by_name` directly. Those storage methods stay, because the native
-  search row needs them. Only the route goes.
-- The remaining importer of `create_code_index_router` at the 0.5.0 tip is
-  `tests/servers/routes/test_code_index_prune_route.py`. The prune route is deleted by
-  9.3, so that file is gone before this leaf starts. Acceptance 4.1.3 checks it.
-- The five keys in `docs/contracts/parity-ledger-status.d/git-workspaces.json` (lines
-  138 to 158) are the graph, blast-radius, file, search and neighbors routes. The
-  `graph/path` key belongs to 9.4. The status values the generator accepts are `proxied`,
-  `delegated` and `dropped by decision #N` (`scripts/generate_parity_ledger.py` 176 to 180).
-  `render_ledger` (186 to 195) raises on a stale key whose status is not a drop, so the
-  keys must leave in the same commit as the Python surfaces.
-- `tests/contracts/http/manifest.json` records `code_index` cases with `origin: python`.
-  The corpus replay module `tests/contracts/http_corpus.py` records `up` cases only for
-  python-origin families (line 97), so the flip keeps a re-record off the deleted routes.
+**Research context:** `create_code_index_router` owns graph_overview, graph_file,
+graph_symbol_neighbors, graph_blast_radius and graph_search. Delete that file only
+after #24710 removes its path/mutation routes; remove register_routes' mount and
+routes package re-export. Context methods to delete are graph_overview, graph_file,
+graph_symbol_neighbors and graph_blast_radius. Search reads storage directly: do not
+delete shared storage search methods. Remove _graph_project_root and
+_require_graph_enabled only after their path/lifecycle consumers have been retired
+and the literal caller sweep proves zero use. Keep CodeIndexContext's live service
+properties. #24713 is ordered first because it still validates a graph_overview test
+and edits the same context; it must not depend back on this plan.
+
+The five status keys are HTTP GET /api/code-index/graph, /graph/file/{file_path:path},
+/graph/symbol/{symbol_id}/neighbors, /graph/blast-radius and /graph/search. Remove the
+keys with the Python routes; regenerate the committed ledger using existing
+`uv run python scripts/generate_parity_ledger.py`. Retain native corpus cases and
+switch origin; never drop request coverage merely to avoid a dead recorder.
+Re-point graph_search's audit implementation to family/search.rs and the other four
+to family/graph.rs with their actual indexed handler symbols after prerequisites
+land. Refresh the audit's source-audit/rust-capability verification fields. Do not
+claim future Rust symbols already exist in this checkout.
+
+Add Rust source-inventory checks plus the real routing proof from 2.1; do not add
+Python replacement tests. Delete obsolete Python test definitions/imports only.
+Run existing focused Python regressions with the isolated DATABASE_URL and
+GOBBY_TEST_PROTECT=1; use uv for all Python commands. Planned commands: `cargo test
+-p gobby-daemon --test code_graph_retirement`; `uv run pytest tests/code_index/test_code_index_context.py
+ tests/test_parity_ledger.py -q` with those required environment variables; rerun 2.1.
+
+**Granularity:** more than six production Targets. Router deletion, its mount,
+context caller deletion and derived public records are one retirement transaction:
+separate commits would retain dead imports or fail stale-ledger checks. Gateway
+cleanup remains independently closeable in 3.2.
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: continues calling register_routes for surviving routers without naming the deleted router.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: asserts wiki retirement while using the shared route factory; code-index removal changes no wiki expectation.
 
 **Acceptance:**
+- 3.1.1 - Obligation 9.8.1: all five Python handlers and router file/mount/export plus the four context reads and newly dead helpers are absent; all five native cookie reads still load. test: `crates/gdaemon/tests/code_graph_retirement.rs::python_graph_reads_are_retired`.
+- 3.1.2 - Obligation 9.8.3: five status keys leave proxied, generated ledger matches inventory, and five audit records point to existing native handlers with fresh verification. test: `crates/gdaemon/tests/code_graph_retirement.rs::ledger_and_audit_name_native_graph_handlers`.
+- 3.1.3 - Corpus keeps the five read cases at gdaemon origin and replays equal; no recorder targets retired Python routes. test: `crates/gdaemon/tests/code_graph_retirement.rs::corpus_keeps_native_graph_cases`.
+- 3.1.4 - No imports/callers of deleted handlers/context methods remain; existing live-context regression tests and native browser proof pass after deletion. behavior: "Rust/TypeScript browser proof remains green after Python retirement".
 
-- 4.1.1 - `GET /api/code-index/graph` with a valid cookie is answered by gdaemon, and no Python route is mounted for the five paths. test: `tests/servers/routes/test_code_index_retirement.py::test_code_index_read_routes_are_not_registered`.
-- 4.1.2 - No module imports `gobby.servers.routes.code_index`, and `src/gobby/servers/routes/code_index.py` is absent. test: `tests/servers/routes/test_code_index_retirement.py::test_no_module_imports_code_index_router`.
-- 4.1.3 - Each deleted route handler and each helper it used has zero callers in `src/` and `tests/` at the leaf's commit, and the check is recorded in the close summary. test: `tests/servers/routes/test_code_index_retirement.py::test_deleted_route_helpers_have_no_callers`.
-- 4.1.4 - The five graph keys are absent from the status file, and the committed ledger matches the generator's output. test: `tests/servers/routes/test_code_index_retirement.py::test_parity_ledger_drops_graph_keys`.
-- 4.1.5 - The `code_index` corpus family has gdaemon origin, and no manifest case names a deleted route. test: `tests/servers/routes/test_code_index_retirement.py::test_code_index_corpus_origin_is_gdaemon`.
-
-### 4.2 Delete CodeIndexContext's read methods that no caller reaches [category: code] (depends: 4.1)
+### 3.2 Delete unused gateway methods and obsolete floors [category: refactor] (depends: 3.1, #24670)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/code_index/context.py::CodeIndexContext.graph_overview`
-- `src/gobby/code_index/context.py::CodeIndexContext.graph_file`
-- `src/gobby/code_index/context.py::CodeIndexContext.graph_symbol_neighbors`
-- `src/gobby/code_index/context.py::CodeIndexContext.graph_blast_radius`
-- `tests/code_index/test_code_index_context.py::*` — scope-reason: drops the four graph-read delegation tests.
-
-Research context:
-- `CodeIndexContext.graph_overview` (context.py 135) through `graph_blast_radius` (159)
-  each resolve the project root and delegate to `GcodeGateway`. `graph_path` (179)
-  belongs to 9.4, and this leaf leaves it alone.
-- `CodeIndexContext` is a consumer-facing module (D15 keeps it), so the file stays and
-  only the four read methods go.
-
-**Acceptance:**
-
-- 4.2.1 - `gcode usages` for each of the four symbols returns no caller at the leaf's commit, and the result is recorded in the close summary. test: `tests/code_index/test_code_index_context.py::test_context_has_no_graph_read_methods`.
-- 4.2.2 - `CodeIndexContext` keeps every method that still has a caller, and the focused file `tests/code_index/test_code_index_context.py` passes. test: `tests/code_index/test_code_index_context.py::test_context_keeps_live_methods`.
-
-### 4.3 Delete GcodeGateway's methods that only deleted code called, and the version floors [category: code] (depends: 4.2, #24670)
-`kind: deliverable`
-
-This leaf removes the gateway methods that only the deleted routes and context methods
-called, plus the two version floors whose only readers were the pruner and the
-gateway's prune path. It moves nothing. It also removes the floor wording from the
-three documents that state it.
-
-Targets:
-- `src/gobby/code_index/gcode_gateway.py::*` — operation: delete-lines — base-blob: e77a70429a3774b3325b2eb848f2a692b8093add — lines: 30-31, 419-421, 423-445, 447-457, 459-469, 471-489, 491-512, 514-540, 542-546, 548-552, 554-576, 578-600, 602-606, 608-612, 614-626, 677-714, 968 — scope-reason: deletes the fifteen methods named in Research context, the two version floors and their __all__ entry at the 0.5.0 tip; the proof is re-grounded after #24670 (see Research context).
-- `src/gobby/code_index/gcode_versions.py` — created by #24670; the two floors leave it.
-- `crates/AGENTS.md` — drops the gcode maintenance floor sentence (line 110).
-- `AGENTS.md` — drops the gcode maintenance version floor phrase (line 238).
-- `.gobby/workflows/rules/project-operating-policy.yaml::*` — scope-reason: drops the floor sentence in the crate-release rule (line 279).
-- `tests/code_index/test_gcode_gateway.py::*` — scope-reason: drops the tests of the deleted methods and floors.
+- `src/gobby/code_index/gcode_gateway.py::*` — operation: delete-lines — base-blob: 8f304739353c234a988f2bf06d4891444c355fe0 — lines: 30-31, 419-421, 423-445, 447-457, 459-469, 471-489, 491-512, 514-540, 542-546, 548-552, 554-576, 578-600, 602-606, 608-612, 614-626, 677-714, 968 — scope-reason: pure deletion of fifteen retired methods and obsolete floor definitions/export at the inspected checkout.
+- `src/gobby/code_index/gcode_versions.py`
+- `tests/code_index/test_gcode_gateway.py::*` — scope-reason: delete tests/imports for retired methods and floors without adding Python.
 - `tests/code_index/test_gcode_versions.py`
+- `AGENTS.md`
+- `crates/AGENTS.md`
+- `.gobby/workflows/rules/project-operating-policy.yaml::*` — scope-reason: delete the gcode maintenance-floor release sentence.
+- `crates/gdaemon/tests/code_graph_retirement.rs`
 
-Research context:
-- The fifteen methods, by their 0.5.0 tip ranges (`gcode_gateway.py`): `checked_version`
-  (419-421), `graph_sync_file` (423-445), `graph_overview` (447-457), `graph_file`
-  (459-469), `graph_neighbors` (471-489), `graph_blast_radius` (491-512), `symbol_path`
-  (514-540), `graph_clear` (542-546), `graph_rebuild` (548-552), `vector_sync_file`
-  (554-576), `vector_clear` (578-600), `vector_rebuild` (602-606), `prune` (608-612),
-  `maintenance_index` (614-626) and `prune_project_for_maintenance` (677-714). The two
-  floors are at 30-31, and the `__all__` entry for `MIN_GCODE_PRUNE_BUDGET_VERSION` is at
-  line 968. Each range sits between kept lines, as the proof grammar requires. The
-  floors' readers are `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION` at lines 442 and 573 and
-  `MIN_GCODE_PRUNE_BUDGET_VERSION` at lines 695 and 698, all inside deleted ranges.
-- `gcode_gateway.py` is 969 lines at the 0.5.0 tip and sits above the 850-line growth
-  lint, so base validation rejects exact symbol targets on it. The file entry is the
-  pure-deletion proof in Targets, grounded on the tip blob.
-- Re-grounding route, agreed by the Orchestrator (relayed 2026-10-18, 12:45 CDT). #24670
-  moves the two floors into `gcode_versions.py` and edits this file's layout before this
-  leaf starts. After #24670 closes and before 4.3 is claimed, the Writer re-grounds the
-  proof on the gateway blob then at tip, with ranges from `gcode outline`, and deletes the
-  two floors from `gcode_versions.py` by name. The re-grounding changes the plan's bytes,
-  so it first withdraws any M1 that exists: the Writer removes the whole `## M1 Task
-  Manifest` block together with its preceding blank line, and commits that removal with
-  one dated entry in V1. The removal diff touches only the M1 block and adds only the
-  changelog lines. The Plan Adversary (gobby#16993) then derives and applies a fresh M1
-  and re-stamps the re-grounded proof before 4.3 is claimed. If no M1 exists at
-  re-grounding time, the Writer records the dated V1 entry and nothing is withdrawn.
-- The floor wording sits in three places. `crates/AGENTS.md` (line 110) and root
-  `AGENTS.md` (line 238) each say to keep the managed pins and the gcode maintenance floor
-  in step. The project rule at line 279 of `project-operating-policy.yaml` says a gcode
-  release keeps `MIN_GCODE_PRUNE_BUDGET_VERSION` equal to the crate version. Each sentence
-  goes. The bundled rule templates under `src/gobby/install/shared/` carry no such sentence.
+**Research context:** The 969-line gateway's current method ranges are enumerated by
+`gcode outline src/gobby/code_index/gcode_gateway.py --offset 32`. Delete exactly
+checked_version, graph_sync_file, graph_overview, graph_file, graph_neighbors,
+graph_blast_radius, symbol_path, graph_clear, graph_rebuild, vector_sync_file,
+vector_clear, vector_rebuild, prune, maintenance_index and
+prune_project_for_maintenance. Keep private _checked_version and _ensure_version
+while live incremental_index/nightly_repair/invalidate consumers need them; a public
+property deletion does not imply deleting private version checking.
 
-**Acceptance:**
+#24709 (ancestor of #24710) removes maintenance/pruner consumers. The family seam's
+prerequisites remove sync_worker; 3.1 removes read consumers. Confirm these facts at
+the implementation tip by exact identifier sweep across src/, tests/ and crates/;
+fix any owned residual consumer through deletion or native use, never Python glue.
+The pre-expansion freshness gate rebinds this pure-deletion proof after #24670 moves
+floors to gcode_versions.py. That gate must update the hash/ranges and re-review the
+result; this proof is not permission to apply stale line ranges. The gcode_versions module/test Targets apply to the files created by #24670; if its
+extraction supplies no separate test file, create none. Remove only
+MIN_GCODE_PRUNE_BUDGET_VERSION and GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION, their
+imports/re-exports and obsolete tests. Keep MIN_GCODE_GRAPH_VERSION and live checking.
+Delete maintenance-floor wording in root/crates AGENTS and project operating rule.
+The coordinator must reconcile the installed rule row using the rule-management
+surface as part of activation; templates are not live config. Other plans' release
+leaves must not recreate the removed floor. No direct SQL or backup edits.
 
-- 4.3.1 - Each of the fifteen named methods has no caller in `src/`, `tests/` or `crates/` at the leaf's commit, and the caller check is recorded in the close summary. test: `tests/code_index/test_gcode_gateway.py::test_gateway_keeps_no_route_only_methods`.
-- 4.3.2 - `gcode_versions.py` no longer defines `MIN_GCODE_PRUNE_BUDGET_VERSION` or `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION`, and the floor test that read them is removed with them. test: `tests/code_index/test_gcode_versions.py::test_removed_floors_are_absent`.
-- 4.3.3 - `crates/AGENTS.md`, root `AGENTS.md` and `project-operating-policy.yaml` no longer state a gcode maintenance version floor. file: `crates/AGENTS.md`, `AGENTS.md`, `.gobby/workflows/rules/project-operating-policy.yaml`.
-- 4.3.4 - `gcode_gateway.py` stays under 1,000 lines after the deletion and keeps every method and error class that a surviving caller uses. test: `tests/code_index/test_gcode_gateway.py::test_surviving_gateway_methods_keep_their_callers`.
+Planned checks: Rust code_graph_retirement tests; existing focused
+`uv run pytest tests/code_index/test_gcode_gateway.py -q` with isolated DATABASE_URL
+and GOBBY_TEST_PROTECT=1. The Rust retirement test reads source inventory and verifies
+absence of the named public methods/floors and retention of live gateway functions.
+It is a regression check paired with surviving functional Python tests, not a claim
+that text absence alone proves routing. No new Python test or runtime is introduced.
 
-### 4.4 Re-point the audit entries at the native handlers [category: docs] (depends: 2.1, 4.1)
-`kind: deliverable`
-
-The parity-ledger rows leave in 4.1, because their status keys go there. This leaf
-keeps only the audit re-point.
-
-Targets:
-- `docs/reference-audit/code-index.json::*` — scope-reason: re-points the five `create_code_index_router` entries at the native handlers.
-- `tests/contracts/test_code_graph_ledger_rows.py` — rewritten to check the audit entries only.
-
-Research context:
-- `docs/reference-audit/code-index.json` line 755 names `create_code_index_router.graph_overview`,
-  and four further entries name the same router.
+**Granularity:** more than six Targets, all one dead gateway API cleanup and its
+floor carriers; the prerequisite-owned worker/pruner state machines are excluded.
 
 **Acceptance:**
+- 3.2.1 - Obligation 9.8.2: all fifteen named dead gateway methods are absent, caller sweeps are recorded and surviving functional gateway tests pass. test: `crates/gdaemon/tests/code_graph_retirement.rs::gateway_retains_only_live_entry_points`.
+- 3.2.2 - Both obsolete floors and their imports/exports/tests are deleted; MIN_GCODE_GRAPH_VERSION and live version checks remain; gateway stays below 1,000 lines. test: `crates/gdaemon/tests/code_graph_retirement.rs::obsolete_gateway_floors_are_absent`.
+- 3.2.3 - Root/crates AGENTS and project operating rule no longer prescribe the maintenance floor; activation records the installed-row reconciliation and cross-plan release notification. file: `AGENTS.md`, `crates/AGENTS.md`, `.gobby/workflows/rules/project-operating-policy.yaml`.
 
-- 4.4.1 - No audit entry names `create_code_index_router`, and each of the five entries names its native handler (`family/graph.rs` or `family/search.rs`). test: `tests/contracts/test_code_graph_ledger_rows.py::test_audit_points_at_native_handlers`.
-
-## E1 End-to-end verification
+## V1: Verification and review gates
 `kind: verification`
 
-- The e2e file in 3.1 runs green through gdaemon before any deletion in P4 lands.
-- The web UI's `useCodeGraph.ts` loads its five views through gdaemon with a cookie, and the same requests without a cookie answer 401.
-- The focused runs named in each acceptance item pass. The full pytest suite does not run.
+Observed research: clean prepared checkout f983bc43f03d5cbf691c860b419e758eb1cb2c98,
+base 28cce0f0de; current task/dependency cards read through MCP on 2026-10-20.
+The six preserved commits remain historical Git evidence. Their prior Security
+verdict and M1 are not evidence for these bytes. No historical RED is asserted.
 
-## V2: Verification
-`kind: verification`
+Source evidence: `gcode evidence` read of AuthState::authenticate is complete,
+excerpt hash `3d0de92eedf12c7e483b4f09c799de1f7ae9add649fc584f6cf205386e0cdf0d`;
+`crates/gdaemon/src/front_door/auth.rs`, lines 129–131 return immediately when
+Authorization is absent, proving the missing cookie branch. Navigation inspected FrontDoor::handle, Caller, RuntimeFamily::claims,
+AuthStore.session_user_id, useCodeGraph and gateway/context outlines. Literal sweeps
+`gcode grep` for graph_sync_file, prune_project_for_maintenance and maintenance_index
+found sync_worker, prune, maintenance and gateway/context/test consumers; none are
+claimed absent today. The bounded production sweep of the fifteen-name regex found
+context.py, gcode_gateway.py, maintenance.py, prune.py and sync_worker.py. Required
+implementation sweeps cover all names, imports and test strings after prerequisites.
 
-These are completion gates for the implementation. Except for plan validation, none has run yet. Each runs after the leaves land, and each must hold before the epic closes.
+Planning-time command: `uv run gobby plans validate
+.gobby/plans/gdaemon-web-session-cookie.md -p /Users/josh/.gobby/worktrees/gobby/wt-task-24659`.
+The candidate report supplies its actual result; no implementation tests have run.
+Observed base validation: exit 0, three phases, no warnings after consumer-inventory
+repair. `git diff --check` also exits 0. Narrative has no M1; expansion validation is intentionally unrun until a fresh
+server-derived manifest exists. This plan contains five deliverables and no deferrals.
 
-- Plan validation with `uv run gobby plans validate .gobby/plans/gdaemon-web-session-cookie.md -p <project root>` is the only planning-time check, and it must pass before review.
-- The Security review is by Grok, gobby#17126. It reviews this draft's cookie verifier, including the duplicate-cookie split in 1.1 and the ambiguous-cookie refusal on the five paths in 2.1, before consensus. Its verdict is recorded in the consensus entry of V1, which precedes the Plan Adversary's M1 derivation, so one M1 covers the verdict. A finding that changes 1.1 or 2.1 reopens the narrative for a fresh review. The review lands before operator approval.
-- Every deleted Python route must have zero callers at the leaf's commit, and each leaf must record the caller check in its close summary.
-- `gcode_gateway.py` must stay under 1,000 lines after deliverable 4.3.
-- The gdaemon version must advance by 0.0.1 in each shipping commit, 1.1 and 2.1, with `Cargo.lock` and the managed pin updated.
-- `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory` and `tests/contracts/test_http_corpus.py::test_case_replays_equal` must pass at 4.1's commit. Both are existing regression gates, and they are not acceptance items of this plan.
+The coordinator routes fresh Security review of parsing, credential precedence,
+read authority, expiry/revocation, relay behavior, outage handling and caller loss;
+then Plan Adversary consensus on the exact bytes. No seat fabricates either verdict.
+The adversary/coordinator applies server-derived M1 using the approved plan workflow.
+Josh must approve the stamped bytes before expansion. Hub-node prerequisite and
+fresh symbol/proof validation remain additional expansion gates; approval never
+waives them. New code leaves 1.1/1.2 use TDD with actual Rust RED/GREEN evidence;
+2.1 is a standalone integration proof; deletion leaves are refactor with focused
+regressions. All heavy tests require a Lane Manager slot, CARGO_BUILD_JOBS=3, isolated
+state and exact command/result receipts. Never run the full pytest suite.
 
-## V1 Plan Changelog
+## V2: Plan provenance
 `kind: framing`
 
-- 2026-10-18, Draft 1 (lane-4 developer seat, session 39fa53a8). Narrative written from the 0.5.0 tip. Decisions (a) to (c) recorded with recommended choices. No M1; the Adversary derives it after consensus.
-- 2026-10-18, Draft 2 (lane-4 developer seat, session 39fa53a8). Applies the Plan Adversary's NEEDS REPAIR (gobby#16993, message d5f60fd0). B1: decisions (a) to (c) quoted and accepted by the Orchestrator at 12:06 CDT; Security reviewer Grok, gobby#17126, 2026-10-18. B2: `authenticate` takes the request, and the `FrontDoor::handle` call sites are targets. B3: duplicate cookies split by route, fail closed on gdaemon-served routes, pass through on proxied routes. B4: deliverable 1.2 removed; the bumps move into 1.1 and 2.1, with the managed pin. B5: the five keys leave the status file in 4.1, and 4.4 keeps the audit re-point only. B6: the HTTP corpus flips in 4.1. B7: 3.1 enables the index through `ConfigPatch`, indexes a fixture project, and compares against the Python backend port; a gap stops the leaf. B8(i): the fifteen methods and the `__all__` entry are named. B8(ii): the re-grounding route, agreed by the Orchestrator at 12:45 CDT, is recorded in 4.3. B9: all three floor-wording locations are targets, and the cross-plan release leaves are recorded in Constraints. N1: the agent-token loss is recorded under D15. N2: the new test files are targets. Version observed at the 0.5.0 tip `6ff393368a`: crate and pin both 0.4.61, not the 0.4.62 the Adversary's message cites.
-- 2026-10-18, Draft 3 (lane-4 developer seat, session 39fa53a8). Applies the Plan Adversary's follow-up to Draft 2 (gobby#16993, message 41c87a52). R1: the 4.3 re-grounding route withdraws any M1 first, by removing the whole `## M1 Task Manifest` block, and then records a dated V1 entry. R2: 3.1 takes the FalkorDB prerequisite and config write of `tests/e2e/test_memory_dream_gc_e2e.py`, and fails rather than skips when the variables are missing; the stop-and-report branch is removed. The memory test skips only when all three variables are unset, which the new file does not copy. R3: `FrontDoor::handle` refuses an ambiguous cookie on the five GET paths with `401 missing_auth` before `table.dispatch`, through `gruntime::admits_browser`, with acceptance 2.1.5; 1.1.4 keeps the three routes that exist at 1.1. Gating the session lookup by the route table is not taken. R4: the Security review by gobby#17126 is taken on Draft 3 before consensus and recorded in the consensus entry, not after the M1 derivation. Nit (restraint): 1.1.10 and 2.1.4 use the existing `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`; the new pin test and its targets are dropped. Version unchanged from Draft 2: the crate and pin read 0.4.61 at the tip, and the 0.4.62 the Adversary cited came from the main checkout.
-- 2026-10-18, Draft 4 (lane-4 developer seat, session 39fa53a8). Applies the Plan Adversary's second pass (gobby#16993), R5. `gruntime::admits_browser` takes the row slice, `admits_browser(rows, method, path)`, because gruntime cannot read gcodeindex's rows without a cycle. `FrontDoor::handle` passes the code-index family's public `NATIVE_ROUTES`, and gdaemon takes a path dependency on `gcodeindex` to name it. `RouteFamily` is unchanged. 2.1's scope adds `NATIVE_ROUTES` visibility if #24665 has not made it public. 2.1.5 is unchanged. The Security verdict from gobby#17126 is not yet recorded; it goes into the consensus entry, which is committed before the Adversary derives M1.
-- 2026-10-18, Draft 5, the consensus candidate (lane-4 developer seat, session 39fa53a8). Folds the Adversary's R6 and Grok's Security verdict on Draft 3 (29bdbca230) into one commit, so one M1 covers both. R6: 2.1 adds no dependency on `gcodeindex`. gdaemon already depends on package `gobby-codeindex`, linked by the family plan (D5 and 1.9.1), and the `crates/gdaemon/Cargo.toml` target is the version bump only. This corrects the dependency statement in the Draft 4 entry. Security verdict, gobby#17126, dated 2026-10-18: FINDINGS none. Accepted: a proxied request with two distinct `gobby_session` values passes through unchanged. Python reads the last pair, and gdaemon does not authorize a proxied route from the cookie. The collector counts every pair, so a last-wins map cannot hide one. Observed, not a finding: on proxied routes a non-bearer `Authorization` header still reaches Python's cookie check (`auth_service.py` 399 to 409). The 1.1.3 rule covers gdaemon-served routes, and the Decision Record says so.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Verify the browser session cookie in the front door, and bump gdaemon
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: An unexpired `gobby_session` cookie resolves through
-    `KeyResolver::resolve_session` to its `user_id`, and the request carries `BrowserSession
-    { user_id }` in its extensions. test: `crates/gdaemon/tests/front_door.rs::cookie_session_resolves_unexpired_user`.
-
-    1.1.2: An expired, unknown or empty cookie, and a request without one, carries
-    no `BrowserSession` and proceeds as unauthenticated does today. test: `crates/gdaemon/tests/front_door.rs::cookie_session_rejects_expired_and_unknown`.
-
-    1.1.3: A request with an `Authorization` header is decided by the bearer path
-    alone, and its `gobby_session` cookie is ignored. test: `crates/gdaemon/tests/front_door.rs::bearer_takes_precedence_over_cookie`.
-
-    1.1.4: Two distinct `gobby_session` values on the lease-admin route, the machines
-    API or the node channel are answered `401 missing_auth` before the route''s handler
-    runs. test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_fail_closed_on_hub_routes`.
-
-    1.1.5: Two distinct `gobby_session` values on a proxied route reach the backend
-    with both `Cookie` values unchanged, and carry no `BrowserSession`. test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_pass_through_on_proxied_routes`.
-
-    1.1.6: The same `gobby_session` value sent twice is accepted as that session.
-    test: `crates/gdaemon/tests/front_door.rs::same_session_cookie_sent_twice_is_accepted`.
-
-    1.1.7: Client identity headers are removed before the cookie branch runs, and
-    no cookie-derived value is written to any identity header. test: `crates/gdaemon/tests/front_door.rs::cookie_session_sets_no_identity_headers`.
-
-    1.1.8: `resolve_session` hashes the cookie with `api_key_format::hash` and filters
-    `expires_at >= now()`. The Rust test pins the digest that Python''s `hash_token`
-    returns for a fixture token. test: `crates/gdaemon/tests/front_door.rs::session_hash_matches_python_hash_token`.
-
-    1.1.9: The lease-admin route stays API-key-only: a request whose only credential
-    is a `gobby_session` cookie is refused as before. test: `crates/gdaemon/tests/front_door.rs::cookie_never_admits_lease_admin`.
-
-    1.1.10: `crates/gdaemon/Cargo.toml` and the `Cargo.lock` entry for gdaemon carry
-    the merged-base version plus 0.0.1, and the managed `gdaemon` pin in `version_pins.py`
-    matches. The existing pin test checks the pair. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:1.1:1.1.1
-  - covers:gdaemon-web-session-cookie:1.1:1.1.2
-  - covers:gdaemon-web-session-cookie:1.1:1.1.3
-  - covers:gdaemon-web-session-cookie:1.1:1.1.4
-  - covers:gdaemon-web-session-cookie:1.1:1.1.5
-  - covers:gdaemon-web-session-cookie:1.1:1.1.6
-  - covers:gdaemon-web-session-cookie:1.1:1.1.7
-  - covers:gdaemon-web-session-cookie:1.1:1.1.8
-  - covers:gdaemon-web-session-cookie:1.1:1.1.9
-  - covers:gdaemon-web-session-cookie:1.1:1.1.10
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Family claims browser-session callers on the five graph read rows
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '2.1.1: `Caller::of` returns `Caller::Browser` for a request
-    carrying `BrowserSession`, and `Caller::Operator` for a request carrying `x-gobby-key-id`,
-    as before. test: `crates/gruntime/tests/caller.rs::browser_session_maps_to_browser_caller`.
-
-    2.1.2: A `GET` with a browser session to each of the five paths is served natively,
-    and a browser session on any other path, or on any other method, reaches Python
-    unchanged. test: `crates/gdaemon/tests/front_door.rs::browser_session_claims_only_listed_graph_reads`.
-
-    2.1.3: An API-key caller''s claims on every row are unchanged. test: `crates/gcodeindex/tests/family_claims.rs::api_key_callers_keep_listed_row_claims`.
-
-    2.1.4: `crates/gdaemon/Cargo.toml`, `Cargo.lock` and the managed `gdaemon` pin
-    carry the 1.1 version plus 0.0.1. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-    2.1.5: Two distinct `gobby_session` values on each of the five GET paths are answered
-    `401 missing_auth` before dispatch, and the same two values on a path that no
-    row admits to browser callers reach Python with both `Cookie` values unchanged.
-    test: `crates/gdaemon/tests/front_door.rs::duplicate_session_cookies_fail_closed_on_graph_reads`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:2.1:2.1.1
-  - covers:gdaemon-web-session-cookie:2.1:2.1.2
-  - covers:gdaemon-web-session-cookie:2.1:2.1.3
-  - covers:gdaemon-web-session-cookie:2.1:2.1.4
-  - covers:gdaemon-web-session-cookie:2.1:2.1.5
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: The web UI code-graph view loads through gdaemon with a cookie
-  category: test
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: '3.1.1: Each of the five requests returns 200 through gdaemon
-    for a valid cookie, with the same top-level JSON keys as Python''s response from
-    the Python backend port for the same project. test: `tests/e2e/test_code_graph_session_cookie.py::test_code_graph_views_load_through_gdaemon_with_cookie`.
-
-    3.1.2: The same requests with no cookie, or with an expired cookie, receive the
-    same 401 that Python answers today. test: `tests/e2e/test_code_graph_session_cookie.py::test_unauthenticated_graph_reads_stay_401`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:3.1:3.1.1
-  - covers:gdaemon-web-session-cookie:3.1:3.1.2
-  tdd: false
-  source_section: '3.1'
-  assigned_agent: developer
-- title: Delete the five Python graph read routes, their router and their ledger keys
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '4.1.1: `GET /api/code-index/graph` with a valid cookie is
-    answered by gdaemon, and no Python route is mounted for the five paths. test:
-    `tests/servers/routes/test_code_index_retirement.py::test_code_index_read_routes_are_not_registered`.
-
-    4.1.2: No module imports `gobby.servers.routes.code_index`, and `src/gobby/servers/routes/code_index.py`
-    is absent. test: `tests/servers/routes/test_code_index_retirement.py::test_no_module_imports_code_index_router`.
-
-    4.1.3: Each deleted route handler and each helper it used has zero callers in
-    `src/` and `tests/` at the leaf''s commit, and the check is recorded in the close
-    summary. test: `tests/servers/routes/test_code_index_retirement.py::test_deleted_route_helpers_have_no_callers`.
-
-    4.1.4: The five graph keys are absent from the status file, and the committed
-    ledger matches the generator''s output. test: `tests/servers/routes/test_code_index_retirement.py::test_parity_ledger_drops_graph_keys`.
-
-    4.1.5: The `code_index` corpus family has gdaemon origin, and no manifest case
-    names a deleted route. test: `tests/servers/routes/test_code_index_retirement.py::test_code_index_corpus_origin_is_gdaemon`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:4.1:4.1.1
-  - covers:gdaemon-web-session-cookie:4.1:4.1.2
-  - covers:gdaemon-web-session-cookie:4.1:4.1.3
-  - covers:gdaemon-web-session-cookie:4.1:4.1.4
-  - covers:gdaemon-web-session-cookie:4.1:4.1.5
-  tdd: true
-  source_section: '4.1'
-  implementation_domain: backend
-- title: Delete CodeIndexContext's read methods that no caller reaches
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.1'
-  validation_criteria: '4.2.1: `gcode usages` for each of the four symbols returns
-    no caller at the leaf''s commit, and the result is recorded in the close summary.
-    test: `tests/code_index/test_code_index_context.py::test_context_has_no_graph_read_methods`.
-
-    4.2.2: `CodeIndexContext` keeps every method that still has a caller, and the
-    focused file `tests/code_index/test_code_index_context.py` passes. test: `tests/code_index/test_code_index_context.py::test_context_keeps_live_methods`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:4.2:4.2.1
-  - covers:gdaemon-web-session-cookie:4.2:4.2.2
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: backend
-- title: Delete GcodeGateway's methods that only deleted code called, and the version
-    floors
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.2'
-  validation_criteria: '4.3.1: Each of the fifteen named methods has no caller in
-    `src/`, `tests/` or `crates/` at the leaf''s commit, and the caller check is recorded
-    in the close summary. test: `tests/code_index/test_gcode_gateway.py::test_gateway_keeps_no_route_only_methods`.
-
-    4.3.2: `gcode_versions.py` no longer defines `MIN_GCODE_PRUNE_BUDGET_VERSION`
-    or `GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION`, and the floor test that read them
-    is removed with them. test: `tests/code_index/test_gcode_versions.py::test_removed_floors_are_absent`.
-
-    4.3.3: `crates/AGENTS.md`, root `AGENTS.md` and `project-operating-policy.yaml`
-    no longer state a gcode maintenance version floor. file: `crates/AGENTS.md`, `AGENTS.md`,
-    `.gobby/workflows/rules/project-operating-policy.yaml`.
-
-    4.3.4: `gcode_gateway.py` stays under 1,000 lines after the deletion and keeps
-    every method and error class that a surviving caller uses. test: `tests/code_index/test_gcode_gateway.py::test_surviving_gateway_methods_keep_their_callers`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:4.3:4.3.1
-  - covers:gdaemon-web-session-cookie:4.3:4.3.2
-  - covers:gdaemon-web-session-cookie:4.3:4.3.3
-  - covers:gdaemon-web-session-cookie:4.3:4.3.4
-  tdd: true
-  source_section: '4.3'
-  implementation_domain: backend
-- title: Re-point the audit entries at the native handlers
-  category: docs
-  task_type: feature
-  depends_on:
-  - '2.1'
-  - '4.1'
-  validation_criteria: '4.4.1: No audit entry names `create_code_index_router`, and
-    each of the five entries names its native handler (`family/graph.rs` or `family/search.rs`).
-    test: `tests/contracts/test_code_graph_ledger_rows.py::test_audit_points_at_native_handlers`.'
-  labels:
-  - covers:gdaemon-web-session-cookie:4.4:4.4.1
-  tdd: false
-  source_section: '4.4'
-  assigned_agent: tech-writer
-```
+2026-10-20: fresh Rust/TypeScript design under Orchestrator ruling
+8d65292e-775d-4eb2-b8dc-9b5dc55719bf. Replaces historical draft/M1; preserves obligations
+9.8.1–9.8.3. No fresh Security/adversary/operator approval is claimed. Expansion,
+landing, activation and task closure remain Orchestrator-owned.
