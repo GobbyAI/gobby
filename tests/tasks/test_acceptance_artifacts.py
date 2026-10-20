@@ -2119,6 +2119,101 @@ def test_test_body_unreachable_assertion_is_not_credited(tmp_path: Path, source:
     assert result.findings == (NO_ASSERTION,)
 
 
+@pytest.mark.parametrize("helper", [False, True], ids=["test_body", "helper"])
+@pytest.mark.parametrize(
+    "control",
+    [
+        "while True or False:\n    return",
+        "if True or False:\n    return\nelse:\n    assert receipt == 'ok'\nreturn",
+        "while 1 == 1:\n    return",
+        "while (False,):\n    return",
+        "while True or calls():\n    return",
+        "while not (False or False):\n    return",
+        "while 1 < 2 <= 2:\n    return",
+        "while 1 in (1, 2):\n    return",
+        "while 3 not in [1, 2]:\n    return",
+        "while None is None:\n    return",
+        "while None is not False:\n    return",
+        "while 1 is 1:\n    return",
+        "if False and calls():\n    assert receipt == 'ok'\nreturn",
+        "while True:\n    while True:\n        break\n    else:\n        break\n    return",
+        "while True:\n    for _ in range(0, 1, 0):\n        pass\n    else:\n        break\n    return",
+        "while True:\n    for _ in [1]:\n        break\n    else:\n        break",
+        "while True:\n    for _ in [1]:\n        return\n    else:\n        break",
+        "while True:\n    for _ in range(1):\n        break\n    else:\n        break",
+        "0 > 1 < _assert_hidden(receipt)",
+    ],
+    ids=[
+        "constant_or_while",
+        "constant_or_if_else",
+        "constant_compare_while",
+        "truthy_tuple_while",
+        "decisive_or_call",
+        "recursive_not_or",
+        "chained_compare",
+        "constant_in",
+        "constant_not_in",
+        "constant_is",
+        "constant_is_not",
+        "constant_integer_is",
+        "decisive_and_call",
+        "nested_true_while_else",
+        "nested_zero_step_else",
+        "nested_nonempty_for_break_else",
+        "nested_nonempty_for_return_else",
+        "nested_nonempty_range_break_else",
+        "chained_compare_hidden_helper",
+    ],
+)
+def test_constant_control_dead_assertions_are_not_credited(
+    tmp_path: Path, control: str, helper: bool
+) -> None:
+    if control == "0 > 1 < _assert_hidden(receipt)":
+        body = control
+    else:
+        body = control + "\nassert receipt == 'ok'"
+    if helper:
+        source = "def _assert_ok(receipt):\n" + textwrap.indent(body, "    ")
+        source += "\n\ndef test_feature():\n    _assert_ok('ok')\n"
+    else:
+        source = "def test_feature():\n    receipt = 'ok'\n" + textwrap.indent(body, "    ")
+    source += "\n\ndef _assert_hidden(receipt):\n    assert receipt == 'ok'\n"
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is False
+    assert result.findings == (NO_ASSERTION,)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        "for item in items:\n    pass\nelse:\n    break",
+        "for item in []:\n    pass\nelse:\n    break",
+        "while False:\n    pass\nelse:\n    break",
+        "while flag:\n    pass\nelse:\n    break",
+        "for item in [1]:\n    continue\nelse:\n    break",
+        "for item in range(1):\n    continue\nelse:\n    break",
+    ],
+    ids=[
+        "for_else",
+        "empty_for_else",
+        "false_while_else",
+        "unknown_while_else",
+        "nonempty_continue_else",
+        "range_continue_else",
+    ],
+)
+def test_outer_assertion_after_nested_loop_else_break_is_credited(
+    tmp_path: Path, nested: str
+) -> None:
+    source = "def test_feature():\n    while True:\n" + textwrap.indent(nested, "        ")
+    source += "\n    assert make_receipt() == 'ok'\n"
+    result = _committed_python_result(tmp_path, source)
+
+    assert result.passed is True, result.findings
+    assert result.findings == ()
+
+
 MOCK_CALL_TEST = """
     from unittest.mock import MagicMock
 

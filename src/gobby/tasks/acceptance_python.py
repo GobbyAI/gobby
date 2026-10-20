@@ -24,6 +24,7 @@ forms beyond literal keys are outside what the resolver can see.
 from __future__ import annotations
 
 import ast
+import operator
 import re
 import textwrap
 from collections import deque
@@ -519,9 +520,25 @@ def _live_scope_nodes(body: Iterable[ast.stmt], *, break_scope: bool = False) ->
     while queue:
         node = queue.popleft()
         yield node
-        if isinstance(node, _DECLARATIONS) or (
-            break_scope and isinstance(node, (ast.For, ast.AsyncFor, ast.While))
-        ):
+        if isinstance(node, _DECLARATIONS):
+            continue
+        if break_scope and isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            # A nested loop's else belongs to the enclosing break scope; its body does not.
+            if isinstance(node, ast.While):
+                runs_else = _static_truth(node.test) is not True
+            else:
+                runs_else = not _raises_at_iterator(node.iter)
+                nonempty = _is_literal(node.iter) and bool(ast.literal_eval(node.iter))
+                if isinstance(node.iter, ast.Call) and isinstance(node.iter.func, ast.Name):
+                    if node.iter.func.id == "range" and _literal_range(node.iter.args) is not None:
+                        nonempty = not _is_empty_range(node.iter.args)
+                if nonempty and _block_ends(node.body):
+                    runs_else = any(
+                        isinstance(child, ast.Continue)
+                        for child in _live_scope_nodes(node.body, break_scope=True)
+                    )
+            if runs_else:
+                queue.extend(_live_block(node.orelse))
             continue
         if isinstance(node, ast.If):
             truth = _static_truth(node.test)
@@ -545,6 +562,16 @@ def _live_scope_nodes(body: Iterable[ast.stmt], *, break_scope: bool = False) ->
             continue
         elif isinstance(node, ast.BoolOp):
             queue.extend(_live_operands(node))
+            continue
+        elif isinstance(node, ast.Compare):
+            queue.append(node.left)
+            for index, operand in enumerate(node.comparators, 1):
+                queue.append(operand)
+                prefix = ast.Compare(
+                    left=node.left, ops=node.ops[:index], comparators=node.comparators[:index]
+                )
+                if _static_comparison(prefix) is False:
+                    break
             continue
         elif isinstance(node, (ast.For, ast.AsyncFor)) and _raises_at_iterator(node.iter):
             # The iterator raises before any item, so neither the body nor the else clause runs.
@@ -754,12 +781,68 @@ def _live_children(node: ast.AST) -> Iterator[ast.AST]:
 
 def _static_truth(node: ast.expr) -> bool | None:
     """Truth value of a constant test, or None when the test is not a constant."""
-    if isinstance(node, ast.Constant):
-        return bool(node.value)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         inner = _static_truth(node.operand)
         return None if inner is None else not inner
+    if isinstance(node, ast.BoolOp):
+        decisive = isinstance(node.op, ast.Or)
+        for operand in node.values:
+            truth = _static_truth(operand)
+            if truth is None or truth is decisive:
+                return truth
+        return not decisive
+    if isinstance(node, ast.Compare):
+        return _static_comparison(node)
+    if _is_literal(node):
+        return bool(ast.literal_eval(node))
     return None
+
+
+def _static_comparison(node: ast.Compare) -> bool | None:
+    """Compare only literal values, stopping before an unreachable chained operand."""
+    operations = {
+        ast.Eq: operator.eq,
+        ast.NotEq: operator.ne,
+        ast.Lt: operator.lt,
+        ast.LtE: operator.le,
+        ast.Gt: operator.gt,
+        ast.GtE: operator.ge,
+    }
+    previous = node.left
+    for op, following in zip(node.ops, node.comparators, strict=True):
+        if not _is_literal(previous) or not _is_literal(following):
+            return None
+        left, right = ast.literal_eval(previous), ast.literal_eval(following)
+        try:
+            if isinstance(op, (ast.Is, ast.IsNot)):
+                # Identical scalar constants share a compiler constant; containers may not.
+                if isinstance(previous, ast.Constant) and isinstance(following, ast.Constant):
+                    result = type(left) is type(right) and left == right
+                elif (
+                    left is None
+                    or right is None
+                    or isinstance(left, bool)
+                    or isinstance(right, bool)
+                ):
+                    result = left is right
+                elif type(left) is not type(right):
+                    result = False
+                else:
+                    return None
+                if isinstance(op, ast.IsNot):
+                    result = not result
+            elif isinstance(op, (ast.In, ast.NotIn)):
+                result = left in right
+                if isinstance(op, ast.NotIn):
+                    result = not result
+            else:
+                result = operations[type(op)](left, right)
+        except (TypeError, ValueError):
+            return None
+        if not result:
+            return False
+        previous = following
+    return True
 
 
 def _local_testcase(module: _Module, name: str, depth: int) -> bool:
