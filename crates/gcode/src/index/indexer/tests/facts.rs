@@ -226,6 +226,9 @@ mod serial_db {
         resolve_project_local_import_inheritance,
     };
     use super::super::super::sink::PostgresCodeFactSink;
+    use super::super::super::{IndexOptions, IndexRequest, index_files};
+    use super::super::fixtures::{git, git_output, write_file};
+    use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
     use crate::db;
     use crate::index::api;
     use crate::models::{
@@ -1248,5 +1251,734 @@ mod serial_db {
             format!("{prefix}-{}-{nanos}", std::process::id()).as_bytes(),
         )
         .to_string()
+    }
+
+    fn indexed_file_row(
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) -> crate::models::IndexedFile {
+        crate::models::IndexedFile {
+            id: crate::models::IndexedFile::make_id(project_id, file_path, content_hash),
+            project_id: project_id.to_string(),
+            file_path: file_path.to_string(),
+            language: "rust".to_string(),
+            content_hash: content_hash.to_string(),
+            symbol_count: 0,
+            byte_size: 0,
+            indexed_at: String::new(),
+        }
+    }
+
+    fn selector_git_blob(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+    ) -> Option<String> {
+        let project_id = db::id_param(project_id).expect("project uuid");
+        conn.query_one(
+            "SELECT git_blob_id FROM code_indexed_file_states
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )
+        .expect("selector row")
+        .get(0)
+    }
+
+    fn selector_row_xmin(conn: &mut postgres::Client, project_id: &str, file_path: &str) -> String {
+        let project_id = db::id_param(project_id).expect("project uuid");
+        conn.query_one(
+            "SELECT xmin::text FROM code_indexed_file_states
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )
+        .expect("selector row")
+        .get(0)
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn unchanged_reindex_issues_no_selector_updates() {
+        let database_url =
+            crate::test_env::postgres_test_database_url("unchanged reindex selectors");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        std::fs::create_dir_all(&hooks).expect("create hooks dir");
+        let project_root = base.path().join("repo");
+        std::fs::create_dir_all(&project_root).expect("create project root");
+        let clean = "src/clean.rs";
+        write_file(&project_root, clean, b"pub fn clean() {}\n");
+        git(&project_root, &hooks, &["init", "-q"]);
+        git(&project_root, &hooks, &["add", "."]);
+        git(&project_root, &hooks, &["commit", "-q", "-m", "seed"]);
+
+        let project_id = unique_id("gcode-unchanged-reindex");
+        cleanup(&mut conn, &project_id).expect("pre-clean");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        super::super::serial_db::seed_primary_checkout(&mut conn, &project_id, &project_root)
+            .expect("seed primary checkout");
+        let ctx = Context {
+            database_url,
+            project_root: project_root.clone(),
+            project_id: project_id.clone(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            runtime_config_capture_degraded: false,
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            grant_ai: None,
+            index_scope: ProjectIndexScope::Single,
+        };
+        let request = |full: bool| IndexRequest {
+            project_root: project_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        };
+        index_files(request(true), &ctx, IndexOptions::default()).expect("first index");
+        let before = selector_row_xmin(&mut conn, &project_id, clean);
+
+        index_files(request(false), &ctx, IndexOptions::default()).expect("unchanged reindex");
+
+        assert_eq!(
+            selector_row_xmin(&mut conn, &project_id, clean),
+            before,
+            "an unchanged selector must not be rewritten"
+        );
+    }
+
+    fn mark_content_synced(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        let project_id = db::id_param(project_id).expect("project uuid");
+        conn.execute(
+            "UPDATE code_indexed_files SET graph_synced = TRUE, vectors_synced = TRUE
+             WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+            &[&project_id, &file_path, &content_hash],
+        )
+        .expect("mark content synced");
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn clean_selector_records_git_blob() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-pin-clean-blob");
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        let rel = "src/clean.rs";
+        let file = indexed_file_row(&project_id, rel, "hash-clean");
+        api::upsert_file(&mut conn, &file).expect("insert indexed file");
+        api::file_state::upsert_file_state(
+            &mut conn,
+            &machine_id,
+            &file,
+            Path::new("/tmp/clean"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("insert selector");
+
+        assert!(
+            api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-clean",
+                Some("blob-clean"),
+            )
+            .expect("record clean blob")
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel).as_deref(),
+            Some("blob-clean")
+        );
+
+        assert!(
+            api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-clean",
+                None,
+            )
+            .expect("clear dirty blob")
+        );
+        assert_eq!(selector_git_blob(&mut conn, &project_id, rel), None);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn selector_blob_follows_every_write_outcome() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-pin-blob-outcomes");
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        let rel = "src/outcome.rs";
+        let root = Path::new("/tmp/outcome");
+
+        // Fresh write: only the selector's current content hash can set a blob.
+        let v1 = indexed_file_row(&project_id, rel, "hash-v1");
+        api::upsert_file(&mut conn, &v1).expect("insert v1");
+        api::file_state::upsert_file_state(
+            &mut conn,
+            &machine_id,
+            &v1,
+            root,
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("fresh selector");
+        assert!(
+            api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-v1",
+                Some("blob-v1"),
+            )
+            .expect("fresh blob")
+        );
+        let before = selector_row_xmin(&mut conn, &project_id, rel);
+        assert!(
+            !api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-v1",
+                Some("blob-v1"),
+            )
+            .expect("unchanged blob")
+        );
+        assert_eq!(selector_row_xmin(&mut conn, &project_id, rel), before);
+        assert!(
+            !api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-stale",
+                Some("blob-stale"),
+            )
+            .expect("stale hash write")
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel).as_deref(),
+            Some("blob-v1")
+        );
+
+        // Adopted with unchanged content: the carried-over blob ID survives.
+        mark_content_synced(&mut conn, &project_id, rel, "hash-v1");
+        assert!(
+            api::file_state::adopt_file_state(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-v1",
+                root,
+                api::IndexWriteMode::Overlay,
+            )
+            .expect("adopt unchanged content")
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel).as_deref(),
+            Some("blob-v1")
+        );
+
+        // Overwrite with changed content: the migration trigger clears the carried-over blob ID.
+        let v2 = indexed_file_row(&project_id, rel, "hash-v2");
+        api::upsert_file(&mut conn, &v2).expect("insert v2");
+        api::file_state::upsert_file_state(
+            &mut conn,
+            &machine_id,
+            &v2,
+            root,
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("overwrite selector");
+        assert_eq!(selector_git_blob(&mut conn, &project_id, rel), None);
+
+        // Skipped back-fill: an unchanged clean file fills the missing blob ID once.
+        assert!(
+            api::file_state::set_selector_git_blob(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                rel,
+                "hash-v2",
+                Some("blob-v2"),
+            )
+            .expect("skipped back-fill")
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel).as_deref(),
+            Some("blob-v2")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn indexed_selectors_record_blob_only_for_clean_tracked_paths() {
+        let database_url = crate::test_env::postgres_test_database_url("indexer blob callers");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        std::fs::create_dir_all(&hooks).expect("create hooks dir");
+        let project_root = base.path().join("repo");
+        std::fs::create_dir_all(&project_root).expect("create project root");
+        let clean = "src/clean.rs";
+        let dirty = "src/dirty.rs";
+        let untracked = "src/untracked.rs";
+        write_file(&project_root, clean, b"pub fn clean() {}\n");
+        write_file(&project_root, dirty, b"pub fn dirty_before() {}\n");
+        git(&project_root, &hooks, &["init", "-q"]);
+        git(&project_root, &hooks, &["add", "."]);
+        git(&project_root, &hooks, &["commit", "-q", "-m", "seed"]);
+        let clean_spec = format!("HEAD:{clean}");
+        let clean_blob = git_output(&project_root, &hooks, &["rev-parse", clean_spec.as_str()])
+            .trim()
+            .to_string();
+        // Only the clean file still matches HEAD: the tracked file is edited
+        // after the commit and the other file is never added.
+        write_file(&project_root, dirty, b"pub fn dirty_after() {}\n");
+        write_file(&project_root, untracked, b"pub fn untracked() {}\n");
+
+        let project_id = unique_id("gcode-blob-callers");
+        cleanup(&mut conn, &project_id).expect("pre-clean");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        super::super::serial_db::seed_primary_checkout(&mut conn, &project_id, &project_root)
+            .expect("seed primary checkout");
+        let ctx = Context {
+            database_url,
+            project_root: project_root.clone(),
+            project_id: project_id.clone(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            runtime_config_capture_degraded: false,
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            grant_ai: None,
+            index_scope: ProjectIndexScope::Single,
+        };
+        let outcome = index_files(
+            IndexRequest {
+                project_root: project_root.clone(),
+                path_filter: None,
+                explicit_files: Vec::new(),
+                full: true,
+                require_cpp_semantics: false,
+                sync_projections: false,
+            },
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("index fixture repo");
+        assert_eq!(
+            outcome.indexed_files, 3,
+            "all three fixture files must be indexed"
+        );
+
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, clean).as_deref(),
+            Some(clean_blob.as_str()),
+            "a clean tracked selector records its HEAD blob"
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, dirty),
+            None,
+            "a dirty tracked selector does not qualify"
+        );
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, untracked),
+            None,
+            "an untracked selector does not qualify"
+        );
+    }
+
+    fn init_repo(root: &Path, hooks: &Path) {
+        std::fs::create_dir_all(hooks).expect("create hooks dir");
+        git(root, hooks, &["init", "-q"]);
+    }
+
+    fn commit_all(root: &Path, hooks: &Path) {
+        git(root, hooks, &["add", "."]);
+        git(root, hooks, &["commit", "-q", "-m", "fixture"]);
+    }
+
+    fn head_blob(root: &Path, hooks: &Path, rel: &str) -> String {
+        let spec = format!("HEAD:{rel}");
+        git_output(root, hooks, &["rev-parse", spec.as_str()])
+            .trim()
+            .to_string()
+    }
+
+    fn selector_context(
+        database_url: String,
+        root: &Path,
+        project_id: &str,
+        index_scope: ProjectIndexScope,
+    ) -> Context {
+        Context {
+            database_url,
+            project_root: root.to_path_buf(),
+            project_id: project_id.to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            runtime_config_capture_degraded: false,
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            grant_ai: None,
+            index_scope,
+        }
+    }
+
+    fn selector_request(root: &Path, full: bool) -> IndexRequest {
+        IndexRequest {
+            project_root: root.to_path_buf(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        }
+    }
+
+    fn seed_project_stats(conn: &mut postgres::Client, machine_id: &str, project_id: &str) {
+        api::upsert_project_stats(
+            conn,
+            machine_id,
+            &IndexedProject {
+                id: project_id.to_string(),
+                root_path: format!("/tmp/{project_id}"),
+                total_files: 1,
+                total_symbols: 0,
+                last_indexed_at: String::new(),
+                index_duration_ms: 0,
+                total_eligible_files: None,
+                indexer_version: None,
+            },
+            api::IndexWriteMode::Overlay,
+            true,
+        )
+        .expect("seed project stats");
+    }
+
+    // The parent must look indexed on this machine, with a diverging version of
+    // the same path, before an overlay run validates it.
+    fn seed_overlay_parent(
+        conn: &mut postgres::Client,
+        machine_id: &str,
+        parent_project_id: &str,
+        rel: &str,
+    ) {
+        seed_project_stats(conn, machine_id, parent_project_id);
+        let parent_file = indexed_file_row(parent_project_id, rel, "parent-old-hash");
+        api::upsert_file(conn, &parent_file).expect("seed parent content version");
+        api::file_state::upsert_file_state(
+            conn,
+            machine_id,
+            &parent_file,
+            Path::new(&format!("/tmp/{parent_project_id}")),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("seed parent selector");
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn selector_blob_backfills_on_skipped_primary_file() {
+        let database_url = crate::test_env::postgres_test_database_url("indexer blob skip");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        let root = base.path().join("repo");
+        std::fs::create_dir_all(&root).expect("create project root");
+        let rel = "src/skip.rs";
+        write_file(&root, rel, b"pub fn skip_v1() {}\n");
+        init_repo(&root, &hooks);
+        commit_all(&root, &hooks);
+        // The first index sees an edit that is not committed yet, so its
+        // selector is written without a blob.
+        write_file(&root, rel, b"pub fn skip_v2() {}\n");
+
+        let project_id = unique_id("gcode-blob-primary-skip");
+        cleanup(&mut conn, &project_id).expect("pre-clean");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        super::super::serial_db::seed_primary_checkout(&mut conn, &project_id, &root)
+            .expect("seed primary checkout");
+        let ctx = selector_context(database_url, &root, &project_id, ProjectIndexScope::Single);
+        index_files(selector_request(&root, true), &ctx, IndexOptions::default())
+            .expect("full index of the dirty file");
+        assert_eq!(selector_git_blob(&mut conn, &project_id, rel), None);
+
+        // Committing the edit makes the unchanged selector match a clean HEAD.
+        commit_all(&root, &hooks);
+        let outcome = index_files(
+            selector_request(&root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("incremental index of the committed file");
+        assert_eq!(outcome.indexed_files, 0, "an unchanged selector is skipped");
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel),
+            Some(head_blob(&root, &hooks, rel)),
+            "the skip path back-fills the clean HEAD blob"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn selector_blob_backfills_on_adopted_primary_file() {
+        let database_url = crate::test_env::postgres_test_database_url("indexer blob adopt");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        let root = base.path().join("repo");
+        std::fs::create_dir_all(&root).expect("create project root");
+        let rel = "src/adopt.rs";
+        let bytes = b"pub fn adopt_v1() {}\n";
+        write_file(&root, rel, bytes);
+        init_repo(&root, &hooks);
+        commit_all(&root, &hooks);
+        let content_hash = crate::index::hasher::content_hash(bytes);
+
+        let project_id = unique_id("gcode-blob-primary-adopt");
+        cleanup(&mut conn, &project_id).expect("pre-clean");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        super::super::serial_db::seed_primary_checkout(&mut conn, &project_id, &root)
+            .expect("seed primary checkout");
+        let ctx = selector_context(database_url, &root, &project_id, ProjectIndexScope::Single);
+        index_files(selector_request(&root, true), &ctx, IndexOptions::default())
+            .expect("full index of the committed file");
+        mark_content_synced(&mut conn, &project_id, rel, &content_hash);
+        // Dropping this machine's selector makes the next run see the file as
+        // stale, so it adopts the synced content version instead of parsing it.
+        let project_uuid = db::id_param(&project_id).expect("project uuid");
+        conn.execute(
+            "DELETE FROM code_indexed_file_states WHERE project_id = $1 AND file_path = $2",
+            &[&project_uuid, &rel],
+        )
+        .expect("drop selector");
+
+        let outcome = index_files(
+            selector_request(&root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("adoption run");
+        assert_eq!(outcome.indexed_files, 0, "adoption must not re-parse");
+        assert_eq!(outcome.skipped_files, 1);
+        assert_eq!(
+            selector_git_blob(&mut conn, &project_id, rel),
+            Some(head_blob(&root, &hooks, rel)),
+            "the adopt path back-fills the clean HEAD blob"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn selector_blob_backfills_on_skipped_overlay_file() {
+        let database_url = crate::test_env::postgres_test_database_url("indexer overlay blob skip");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        let overlay_root = base.path().join("overlay");
+        std::fs::create_dir_all(&overlay_root).expect("create overlay root");
+        let rel = "src/lib.rs";
+        let bytes = b"pub fn overlay_skip() {}\n";
+        write_file(&overlay_root, rel, bytes);
+        init_repo(&overlay_root, &hooks);
+        commit_all(&overlay_root, &hooks);
+        let content_hash = crate::index::hasher::content_hash(bytes);
+
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        let overlay_project_id = unique_id("gcode-blob-overlay-skip");
+        let parent_project_id = unique_id("gcode-blob-overlay-skip-parent");
+        cleanup(&mut conn, &overlay_project_id).expect("pre-clean overlay");
+        cleanup(&mut conn, &parent_project_id).expect("pre-clean parent");
+        let _overlay_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: overlay_project_id.clone(),
+        };
+        let _parent_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: parent_project_id.clone(),
+        };
+        seed_overlay_parent(&mut conn, &machine_id, &parent_project_id, rel);
+        // The overlay selector already carries the current content, so the run
+        // takes the overlay skip branch.
+        seed_project_stats(&mut conn, &machine_id, &overlay_project_id);
+        let overlay_file = indexed_file_row(&overlay_project_id, rel, &content_hash);
+        api::upsert_file(&mut conn, &overlay_file).expect("seed overlay content version");
+        api::file_state::upsert_file_state(
+            &mut conn,
+            &machine_id,
+            &overlay_file,
+            &overlay_root,
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("seed overlay selector");
+
+        let ctx = selector_context(
+            database_url,
+            &overlay_root,
+            &overlay_project_id,
+            ProjectIndexScope::Overlay {
+                overlay_project_id: overlay_project_id.clone(),
+                overlay_root: overlay_root.clone(),
+                parent_project_id: parent_project_id.clone(),
+                parent_root: std::path::PathBuf::from(format!("/tmp/{parent_project_id}")),
+            },
+        );
+        let outcome = index_files(
+            selector_request(&overlay_root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("overlay skip run");
+        assert_eq!(outcome.indexed_files, 0, "an unchanged overlay is skipped");
+        assert_eq!(
+            selector_git_blob(&mut conn, &overlay_project_id, rel),
+            Some(head_blob(&overlay_root, &hooks, rel)),
+            "the overlay skip path back-fills the clean HEAD blob"
+        );
+        let before = selector_row_xmin(&mut conn, &overlay_project_id, rel);
+        index_files(
+            selector_request(&overlay_root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("unchanged overlay skip run");
+        assert_eq!(
+            selector_row_xmin(&mut conn, &overlay_project_id, rel),
+            before,
+            "an unchanged overlay selector must not be rewritten"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn selector_blob_backfills_on_adopted_overlay_file() {
+        let database_url =
+            crate::test_env::postgres_test_database_url("indexer overlay blob adopt");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let base = tempfile::tempdir().expect("create temp base");
+        let hooks = base.path().join("hooks");
+        let overlay_root = base.path().join("overlay");
+        std::fs::create_dir_all(&overlay_root).expect("create overlay root");
+        let rel = "src/lib.rs";
+        let bytes = b"pub fn overlay_adopted() {}\n";
+        write_file(&overlay_root, rel, bytes);
+        init_repo(&overlay_root, &hooks);
+        commit_all(&overlay_root, &hooks);
+        let content_hash = crate::index::hasher::content_hash(bytes);
+
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        let overlay_project_id = unique_id("gcode-blob-overlay-adopt");
+        let parent_project_id = unique_id("gcode-blob-overlay-adopt-parent");
+        cleanup(&mut conn, &overlay_project_id).expect("pre-clean overlay");
+        cleanup(&mut conn, &parent_project_id).expect("pre-clean parent");
+        let _overlay_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: overlay_project_id.clone(),
+        };
+        let _parent_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: parent_project_id.clone(),
+        };
+        seed_overlay_parent(&mut conn, &machine_id, &parent_project_id, rel);
+        // The overlay has this content version synced but no selector on this
+        // machine, so the run adopts it instead of parsing.
+        seed_project_stats(&mut conn, &machine_id, &overlay_project_id);
+        let overlay_file = indexed_file_row(&overlay_project_id, rel, &content_hash);
+        api::upsert_file(&mut conn, &overlay_file).expect("seed overlay content version");
+        mark_content_synced(&mut conn, &overlay_project_id, rel, &content_hash);
+
+        let ctx = selector_context(
+            database_url,
+            &overlay_root,
+            &overlay_project_id,
+            ProjectIndexScope::Overlay {
+                overlay_project_id: overlay_project_id.clone(),
+                overlay_root: overlay_root.clone(),
+                parent_project_id: parent_project_id.clone(),
+                parent_root: std::path::PathBuf::from(format!("/tmp/{parent_project_id}")),
+            },
+        );
+        let outcome = index_files(
+            selector_request(&overlay_root, false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("overlay adoption run");
+        assert_eq!(
+            outcome.indexed_files, 0,
+            "overlay run must adopt, not parse"
+        );
+        assert_eq!(outcome.skipped_files, 1);
+        assert_eq!(
+            selector_git_blob(&mut conn, &overlay_project_id, rel),
+            Some(head_blob(&overlay_root, &hooks, rel)),
+            "the overlay adopt path back-fills the clean HEAD blob"
+        );
     }
 }

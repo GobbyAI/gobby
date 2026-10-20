@@ -508,6 +508,7 @@ class TestSpawnAgentImplErrorBranches:
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
             provider="codex",
+            base_commit="base-sha",
             phase_timings_ms=spawn_config.phase_timings_ms,
         )
 
@@ -603,6 +604,7 @@ class TestSpawnAgentImplErrorBranches:
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
             provider="codex",
+            base_commit="base-sha",
             phase_timings_ms=spawn_request.phase_timings_ms,
         )
         assert repair.await_args is not None

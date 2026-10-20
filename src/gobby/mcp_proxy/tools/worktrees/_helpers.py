@@ -123,12 +123,14 @@ def resolve_project_context(
 async def copy_project_json_to_worktree(
     repo_path: str | Path,
     worktree_path: str | Path,
+    *,
+    base_commit: str | None = None,
 ) -> None:
     """Write the isolation sidecar for a worktree without rewriting tracked metadata.
 
     Delegates to ``ensure_project_json_for_isolation``.
     """
-    await ensure_project_json_for_isolation(repo_path, worktree_path)
+    await ensure_project_json_for_isolation(repo_path, worktree_path, base_commit=base_commit)
 
 
 # Registry: (module_path, function_name, uses_mode_param)

@@ -1,5 +1,6 @@
 use super::super::UnsupportedFileType;
 use super::super::lifecycle::current_file_state;
+use super::super::selector_blob::HeadBlobs;
 use super::fixtures::write_file;
 
 #[test]
@@ -15,6 +16,7 @@ fn current_file_state_keeps_unhashable_paths_present() {
             temp.path().join("src/unreadable"),
         ],
         &[],
+        &HeadBlobs::default(),
     );
 
     assert!(state.present_paths.contains("src/lib.rs"));

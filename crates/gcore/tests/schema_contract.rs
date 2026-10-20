@@ -18,18 +18,15 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 470);
-    assert_eq!(
-        identity.latest_asset.filename,
-        "470_validation_run_records.sql"
-    );
+    assert_eq!(identity.latest_asset.version, 471);
+    assert_eq!(identity.latest_asset.filename, "471_code_overlay_pins.sql");
     assert_eq!(
         identity.latest_asset.checksum,
-        "132991cb36fcbb4bcff275b7b5647b1a20321b555649fa66099bb557b4483c66"
+        "0442fc0551a1959898df7feebaf0ca03ebeb170a25febb00c3a2e73c256da751"
     );
     assert_eq!(
         identity.root_hash,
-        "790fc3f27389f4b81b1dce3f4a5ba782e11817fd8b68cd731b0404ff4ac025ff"
+        "1c2b12a59d3e2585ac5e3c34bdc2f7f687d30028b4f0780a2687dc527eb81023"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -112,6 +109,59 @@ fn catalog_pins_project_checkouts_and_drops_projects_repo_path() {
             "catalog constraints missing {constraint}"
         );
     }
+}
+
+#[test]
+fn code_overlay_pin_schema_contract() {
+    let catalog: serde_json::Value =
+        serde_json::from_str(CATALOG_MANIFEST_JSON).expect("catalog manifest must be valid JSON");
+    let names = |kind: &str| -> Vec<&str> {
+        catalog[kind]
+            .as_array()
+            .unwrap_or_else(|| panic!("{kind} must be an array"))
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect()
+    };
+    let columns = names("columns");
+    for column in [
+        "code_overlay_pins.machine_id",
+        "code_overlay_pins.overlay_project_id",
+        "code_overlay_pins.file_path",
+        "code_overlay_pins.source_project_id",
+        "code_overlay_pins.content_hash",
+        "code_overlay_pins.git_blob_id",
+        "code_overlay_pins.graph_projected",
+        "code_overlay_pins.vector_projected",
+    ] {
+        assert!(
+            columns.contains(&column),
+            "catalog columns missing {column}"
+        );
+    }
+    let constraints = names("constraints");
+    for constraint in [
+        "code_overlay_pins.code_overlay_pins_pkey",
+        "code_overlay_pins.code_overlay_pins_source_content_fkey",
+    ] {
+        assert!(
+            constraints.contains(&constraint),
+            "catalog constraints missing {constraint}"
+        );
+    }
+    let source_fk = catalog["constraints"]
+        .as_array()
+        .expect("catalog constraints")
+        .iter()
+        .find(|entry| entry["name"] == "code_overlay_pins.code_overlay_pins_source_content_fkey")
+        .expect("source content foreign key");
+    assert!(
+        source_fk["definition"].as_str().is_some_and(|definition| {
+            definition
+                .contains("REFERENCES code_indexed_files(project_id, file_path, content_hash)")
+        }),
+        "pin source must reference the immutable content version"
+    );
 }
 
 #[test]

@@ -42,6 +42,7 @@ from gobby.utils.checkout_root import MarkerMismatchError
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.utils.project_init import initialize_project
 from tests.fixtures.isolated_checkout import (
+    init_git_checkout,
     insert_isolated_machine,
     insert_overlay,
     patch_local_machine_id,
@@ -2133,6 +2134,7 @@ class TestHookCheckoutIngress:
         isolated.mkdir(parents=True)
         project = LocalProjectManager(temp_db).create(name="hook-isolation")
         write_project_marker(canonical, project_id=project.id, name="hook-isolation")
+        init_git_checkout(canonical)
         LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(canonical))
         await ensure_project_json_for_isolation(canonical, isolated)
 

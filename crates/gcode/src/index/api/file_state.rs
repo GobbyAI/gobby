@@ -1,5 +1,7 @@
 //! Machine-local file-state writes fenced to the registered checkout.
 
+use std::collections::HashMap;
+
 use postgres::GenericClient;
 
 use super::IndexWriteMode;
@@ -220,4 +222,60 @@ pub fn delete_file_state(
         &[&machine_id, &project_id, &file_path],
     )?;
     Ok(deleted > 0)
+}
+
+/// Sets or clears one selector's Git blob ID while it still names `content_hash`.
+/// Returns whether the blob changed; unchanged or missing selectors are not written.
+pub fn set_selector_git_blob(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+    git_blob_id: Option<&str>,
+) -> anyhow::Result<bool> {
+    let machine_id = id_param(machine_id)?;
+    let project_id = id_param(project_id)?;
+    let updated = conn.execute(
+        "UPDATE code_indexed_file_states
+         SET git_blob_id = $4
+         WHERE machine_id = $1 AND project_id = $2 AND file_path = $3
+           AND content_hash = $5 AND git_blob_id IS DISTINCT FROM $4",
+        &[
+            &machine_id,
+            &project_id,
+            &file_path,
+            &git_blob_id,
+            &content_hash,
+        ],
+    )?;
+    Ok(updated > 0)
+}
+
+/// The stored `(content_hash, git_blob_id)` of each selector, keyed by file path.
+/// A missing blob is `None`.
+pub type SelectorStates = HashMap<String, (String, Option<String>)>;
+
+/// Loads every selector of one machine and project in a single query.
+pub fn selector_states(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+) -> anyhow::Result<SelectorStates> {
+    let machine_id = id_param(machine_id)?;
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        "SELECT file_path, content_hash, git_blob_id
+         FROM code_indexed_file_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &project_id],
+    )?;
+    let mut states = HashMap::new();
+    for row in rows {
+        let file_path: String = row.try_get("file_path")?;
+        let content_hash: String = row.try_get("content_hash")?;
+        let git_blob_id: Option<String> = row.try_get("git_blob_id")?;
+        states.insert(file_path, (content_hash, git_blob_id));
+    }
+    Ok(states)
 }

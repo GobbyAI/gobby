@@ -35,7 +35,11 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.checkout_root import InvalidCheckoutRootError
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.utils.project_init import initialize_project
-from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
+from tests.fixtures.isolated_checkout import (
+    init_git_checkout,
+    insert_isolated_machine,
+    write_project_marker,
+)
 from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
 
 pytestmark = pytest.mark.unit
@@ -161,6 +165,7 @@ def _seed_canonical_checkout(
     projects = LocalProjectManager(db)
     project = projects.create(name)
     write_project_marker(canonical_path, project_id=project.id, name=name)
+    init_git_checkout(canonical_path)
     LocalProjectCheckoutManager(db).register(LOCAL_MACHINE_ID, project.id, str(canonical_path))
     return project
 
@@ -195,7 +200,7 @@ def test_agent_and_operator_plan_validation_match_with_project_flag(
     tmp_path: Path,
 ) -> None:
     from gobby.runtime_grants import GrantBundle, sign_grant
-    from gobby.runtime_grants.launch import write_grant_file
+    from gobby.runtime_grants.launch import materialize_managed_launch
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
@@ -300,7 +305,14 @@ Validate the same plan through both principals.
         ),
         GOLDEN_SECRET,
     )
-    grant_path = write_grant_file(tmp_path / "agent-grant" / "grant.json", grant)
+    # The launch path writes the envelope with the run-scoped managed_api_token that
+    # the agent's capability reader requires; a bare grant file has no such token.
+    launch = materialize_managed_launch(
+        grant,
+        dest_dir=tmp_path / "agent-grant",
+        signing_key=b"test-signing-key",
+        deadline_seconds=1800,
+    )
 
     command = [
         gobby_bin,
@@ -345,9 +357,12 @@ Validate the same plan through both principals.
             timeout=30,
         )
         operator_requests = list(daemon.requests)
+        # The reader rejects a GOBBY_PROJECT_ID that differs from the envelope principal,
+        # and a developer shell can carry another project's id into base_env.
         agent_env = base_env | {
             "GOBBY_AGENT_RUN_ID": str(fixture.execution_id),
-            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(launch.grant_path),
+            "GOBBY_PROJECT_ID": str(fixture.project_id),
             "GOBBY_SESSION_ID": str(fixture.session_id),
         }
         agent = subprocess.run(
@@ -373,7 +388,7 @@ Validate the same plan through both principals.
             "/api/mcp/gobby-tasks/tools/list_tasks",
             {
                 "project": str(fixture.project_id),
-                "label": "covers:agent-role-acceptance:1.1:1.1.1",
+                "labels": ["covers:agent-role-acceptance:1.1:1.1.1"],
                 "limit": 50,
                 "offset": 0,
                 "sort_by": "created_at",

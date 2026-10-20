@@ -14,14 +14,15 @@ use super::file::{
     index_file,
 };
 use super::lifecycle::{
-    attach_projection_sync, current_file_state, get_orphan_files, get_stale_files,
-    refresh_communities, refresh_project_stats,
+    CurrentFileState, attach_projection_sync, current_file_state, get_orphan_files,
+    get_stale_files, refresh_communities, refresh_project_stats,
 };
 use super::local_imports::{
     resolve_local_import_calls, resolve_local_import_inheritance,
     resolve_project_local_import_calls,
 };
 use super::overlay::index_overlay_files;
+use super::selector_blob::{self, HeadBlobs};
 use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest, IndexTarget};
 use super::util::{
     effective_excludes, filter_discovered_paths, relative_path, requested_relative_path,
@@ -66,10 +67,12 @@ fn index_discovered_files(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let head_blobs = HeadBlobs::read(root_path);
     let target = IndexTarget {
         project_id,
         root_path,
         mode: api::IndexWriteMode::Primary,
+        head_blobs: &head_blobs,
     };
     let mut outcome = IndexOutcome::new(project_id);
     let machine_id = gobby_core::machine::read_local_machine_id()?;
@@ -98,7 +101,7 @@ fn index_discovered_files(
 
     // Build current file state for incremental detection and orphan cleanup.
     timings.phase("primary.reconcile");
-    let current_files = current_file_state(root_path, &candidates, &content_only);
+    let current_files = current_file_state(root_path, &candidates, &content_only, &head_blobs);
     let stale: Option<HashSet<String>> = if !request.full {
         Some(get_stale_files(
             conn,
@@ -108,6 +111,12 @@ fn index_discovered_files(
         )?)
     } else {
         None
+    };
+    // Loaded once per run so unchanged selectors skip their blob write.
+    let stored_selectors = if request.full {
+        api::file_state::SelectorStates::new()
+    } else {
+        api::file_state::selector_states(conn, &machine_id, project_id)?
     };
 
     // Clean orphans only during whole-project scans. Filtered scans do not know
@@ -153,6 +162,7 @@ fn index_discovered_files(
         if let Some(ref stale_map) = stale
             && !stale_map.contains(&rel)
         {
+            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
             outcome.skipped_files += 1;
             continue;
         }
@@ -168,6 +178,7 @@ fn index_discovered_files(
                 api::IndexWriteMode::Primary,
             )?
         {
+            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
@@ -206,6 +217,7 @@ fn index_discovered_files(
         if let Some(ref stale_map) = stale
             && !stale_map.contains(&rel)
         {
+            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
             outcome.skipped_files += 1;
             continue;
         }
@@ -221,6 +233,7 @@ fn index_discovered_files(
                 api::IndexWriteMode::Primary,
             )?
         {
+            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
@@ -277,10 +290,12 @@ fn index_explicit_files_with_connection(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let head_blobs = HeadBlobs::read(root_path);
     let target = IndexTarget {
         project_id,
         root_path,
         mode: api::IndexWriteMode::Primary,
+        head_blobs: &head_blobs,
     };
     let mut outcome = IndexOutcome::new(project_id);
     let machine_id = gobby_core::machine::read_local_machine_id()?;
@@ -380,17 +395,24 @@ fn index_explicit_files_with_connection(
         let rel = relative_path(&abs, root_path).ok();
         if !request.full
             && let Some(rel) = rel.as_deref()
-            && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
+            && let Ok(snapshot) = selector_blob::read_snapshot(&abs, rel, &head_blobs)
             && api::file_state::adopt_file_state(
                 conn,
                 &machine_id,
                 project_id,
                 rel,
-                &content_hash,
+                &snapshot.content_hash,
                 root_path,
                 api::IndexWriteMode::Primary,
             )?
         {
+            selector_blob::record_selector_blob(
+                conn,
+                project_id,
+                rel,
+                &snapshot.content_hash,
+                snapshot.clean_blob.as_deref(),
+            )?;
             adopted_paths.push(rel.to_string());
             outcome.skipped_files += 1;
             progress.advance(rel);
@@ -488,6 +510,28 @@ impl Drop for ActiveIndexProgress<'_> {
             sink.finish();
         }
     }
+}
+
+/// Refreshes the clean blob of a file whose stored content is still current.
+/// The write is skipped when the stored hash and blob already equal the current pair.
+fn record_current_blob(
+    conn: &mut Client,
+    project_id: &str,
+    rel: &str,
+    current: &CurrentFileState,
+    stored: &api::file_state::SelectorStates,
+) -> anyhow::Result<()> {
+    let Some(content_hash) = current.hashes.get(rel) else {
+        return Ok(());
+    };
+    let clean_blob = current.clean_blobs.get(rel).map(String::as_str);
+    let unchanged = stored
+        .get(rel)
+        .is_some_and(|(hash, blob)| hash == content_hash && blob.as_deref() == clean_blob);
+    if unchanged {
+        return Ok(());
+    }
+    selector_blob::record_selector_blob(conn, project_id, rel, content_hash, clean_blob)
 }
 
 fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {

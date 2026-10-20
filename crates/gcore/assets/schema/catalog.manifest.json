@@ -1089,6 +1089,10 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "code_indexed_file_states.git_blob_id",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "code_indexed_file_states.machine_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -1271,6 +1275,46 @@
     {
       "name": "code_inheritance.target_symbol_id",
       "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.content_hash",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.file_path",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.git_blob_id",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.graph_attempted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.graph_projected",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "code_overlay_pins.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.overlay_project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.source_project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.vector_attempted_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "code_overlay_pins.vector_projected",
+      "definition": "boolean|bool|NO|false|NEVER"
     },
     {
       "name": "code_symbols.byte_end",
@@ -6355,6 +6399,14 @@
       "definition": "UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line)"
     },
     {
+      "name": "code_overlay_pins.code_overlay_pins_pkey",
+      "definition": "PRIMARY KEY (machine_id, overlay_project_id, file_path)"
+    },
+    {
+      "name": "code_overlay_pins.code_overlay_pins_source_content_fkey",
+      "definition": "FOREIGN KEY (source_project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash)"
+    },
+    {
       "name": "code_symbols.code_symbols_content_fkey",
       "definition": "FOREIGN KEY (project_id, file_path, file_content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE"
     },
@@ -8045,6 +8097,10 @@
       "definition": "CREATE OR REPLACE FUNCTION $auth_schema.rotate_principal_if_generation(p_execution_id uuid, p_expected_generation integer, p_expires_at timestamp with time zone, p_password text)\n RETURNS TABLE(role_name name, credential_generation integer)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO '$auth_schema', 'pg_temp'\n SET createrole_self_grant TO ''\nAS $function$\nDECLARE\nv_current_generation INTEGER;\nv_role_name NAME;\nv_generation INTEGER;\nv_machine_id UUID;\nBEGIN\nPERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));\nSELECT pb.issuing_machine_id INTO v_machine_id\nFROM principal_bindings pb\nWHERE pb.managed_execution_id = p_execution_id AND pb.revoked_at IS NULL\nAND pb.revocation_requested_at IS NULL\nAND is_current_rotation_binding(p_execution_id, pb.credential_generation);\nIF v_machine_id IS NULL THEN\nRETURN;\nEND IF;\nPERFORM drain_rotation_predecessors(v_machine_id, p_execution_id);\nIF EXISTS (SELECT 1 FROM principal_bindings pb\nWHERE pb.managed_execution_id = p_execution_id AND pb.revoked_at IS NULL\nAND pb.predecessor_drain_deadline IS NOT NULL) THEN\nRETURN;\nEND IF;\nSELECT max(pb.credential_generation) INTO v_current_generation\nFROM principal_bindings AS pb\nWHERE pb.managed_execution_id = p_execution_id\nAND pb.revoked_at IS NULL;\nIF v_current_generation IS DISTINCT FROM p_expected_generation THEN\nRETURN;\nEND IF;\n\nSELECT rotated.role_name, rotated.credential_generation\nINTO v_role_name, v_generation\nFROM rotate_principal(p_execution_id, p_expires_at, p_password) AS rotated;\n\nUPDATE principal_bindings AS predecessor\nSET revocation_requested_at = statement_timestamp(),\npredecessor_drain_deadline = LEAST(statement_timestamp() + INTERVAL '5 minutes', p_expires_at)\nWHERE predecessor.managed_execution_id = p_execution_id\nAND predecessor.credential_generation = p_expected_generation\nAND predecessor.revoked_at IS NULL;\nRETURN QUERY SELECT v_role_name, v_generation;\nEND\n$function$"
     },
     {
+      "name": "$schema.clear_code_indexed_file_states_git_blob()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.clear_code_indexed_file_states_git_blob()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nIF NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN\nNEW.git_blob_id := NULL;\nEND IF;\nRETURN NEW;\nEND;\n$function$"
+    },
+    {
       "name": "$schema.compute_task_state_bucket(p_task_id uuid)",
       "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE COALESCE(\n(\nSELECT CASE\nWHEN stage_scan.state IN (\n'ready', 'in_progress', 'needs_review', 'review_approved'\n)\nTHEN stage_scan.state\nELSE 'ready'\nEND\nFROM task_stage_states stage_scan\nWHERE stage_scan.task_id = p_task_id\nAND stage_scan.state <> 'done'\nORDER BY stage_scan.position\nLIMIT 1\n),\n'ready'\n)\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
     },
@@ -8253,6 +8309,10 @@
     {
       "name": "code_inheritance_unique_target",
       "definition": "CREATE UNIQUE INDEX code_inheritance_unique_target ON $schema.code_inheritance USING btree (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line) NULLS NOT DISTINCT"
+    },
+    {
+      "name": "code_overlay_pins_pkey",
+      "definition": "CREATE UNIQUE INDEX code_overlay_pins_pkey ON $schema.code_overlay_pins USING btree (machine_id, overlay_project_id, file_path)"
     },
     {
       "name": "code_symbols_pkey",
@@ -9939,6 +9999,10 @@
     {
       "name": "chat_attachments.trg_chat_attachments_updated_at_touch",
       "definition": "CREATE TRIGGER trg_chat_attachments_updated_at_touch BEFORE UPDATE ON chat_attachments FOR EACH ROW EXECUTE FUNCTION touch_chat_attachments_updated_at()"
+    },
+    {
+      "name": "code_indexed_file_states.trg_code_indexed_file_states_git_blob_clear",
+      "definition": "CREATE TRIGGER trg_code_indexed_file_states_git_blob_clear BEFORE UPDATE OF content_hash ON code_indexed_file_states FOR EACH ROW EXECUTE FUNCTION clear_code_indexed_file_states_git_blob()"
     },
     {
       "name": "coordination_waits.coordination_wait_changed",
