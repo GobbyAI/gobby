@@ -93,17 +93,16 @@ async def list_tools(
 
 
 async def _list_tools_with_timeout(
-    manager: _ToolInventoryManager,
-    session: ClientSession,
+    manager: _ToolInventoryManager, session: ClientSession, timeout: float
 ) -> list[dict[str, Any]]:
-    deadline = asyncio.timeout(manager.connection_timeout)
+    deadline = asyncio.timeout(timeout)
     try:
         async with deadline:
             return await manager._list_tools_from_session(session)
     except TimeoutError as exc:
         if not deadline.expired():
             raise
-        raise MCPError(f"Tool discovery timeout after {manager.connection_timeout}s") from exc
+        raise MCPError(f"Tool discovery timeout after {timeout}s") from exc
 
 
 async def list_tools_for_server(
@@ -116,16 +115,47 @@ async def list_tools_for_server(
         raise KeyError(f"Server '{server_id}' not configured")
     config = manager._configs.get(server_id)
     label = config.name if config is not None else server_id
+    timeout = manager.connection_timeout + (config.connect_timeout if config is not None else 0.0)
+    deadline = asyncio.timeout(timeout)
+    session = None
     try:
-        session = await manager.get_client_session(server_id)
-        tool_list = await _list_tools_with_timeout(manager, session)
-    except Exception as initial_error:
-        error_message, counts = clean_untrusted_value(describe_exception(initial_error))
-        log_invisible_counts(counts, "external MCP discovery error")
-        logger.warning("Failed to list tools for %s: %s", label, error_message)
+        # Connection, listing and the one stale-session retry share one budget.
+        # A slow tools/list may use time the connection did not consume.
+        async with deadline:
+            try:
+                session = await manager.get_client_session(server_id)
+                tool_list = await _list_tools_with_timeout(
+                    manager,
+                    session,
+                    max(manager.connection_timeout, config.connect_timeout)
+                    if config is not None
+                    else manager.connection_timeout,
+                )
+            except Exception as initial_error:
+                error_message, counts = clean_untrusted_value(describe_exception(initial_error))
+                log_invisible_counts(counts, "external MCP discovery error")
+                logger.warning("Failed to list tools for %s: %s", label, error_message)
+                if server_id in manager.health:
+                    manager.health[server_id].record_failure(error_message)
+                return await manager._retry_list_tools_after_failure(server_id, initial_error)
+    except TimeoutError as exc:
+        if not deadline.expired():
+            raise
+        used = manager._connections.get(server_id)
+        if used is not None and used.session is session:
+            await discard_connection(
+                server_id,
+                manager._connections,
+                manager.health,
+                manager._lazy_connector,
+                logger,
+                tool_schema_cache=manager._tool_schema_cache,
+                expected=used,
+            )
+        error_message = f"Tool discovery timeout after {timeout}s for server '{label}'"
         if server_id in manager.health:
             manager.health[server_id].record_failure(error_message)
-        return await manager._retry_list_tools_after_failure(server_id, initial_error)
+        raise MCPError(error_message) from exc
 
     if server_id in manager.health:
         manager.health[server_id].record_success()
@@ -158,7 +188,25 @@ async def retry_list_tools_after_failure(
     try:
         session = await manager.ensure_connected(server_id)
         retry_connection = manager._connections.get(server_id)
-        tool_list = await _list_tools_with_timeout(manager, session)
+        tool_list = await _list_tools_with_timeout(
+            manager,
+            session,
+            max(manager.connection_timeout, config.connect_timeout)
+            if config is not None
+            else manager.connection_timeout,
+        )
+    except asyncio.CancelledError:
+        if retry_connection is not None:
+            await discard_connection(
+                server_id,
+                manager._connections,
+                manager.health,
+                manager._lazy_connector,
+                logger,
+                tool_schema_cache=manager._tool_schema_cache,
+                expected=retry_connection,
+            )
+        raise
     except Exception as retry_error:
         if retry_connection is not None:
             await discard_connection(
