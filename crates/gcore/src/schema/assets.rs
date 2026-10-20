@@ -352,6 +352,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "132991cb36fcbb4bcff275b7b5647b1a20321b555649fa66099bb557b4483c66",
         sql: include_str!("../../assets/schema/migrations/470_validation_run_records.sql"),
     },
+    EmbeddedMigration {
+        version: 471,
+        filename: "471_code_overlay_pins.sql",
+        checksum: "0442fc0551a1959898df7feebaf0ca03ebeb170a25febb00c3a2e73c256da751",
+        sql: include_str!("../../assets/schema/migrations/471_code_overlay_pins.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

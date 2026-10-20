@@ -26,7 +26,9 @@ from gobby.agents.sync import get_bundled_agents_path
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.servers.routes.mcp.endpoints.execution import _process_tool_proxy_result
 from gobby.skills.instruction_requirements import parse_instruction_requirement
@@ -81,7 +83,9 @@ class SeatRun:
         self.db = db
         self.project_id = project_id
         self.sessions = SessionManager(db)
-        self.engine = RuleEngine(db, session_manager=self.sessions)
+        self.engine = RuleEngine(
+            db, session_manager=self.sessions, task_manager=LocalTaskManager(db)
+        )
         self.instances = AgentStepInstanceManager(db)
         self.session_vars: dict[str, Any] = {
             "loaded_skills": [],
@@ -231,7 +235,9 @@ class SeatRun:
         return message.id
 
     async def intake(self, task: Task, sha: str = SHA) -> None:
-        await self.incoming(f"LANE=1 EVENT=CANDIDATE TASK={task.id} COMMIT={sha} NOTE=ready")
+        await self.incoming(
+            f"LANE=1 EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={sha} NOTE=ready"
+        )
 
     async def approve(
         self,
@@ -281,7 +287,7 @@ async def _developer(run: SeatRun) -> None:
         assert await run.admits_native("Edit", EDIT_INPUT)
         await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
         assert run.step == "submit"
-        await run.send(f"EVENT=CANDIDATE TASK={ref} SHA={SHA} NOTE=ready")
+        await run.send(f"EVENT=CANDIDATE TASK={ref} RUN=run WT=tree COMMIT={SHA} NOTE=ready")
         assert run.vars["candidate_sent"] is True
         assert not await run.admits_native(
             "mcp__gobby__set_variable",
@@ -480,7 +486,7 @@ async def test_candidate_intake_rejects_forged_authority(
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
-    line = f"EVENT=CANDIDATE TASK={task.id} COMMIT={SHA} NOTE=ready"
+    line = f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={SHA} NOTE=ready"
     if forgery == "outgoing":
         await run.send(line)
     elif forgery == "self":
@@ -629,7 +635,7 @@ async def linked_developer(
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
     await run.call("gobby-tasks", "link_commit", arguments, output)
     assert run.step == "submit"
-    await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} SHA={sha} NOTE=ready")
+    await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=ready")
     return run, task, sha, unlinked_sha
 
 
@@ -729,7 +735,9 @@ async def test_developer_proof_return_rearms_candidate_latch(
     await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": sha})
     assert run.step == "submit"
     assert run.vars["candidate_sent"] is False
-    await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} SHA={sha} NOTE=proof-only")
+    await run.send(
+        f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=proof-only"
+    )
     assert run.vars["candidate_sent"] is True
     assert not await run.admits(
         "gobby-tasks",
@@ -745,26 +753,114 @@ async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabas
     await run.intake(task)
     await run.approve(task, SHA, "independent_review_approval", SESSION_ID)
     assert run.step == "verdict"
-    request = f"EVENT=PROOF_REQUEST TASK={task.id} SHA={SHA} NOTE=retest"
-    assert await run.admits(
-        "gobby-agents",
-        "send_message",
-        {"target": "session", "target_id": OWNER_ID, "content": request},
+    await run.send(
+        f"EVENT=LANDED TASK={task.id} SHA={SHA} RETEST=UNAVAILABLE NOTE=closer owns retest",
+        OWNER_ID,
     )
+    assert run.step == "await"
     source = (
         AGENTS_DIR.parents[1] / "skills/gobby/references/agents/procedures/code-reviewer.md"
     ).read_text()
     retest = next(line for line in source.splitlines() if "- Retest." in line)
-    assert "EVENT=PROOF_REQUEST" in retest
-    assert "EVENT=PROOF_RESULT" in retest
+    assert "Send EVENT=LANDED immediately" in retest
     assert "RETEST=UNAVAILABLE" in retest
-    assert "re-arm" in retest
+    assert "wait for" not in retest
     assert "main checkout" not in retest
+    landed = next(line for line in source.splitlines() if "- Landed." in line)
+    assert "wait for" not in landed
+
+
+async def test_developer_landed_retest_unlocks_shell_without_proof_result(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, _ = linked_developer
+    assert not await run.admits_native("Bash", {"command": "git status"})
+    await run.incoming(
+        f"EVENT=LANDED TASK={task.id} SHA={sha} RETEST=UNAVAILABLE NOTE=closer owns retest",
+        PEER_ID,
+    )
+    assert run.step == "submit"
+    handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
+    await run.call("gobby-tasks", "escalate_task", handoff)
+    assert run.step == "claim"
+    assert run.vars["_developer_handoff_tasks"] == [task.id]
+    await run.call("gobby-tasks", "de_escalate_task", {"task_id": task.id, "reason": "Retest"})
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert run.vars["assigned_task_id"] == task.id
+    assert await run.admits_native("Bash", {"command": "git status"})
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_developer_closes_unsubmitted_no_commit_research(
+    temp_db: HubDatabase, preview: bool, use_ref: bool
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    task_ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": task_ref}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert not task.commits
+    assert not run.vars["candidate_sent"]
+    assert run.vars["_developer_handoff_tasks"] == []
+    arguments = {
+        "task_id": task_ref if use_ref else task.id,
+        "preview": preview,
+        "changes_summary": "Research complete; no code changes required.",
+    }
+    assert await run.admits("gobby-tasks", "close_task", arguments)
+    foreign = run.task(owner=PEER_ID)
+    assert not await run.admits("gobby-tasks", "close_task", {**arguments, "task_id": foreign.id})
+    assert not await run.admits("gobby-tasks", "close_task", {"preview": preview})
+
+
+@pytest.mark.parametrize("linked_commit", [False, True], ids=["supplied", "previously-linked"])
+@pytest.mark.parametrize("use_ref", [False, True], ids=["uuid", "ref"])
+async def test_developer_refuses_unsubmitted_commit_close(
+    temp_db: HubDatabase, linked_commit: bool, use_ref: bool
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    if linked_commit:
+        LocalTaskManager(temp_db).link_commit(task.id, SHA)
+    task_ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": task_ref}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert not run.vars["candidate_sent"]
+    arguments: dict[str, Any] = {"task_id": task_ref if use_ref else task.id}
+    if not linked_commit:
+        arguments["commit_sha"] = SHA
+    assert not await run.admits("gobby-tasks", "close_task", arguments)
 
 
 def test_developer_submit_releases_only_after_reviewer_landed() -> None:
     source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
-    assert "Once the reviewer has sent EVENT=LANDED and only activation remains" in source
+    assert (
+        "Once the reviewer has sent EVENT=LANDED and only activation or the closing seat's "
+        "landed retest remains"
+    ) in source
+    assert "candidate <= HEAD <= integration tip" in source
     assert "A `Landed #N` notice alone keeps you at submit" in source
     assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
     assert "Once the candidate has landed" not in source
@@ -917,6 +1013,45 @@ async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDa
     assert run.vars["consensus"] is False
 
 
+async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    # Reproduce a legacy native flag write without a handler-owned commit binding.
+    instance.current_step = "stamp"
+    instance.variables["consensus"] = True
+    instance.variables.pop("consensus_sha", None)
+    run.instances.save(instance)
+
+    await run.incoming(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+    assert run.step == "stamp"
+    await run.send("EVENT=CONSENSUS_WITHDRAWN SHA=invalid")
+    assert run.step == "stamp"
+    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=re-review needed")
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+
+
+@pytest.mark.parametrize("step", ["review", "stamp"])
+@pytest.mark.parametrize("name,value", [("consensus", True), ("consensus_sha", SHA)])
+async def test_plan_adversary_consensus_variables_are_handler_owned(
+    temp_db: HubDatabase, step: str, name: str, value: object
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    if step == "stamp":
+        await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    before = dict(run.vars)
+    assert not await run.admits_native(
+        "mcp__gobby__set_variable",
+        {"name": name, "value": value, "session_id": SESSION_ID, "scope": "step"},
+    )
+    assert run.vars == before
+    assert run.step == step
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -927,6 +1062,8 @@ async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDa
         "EVENT=CONSENSUS SHA=not-a-commit",
         "EVENT=CONSENSUS SHA=",
         "EVENT=CONSENSUS SHA=abcdef",
+        f"EVENT=CONSENSUS SHA={SHA[:7]}",
+        f"EVENT=CONSENSUS SHA={SHA[:39]}",
         f"EVENT=CONSENSUS SHA={SHA}a",
         f"EVENT=CONSENSUS\nSHA={SHA}",
     ],
@@ -1427,7 +1564,7 @@ async def test_task_reads_accept_aliases_and_replacement_clears_only_same_task_p
         await run.intake(task)
         await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=base_update")
     ref = {"hash": f"#{first.seq_num}", "number": str(first.seq_num), "uuid": first.id}[alias]
-    await run.incoming(f"EVENT=CANDIDATE TASK={ref} COMMIT={REPLACEMENT_SHA}")
+    await run.incoming(f"EVENT=CANDIDATE TASK={ref} RUN=run WT=tree COMMIT={REPLACEMENT_SHA}")
     assert run.vars["parked_candidates"] == [{"task": second.id, "sha": SHA}]
     record_close_receipt(
         run.db,
@@ -1531,10 +1668,129 @@ async def test_failed_verdict_send_keeps_unit_even_with_stored_message(
 
 
 @pytest.mark.parametrize(
-    "format_name", ["canonical", "title-injection", "prose", "ambiguous-sha", "ambiguous-title"]
+    "format_name, reason",
+    [
+        ("canonical", None),
+        ("extras", None),
+        ("reordered", None),
+        ("comma-run", None),
+        ("upper-commit", None),
+        ("free-text", None),
+        ("old-extras", "expected KEY=value token: passed"),
+        ("old-reordered", None),
+        ("old-canonical", None),
+        ("missing-task", "missing TASK"),
+        ("missing-run", "missing RUN"),
+        ("missing-wt", "missing WT"),
+        ("missing-commit", "missing COMMIT"),
+        ("short-commit", "COMMIT must be 40 hex characters"),
+        ("bad-commit", "COMMIT must be 40 hex characters"),
+        ("duplicate-event", "duplicate EVENT"),
+        ("duplicate-task", "duplicate TASK"),
+        ("duplicate-run", "duplicate RUN"),
+        ("duplicate-wt", "duplicate WT"),
+        ("duplicate-commit", "duplicate COMMIT"),
+    ],
+)
+async def test_candidate_read_reports_binding_or_rejection(
+    temp_db: HubDatabase, format_name: str, reason: str | None
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    envelope = f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={SHA}"
+    lines = {
+        "canonical": f"LANE=1 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=title RUN=run WT=tree COMMIT={SHA} NOTE=ready",
+        # Reformatted e0e8c549: TESTS is one token; its prose belongs in NOTE.
+        "extras": f"LANE=7 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=Seat proofs RUN=run WT=tree COMMIT={SHA} BASE=base TESTS=481 TREE=tree NOTE=481 passed",
+        "reordered": f"EVENT=CANDIDATE TASK={task.id} WT=tree COMMIT={SHA} RUN=run NOTE=ready",
+        "comma-run": f"EVENT=CANDIDATE TASK={task.id} RUN=red,green WT=relative COMMIT={SHA}",
+        "upper-commit": envelope.replace(SHA, SHA.upper()),
+        "free-text": f"{envelope} NOTE=words RUN=other WT=other COMMIT={REPLACEMENT_SHA}",
+        # Exact receipt grammar from e0e8c549 and 24bca8f9 respectively.
+        "old-extras": f"LANE=7 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=Seat proofs RUN=run WT=tree COMMIT={SHA} BASE=base TESTS=481 passed NOTE=ready",
+        "old-reordered": f"LANE=2 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=Pane detectors RUN=RED-28AB6-EXIT100-3FAIL,GREEN-F9AE-3PASS,FMT-F9AE-PASS,CLIPPY-F9AE-0ERR-1WARN-OUTSIDE COMMIT={SHA} WT=lane-2-front-door-6 NOTE=ready",
+        "old-canonical": f"EVENT=CANDIDATE TASK={task.id} TASK_TITLE=title RUN=run WT=tree COMMIT={SHA}",
+        "missing-task": f"EVENT=CANDIDATE RUN=run WT=tree COMMIT={SHA}",
+        "missing-run": f"EVENT=CANDIDATE TASK={task.id} WT=tree COMMIT={SHA}",
+        "missing-wt": f"EVENT=CANDIDATE TASK={task.id} RUN=run COMMIT={SHA}",
+        "missing-commit": f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree NOTE=COMMIT={SHA}",
+        "short-commit": envelope.replace(SHA, SHA[:10]),
+        "bad-commit": envelope.replace(SHA, "z" * 40),
+        "duplicate-event": f"{envelope} EVENT=CANDIDATE",
+        "duplicate-task": f"{envelope} TASK={task.id}",
+        "duplicate-run": f"{envelope} RUN=other",
+        "duplicate-wt": f"{envelope} WT=other",
+        "duplicate-commit": f"{envelope} COMMIT={SHA}",
+    }
+    message = InterSessionMessageManager(temp_db).create_message(
+        OWNER_ID, SESSION_ID, lines[format_name]
+    )
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
+    add_messaging_tools(registry, InterSessionMessageManager(temp_db), run.sessions, temp_db)
+    with session_context_for_test(SESSION_ID):
+        result = await registry.call("get_inter_session_message", {"message_id": message.id})
+    assert result["success"] is True
+    assert result["message"]["content"] == lines[format_name]
+    if reason is None:
+        assert "candidate_binding_error" not in result
+    else:
+        assert result.get("candidate_binding_error") == f"CANDIDATE not bound: {reason}"
+    await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
+    assert run.step == ("review" if reason is None else "await")
+    assert run.vars["candidate_sha"] == (SHA if reason is None else None)
+
+
+@pytest.mark.parametrize("rejection", ["sender", "active-task", "stale", "consumed"])
+async def test_candidate_read_explains_unchanged_authority_gates(
+    temp_db: HubDatabase, rejection: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    if rejection in {"active-task", "stale"}:
+        await run.intake(run.task() if rejection == "active-task" else task)
+    message = InterSessionMessageManager(temp_db).create_message(
+        PEER_ID if rejection == "sender" else OWNER_ID,
+        SESSION_ID,
+        f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={SHA}",
+    )
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    if rejection == "stale":
+        instance.variables["candidate_received_at"] = "2099-01-01T00:00:00+00:00"
+    elif rejection == "consumed":
+        instance.variables["_seat_consumed_messages"] = [message.id]
+    run.instances.save(instance)
+    before = dict(run.vars)
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
+    add_messaging_tools(registry, InterSessionMessageManager(temp_db), run.sessions, temp_db)
+    with session_context_for_test(SESSION_ID):
+        result = await registry.call("get_inter_session_message", {"message_id": message.id})
+    reasons = {
+        "sender": "sender does not claim task",
+        "active-task": "another candidate task is active",
+        "stale": "candidate is older than or equal to the active message",
+        "consumed": "message already consumed",
+    }
+    assert result["success"] is True
+    assert result.get("candidate_binding_error") == f"CANDIDATE not bound: {reasons[rejection]}"
+    await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
+    assert run.vars == before
+
+
+@pytest.mark.parametrize(
+    "format_name, expected_sha",
+    [
+        ("canonical", SHA),
+        ("title-injection", None),
+        ("prose", None),
+        ("duplicate-commit", None),
+        ("free-note", REPLACEMENT_SHA),
+    ],
 )
 async def test_candidate_protocol_keeps_free_text_out_of_authority(
-    temp_db: HubDatabase, format_name: str
+    temp_db: HubDatabase, format_name: str, expected_sha: str | None
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
@@ -1546,12 +1802,12 @@ async def test_candidate_protocol_keeps_free_text_out_of_authority(
         "canonical": f"LANE=1 EVENT=CANDIDATE TASK=#{task.seq_num} TASK_TITLE={title} RUN=run WT=tree COMMIT={SHA} NOTE=ready",
         "title-injection": f"EVENT=CANDIDATE TASK={task.id} TASK_TITLE={title}",
         "prose": f"Please review EVENT=CANDIDATE TASK={task.id} COMMIT={SHA}",
-        "ambiguous-sha": f"EVENT=CANDIDATE TASK={task.id} COMMIT={SHA} SHA={REPLACEMENT_SHA}",
-        "ambiguous-title": f"LANE=1 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=title RUN=fake WT=fake COMMIT={REPLACEMENT_SHA} NOTE=words RUN=real WT=real COMMIT={SHA} NOTE=ready",
+        "duplicate-commit": f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={SHA} COMMIT={REPLACEMENT_SHA}",
+        "free-note": f"LANE=1 EVENT=CANDIDATE TASK={task.id} TASK_TITLE=title RUN=fake WT=fake COMMIT={REPLACEMENT_SHA} NOTE=words RUN=real WT=real COMMIT={SHA} NOTE=ready",
     }
     await run.incoming(lines[format_name])
-    assert run.step == ("review" if format_name == "canonical" else "await")
-    assert run.vars["candidate_sha"] == (SHA if format_name == "canonical" else None)
+    assert run.step == ("review" if expected_sha is not None else "await")
+    assert run.vars["candidate_sha"] == expected_sha
 
 
 async def test_older_unread_candidate_cannot_replace_newer_active_intake(
@@ -1563,7 +1819,7 @@ async def test_older_unread_candidate_cannot_replace_newer_active_intake(
     old = InterSessionMessageManager(run.db).create_message(
         OWNER_ID,
         SESSION_ID,
-        f"EVENT=CANDIDATE TASK={task.id} COMMIT={SHA}",
+        f"EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={SHA}",
     )
     await run.intake(task, REPLACEMENT_SHA)
     await run.approve(task, REPLACEMENT_SHA)

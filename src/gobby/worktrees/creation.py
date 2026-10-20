@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -23,7 +23,18 @@ logger = logging.getLogger(__name__)
 
 type Provider = Literal["claude", "codex", "droid"]
 type PathFactory = Callable[[str, str | None], str]
-type SidecarWriter = Callable[[str | Path, str | Path], Awaitable[None]]
+
+
+class SidecarWriter(Protocol):
+    async def __call__(
+        self,
+        source_repo_path: str | Path,
+        isolated_path: str | Path,
+        *,
+        base_commit: str | None = None,
+    ) -> None: ...
+
+
 type HookInstaller = Callable[[Provider | None, str | Path], bool]
 
 
@@ -186,7 +197,7 @@ async def create_worktree(
 
     writer = sidecar_writer or project_context.ensure_project_json_for_isolation
     try:
-        await writer(git_manager.repo_path, worktree.worktree_path)
+        await writer(git_manager.repo_path, worktree.worktree_path, base_commit=base_commit_sha)
     except (IsolationProjectJsonError, OSError) as exc:
         await _cleanup_git_worktree(
             git_manager,

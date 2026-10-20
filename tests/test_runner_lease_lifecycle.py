@@ -124,7 +124,7 @@ def native_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     assert "60892/gobby_test" in database_url
     token = str(uuid4())
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
     monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
     monkeypatch.setattr(
         "gobby.config.bootstrap.load_bootstrap",
@@ -218,7 +218,7 @@ async def test_contained_runner_seeds_row_and_clears_view(
     write_fd: int | None = None
     if supervised:
         read_fd, write_fd = os.pipe()
-        monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+        monkeypatch.setattr("gobby.runner_backend._supervisor_fd", read_fd)
     try:
         if fail_startup:
             with pytest.raises(RuntimeError, match="injected startup failure"):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-import os
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
-from gobby.runner_backend import front_door_secret, supervisor_write_token
+from gobby.runner_backend import front_door_secret, supervisor_fd, supervisor_write_token
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -359,7 +358,7 @@ def native_publisher_from_environment(
 ) -> NativePublisher | None:
     """Native mode needs both the supervisor pipe and the front-door pair secret."""
     secret = front_door_secret()
-    if not os.environ.get("GOBBY_SUPERVISOR_FD") or not secret:
+    if supervisor_fd() is None or not secret:
         return None
     return NativePublisher(
         secret=secret,

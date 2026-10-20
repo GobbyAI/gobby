@@ -48,10 +48,15 @@ _LANDING_ACTION = re.compile(
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
 _RETEST_PROCEDURE = (
-    "Retest on the landed tree belongs to the author: send EVENT=PROOF_REQUEST for this task "
-    "and SHA to the author session and your Lane Manager, carrying this landing's landed_tip "
-    "and the focused verification commands from the task's validation evidence. Do not run "
-    "them yourself; wait for the author's EVENT=PROOF_RESULT before your LANDED line."
+    "Send EVENT=LANDED immediately with RETEST=UNAVAILABLE to the closing seat and your Lane "
+    "Manager, carrying this landing's receipt and landed_tip and the focused verification "
+    "commands from the task's validation evidence. The closing seat owns the retest: after "
+    "LANDED, it uses the developer handoff, de-escalate and reclaim sequence for shell access. "
+    "Under a fresh Release Manager GO, it tests in its own worktree at a clean HEAD with "
+    "candidate <= HEAD <= integration tip, including the landed merge SHA. Its later "
+    "EVENT=PROOF_RESULT must name that landed merge SHA, the same test set, commands, results "
+    "and tested HEAD. Pending or failing proof withholds close release; failing proof reopens "
+    "the task through the Orchestrator. Activation gates still apply."
 )
 
 

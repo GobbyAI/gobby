@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,6 +36,27 @@ def write_project_marker(root: Path, *, project_id: str, name: str) -> None:
     (gobby_dir / "project.json").write_text(
         json.dumps({"id": project_id, "name": name}),
         encoding="utf-8",
+    )
+
+
+def init_git_checkout(root: Path) -> None:
+    """Make `root` a git repository whose HEAD commit holds its current files."""
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "seed",
+        ],
+        cwd=root,
+        check=True,
     )
 
 

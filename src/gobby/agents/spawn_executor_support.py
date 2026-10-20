@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 
@@ -100,6 +100,12 @@ def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
             env[key] = value
 
 
+def persisted_sandbox_metadata(launch: SandboxLaunch) -> dict[str, Any]:
+    """Return launch metadata plus the SRT argv prefix gdaemon rebuilds a wrap from."""
+    # wrap([]) is exactly the prefix through "--" when SRT is enforced, else [].
+    return {**launch.metadata(), "wrap_prefix": launch.wrap([])}
+
+
 def _record_resume_launch_details(
     request: SpawnRequest,
     *,
@@ -126,7 +132,7 @@ def _record_resume_launch_details(
     metadata["sandbox_args"] = list(sandbox_args or [])
     metadata["sandbox_env"] = dict(sandbox_env or {})
     if sandbox_launch is not None:
-        metadata["sandbox"] = sandbox_launch.metadata()
+        metadata["sandbox"] = persisted_sandbox_metadata(sandbox_launch)
     final_env = merge_resume_metadata_env(
         metadata.get("env") if isinstance(metadata.get("env"), Mapping) else None,
         request.extra_env,

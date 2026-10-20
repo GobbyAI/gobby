@@ -1,4 +1,5 @@
 use super::super::lifecycle::refresh_project_stats;
+use super::super::selector_blob::HeadBlobs;
 use super::super::types::IndexTarget;
 use super::super::{
     IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexRequest, index_files,
@@ -196,6 +197,7 @@ fn refresh_project_stats_propagates_checkout_fence_failure() {
             project_id: &project_id,
             root_path: stale_root.path(),
             mode: api::IndexWriteMode::Primary,
+            head_blobs: &HeadBlobs::default(),
         },
         1,
         None,
@@ -232,6 +234,7 @@ fn refresh_project_stats_propagates_checkout_fence_failure() {
             project_id: &project_id,
             root_path: committed_root.path(),
             mode: api::IndexWriteMode::Primary,
+            head_blobs: &HeadBlobs::default(),
         },
         1,
         None,

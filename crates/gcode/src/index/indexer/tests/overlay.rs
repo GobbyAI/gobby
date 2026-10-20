@@ -114,6 +114,7 @@ fn incremental_overlay_candidates_cover_divergence_from_the_parent_checkout() {
                 IndexedFileState {
                     content_hash: "parent-hash".to_string(),
                     language: "text".to_string(),
+                    git_blob_id: None,
                 },
             )
         })
@@ -156,6 +157,7 @@ fn incremental_overlay_candidates_fall_back_to_discovery_without_git() {
         IndexedFileState {
             content_hash: "parent-hash".to_string(),
             language: "rust".to_string(),
+            git_blob_id: None,
         },
     )]);
     let no_states: HashMap<String, IndexedFileState> = HashMap::new();
@@ -177,14 +179,17 @@ fn overlay_reconciliation_actions_cover_inherit_shadow_add_delete() {
     let parent = IndexedFileState {
         content_hash: "parent-hash".to_string(),
         language: "rust".to_string(),
+        git_blob_id: None,
     };
     let overlay = IndexedFileState {
         content_hash: "overlay-hash".to_string(),
         language: "rust".to_string(),
+        git_blob_id: None,
     };
     let tombstone = IndexedFileState {
         content_hash: visibility::TOMBSTONE_HASH.to_string(),
         language: visibility::TOMBSTONE_LANGUAGE.to_string(),
+        git_blob_id: None,
     };
 
     assert_eq!(

@@ -8,6 +8,7 @@ use crate::index::{chunker, hasher, languages, parser, walker};
 use crate::models::{CallTargetKind, IndexedFile, ParseResult};
 
 use super::IndexTimings;
+use super::selector_blob;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{FileIndexCounts, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
@@ -64,6 +65,14 @@ pub(super) fn index_file(
         &h,
         size,
         &parse_result,
+    )?;
+    let clean_blob = target.head_blobs.clean_blob(&rel, &parse_result.source);
+    selector_blob::record_selector_blob(
+        &mut tx,
+        target.project_id,
+        &rel,
+        &h,
+        clean_blob.as_deref(),
     )?;
 
     timings.phase("file.commit");
@@ -154,6 +163,14 @@ pub(super) fn index_content_only(
         &content_hash,
         source.len(),
         &source,
+    )?;
+    let clean_blob = target.head_blobs.clean_blob(&rel, &source);
+    selector_blob::record_selector_blob(
+        &mut tx,
+        target.project_id,
+        &rel,
+        &content_hash,
+        clean_blob.as_deref(),
     )?;
 
     tx.commit()

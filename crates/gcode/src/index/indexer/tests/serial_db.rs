@@ -1,4 +1,5 @@
 use super::super::file::{index_file, write_parsed_file_facts};
+use super::super::selector_blob::HeadBlobs;
 use super::super::sink::PostgresCodeFactSink;
 use super::super::types::IndexTarget;
 use super::super::{IndexOptions, IndexRequest, index_files};
@@ -929,6 +930,7 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
             project_id: &project_id,
             root_path: project_root.path(),
             mode: api::IndexWriteMode::Primary,
+            head_blobs: &HeadBlobs::default(),
         },
         &excludes,
         &import_context,
@@ -1012,7 +1014,7 @@ fn test_uuid_param(id: &str) -> uuid::Uuid {
     db::id_param(id).expect("test id is a uuid")
 }
 
-fn seed_primary_checkout(
+pub(super) fn seed_primary_checkout(
     conn: &mut postgres::Client,
     project_id: &str,
     root_path: &Path,

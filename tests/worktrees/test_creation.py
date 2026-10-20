@@ -10,7 +10,9 @@ from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils import project_context
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.project_context import read_isolation_marker
 from gobby.worktrees.creation import create_worktree
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -171,3 +173,43 @@ async def test_creation_registers_canonical_root_for_overlay_grants(
     )
     assert row is not None
     assert str(row["overlay_id"]) == code_index_id_for_root(requested)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create_branch", [True, False])
+async def test_creation_marker_records_selected_base_not_source_head(
+    local_base_repo: tuple[Path, LocalWorktreeManager, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    create_branch: bool,
+) -> None:
+    root, storage, project_id = local_base_repo
+    monkeypatch.setattr(project_context, "link_checkout_cargo_target", lambda *a, **k: None)
+    selected = _git(root, "rev-parse", "refs/heads/seat-base")
+    _git(root, "checkout", "-q", "main")
+    branch = "new-seat"
+    if create_branch:
+        expected = selected
+    else:
+        _git(root, "checkout", "-q", "-b", "existing-seat")
+        _git(root, "commit", "-q", "--allow-empty", "-m", "existing branch progress")
+        expected = _git(root, "rev-parse", "HEAD")
+        _git(root, "checkout", "-q", "main")
+        branch = "existing-seat"
+    assert _git(root, "rev-parse", "HEAD") not in {selected, expected}
+    result = await create_worktree(
+        git_manager=WorktreeGitManager(root),
+        worktree_storage=storage,
+        project_id=project_id,
+        branch_name=branch,
+        base_branch="seat-base",
+        create_branch=create_branch,
+        worktree_path=str(tmp_path / "worktree"),
+        event_emitter=lambda *_args, **_kwargs: {},
+    )
+    assert result.success, result.error
+    assert result.worktree is not None
+    marker = read_isolation_marker(Path(result.worktree.worktree_path))
+    assert marker is not None
+    assert marker["base_commit"] == expected

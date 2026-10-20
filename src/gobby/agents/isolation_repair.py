@@ -25,6 +25,7 @@ async def repair_isolation_environment(
     main_repo_path: str,
     isolated_path: str,
     provider: str,
+    base_commit: str | None = None,
     phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> None:
     """Repair hooks, project metadata, and MCP config for an isolated workspace."""
@@ -42,7 +43,9 @@ async def repair_isolation_environment(
 
     started_at = start_spawn_phase()
     try:
-        await ensure_project_json_for_isolation(main_repo_path, isolated_path)
+        await ensure_project_json_for_isolation(
+            main_repo_path, isolated_path, base_commit=base_commit
+        )
     finally:
         finish_spawn_phase(phase_timings_ms, "isolation_project_marker", started_at)
     started_at = start_spawn_phase()

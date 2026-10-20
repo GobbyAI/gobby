@@ -81,6 +81,22 @@ def test_claim_exposes_tdd_gate_state() -> None:
         manager,
     )
 
+    obligations = state.pop("claimed_task_tdd_obligations")
+    assert set(obligations) == {"task-1", "task-2"}
+    assert [item["reference"] for item in obligations["task-1"]] == [
+        "tests/workflows/test_claimed_task_extra_skills.py::test_one",
+        "tests/workflows/test_shared.py::test_shared",
+    ]
+    assert [item["reference"] for item in obligations["task-2"]] == [
+        "tests/workflows/test_shared.py::test_shared",
+        "crates/gclient/tests/parity/sidebar.rs::test_sidebar",
+    ]
+    assert all(item["task_id"] == "task-1" for item in obligations["task-1"])
+    assert all(
+        item["criterion"] == tasks["task-1"].validation_criteria for item in obligations["task-1"]
+    )
+    assert all(item["regression_only"] is False for item in obligations["task-1"])
+
     assert state == {
         "claimed_task_extra_skills": ["test-driven-development"],
         "unresolvable_claimed_task_extra_skills": [],
@@ -114,6 +130,7 @@ def test_claim_exposes_tdd_gate_state() -> None:
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
+        "claimed_task_tdd_obligations": {},
     }
     assert stale_variables["claimed_task_requires_tdd"] is False
     assert stale_variables["claimed_task_acceptance_test_paths"] == []
@@ -162,7 +179,7 @@ def test_tdd_gate_uses_event_worktree_path_over_registered_project_path() -> Non
 
     gate = build_condition_helpers(context=context)["tdd_gate_open"]
 
-    assert gate(variables) is True
+    assert gate(variables) is False
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
@@ -293,6 +310,7 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
+        "claimed_task_tdd_obligations": {},
     }
 
 

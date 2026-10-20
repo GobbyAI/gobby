@@ -165,6 +165,7 @@ class CloneIsolationHandler(IsolationHandler):
             main_repo_path=config.project_path,
             isolated_path=clone_path,
             provider=config.provider,
+            base_commit=base_commit_sha,
             phase_timings_ms=config.phase_timings_ms,
         )
 

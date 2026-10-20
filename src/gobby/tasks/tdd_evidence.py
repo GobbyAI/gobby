@@ -27,11 +27,12 @@ from gobby.tasks.tdd_compacted_output import (
     _path_matches_artifact,
     has_compacted_pytest_failure,
 )
-from gobby.tasks.tdd_paths import is_implementation_edit_path, is_test_convention_path
+from gobby.tasks.tdd_paths import is_implementation_edit_path
 from gobby.tasks.tdd_pytest_provenance import _FAILURE_SECTION_BOUNDARY_RE, _failure_section
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
+    _has_python_declaration_stub,
     _has_python_keyword_stub,
     _has_python_module_stub,
     _has_python_runtime_stub,
@@ -134,14 +135,12 @@ def evaluate_tdd_evidence(
     renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
     task_category: str | None = None,
     implementation_paths: Iterable[str] | None = None,
+    regression_only: Iterable[str] | None = None,
 ) -> TddEvidenceResult:
-    """Require a cycle for changed tests and later coverage of every named test.
+    """Require each behavior obligation's own RED before implementation and later GREEN.
 
-    The caller supplies implementation_paths from the task's linked patch. Only
-    test-category tasks may count non-test fixture modules under tests/ as code.
-    Unchanged named tests contribute either a genuine cycle or regression runs.
-    Unchanged detection is file-granular: every named test in an edited file is
-    treated as changed. Regression listings accompany a genuine task-level cycle.
+    Only explicitly designated, unchanged regressions may use GREEN alone.
+    Test-category tasks may count non-test fixture modules under tests/ as code.
     """
     if not tests:
         return TddEvidenceResult(
@@ -168,19 +167,15 @@ def evaluate_tdd_evidence(
     red_cache: dict[_RedCacheKey, tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
+    cycles: list[tuple[TranscriptValidationRun, TranscriptEdit]] = []
     # Attribution limits affirmative anchors; safety checks need physical history.
     task_edits = tuple(edit for edit in evidence.edits if edit.task_attributed)
     changed_paths = linked_paths | {edit.path for edit in task_edits}
-    changed_test_paths = {
-        path
-        for path in changed_paths
-        if (path in named_test_paths or is_test_convention_path(path))
-        and not is_implementation_path(path)
-    }
     unchanged = tuple(
         test
         for test in tests
-        if implementation_paths is not None
+        if test.reference in frozenset(regression_only or ())
+        and implementation_paths is not None
         and not changed_paths.intersection(
             (test.path, *(renamed_test_paths or {}).get(test.path, ()))
         )
@@ -190,21 +185,21 @@ def evaluate_tdd_evidence(
         key=lambda edit: edit.order,
         default=None,
     )
-    unchanged_reds: dict[str, TranscriptValidationRun] = {}
-    if unchanged and first_production is None:
+    if first_production is None:
         return TddEvidenceResult(
-            False, False, ("Unchanged-test evidence has no attributable production edit.",)
+            False,
+            False,
+            ("Unchanged-test evidence has no attributable production edit.",)
+            if implementation_paths is not None
+            else tuple(
+                f"{test.reference}: transcript has no edit of the named test"
+                if not any(edit.path == test.path for edit in task_edits)
+                else f"{test.reference}: no production edit follows the test edit"
+                for test in tests
+            ),
         )
-    if first_production is not None:
-        for test in unchanged:
-            red, _ = _find_red_run(test, evidence, -1, first_production)
-            if (
-                red is not None
-                and _find_green_run(test, evidence, red, after_order=first_production.order)
-                is not None
-            ):
-                unchanged_reds[test.reference] = red
     for test in tests:
+        cycle = None
         if test in unchanged:
             continue
         test_paths = (test.path, *(renamed_test_paths or {}).get(test.path, ()))
@@ -213,13 +208,18 @@ def evaluate_tdd_evidence(
             key=lambda edit: edit.order,
         )
         if not test_edits:
+            if first_production is not None:
+                red, rejection = _find_red_run(test, evidence, -1, first_production)
+                if red is not None:
+                    cycles.append((red, first_production))
+                    continue
             findings.append(f"{test.reference}: transcript has no edit of the named test")
             continue
         red = None
         green = None
         red_rejection = None
         production_edit_seen = False
-        for test_edit in test_edits:
+        for test_edit in test_edits[-1:]:
             red_test = (
                 test
                 if test_edit.path == test.path
@@ -296,7 +296,8 @@ def evaluate_tdd_evidence(
                 cycle = (red, production_edit)
                 break
         if cycle is not None:
-            break
+            cycles.append(cycle)
+            continue
         if not production_edit_seen:
             findings.append(f"{test.reference}: no production edit follows the test edit")
             continue
@@ -314,24 +315,12 @@ def evaluate_tdd_evidence(
                 f"{test.reference}: assertion-backed red has no later production edit and pass"
             )
 
-    if cycle is None and (changed_test_paths or not unchanged):
-        if not findings:
-            findings.append("TDD requires a named RED-to-GREEN cycle for the task's changed tests")
-        return TddEvidenceResult(False, False, tuple(findings))
-
-    # An existing test may expose a bug without changing. It can anchor a cycle
-    # only when this task did not add or change tests that still need their RED.
-    if cycle is None and unchanged_reds and first_production is not None:
-        cycle = (min(unchanged_reds.values(), key=lambda run: run.order), first_production)
-    red = cycle[0] if cycle is not None else None
-    after_order = (
-        cycle[1].order
-        if cycle is not None
-        else max((edit.order for edit in task_edits), default=-1)
-    )
-    findings = []
-    if cycle is None:
-        findings.append("TDD requires at least one genuine RED-to-GREEN cycle for the task")
+    if cycles:
+        first_behavior = min(edit.order for _, edit in cycles)
+        if any(red.order >= first_behavior for red, _ in cycles):
+            findings.append("Every named RED must precede the leaf's first behavior-bearing write")
+    red = min((item[0] for item in cycles), key=lambda run: run.order, default=None)
+    after_order = max((edit.order for edit in task_edits), default=-1)
     green_commands: list[str] = []
     for test in tests:
         green = _find_green_run(
@@ -341,12 +330,7 @@ def evaluate_tdd_evidence(
             after_order=after_order,
         )
         if green is None:
-            requirement = (
-                "the production edit that completed the task-level TDD cycle"
-                if cycle is not None
-                else "the task's latest edit (regression evidence)"
-            )
-            findings.append(f"{test.reference}: no pass after {requirement}")
+            findings.append(f"{test.reference}: no pass after the task's latest edit")
             continue
         green_commands.append(green.command)
 
@@ -354,18 +338,9 @@ def evaluate_tdd_evidence(
         passed=not findings,
         skipped=False,
         findings=tuple(findings),
-        red_runs=tuple(
-            dict.fromkeys(
-                (
-                    *((red.command,) if red is not None else ()),
-                    *(run.command for run in unchanged_reds.values()),
-                )
-            )
-        ),
+        red_runs=tuple(dict.fromkeys(item[0].command for item in cycles)) if not findings else (),
         green_runs=tuple(green_commands),
-        regression_tests=tuple(
-            test.reference for test in unchanged if test.reference not in unchanged_reds
-        ),
+        regression_tests=tuple(test.reference for test in unchanged),
     )
 
 
@@ -472,6 +447,10 @@ def _red_run_proof(
             _has_runtime_stub(test, evidence, run, core_command, parse_cache)
             or _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
+            or (
+                _has_declaration_assertion(core_command, run.output, test)
+                and _has_python_declaration_stub(test, evidence, run, closing_edit, parse_cache)
+            )
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
             or _test_tightening_proof(test, evidence, run, parse_cache)
             or has_stub_revert_proof(evidence, run, closing_edit)
@@ -482,6 +461,24 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _has_declaration_assertion(command: str, output: str | None, test: AcceptanceTest) -> bool:
+    """Keep assertion credit local to the named test's own failure section."""
+    if output is None:
+        return False
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if not (
+            _PYTEST_FAILURE_HEADER_RE.match(line)
+            or _RTK_FAILURE_HEADER_RE.match(line)
+            or _PYTEST_LOCATION_RE.match(line)
+        ):
+            continue
+        section = _failure_section(lines, index)
+        if is_assertion_failure(section) and _has_pytest_body_failure(command, section, test)[0]:
+            return True
+    return False
 
 
 def _has_runtime_stub(
@@ -559,7 +556,11 @@ def _has_original_source_failure(
         return False
     lines = (run.output or "").splitlines()
     start = 0
+    header: str | None = None
     for index, line in enumerate(lines):
+        named_header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        if named_header is not None:
+            header = named_header["name"]
         match = _PYTEST_LOCATION_RE.match(line)
         if match is None:
             continue
@@ -567,6 +568,7 @@ def _has_original_source_failure(
         start = index + 1
         if (
             _path_matches_artifact(match.group("path"), test)
+            and (header is None or _header_names_artifact(header, test, (), ()))
             and node.lineno < int(match.group("line")) <= (node.end_lineno or node.lineno)
             and _section_has_failure_detail(section)
             and (not require_not_implemented or _NOT_IMPLEMENTED_DETAIL_RE.search(section))

@@ -55,7 +55,7 @@ const PRIOR_BASELINE_VERSION: i32 = 419;
 const PRIOR_BASELINE_CHECKSUM: &str =
     "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 
-const GCODE_RLS_TABLES: [&str; 12] = [
+const GCODE_RLS_TABLES: [&str; 13] = [
     "code_indexed_projects",
     "code_indexed_project_states",
     "code_indexed_file_states",
@@ -68,6 +68,7 @@ const GCODE_RLS_TABLES: [&str; 12] = [
     "code_index_projection_cleanup_pending",
     "code_index_prune_dirty_projects",
     "code_communities",
+    "code_overlay_pins",
 ];
 
 struct ScratchDatabase {
@@ -191,7 +192,7 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             .map(|(name, command, _, _)| (name.clone(), command.clone()))
             .collect();
         assert_eq!(operations, expected);
-        for (_, _, using_expression, check_expression) in policies {
+        for (_, command, using_expression, check_expression) in policies {
             let predicate = format!("{using_expression} {check_expression}");
             assert!(predicate.contains("current_code_overlay_project_id"));
             assert!(predicate.contains("current_project_id"));
@@ -200,12 +201,16 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
                 "code_indexed_file_states",
                 "code_index_prune_dirty_projects",
                 "code_communities",
+                "code_overlay_pins",
             ]
             .contains(&table)
             {
                 assert!(predicate.contains("current_machine_id"));
             }
             assert_ne!(predicate.trim().to_ascii_lowercase(), "true");
+            if table == "code_overlay_pins" && ["INSERT", "UPDATE"].contains(&command.as_str()) {
+                assert!(check_expression.contains("source_project_id"));
+            }
         }
     }
     // project_checkouts is read-only for gcode: SELECT plus the UPDATE policy
@@ -726,6 +731,17 @@ fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> an
                 ($3, $2, 'other-machine.rs', 'other')",
         &[&machine_id, &project_id, &other_machine_id],
     )?;
+    client.execute(
+        "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+        &[&overlay_project_id],
+    )?;
+    for source_id in [project_id, overlay_project_id, unrelated_project_id] {
+        client.execute(
+            "INSERT INTO code_indexed_files(id, project_id, file_path, language, content_hash) \
+             VALUES ($1, $2, 'pin.rs', 'rust', 'pin')",
+            &[&Uuid::new_v4(), &source_id],
+        )?;
+    }
 
     let validation = match database.connect_as(&role_name, &password) {
         Ok(mut scoped) => (|| -> anyhow::Result<()> {
@@ -757,10 +773,55 @@ fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> an
                 "machine scope must filter parent state"
             );
 
-            scoped.execute(
-                "INSERT INTO code_indexed_projects(id) VALUES ($1)",
-                &[&overlay_project_id],
-            )?;
+            let foreign_visible: i64 = scoped
+                .query_one(
+                    "SELECT count(*) FROM code_indexed_files WHERE project_id = $1",
+                    &[&unrelated_project_id],
+                )?
+                .get(0);
+            assert_eq!(foreign_visible, 0, "foreign pin source must be invisible");
+            let insert_pin = "INSERT INTO code_overlay_pins( \
+                machine_id, overlay_project_id, file_path, source_project_id, content_hash \
+                ) VALUES ($1, $2, 'pin.rs', $3, 'pin')";
+            let error = scoped
+                .execute(
+                    insert_pin,
+                    &[&machine_id, &overlay_project_id, &unrelated_project_id],
+                )
+                .expect_err("pinning a known foreign source must fail RLS before FK admission");
+            assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+            for source_id in [project_id, overlay_project_id] {
+                assert_eq!(
+                    scoped.execute(insert_pin, &[&machine_id, &overlay_project_id, &source_id])?,
+                    1,
+                    "parent and frozen overlay sources must be pinnable",
+                );
+                let error = scoped
+                    .execute(
+                        "UPDATE code_overlay_pins SET source_project_id = $1 \
+                         WHERE machine_id = $2 AND overlay_project_id = $3 AND file_path = 'pin.rs'",
+                        &[&unrelated_project_id, &machine_id, &overlay_project_id],
+                    )
+                    .expect_err("changing a pin to a known foreign source must fail RLS");
+                assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+                let stored_source: Uuid = scoped
+                    .query_one("SELECT source_project_id FROM code_overlay_pins", &[])?
+                    .get(0);
+                assert_eq!(
+                    stored_source, source_id,
+                    "rejected source update must leave pin intact"
+                );
+                scoped.execute("DELETE FROM code_overlay_pins", &[])?;
+            }
+            for (pin_machine, pin_overlay) in [
+                (other_machine_id, overlay_project_id),
+                (machine_id, unrelated_project_id),
+            ] {
+                let error = scoped
+                    .execute(insert_pin, &[&pin_machine, &pin_overlay, &project_id])
+                    .expect_err("pin destination machine and overlay must stay fenced");
+                assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+            }
             scoped.execute(
                 "INSERT INTO code_indexed_project_states( \
                      machine_id, project_id, root_path, total_files, total_symbols \

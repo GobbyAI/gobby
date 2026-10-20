@@ -2,7 +2,7 @@ tags: [tdd-enforcement, enforcement, gobby, default]
 
 rules:
   enforce-tdd-block:
-    description: "Block production source writes until a qualifying test is written"
+    description: "Require every named behavior test's retained RED before production writes"
     event: before_tool
     enabled: true
     priority: 32
@@ -10,10 +10,13 @@ rules:
       (variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd'))
       and event.data.get('canonical_tool_kind') == 'write'
       and first_tdd_code_path(event.data, tool_input)
+      and not tdd_stub_only_write(event.data, tool_input)
       and not tdd_gate_open(variables)
     effects:
       - type: block
         tools: [Write, Bash]
         reason: |
-          Use a test-first flow. Write {% if variables.get('claimed_task_acceptance_test_paths') %}one of the claimed task's acceptance tests: {{ variables.get('claimed_task_acceptance_test_paths') | join(', ') }}{% else %}any test-convention file under the task's targets{% endif %}, then retry writing {{ first_tdd_code_path(event.data, tool_input) }}.
+          Production write blocked: missing authenticated retained named RED for {{ tdd_missing_red() | join(', ') }}.
+          Prepare every named behavior test and run it to its own assertion/panic-backed failure before writing {{ first_tdd_code_path(event.data, tool_input) }}. Only stored, unchanged regression-only: criteria may use GREEN alone.
+          Test-only writes and mechanically verified behavior-free API stubs may prepare RED. Shell and mixed implementation writes require the same leaf-wide barrier.
           For Rust, follow the `test-driven-development` skill's `Rust Stub-First RED` sequence.

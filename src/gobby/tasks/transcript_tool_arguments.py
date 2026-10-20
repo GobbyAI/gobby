@@ -5,8 +5,11 @@ from __future__ import annotations
 import ast
 import builtins
 import io
+import json
 import os
+import re
 import tokenize
+from pathlib import Path
 from typing import Any
 
 _COMMAND_KEYS = ("cmd", "command", "script")
@@ -22,11 +25,139 @@ def extract_command(arguments: dict[str, Any]) -> str:
     return ""
 
 
-def edited_source(tool_name: str, arguments: dict[str, Any], previous: str | None) -> str | None:
+def exact_patch(arguments: Any) -> str | None:
+    """Extract a literal patch, never infer execution of arbitrary wrapper code."""
+    if isinstance(arguments, str):
+        return arguments if arguments.startswith("*** Begin Patch\n") else None
+    if not isinstance(arguments, dict):
+        return None
+    arguments = {key: value for key, value in arguments.items() if key not in {"cwd", "workdir"}}
+    if len(arguments) != 1:
+        return None
+    for key in ("raw", "patch", "input"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.startswith("*** Begin Patch\n"):
+            return value
+    code = arguments.get("code") or arguments.get("raw")
+    if isinstance(code, str):
+        match = re.fullmatch(
+            r'\s*text\(await tools\.apply_patch\(("(?:[^"\\]|\\.)*")\)\);?\s*', code
+        )
+        if match:
+            try:
+                return exact_patch(json.loads(match[1]))
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def patch_sources(
+    arguments: Any, root: str | None, sources: dict[str, str | None]
+) -> dict[str, str] | None:
+    """Reconstruct only exact additions or uniquely matched ordered update hunks."""
+    patch = exact_patch(arguments)
+    if patch is None:
+        return None
+    lines = patch.splitlines(keepends=True)
+    if not lines or lines.pop(0).rstrip("\r\n") != "*** Begin Patch":
+        return None
+    if not lines or lines.pop().rstrip("\r\n") != "*** End Patch":
+        return None
+    result: dict[str, str] = {}
+    while lines:
+        header = lines.pop(0).rstrip("\r\n")
+        if not header.startswith(("*** Add File: ", "*** Update File: ")):
+            return None
+        path = Path(header.split(": ", 1)[1])
+        if not path.is_absolute():
+            if root is None:
+                return None
+            path = Path(root, path)
+        path = path.resolve()
+        if root is not None and not path.is_relative_to(Path(root).resolve()):
+            return None
+        key = str(path)
+        if key in result:
+            return None
+        body: list[str] = []
+        while lines and not lines[0].startswith("*** "):
+            body.append(lines.pop(0))
+        if header.startswith("*** Add File: "):
+            if (
+                sources.get(key) is not None
+                or not body
+                or any(not line.startswith("+") for line in body)
+            ):
+                return None
+            result[key] = "".join(line[1:] for line in body)
+            continue
+        before = sources.get(key)
+        if before is None or not body:
+            return None
+        after, offset = before, 0
+        while body:
+            marker = body.pop(0).rstrip("\r\n")
+            if marker != "@@":
+                return None
+            old: list[str] = []
+            new: list[str] = []
+            while body and not body[0].startswith("@@"):
+                line = body.pop(0)
+                if not line or line[0] not in " +-":
+                    return None
+                if line[0] in " -":
+                    old.append(line[1:])
+                if line[0] in " +":
+                    new.append(line[1:])
+            original, replacement = "".join(old), "".join(new)
+            if not original or after.count(original) != 1:
+                return None
+            index = after.find(original)
+            if index < offset:
+                return None
+            after = after[:index] + replacement + after[index + len(original) :]
+            offset = index + len(replacement)
+        result[key] = after
+    return result or None
+
+
+def patch_write_input(arguments: Any, root: str | None) -> dict[str, Any] | None:
+    """Project an exact patch against current bytes for the pre-write stub check."""
+    patch = exact_patch(arguments)
+    if patch is None:
+        return None
+    sources: dict[str, str | None] = {}
+    for name in re.findall(r"^\*\*\* (?:Add|Update) File: (.+)$", patch, re.MULTILINE):
+        path = Path(name)
+        if not path.is_absolute():
+            if root is None:
+                return None
+            path = Path(root, path)
+        try:
+            sources[str(path.resolve())] = path.read_text() if path.exists() else None
+        except (OSError, UnicodeError):
+            return None
+    projected = patch_sources(arguments, root, sources)
+    if projected is None:
+        return None
+    return {"changes": [{"file_path": path, "content": text} for path, text in projected.items()]}
+
+
+def edited_source(
+    tool_name: str,
+    arguments: dict[str, Any],
+    previous: str | None,
+    path: str | None = None,
+    root: str | None = None,
+) -> str | None:
     """Replay a structured source edit; unknown or ambiguous changes lose the snapshot."""
     if tool_name == "write":
         content = arguments.get("content")
         return content if isinstance(content, str) else None
+    if tool_name in {"apply_patch", "exec"} and path is not None:
+        key = str(Path(path).resolve())
+        projected = patch_sources(arguments, root, {key: previous})
+        return projected.get(key) if projected is not None else None
     if previous is None or tool_name not in {"edit", "multiedit", "search_replace"}:
         return None
     changes = arguments.get("edits") if tool_name == "multiedit" else [arguments]
@@ -199,6 +330,94 @@ def python_added_source(old: str, new: str) -> str | None:
     else:
         return None
     return added if python_noop_module(added) is not None else None
+
+
+def python_declaration_insertion(old: str, new: str) -> str | None:
+    """Extract a pure insertion, retaining both sides of a mid-file edit's anchor."""
+    before, after = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    start = 0
+    while start < min(len(before), len(after)) and before[start] == after[start]:
+        start += 1
+    end = 0
+    while end < min(len(before), len(after)) - start and before[-end - 1] == after[-end - 1]:
+        end += 1
+    if start + end != len(before):
+        return None
+    return "".join(after[start : len(after) - end if end else len(after)])
+
+
+def python_declaration_module(
+    source: str, parse_cache: PythonModuleCache | None = None
+) -> dict[str, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] | None:
+    """Recognize declaration-only API shape; calls and constraints are behavior."""
+    module = parse_python_module(source, parse_cache)
+    if module is None:
+        return None
+    declarations: dict[str, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for statement in module.body:
+        if isinstance(statement, ast.Import | ast.ImportFrom) or _is_docstring(statement):
+            continue
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+            valid = _declaration_method(statement)
+        elif isinstance(statement, ast.ClassDef):
+            valid = (
+                not statement.decorator_list
+                and not statement.keywords
+                and all(isinstance(base, ast.Name) for base in statement.bases)
+                and all(_declaration_member(member) for member in statement.body)
+            )
+        else:
+            return None
+        if not valid or statement.name in declarations:
+            return None
+        declarations[statement.name] = statement
+    return declarations
+
+
+def _declaration_member(member: ast.stmt) -> bool:
+    if _is_docstring(member) or isinstance(member, ast.Pass):
+        return True
+    if isinstance(member, ast.Expr) and isinstance(member.value, ast.Constant):
+        return member.value.value is Ellipsis
+    if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name):
+        return (
+            _shape_expression(member.annotation)
+            and not any(
+                isinstance(item, ast.Name) and item.id in {"Literal", "Annotated"}
+                for item in ast.walk(member.annotation)
+            )
+            and _literal_expression(member.value)
+        )
+    return isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and _declaration_method(
+        member
+    )
+
+
+def _declaration_method(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if node.decorator_list:
+        return False
+    # The existing shape checker validates annotations and defaults. Substitute a
+    # pass body so its broader constructor/return allowances cannot earn credit.
+    shape = ast.FunctionDef(
+        name="stub", args=node.args, body=[ast.Pass()], decorator_list=[], returns=node.returns
+    )
+    if not _noop_method(shape):
+        return False
+    for statement in node.body:
+        if _is_docstring(statement) or isinstance(statement, ast.Pass):
+            continue
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+            if statement.value.value is Ellipsis:
+                continue
+        if (
+            isinstance(statement, ast.Raise)
+            and statement.cause is None
+            and isinstance(statement.exc, ast.Name)
+            and statement.exc.id == "NotImplementedError"
+        ):
+            continue
+        return False
+    return True
 
 
 PythonModuleCache = dict[str, ast.Module | None]
@@ -439,9 +658,10 @@ def extract_edit_paths(
             if resolved is not None:
                 values.add(resolved)
     if tool_name in {"apply_patch", "exec"}:
-        raw = arguments.get("raw") or arguments.get("patch") or arguments.get("input")
+        literal = exact_patch(arguments)
+        raw = literal or arguments.get("raw") or arguments.get("patch") or arguments.get("input")
         if isinstance(raw, str):
-            if tool_name == "exec":
+            if tool_name == "exec" and literal is None:
                 if "tools.apply_patch" not in raw:
                     return values
                 raw = raw.replace(r"\r", "\r").replace(r"\n", "\n")

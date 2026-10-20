@@ -12,12 +12,18 @@ import pytest
 
 from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 from gobby.runner import main
-from gobby.runner_backend import FRONT_DOOR_SECRET_FD_ENV, front_door_secret
+from gobby.runner_backend import FRONT_DOOR_SECRET_FD_ENV, front_door_secret, supervisor_fd
 from gobby.runner_init import StartRefusal
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
 from gobby.utils import spawn
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _isolate_supervisor_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
+    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
 
 
 @pytest.mark.parametrize(
@@ -111,7 +117,8 @@ def test_main_seals_inherited_descriptors_before_the_runner_starts(
     children: list[subprocess.Popen[bytes]] = []
 
     def start_a_child(**_kwargs: object) -> None:
-        assert os.environ["GOBBY_SUPERVISOR_FD"] == str(read_fd)
+        assert os.environ.get("GOBBY_SUPERVISOR_FD") is None
+        assert supervisor_fd() == read_fd
         assert not os.get_inheritable(read_fd)
         os.fstat(read_fd)
         inheritable_at_runner_start.append(os.get_inheritable(write_fd))

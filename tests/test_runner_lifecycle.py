@@ -53,9 +53,9 @@ def _clear_app_context_between_tests(monkeypatch: pytest.MonkeyPatch) -> Iterato
 
 @pytest.fixture(autouse=True)
 def _isolate_supervisor_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A stale GOBBY_SUPERVISOR_FD from the launching shell selects the backend
-    # ports and makes watch_supervisor read a closed descriptor.
+    # Tests of main() consume the environment; run_gobby() consumes captured state.
     monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
 
 
 def _runner_with_static_runtime() -> GobbyRunner:
@@ -2930,10 +2930,9 @@ class TestMainFunction:
                 assert exc_info.value.code == 1
 
     def test_main_exits_cleanly_when_daemon_already_running(
-        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A contained backend returns cleanly when the native owner holds the PID lock."""
-        monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
         caplog.set_level(logging.INFO, logger="gobby.runner")
         with (
             patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,
@@ -4674,11 +4673,8 @@ class TestMainFunctionExtended:
             mock_asyncio_run.assert_called_once()
         assert mock_asyncio_run.call_count == 1
 
-    def test_main_exits_when_daemon_running(
-        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_main_exits_when_daemon_running(self, caplog: pytest.LogCaptureFixture) -> None:
         """PID ownership, rather than a public health probe, blocks duplicate backends."""
-        monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
         caplog.set_level(logging.INFO, logger="gobby.runner")
         with (
             patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,

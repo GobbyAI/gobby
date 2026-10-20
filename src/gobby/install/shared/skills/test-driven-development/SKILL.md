@@ -14,6 +14,27 @@ metadata:
 
 Use this when a task requires TDD.
 
+## Leaf-wide production-write barrier
+
+Resolve every named test in the claimed leaf's stored criteria before implementing
+behavior. Each behavior test needs its own authenticated retained RED after its
+relevant test edit and before any behavior-bearing production write. Writing one
+acceptance file, a sibling test's failure, a first GREEN, compile/collection errors,
+or an aggregate failure count cannot open the barrier. Test edits invalidate that
+test's earlier RED; another task's claim or run cannot authorize this leaf.
+
+All named criteria are behavior obligations unless the stored criterion explicitly
+says `regression-only:` and its test is proven unchanged against the claim baseline.
+Only those unchanged regressions may use GREEN alone. Uncertain identity or
+regression status keeps production blocked. Close checks the same per-test RED
+chronology and a later GREEN for every named test.
+
+Test-only writes and mechanically verified behavior-free API stubs may prepare RED.
+Skill completion permits that preparation; the write guard still requires every
+behavior test's original retained failure before implementation. Shell writes and
+mixed patches share the barrier. Compaction preserves authenticated originals;
+never reconstruct or replay historical RED.
+
 ## Required Loop
 
 1. Write or update the smallest meaningful test before implementation.

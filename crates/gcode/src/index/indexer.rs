@@ -10,6 +10,7 @@ mod lifecycle;
 mod local_imports;
 mod overlay;
 mod pipeline;
+mod selector_blob;
 mod sink;
 mod timing;
 mod types;

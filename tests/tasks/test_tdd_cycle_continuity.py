@@ -46,6 +46,7 @@ from gobby.tasks.transcript_evidence import (
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
+    TranscriptTaskClaim,
     TranscriptValidationRun,
 )
 from gobby.tasks.transcript_tool_arguments import match_task_file
@@ -938,8 +939,14 @@ def test_named_unchanged_test_is_not_refused_for_missing_edit(has_red: bool) -> 
         edits=(_edit("src/feature.py", 3),),
         validation_runs=(*((_run(2, red=True),) if has_red else ()), _run(4, red=False)),
     )
-    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
-    assert result.passed is has_red, result.findings
+    # An unchanged test is GREEN-only only when its criterion designates it a regression.
+    result = evaluate_tdd_evidence(
+        (_test(),),
+        evidence,
+        implementation_paths=("src/feature.py",),
+        regression_only=() if has_red else (_test().reference,),
+    )
+    assert result.passed, result.findings
     assert not any("no edit of the named test" in finding for finding in result.findings)
     assert result.red_runs == ((_run(2, red=True).command,) if has_red else ())
     assert result.details()["regression_tests"] == ([] if has_red else [_test().reference])
@@ -956,7 +963,10 @@ def test_unchanged_regression_can_accompany_another_unchanged_tests_cycle() -> N
         ),
     )
     result = evaluate_tdd_evidence(
-        (_test(), regression), evidence, implementation_paths=("src/feature.py",)
+        (_test(), regression),
+        evidence,
+        implementation_paths=("src/feature.py",),
+        regression_only=(regression.reference,),
     )
     assert result.passed, result.findings
     assert result.regression_tests == (regression.reference,)
@@ -967,7 +977,12 @@ def test_unchanged_regression_still_requires_a_fresh_pass() -> None:
         edits=(_edit("src/feature.py", 3),),
         validation_runs=(_run(2, red=False),),
     )
-    result = evaluate_tdd_evidence((_test(),), evidence, implementation_paths=("src/feature.py",))
+    result = evaluate_tdd_evidence(
+        (_test(),),
+        evidence,
+        implementation_paths=("src/feature.py",),
+        regression_only=(_test().reference,),
+    )
     assert not result.passed
     assert any("no pass" in finding for finding in result.findings)
 
@@ -995,6 +1010,137 @@ def test_unchanged_red_does_not_replace_changed_tests_red() -> None:
     assert not result.passed
     assert not result.red_runs
     assert any(changed.reference in finding for finding in result.findings)
+
+
+def _named_red(order: int, test: AcceptanceTest) -> TranscriptValidationRun:
+    return replace(
+        _run(order, red=True),
+        command=f"uv run pytest {test.path} -q",
+        output=(
+            f"________________ {test.symbol} ________________\n"
+            "E   assert 1 == 2\n"
+            f"{test.path}:4: AssertionError\n"
+            f"FAILED {test.reference} - assert 1 == 2\n"
+        ),
+    )
+
+
+def test_one_cycle_cannot_cover_second_behavior_criterion() -> None:
+    other = _test("tests/test_other.py", "test_other")
+    other_green = replace(_run(7, red=False), command=f"uv run pytest {other.path} -q")
+    evidence = TranscriptEvidence(
+        edits=(_edit(TEST_PATH, 1), _edit(other.path, 2), _edit("src/feature.py", 5)),
+        validation_runs=(_run(3, red=True), _run(6, red=False), other_green),
+    )
+    both_red = replace(
+        evidence,
+        validation_runs=(_run(3, red=True), _named_red(4, other), _run(6, red=False), other_green),
+    )
+
+    one_cycle = evaluate_tdd_evidence((_test(), other), evidence)
+    own_cycles = evaluate_tdd_evidence((_test(), other), both_red)
+
+    assert not one_cycle.passed
+    assert any(other.reference in finding for finding in one_cycle.findings), one_cycle.findings
+    assert own_cycles.passed, own_cycles.findings
+    assert own_cycles.red_runs == (_run(3, red=True).command, _named_red(4, other).command)
+
+
+@pytest.mark.parametrize("declaration", [False, True], ids=["ordinary", "declaration-stub"])
+def test_close_and_write_authorization_use_same_named_red(declaration: bool) -> None:
+    from gobby.tasks.tdd_write_authorization import (
+        authorize_production_write,
+        task_tdd_obligations,
+    )
+
+    obligations = task_tdd_obligations("task", f"1. The feature works; test: {_test().reference}")
+    tests = tuple(obligation.test for obligation in obligations)
+    claims = (TranscriptTaskClaim(task_ref="task", claimed_at=START),)
+    named = _run(2 + int(declaration), red=True)
+    sibling = _named_red(2 + int(declaration), _test(TEST_PATH, "test_sibling"))
+    edits: tuple[TranscriptEdit, ...] = (_edit(TEST_PATH, 1),)
+    pending = _edit("src/gobby/feature.py", 3 + int(declaration))
+    if declaration:
+        body = (
+            "from gobby.feature import ChoiceConfig\n\ndef test_feature():\n"
+            "    config = ChoiceConfig(retries=-1)\n    assert config.retries >= 0\n"
+        )
+        stub = "class ChoiceConfig(BaseModel):\n    retries: int = -1\n"
+        edits = (
+            replace(
+                edits[0],
+                source_after=body,
+                source_created=True,
+                source_confirmed=True,
+                source_confirmed_at=edits[0].timestamp,
+            ),
+            replace(
+                _edit(pending.path, 2),
+                source_after=stub,
+                source_created=True,
+                source_confirmed=True,
+                source_confirmed_at=START + timedelta(seconds=2),
+            ),
+        )
+        pending = replace(
+            pending,
+            source_after=stub
+            + (
+                "\n    @field_validator('retries')\n    def validate(cls, value):\n"
+                "        if value < 0:\n            raise ValueError('negative retries')\n"
+                "        return value\n"
+            ),
+        )
+
+    def decide(red: TranscriptValidationRun) -> tuple[bool, dict[str, str], bool, tuple[str, ...]]:
+        prepared = TranscriptEvidence(edits=edits, validation_runs=(red,), task_claims=claims)
+        closed = replace(
+            prepared,
+            edits=(*prepared.edits, pending),
+            validation_runs=(red, _run(4 + int(declaration), red=False)),
+        )
+        write = authorize_production_write(
+            obligations, prepared, task_refs=frozenset({"task"}), pending_writes=(pending,)
+        )
+        close = evaluate_tdd_evidence(tests, closed)
+        return write.allowed, dict(write.red_runs), close.passed, close.red_runs
+
+    assert [test.reference for test in tests] == [_test().reference]
+    assert decide(named) == (True, {_test().reference: named.command}, True, (named.command,))
+    assert decide(sibling) == (False, {}, False, ())
+
+
+def test_changed_regression_loses_green_only_status() -> None:
+    regression = _test("tests/test_kept.py", "test_kept")
+    designation = (regression.reference,)
+    kept_green = replace(_run(6, red=False), command=f"uv run pytest {regression.path} -q")
+    unchanged = TranscriptEvidence(
+        edits=(_edit(TEST_PATH, 1), _edit("src/feature.py", 4)),
+        validation_runs=(_run(3, red=True), _run(5, red=False), kept_green),
+    )
+    changed = replace(
+        unchanged,
+        edits=(_edit(TEST_PATH, 1), _edit(regression.path, 2), _edit("src/feature.py", 4)),
+    )
+
+    kept = evaluate_tdd_evidence(
+        (_test(), regression),
+        unchanged,
+        implementation_paths=(TEST_PATH, "src/feature.py"),
+        regression_only=designation,
+    )
+    lost = evaluate_tdd_evidence(
+        (_test(), regression),
+        changed,
+        implementation_paths=(TEST_PATH, regression.path, "src/feature.py"),
+        regression_only=designation,
+    )
+
+    assert kept.passed, kept.findings
+    assert kept.regression_tests == designation
+    assert not lost.passed
+    assert lost.regression_tests == ()
+    assert any(regression.reference in finding for finding in lost.findings), lost.findings
 
 
 @pytest.mark.parametrize(

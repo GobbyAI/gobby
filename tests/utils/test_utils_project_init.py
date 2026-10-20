@@ -38,6 +38,7 @@ from gobby.utils.project_init import (
     update_project_json_fields,
 )
 from tests.fixtures.isolated_checkout import (
+    init_git_checkout,
     insert_isolated_machine,
     insert_overlay,
     patch_local_machine_id,
@@ -883,6 +884,7 @@ class TestInitializeProject:
             "parent-project",
             "2024-01-01T00:00:00Z",
         )
+        init_git_checkout(parent_root)
         await ensure_project_json_for_isolation(parent_root, worktree_root)
 
         result = initialize_project(worktree_root, db=temp_db)
