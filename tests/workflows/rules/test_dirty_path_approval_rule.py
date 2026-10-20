@@ -21,10 +21,18 @@ RULE_NAME = "block-dirty-path-approval-cli"
 RULE_FILE = get_bundled_rules_path() / "task-enforcement" / f"{RULE_NAME}.yaml"
 CLI_SOURCE = Path(__file__).resolve().parents[3] / "src" / "gobby" / "cli" / "__init__.py"
 EXPANSION_RULE = "block-gobby-cli-expansion"
+COMMAND_WORD_RULE = "block-gobby-command-word-expansion"
+BRACE_SPELLING_RULE = "block-protected-approval-brace-spelling"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
 INVOCATIONS = (
+    "caffeinate g{o..o}bby sessions {approve-dirty-paths,} s7 --checkout /repo a.txt",
+    "/usr/bin/arch -arch arm64 g{o..o}bby sessions {approve-dirty-paths,} s7 a.txt",
+    "unknown-launcher {f..h}{n..p}bby sessions approve-{dirty-paths,} s7 a.txt",
+    "unknown-launcher gobby sessions approve-{dirty-paths,} s7 a.txt",
+    "unknown-launcher {f..h}{n..p}{a..c}{a..c}{x..z} "
+    "{r..t}{d..f}{r..t}{r..t}{h..j}{n..p}{m..o}{r..t} approve-{dirty-paths,} s7",
     "sudo -u root gobby sessions approve-dirty-paths s7 a.txt",
     "sudo -i gobby sessions approve-dirty-paths s7",
     "doas -u root gobby sessions approve-dirty-paths s7 a.txt",
@@ -142,7 +150,8 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     temp_db.execute(
-        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s)", (RULE_NAME, EXPANSION_RULE)
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, COMMAND_WORD_RULE, BRACE_SPELLING_RULE),
     )
     engine = RuleEngine(temp_db)
 
@@ -185,6 +194,7 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
 # command needs a non-literal executable word. Quoted and escaped spellings are literal, and
 # braces in later arguments pass.
 BRACE_REFUSED = (
+    "echo gobb{y..y}",
     "find . -exec g{o..o}bby tasks list \\;",
     "find . -name x -exec gobby sessions {approve-dirty-paths,} s7 \\;",
     "find . -execdir $X tasks list \\;",
@@ -448,7 +458,6 @@ BRACE_ALLOWED = (
     "gobby --config=/tmp/x tasks show {a,b}",
     "gobby --config /tmp/x tasks list",
     "uv run gobby tasks show {a,b}",
-    "echo gobb{y..y}",
     "ls {gobby,x}.md",
     '"{gobby,x}" tasks list',
     "'{gobby,x}' tasks list",
@@ -541,7 +550,8 @@ async def test_unquoted_brace_in_gobby_command_words_is_refused(
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     temp_db.execute(
-        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s)", (RULE_NAME, EXPANSION_RULE)
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, COMMAND_WORD_RULE, BRACE_SPELLING_RULE),
     )
     engine = RuleEngine(temp_db)
     decisions: dict[str, str] = {}
@@ -592,7 +602,7 @@ def _rule_value_options() -> set[str]:
     data = yaml.safe_load(RULE_FILE.read_text())
     (effect,) = [
         effect
-        for effect in data["rules"][RULE_NAME]["effects"]
+        for effect in data["rules"][COMMAND_WORD_RULE]["effects"]
         if "value_options" in effect.get("command_pattern", "")
     ]
     (group,) = re.findall(r"\(\?P<value_options>([^)]*)\)", effect["command_pattern"])

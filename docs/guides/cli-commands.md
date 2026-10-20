@@ -840,8 +840,17 @@ door. Browser sessions get 403 and change nothing. Agent bearers, forged identit
 requests with no valid credential get 401. Each path stays approved only while its
 content matches what it was at approval. Agents cannot run it:
 `block-dirty-path-approval-cli` refuses a shell command that names the subcommand.
-It also refuses an unquoted `{` or `}` in a gobby command word, including a one-letter
-range such as `g{o..o}bby`, and an unquoted `{`, `}`, `$` or backtick in a gobby group,
+`block-protected-approval-brace-spelling` also refuses an unquoted brace word that can
+produce the basename `gobby` or `approve-dirty-paths` anywhere in argv. An arbitrary
+launcher can execute an argument, so the guard also refuses `echo gobb{y..y}`. Quote
+or escape braces when relaying that spelling as data. Ordinary brace data such as
+`echo {a,b}`, `cp f{,.bak}`, `ls {gobby,x}.md` and `pytest tests/{a,b}.py` stays allowed.
+The guard matches alternatives and ranges symbolically against those two names; it
+never generates their Cartesian expansions. Unsupported ambiguous expressions fail
+closed. Quoted and escaped braces stay literal.
+`block-gobby-command-word-expansion` refuses an unquoted `{` or `}` in a gobby command
+word, including a one-letter range such as `g{o..o}bby`, and an unquoted `{`, `}`, `$`
+or backtick in a gobby group,
 subcommand or global option value (`--config VALUE`, `--config=VALUE`), because the brace
 or expansion can reach the subcommand. A `$` or backtick inside double quotes (`"$x"`)
 counts in a group or subcommand word too, because the shell expands it there. A
@@ -849,7 +858,7 @@ double-quoted `--config` value does not split, so it is allowed. The executable 
 any other command is refused when it holds an unquoted `{`, `}`, `$` or backtick, or a
 `$` or backtick inside double quotes, after any leading shell assignments (`X=1`) and the
 optional `uv run`, `uvx`, `uv tool run`, `env`, `nohup`, `time`, `command`, `exec`, `nice`,
-`timeout` and `xargs` prefixes with their options, whatever letters surround it: spell the
+`timeout`, `xargs`, `sudo` and `doas` prefixes with their options: spell the
 executable literally. Every value-taking option of those prefixes is skipped in both
 `--opt VALUE` and `--opt=VALUE` forms (for example `uv run --project`, `--directory`,
 `--python`, `-p` and `--with`, `uvx --from`, `env -u`, `-C`, `-P` and `-S`, `time -o`,
@@ -866,9 +875,12 @@ the subcommand is refused, with quote and backslash noise between its letters, s
 the matcher cannot parse is refused too. The matcher also re-parses a `sh -c` payload or
 `eval` argument as a command, so `eval "$X"` is refused because its executable is `$X`.
 `find -exec`, `-execdir`, `-ok` and `-okdir` run their words as a command and get the same
-checks. Wrappers outside this list, such as `sudo` and `doas`, are not checked for braces or
-`$`; the daemon's operator-key check, which returns 401 to an agent bearer, is the boundary
-there. `block-gobby-cli-expansion` refuses a command that names the subcommand inside a
+checks. `sudo` and `doas` also refuse unknown options and shell or login payloads that
+contain expansion syntax or name the approval subcommand. The CLI reads and sends the
+local operator key, so an agent invoking it through a launcher does not receive the
+401 that a direct API request with an agent bearer receives. The shell rules must
+refuse those CLI invocations.
+`block-gobby-cli-expansion` refuses a command that names the subcommand inside a
 substitution or backtick, or that builds a `gobby sessions` subcommand from a variable or a
 substitution.
 A managed execution's database role cannot read or write session state.
