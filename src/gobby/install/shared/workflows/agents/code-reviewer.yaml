@@ -237,16 +237,15 @@ step_workflow:
         On BOUNCE, send the CANDIDATE_VERDICT line. For a LAND requiring landing, record the
         independent_review_approval receipt, send the LAND verdict, then call
         land_commit on the same SHA and follow its response: when
-        retest_required, send EVENT=PROOF_REQUEST to the author and wait for its
-        EVENT=PROOF_RESULT (timeout 900; re-arm after any other author message)
-        without running the retest yourself, then
-        send LANDED with RETEST=UNAVAILABLE and a NOTE if none arrives; LAND_PENDING
+        retest_required, report RETEST=UNAVAILABLE pending the closing seat's
+        own landed retest, without running it yourself or delaying LANDED.
+        Send LAND_PENDING
         and retry on receipt_pending, LAND_BLOCKED
         and wait on a refusal. Once a receipt_id returns, send EVENT=ALREADY_LANDED
         with the original receipt_id and landed_by_session_id when already_landed
         is true and landed_by_session_id names another session (neither your
         current session ID nor unknown);
-        otherwise send EVENT=LANDED with the full field set and required retest,
+        otherwise send EVENT=LANDED with the full field set immediately,
         including recovery or replay of your own landing or an unknown lander.
         Never send your own
         LANDED for another reviewer's landing. A message that starts with the
