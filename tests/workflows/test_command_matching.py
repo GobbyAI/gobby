@@ -9,6 +9,7 @@ and everything else fails closed.
 from __future__ import annotations
 
 import shlex
+import time
 from pathlib import Path
 
 import pytest
@@ -1113,3 +1114,18 @@ def test_selector_cache_hits_match_misses(command: str, outcomes: set[bool]) -> 
 )
 def test_command_position_group_case_matches_blocks(command: str, mask_quoted: bool) -> None:
     assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+def test_quoted_braces_stay_literal() -> None:
+    assert not command_patterns_match('echo "{a,b}"', pattern=r"\ba b\b")
+    assert not command_patterns_match(r"echo \{a,b\}", pattern=r"\ba b\b")
+    assert not command_patterns_match("echo {a,b}", pattern=r"\ba b\b")
+
+
+def test_unmatched_brace_runs_match_in_linear_time() -> None:
+    # Each call gets its own command, so neither reuses the other's cached derivation.
+    braces = "{" * 15000
+    started = time.perf_counter()
+    assert command_patterns_match(f"echo {braces} unique-24613-a", pattern=r"\bunique-24613-a\b")
+    assert not command_patterns_match(f"echo {braces} unique-24613-b", pattern=r"\bnever-24613\b")
+    assert time.perf_counter() - started < 5.0

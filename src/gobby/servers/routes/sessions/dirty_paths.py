@@ -1,8 +1,9 @@
 """Operator route that records an approval for a session's unowned dirty paths.
 
 Only a request whose front-door identity gdaemon verified from an operator API key
-is admitted. Agent bearers, managed claims, cookies and unauthenticated requests
-are refused with 403 before the session is touched.
+is admitted. A browser session that the auth layer admits without that key is refused
+with 403 before the session is touched. Agent bearers, forged identities and requests
+with no valid credential are refused with 401 by the auth layer before this route runs.
 """
 
 from __future__ import annotations
