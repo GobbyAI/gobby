@@ -136,6 +136,16 @@ def test_submit_observation_timeout_preserves_an_unproven_gap() -> None:
     assert ledger.read("t1") == _GAP
 
 
+def test_untracked_submit_timeout_leaves_no_credit_for_future_input() -> None:
+    ledger = ComposerLedger()
+
+    ledger.record_submit("t1", adopt=True, input_timeout=0.001)
+
+    assert ledger.read("t1") == _EMPTY
+    ledger.observe_host_event(_host(1, submit=True))
+    assert ledger.read("t1") == _DRAFT
+
+
 def test_record_without_a_new_flagged_write_does_not_move_the_clean_point() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1))

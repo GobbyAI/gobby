@@ -338,14 +338,17 @@ async def test_spawned_agent_wakes_raise_no_seat_item(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("later_draft", [False, True])
+@pytest.mark.parametrize("tracked", [False, True])
 async def test_native_submit_before_host_event_preserves_following_wake(
     seat: Seat,
     composer_ledger: ComposerLedger,
     monkeypatch: pytest.MonkeyPatch,
     later_draft: bool,
+    tracked: bool,
 ) -> None:
     """A provider can consume Enter before the host stream reaches the daemon."""
-    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    if tracked:
+        composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     terminals = MagicMock()
     terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend="native")
     handlers = EventHandlers(terminal_manager=terminals)

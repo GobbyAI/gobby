@@ -292,6 +292,10 @@ class ComposerLedger:
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
+            if entry is None and adopt:
+                # Observe the native Enter while waiting, even for a pre-existing seat.
+                entry = _Entry(clean_seq=self._next())
+                self._entries[terminal_id] = entry
             if entry is not None and input_timeout > 0:
                 observed = entry
                 self._input_changed.wait_for(
@@ -304,8 +308,6 @@ class ComposerLedger:
                 )
                 entry = self._entries.get(terminal_id)
             if entry is None:
-                if adopt:
-                    self._entries[terminal_id] = _Entry(clean_seq=self._next())
                 return
             _close_wait(entry, "resumed")
             seq = self._next()
