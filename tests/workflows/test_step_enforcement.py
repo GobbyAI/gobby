@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.enforcement.blocking import (
@@ -41,12 +42,13 @@ PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("step", ["load_skills", "serve"])
-async def test_researcher_can_set_role_title_without_write_authority(
+async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
     step: str,
+    tmp_path: Path,
 ) -> None:
     shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
     definition = yaml.safe_load((shared / "researcher.yaml").read_text())
@@ -59,6 +61,13 @@ async def test_researcher_can_set_role_title_without_write_authority(
     }
     _setup_step_workflow(
         db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
+    )
+    scope_bundle = yaml.safe_load((shared.parent / "rules/roles/seat-write-scope.yaml").read_text())
+    scope_rule = scope_bundle["rules"]["researcher-write-scope"]
+    RuleDefinitionManager(db).create(
+        name="researcher-write-scope",
+        definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
+        tags=scope_bundle["tags"],
     )
     response = await engine.evaluate(
         _make_event(
@@ -76,12 +85,26 @@ async def test_researcher_can_set_role_title_without_write_authority(
     )
     assert response.decision != "block", response.reason
     for native in ("Edit", "Write", "apply_patch"):
-        response = await engine.evaluate(
-            _make_event(data={"tool_name": native, "tool_input": {}}),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-        assert response.decision == "block"
+        for relative in (".gobby/plans/research/report.md", "src/app.py", None):
+            path = str(tmp_path / relative) if relative else None
+            response = await engine.evaluate(
+                _make_event(
+                    data={
+                        "tool_name": native,
+                        "tool_input": {"file_path": path} if path else {},
+                        "canonical_tool_kind": "write",
+                        "canonical_file_paths": [path] if path else [],
+                        "project_path": str(tmp_path),
+                        "cwd": str(tmp_path),
+                    }
+                ),
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            allowed = step == "serve" and relative == ".gobby/plans/research/report.md"
+            assert (response.decision != "block") is allowed, (native, relative, step, response)
+            if step == "serve" and not allowed:
+                assert "researcher-write-scope" in (response.reason or "")
     current = instance_mgr.get_for_session(SESSION_ID)
     assert current is not None and current.current_step == step
 

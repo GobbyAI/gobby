@@ -118,8 +118,8 @@ step_workflow:
         re-arm after an interim owner reply. If no wait applies, send
         EVENT=SEAT_READY NOTE=idle to the Orchestrator and end the turn.
         An idle declaration expires when the next turn starts.
-      # Read-only internal reads (research, memory, sessions, plans) pass any
-      # step allowlist; these entries name title bootstrap and messaging.
+      # Internal reads pass this MCP allowlist; native report writes are
+      # confined by researcher-write-scope.
       allowed_mcp_tools:
         - "gobby-sessions:set_title"
         - "gobby-agents:send_message"
