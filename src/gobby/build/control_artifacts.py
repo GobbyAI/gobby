@@ -292,7 +292,14 @@ async def delete_artifacts(
                     ),
                     base_branch=preflight_base,
                 )
-                if not worktree_result.success and path.exists():
+                if not worktree_result.success and (
+                    path.exists()
+                    or (
+                        stored_worktree is not None
+                        and stored_worktree.branch_name
+                        and await _local_branch_exists(worktree_git, stored_worktree.branch_name)
+                    )
+                ):
                     artifact.error = worktree_result.error or worktree_result.message
                     continue
                 git_removed = worktree_result.success

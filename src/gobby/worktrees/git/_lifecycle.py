@@ -373,6 +373,8 @@ async def _refuse_missing_registration_mismatch(
         if authoritative
         and Path(record[0].removeprefix("worktree ")).resolve() == worktree_path.resolve()
     ]
+    if authoritative and not matches:
+        return None
     expected = (
         f"branch refs/heads/{branch_name.removeprefix('refs/heads/')}" if branch_name else None
     )

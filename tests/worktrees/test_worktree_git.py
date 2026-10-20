@@ -1355,7 +1355,7 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
             subprocess.CompletedProcess(
                 args=["worktree", "list", "--porcelain", "-z"],
                 returncode=0,
-                stdout=f"worktree {worktree_path}\0HEAD abc\0branch refs/heads/feature/test\0\0",
+                stdout="worktree /repo\0HEAD abc\0branch refs/heads/main\0\0",
                 stderr="",
             ),
             subprocess.CompletedProcess(
@@ -1396,6 +1396,34 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         assert "and branch feature/test" in result.message
         assert mock_run.call_args_list[3].args[0] == ["worktree", "list", "--porcelain", "-z"]
         assert mock_run.call_args_list[4].args[0][-3:] == ["branch", "-D", "feature/test"]
+
+    @pytest.mark.parametrize("probe_state", ["failed", "empty"])
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_missing_registration_probe_failure_preserves_branch(
+        self,
+        mock_run: AsyncMock,
+        manager: WorktreeGitManager,
+        tmp_path: Path,
+        probe_state: str,
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["worktree", "list", "--porcelain", "-z"],
+            returncode=1 if probe_state == "failed" else 0,
+            stdout="",
+            stderr="injected failure" if probe_state == "failed" else "",
+        )
+
+        result = await manager.delete_worktree(
+            tmp_path / "missing",
+            delete_branch=True,
+            branch_name="feature/test",
+            base_branch="main",
+        )
+
+        assert not result.success
+        assert result.error == "worktree_registration_branch_mismatch"
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.args[0][-4:] == ["worktree", "list", "--porcelain", "-z"]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:

@@ -109,7 +109,16 @@ async def test_artifact_cleanup_preserves_missing_unlanded_registrations(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("merged", [False, True])
+@pytest.mark.parametrize(
+    ("merged", "registration_absent", "branch_deleted"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (True, True, True),
+    ],
+)
 @pytest.mark.parametrize("merge_target", ["main", "parent"])
 async def test_artifact_cleanup_recovers_missing_registered_checkout(
     temp_db: HubDatabase,
@@ -117,6 +126,8 @@ async def test_artifact_cleanup_recovers_missing_registered_checkout(
     monkeypatch: pytest.MonkeyPatch,
     merged: bool,
     merge_target: str,
+    registration_absent: bool,
+    branch_deleted: bool,
 ) -> None:
     from gobby.build.control_artifacts import BuildArtifactSummary, delete_artifacts
     from gobby.storage.tasks import LocalTaskManager
@@ -163,6 +174,12 @@ async def test_artifact_cleanup_recovers_missing_registered_checkout(
     shutil.rmtree(other)
     os.utime(admin / "gitdir", (0, 0))
     shutil.rmtree(target)
+    if registration_absent:
+        _git(repo, "worktree", "remove", str(target))
+    if branch_deleted:
+        _git(repo, "switch", merge_target)
+        _git(repo, "branch", "-d", "task/missing")
+        _git(repo, "switch", "main")
     artifact = BuildArtifactSummary(
         family="worktree", task_id=task.id, path=str(target), artifact_id=worktree.id
     )
@@ -185,7 +202,7 @@ async def test_artifact_cleanup_recovers_missing_registered_checkout(
         assert refs.worktree_id == worktree.id
         assert refs.worktree_path == str(target)
         assert "task/missing" in _branches(repo)
-        assert str(target) in remaining
+        assert (str(target) in remaining) is not registration_absent
     assert str(other) in remaining
     assert unrelated_head in remaining
 

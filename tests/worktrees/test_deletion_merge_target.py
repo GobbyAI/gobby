@@ -369,6 +369,36 @@ async def test_missing_cleanup_preserves_unrelated_unlanded_registration(
 
 
 @pytest.mark.asyncio
+async def test_already_unregistered_missing_checkout_cleans_merged_branch(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(repo, "branch", "-f", "main", "0.5.0")
+    other = repo.parent / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "main")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unlanded = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    shutil.rmtree(worktree.worktree_path)
+    _git(repo, "worktree", "remove", worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="main")
+
+    assert result["success"] is True
+    assert _git(repo, "branch", "--list", "child") == ""
+    storage.delete.assert_called_once_with(worktree.id)
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(other) in remaining
+    assert unlanded in remaining
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure_state", ["missing", "unlinked", "force"])
 async def test_git_remove_failure_preserves_unrelated_unlanded_registration(
     landed_worktree: tuple[Path, Worktree], failure_state: str
