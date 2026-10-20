@@ -8,8 +8,10 @@ and reset between units.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,9 +40,12 @@ from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import record_close_receipt
+from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine import seat_transitions
+from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -683,6 +688,36 @@ async def test_developer_submit_return_refused_for_unowned_task(
         f"EVENT=PROOF_REQUEST TASK={task.id} SHA={unlinked_sha} NOTE=evidence", PEER_ID
     )
     assert run.step == "submit"
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+async def test_developer_proof_request_matches_linked_candidate_off_the_loop(
+    linked_developer: tuple[SeatRun, Task, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # advance_seat reaches _linked_candidate_matches only through the rule-engine offload, so
+    # the commit identity checks run on a worker, never on the loop that delivered the message.
+    run, task, sha, _ = linked_developer
+    caller = asyncio.get_running_loop()
+    states: list[tuple[str, asyncio.AbstractEventLoop | None]] = []
+    normalize = normalize_commit_sha
+
+    def recording(*args: Any, **kwargs: Any) -> str | None:
+        states.append((threading.current_thread().name, _running_loop()))
+        return normalize(*args, **kwargs)
+
+    monkeypatch.setattr(seat_transitions, "normalize_commit_sha", recording)
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", PEER_ID)
+    assert run.step == "implement"
+    assert states
+    for name, loop in states:
+        assert name.startswith((ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX)), name
+        assert loop is not caller
 
 
 async def test_developer_proof_return_rearms_candidate_latch(

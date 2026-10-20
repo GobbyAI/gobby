@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks import checkout_reads
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
 from gobby.hooks._normalization_operands import (
     _git_add_positional_args_after,
@@ -201,6 +202,8 @@ def _positional_checkout_is_path(
         return True
     if not paths:
         return False
+    if checkout_reads.node_origin():
+        return _node_checkout_is_path(paths, cwd, branch_candidate)
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     try:
         if branch_candidate is not None:
@@ -227,7 +230,7 @@ def _positional_checkout_is_path(
                 return False
             if ref.returncode != 1:
                 return None
-        if any(Path(path).exists() for path in paths):
+        if any(Path(cwd, path).exists() for path in paths):
             return True
         result = spawn.run(
             [
@@ -248,6 +251,55 @@ def _positional_checkout_is_path(
             timeout=1,
             # Inspect the proven checkout, never an inherited repository selector.
             env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return bool(result.stdout) if result.returncode == 0 else None
+
+
+def _node_checkout_is_path(
+    paths: tuple[str, ...], cwd: str, branch_candidate: str | None
+) -> bool | None:
+    """`_positional_checkout_is_path` for a node-origin delivery: the node answers git and paths."""
+    try:
+        if branch_candidate is not None:
+            revision = "@{-1}" if branch_candidate == "-" else branch_candidate
+            ref = checkout_reads.run_git(
+                [
+                    "-c",
+                    "core.fsmonitor=false",
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    f"{revision}^{{commit}}",
+                ],
+                cwd=cwd,
+                timeout=1,
+            )
+            if ref.returncode == 0:
+                return False
+            if ref.returncode != 1:
+                return None
+        kinds = {fact.kind for fact in checkout_reads.path_facts(paths, cwd=cwd).files}
+        if kinds & {"file", "dir", "other"}:
+            return True
+        if "outside" in kinds:
+            # Fail closed: an outside path may exist, and None makes the caller write.
+            return None
+        result = checkout_reads.run_git(
+            [
+                "-c",
+                "core.fsmonitor=false",
+                "--literal-pathspecs",
+                "ls-files",
+                "--cached",
+                "-z",
+                "--",
+                *paths,
+            ],
+            cwd=cwd,
+            timeout=1,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

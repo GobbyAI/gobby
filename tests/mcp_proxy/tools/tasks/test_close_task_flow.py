@@ -46,6 +46,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
+from gobby.tasks import close_integration_credit
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
 from gobby.tasks.tdd_evidence import TddEvidenceResult, evaluate_tdd_evidence
@@ -56,6 +57,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
 )
 from gobby.tasks.validation import TaskValidator
+from gobby.utils.git import run_git_command
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -165,6 +167,7 @@ async def _evaluate_named_test_close(
     repo_path: str = "/repo",
     enforce_tdd: bool = True,
     run_close_review: bool = True,
+    commit_sha: str = "abc123",
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -240,7 +243,7 @@ async def _evaluate_named_test_close(
             task_id=task.id,
             reason="completed",
             changes_summary="Implemented and tested.",
-            commit_sha="abc123",
+            commit_sha=commit_sha,
             project_path=None,
             response_detail="diagnostic",
             run_close_review=run_close_review,
@@ -678,6 +681,61 @@ async def test_close_tracked_script_git_runs_off_the_event_loop(tmp_path: Path) 
     )
     records = evaluation.extra["validation_commands"]["criterion_commands"]
     assert records[0]["status"] == "satisfied"
+
+
+def _caller_thread_state() -> tuple[bool, bool]:
+    """Whether the caller is the main thread, and whether an event loop runs on it."""
+    thread_is_main = threading.current_thread() is threading.main_thread()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return thread_is_main, False
+    return thread_is_main, True
+
+
+@pytest.mark.asyncio
+async def test_rooted_close_integration_credit_git_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rooted gate evaluates a candidate on a worker. A pytest run from another tree asks
+    # LandedCandidateCredit, which reads git through close_integration_credit.run_git_command.
+    repo = tmp_path / "repo"
+    export = tmp_path / "export"
+    (repo / "tests").mkdir(parents=True)
+    (export / "tests").mkdir(parents=True)
+    (repo / "tests" / "test_widget.py").write_text("def test_widget():\n    assert True\n")
+    (export / "tests" / "test_widget.py").write_text("def test_widget():\n    assert False\n")
+    git = ["git", "-C", str(repo), "-c", "user.name=Gobby Tests", "-c", "user.email=gobby@test"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run([*git, "add", "tests/test_widget.py"], check=True)
+    subprocess.run([*git, "commit", "-q", "--no-gpg-sign", "-m", "candidate"], check=True)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    task = _task()
+    base = _successful_transcript(task, command="uv run pytest tests/test_widget.py -q")
+    # Coverage resolves a run's targets only after its output reports a passing pytest run.
+    foreign = replace(base.validation_runs[0], workdir=str(export), output="1 passed in 0.01s")
+    transcript = replace(base, validation_runs=(foreign,))
+    states: list[tuple[bool, bool]] = []
+
+    def recording(*args: Any, **kwargs: Any) -> str | None:
+        states.append(_caller_thread_state())
+        return run_git_command(*args, **kwargs)
+
+    monkeypatch.setattr(close_integration_credit, "run_git_command", recording)
+    evaluation, _ = await _evaluate_named_test_close(
+        task,
+        tdd_result=None,
+        net_paths=NetCommitPaths(changed=frozenset({"tests/test_widget.py"})),
+        linked=(sha,),
+        transcript=transcript,
+        repo_path=str(repo),
+        commit_sha=sha,
+    )
+    assert evaluation.candidate_commit_sha == sha
+    assert states
+    assert all(state == (False, False) for state in states)
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
+from gobby.hooks import checkout_reads
 from gobby.hooks._path_scope import (
     _shares_git_repository,
     checkout_root,
@@ -196,14 +197,20 @@ def _ignore_decision(path: Path, root: Path | None) -> Path | bool:
 
 def _git_ignored(root: Path, paths: list[Path]) -> set[Path]:
     """Git's own exclusion matcher handles generated trees and negation rules."""
+    stdin = b"".join(os.fsencode(path) + b"\0" for path in paths)
     try:
-        result = spawn.run(
-            ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
-            input=b"".join(os.fsencode(path) + b"\0" for path in paths),
-            capture_output=True,
-            timeout=2,
-            check=False,
-        )
+        if checkout_reads.node_origin():
+            result = checkout_reads.run_git(
+                ["check-ignore", "--stdin", "-z"], cwd=str(root), timeout=2, input_bytes=stdin
+            )
+        else:
+            result = spawn.run(
+                ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+                input=stdin,
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
     except (OSError, subprocess.TimeoutExpired):
         return set()
     if result.returncode == 128 and len(paths) > 1:

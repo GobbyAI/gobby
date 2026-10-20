@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -12,7 +13,7 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._claim_release as claim_release
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -156,6 +157,35 @@ async def test_refuses_and_names_task_attributed_dirty_paths(world: ReleaseWorld
     assert result.get("error_code") == "task_has_uncommitted_changes", result
     assert "note.py" in str(result["paths"])
     assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
+
+
+def _caller_thread_state() -> tuple[bool, bool]:
+    """Whether the caller is the main thread, and whether an event loop runs on it."""
+    thread_is_main = threading.current_thread() is threading.main_thread()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return thread_is_main, False
+    return thread_is_main, True
+
+
+@pytest.mark.asyncio
+async def test_release_dirty_check_runs_off_the_event_loop(
+    world: ReleaseWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registry runs release_task_claim on a worker thread, and that worker runs the dirty check.
+    (world.repo / "note.py").write_text("in_flight = True\n")
+    states: list[tuple[bool, bool]] = []
+    dirty_paths = task_dirty_paths
+
+    def recording(paths: set[str], root: str) -> set[str] | None:
+        states.append(_caller_thread_state())
+        return dirty_paths(paths, root)
+
+    monkeypatch.setattr(_claim_release, "task_dirty_paths", recording)
+    result = await world.release()
+    assert result.get("error_code") == "task_has_uncommitted_changes", result
+    assert states == [(False, False)]
 
 
 @pytest.mark.asyncio
