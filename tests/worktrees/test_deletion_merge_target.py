@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -293,6 +293,23 @@ async def test_stale_merged_registry_branch_cannot_authorize_unlanded_or_detache
     assert _git(repo, "rev-parse", "refs/heads/main") == main_tip
     assert _git(repo, "rev-parse", "refs/heads/child") == child_tip
     storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_actual_branch_probe_preserves_worktree_without_explicit_merge_target(
+    landed_worktree: tuple[Path, Worktree],
+) -> None:
+    repo, worktree = landed_worktree
+    child = Path(worktree.worktree_path)
+    with patch("gobby.worktrees.git._lifecycle.get_worktree_status", AsyncMock(return_value=None)):
+        result = await WorktreeGitManager(repo).delete_worktree(
+            child, delete_branch=True, base_branch="0.5.0"
+        )
+
+    assert result.success is False
+    assert result.error == "worktree_status_unavailable"
+    assert child.exists()
+    assert _git(repo, "rev-parse", "refs/heads/child") == _git(child, "rev-parse", "HEAD")
 
 
 @pytest.mark.asyncio

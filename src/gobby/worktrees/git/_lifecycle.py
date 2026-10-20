@@ -361,7 +361,13 @@ async def delete_worktree(
         # Get branch name before removal (for optional branch deletion)
         if delete_branch and not branch_name:
             status = await get_worktree_status(runner, worktree_path)
-            if status:
+            if status is None and worktree_path.exists():
+                return GitOperationResult(
+                    success=False,
+                    message="Cannot verify the worktree branch; the worktree was preserved",
+                    error="worktree_status_unavailable",
+                )
+            if status is not None:
                 branch_name = status.branch
             if not branch_name:
                 logger.warning(
