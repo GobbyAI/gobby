@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -36,6 +38,74 @@ def _init_repo(path: Path) -> None:
 def _branches(path: Path) -> set[str]:
     output = _git(path, "branch", "--format=%(refname:short)")
     return {line.strip() for line in output.splitlines() if line.strip()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initially_missing", [False, True])
+async def test_artifact_cleanup_preserves_missing_unlanded_registrations(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initially_missing: bool,
+) -> None:
+    from gobby.build.control_artifacts import BuildArtifactSummary, delete_artifacts
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.worktrees.git import GitOperationResult, WorktreeGitManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    project = _checkout_project(temp_db, repo, monkeypatch, name="registration-safe-clean")
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=project.id, title="Unlanded task", validation_criteria="Preserve unlanded work."
+    )
+    target = tmp_path / "target"
+    _git(repo, "worktree", "add", "-b", "task/unlanded", str(target), "main")
+    _git(target, "commit", "--allow-empty", "-m", "unlanded task work")
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/unlanded",
+        worktree_path=str(target),
+        base_branch="main",
+        task_id=task.id,
+    )
+    tasks.artifacts.set_artifacts_atomic(
+        task.id,
+        worktree_id=worktree.id,
+        worktree_path=str(target),
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+    )
+    other = tmp_path / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "main")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unlanded = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    if initially_missing:
+        shutil.rmtree(target)
+
+    async def refuse_after_unlink(*_args: object, **_kwargs: object) -> GitOperationResult:
+        shutil.rmtree(target)
+        return GitOperationResult(success=False, error="injected Git refusal", message="refused")
+
+    monkeypatch.setattr(WorktreeGitManager, "delete_worktree", refuse_after_unlink)
+    artifact = BuildArtifactSummary(
+        family="worktree", task_id=task.id, path=str(target), artifact_id=worktree.id
+    )
+    await delete_artifacts(temp_db, project.id, [artifact], force=False)
+
+    assert artifact.error is not None
+    assert not artifact.deleted
+    assert worktrees.get(worktree.id) is not None
+    assert tasks.artifacts.get_artifacts(task.id).worktree_id == worktree.id
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(target) in remaining
+    assert str(other) in remaining
+    assert unlanded in remaining
 
 
 def _checkout_project(

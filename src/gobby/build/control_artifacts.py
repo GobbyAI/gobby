@@ -17,7 +17,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.events import emit_worktree_event
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import WorktreeGitManager, worktree_registration_is_absent
 from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 ArtifactFamily = Literal["worktree", "clone"]
@@ -270,6 +270,7 @@ async def delete_artifacts(
                 if occupied is not None:
                     artifact.error = occupied
                     continue
+                git_removed = False
                 if path.exists():
                     # The merged-branch preflight must check the branch's actual
                     # merge target: the task's declared target branch when its
@@ -300,10 +301,12 @@ async def delete_artifacts(
                     if not worktree_result.success and path.exists():
                         artifact.error = worktree_result.error or worktree_result.message
                         continue
-                    if not worktree_result.success:
-                        prune = getattr(worktree_git, "prune_worktrees", None)
-                        if callable(prune):
-                            (await prune())
+                    git_removed = worktree_result.success
+                if not git_removed:
+                    absent, probe_error = await worktree_registration_is_absent(worktree_git, path)
+                    if not absent:
+                        artifact.error = probe_error or "Git worktree registration was preserved"
+                        continue
                 if worktree_id:
                     worktrees.delete(worktree_id)
                     artifact_refs_cleared = task_manager.artifacts.clear_worktree_references(
