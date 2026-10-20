@@ -187,6 +187,45 @@ def _skip_blanks(masked: str, index: int) -> int:
     return index
 
 
+def projected_write_sources(
+    tool_input: Any, paths: list[str], project_path: str
+) -> dict[str, str] | None:
+    """Project structured writes for source-bound TDD proof; uncertain writes have no proof."""
+    from gobby.tasks.transcript_tool_arguments import exact_patch, patch_write_input
+
+    if exact_patch(tool_input) is not None:
+        tool_input = patch_write_input(tool_input, project_path)
+    if not isinstance(tool_input, Mapping) or any(
+        key in tool_input for key in ("command", "cmd", "script")
+    ):
+        return None
+    root = Path(project_path).resolve()
+    sources: dict[str, str] = {}
+    for path in paths:
+        absolute = (root / path).resolve()
+        if not absolute.is_relative_to(root):
+            return None
+        before = _read_absolute_text(str(absolute))
+        changes = list(_iter_changes(tool_input, path))
+        if not changes:
+            return None
+        for change in changes:
+            if change.old is None:
+                before = change.new
+            elif (
+                before is None
+                or not change.old
+                or (before.count(change.old) != 1 and not change.replace_all)
+                or change.old not in before
+            ):
+                return None
+            else:
+                before = before.replace(change.old, change.new, -1 if change.replace_all else 1)
+        if before is not None:
+            sources[absolute.relative_to(root).as_posix()] = before
+    return sources
+
+
 def _iter_changes(value: Any, path: str) -> Iterator[_RustChange]:
     """Yield the structured changes in edit input that target one file path."""
     if isinstance(value, Mapping):

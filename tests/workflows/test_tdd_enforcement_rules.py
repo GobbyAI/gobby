@@ -637,6 +637,85 @@ def test_verified_stub_only_write_can_prepare_red(
             assert blocked is True, tool_input
 
 
+@pytest.mark.parametrize("tool_name", ["Write", "Edit", "apply_patch"])
+@pytest.mark.parametrize(
+    "member,allowed",
+    [
+        ("", True),
+        (
+            "    @field_validator('retries')\n    def validate(cls, value):\n        return value\n",
+            False,
+        ),
+        (
+            "    def value(self):\n        if self.retries:\n            return self.retries\n",
+            False,
+        ),
+        ("    retries = compute_retries()\n", False),
+    ],
+)
+def test_declaration_red_requires_projected_write_of_its_class(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    gate_repo: Path,
+    tool_name: str,
+    member: str,
+    allowed: bool,
+) -> None:
+    test_path, source_path = "tests/test_choices.py", "src/gobby/config/ai.py"
+    body = (
+        "from gobby.config.ai import ChoiceConfig\n\ndef test_choices():\n"
+        "    config = ChoiceConfig(retries=-1)\n    assert config.retries >= 0\n"
+    )
+    stub = (
+        "from pydantic import BaseModel, field_validator\n\nclass ChoiceConfig(BaseModel):\n    retries: int = -1\n"
+        + member
+    )
+    implementation = (
+        stub + "\n    @field_validator('retries')\n"
+        "    def check_retries(cls, value):\n"
+        "        if value < 0:\n            raise ValueError('negative retries')\n"
+        "        return value\n"
+    )
+    path = gate_repo / source_path
+    path.parent.mkdir(parents=True)
+    path.write_text(stub, encoding="utf-8")
+    records = _claim_and_tests(gate_repo, {test_path: body})
+    records += _transcript_pair(
+        gate_repo,
+        2,
+        "Write",
+        _write(gate_repo, source_path, stub),
+        f"File created successfully at: {path}",
+    )
+    records += _pytest_records(
+        gate_repo,
+        3,
+        f"____ test_choices ____\n{test_path}:5: in test_choices\nE   assert -1 >= 0\n1 failed",
+        test_path,
+    )
+    tool_input: dict[str, Any] | str
+    if tool_name == "Write":
+        tool_input = _write(gate_repo, source_path, implementation)
+    elif tool_name == "Edit":
+        tool_input = {"file_path": str(path), "old_string": stub, "new_string": implementation}
+    else:
+        tool_input = (
+            f"*** Begin Patch\n*** Update File: {path}\n@@\n"
+            + "".join("-" + line for line in stub.splitlines(keepends=True))
+            + "".join("+" + line for line in implementation.splitlines(keepends=True))
+            + "*** End Patch\n"
+        )
+    blocked, reason = _gate_blocks(
+        _tdd_block(db, manager),
+        gate_repo,
+        records,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        criteria=f"1. Choices validate bounds; test: {test_path}::test_choices",
+    )
+    assert blocked is (not allowed), reason
+
+
 def test_stub_plus_implementation_patch_is_blocked(
     db: HubDatabase, manager: RuleDefinitionManager, gate_repo: Path
 ) -> None:

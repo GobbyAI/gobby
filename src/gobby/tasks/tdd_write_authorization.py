@@ -70,6 +70,7 @@ def authorize_production_write(
     evidence: TranscriptEvidence,
     *,
     task_refs: frozenset[str],
+    pending_writes: tuple[TranscriptEdit, ...] = (),
 ) -> WriteAuthorization:
     claims = sorted(evidence.task_claims, key=lambda claim: claim.claimed_at)
 
@@ -138,14 +139,17 @@ def authorize_production_write(
                 and _green_run_covers_test(earlier, test)
                 for earlier in scoped.validation_runs
             )
-            red, _ = _find_red_run(
-                test,
-                replace(scoped, validation_runs=(run,)),
-                latest_edit,
-                boundary,
-                require_not_implemented=not test.path.endswith(".rs")
-                and (prior_production or prior_green),
-            )
+            for closing in pending_writes or (boundary,):
+                red, _ = _find_red_run(
+                    test,
+                    replace(scoped, validation_runs=(run,)),
+                    latest_edit,
+                    closing,
+                    require_not_implemented=not test.path.endswith(".rs")
+                    and (prior_production or prior_green),
+                )
+                if red is not None:
+                    break
             if red is not None:
                 break
         if red is None:
@@ -165,12 +169,17 @@ def authorize_session_write(
     repo_path: str,
     archive_dir: str | None = None,
     task_edited_files: set[str] | None = None,
+    pending_sources: Mapping[str, str] | None = None,
 ) -> WriteAuthorization:
     from gobby.config.validation_detection import default_validation_detection_config
     from gobby.tasks.command_equivalence import run_location
     from gobby.tasks.transcript_evidence import _derive_transcript_evidence_sync
 
-    known = (task_edited_files or set()) | {obligation.test.path for obligation in obligations}
+    known = (
+        (task_edited_files or set())
+        | {obligation.test.path for obligation in obligations}
+        | set(pending_sources or ())
+    )
     evidence, _ = _derive_transcript_evidence_sync(
         session,
         None,
@@ -217,11 +226,37 @@ def authorize_session_write(
             missing.append(test.reference)
             continue
         resolved.append(replace(obligation, test=test))
-    authorization = authorize_production_write(tuple(resolved), evidence, task_refs=task_refs)
+    pending_order = (
+        max(
+            [edit.order for edit in evidence.edits]
+            + [run.order for run in evidence.validation_runs],
+            default=-1,
+        )
+        + 1
+    )
+    pending_writes = tuple(
+        TranscriptEdit(
+            session_id=session.id,
+            source=session.source,
+            path=path,
+            tool_name="pending-write",
+            timestamp=datetime.now(UTC),
+            order=pending_order,
+            checkout_root=str(root),
+            source_after=source,
+        )
+        for path, source in (pending_sources or {}).items()
+        if (root / path).resolve().is_relative_to(root)
+    )
+    authorization = authorize_production_write(
+        tuple(resolved), evidence, task_refs=task_refs, pending_writes=pending_writes
+    )
     missing.extend(authorization.missing)
     for obligation in resolved:
         test = obligation.test
         source = sources[test.path]
+        if pending_sources is not None and pending_sources.get(test.path, source) != source:
+            missing.append(test.reference)
         latest = max(
             (edit for edit in evidence.edits if edit.path == test.path),
             key=lambda edit: edit.order,

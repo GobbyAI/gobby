@@ -213,6 +213,7 @@ def server_tdd_authorization(
         task_tdd_obligations,
     )
     from gobby.tasks.transcript_evidence_models import TranscriptEvidenceUnavailable
+    from gobby.workflows.rust_test_evidence import projected_write_sources
 
     variables = context.get("variables", {})
     paths = variables.get("claimed_task_acceptance_test_paths", ())
@@ -245,6 +246,11 @@ def server_tdd_authorization(
     missing: list[str] = []
     reds: dict[str, str] = {}
     checked = False
+    pending = projected_write_sources(
+        context.get("tool_input"),
+        _event_and_tool_paths(getattr(event, "data", {}), context.get("tool_input")),
+        project_path,
+    )
     for task_id in claims:
         task = task_manager.get_task(task_id)
         if task is None or getattr(task, "claimed_by_session_id", None) != session.id:
@@ -279,6 +285,7 @@ def server_tdd_authorization(
                 task_refs=refs,
                 repo_path=project_path,
                 task_edited_files=known_files,
+                pending_sources=pending,
             )
         except (OSError, ValueError, TranscriptEvidenceUnavailable):
             return denied
