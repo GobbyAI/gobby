@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.mcp_proxy.tools.worktrees._helpers import copy_project_json_to_worktree
 from gobby.utils import project_context
 from gobby.utils.project_context import (
     ensure_project_json_for_isolation,
@@ -152,3 +153,19 @@ def test_reader_rejects_partial_pin_provenance(tmp_path: Path) -> None:
     )
 
     assert read_isolation_marker(tmp_path) is None
+
+
+async def test_mcp_sidecar_writer_forwards_selected_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, isolated = tmp_path / "source", tmp_path / "isolated"
+    selected = _seed_source(source)
+    _commit(source, "later.txt")
+    isolated.mkdir()
+    monkeypatch.setattr(project_context, "link_checkout_cargo_target", lambda *args, **kwargs: None)
+
+    await copy_project_json_to_worktree(source, isolated, base_commit=selected)
+
+    marker = read_isolation_marker(isolated)
+    assert marker is not None
+    assert marker["base_commit"] == selected

@@ -355,7 +355,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 471,
         filename: "471_code_overlay_pins.sql",
-        checksum: "f3322c3d5e5182b07e1c9c87a5bfee26f5f3a60591f7a4e71cbc140099bbfea8",
+        checksum: "0442fc0551a1959898df7feebaf0ca03ebeb170a25febb00c3a2e73c256da751",
         sql: include_str!("../../assets/schema/migrations/471_code_overlay_pins.sql"),
     },
 ];

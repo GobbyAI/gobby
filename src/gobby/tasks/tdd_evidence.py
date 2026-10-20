@@ -32,6 +32,7 @@ from gobby.tasks.tdd_pytest_provenance import _FAILURE_SECTION_BOUNDARY_RE, _fai
 from gobby.tasks.tdd_python_evidence import (
     PythonBindingCache,
     _has_pytest_fail_placeholder,
+    _has_python_declaration_stub,
     _has_python_keyword_stub,
     _has_python_module_stub,
     _has_python_runtime_stub,
@@ -472,6 +473,10 @@ def _red_run_proof(
             _has_runtime_stub(test, evidence, run, core_command, parse_cache)
             or _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
+            or (
+                _has_declaration_assertion(core_command, run.output, test)
+                and _has_python_declaration_stub(test, evidence, run, closing_edit, parse_cache)
+            )
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
             or _test_tightening_proof(test, evidence, run, parse_cache)
             or has_stub_revert_proof(evidence, run, closing_edit)
@@ -482,6 +487,24 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _has_declaration_assertion(command: str, output: str | None, test: AcceptanceTest) -> bool:
+    """Keep assertion credit local to the named test's own failure section."""
+    if output is None:
+        return False
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if not (
+            _PYTEST_FAILURE_HEADER_RE.match(line)
+            or _RTK_FAILURE_HEADER_RE.match(line)
+            or _PYTEST_LOCATION_RE.match(line)
+        ):
+            continue
+        section = _failure_section(lines, index)
+        if is_assertion_failure(section) and _has_pytest_body_failure(command, section, test)[0]:
+            return True
+    return False
 
 
 def _has_runtime_stub(

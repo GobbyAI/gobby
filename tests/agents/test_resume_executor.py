@@ -287,7 +287,17 @@ async def test_resumed_opt_out_run_skips_pre_commit_prewarm(
     expected: bool,
 ) -> None:
     _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
-    prepare_sandbox = AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True))
+    prepare_sandbox = AsyncMock(
+        return_value=SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            provider_executable="/managed/provider",
+            policy_path="/policy/settings.json",
+            violation_path="/policy/violations.jsonl",
+            node_path="/managed/node",
+            runner_path="/managed/runner.mjs",
+        )
+    )
     monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     metadata = _resume_metadata()
     metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
@@ -915,6 +925,31 @@ async def test_resume_non_codex_endpoint_uses_provider_specific_environment(
     assert spawn_env[token_env] == "resume-secret"
 
 
+@pytest.mark.parametrize(("backend", "enforced"), [("srt", False), ("provider-native", True)])
+@pytest.mark.asyncio
+async def test_resume_persists_empty_wrap_prefix_for_inactive_srt(
+    monkeypatch: pytest.MonkeyPatch, backend: str, enforced: bool
+) -> None:
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    launch = SandboxLaunch(backend=backend, enforced=enforced)
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", AsyncMock(return_value=launch))
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=_resume_metadata(),
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert launch_updates["sandbox"] == {**launch.metadata(), "wrap_prefix": []}
+
+
 @pytest.mark.asyncio
 async def test_resume_reuses_persisted_claude_mcp_config(
     monkeypatch: pytest.MonkeyPatch,
@@ -949,6 +984,7 @@ async def test_resume_reuses_persisted_claude_mcp_config(
     assert successor_metadata["mcp_path"] == "/persisted/.mcp.json"
     assert successor_metadata["strict_mcp"] is True
     launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert launch_updates["sandbox"]["wrap_prefix"] == wrapped[: wrapped.index("--") + 1]
     assert "mcp_path" not in launch_updates
     assert "strict_mcp" not in launch_updates
     # Claude Code connects `--mcp-config` servers without blocking the session and

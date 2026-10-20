@@ -15,6 +15,7 @@ import psycopg
 from psycopg_pool import PoolTimeout
 
 from gobby.hooks._path_scope import checkout_root
+from gobby.hooks.checkout_reads import event_machine_id
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
@@ -476,9 +477,10 @@ def _live_path_owners(
         FROM sessions
         LEFT JOIN projects ON projects.id = sessions.project_id
         WHERE sessions.id IS DISTINCT FROM %s AND sessions.status = ANY(%s)
+          AND sessions.machine_id = %s
         ORDER BY sessions.seq_num
         """,
-        (exclude_session_id, list(LIVE_SESSION_STATUS_ORDER)),
+        (exclude_session_id, list(LIVE_SESSION_STATUS_ORDER), event_machine_id()),
     )
     variable_manager = SessionVariableManager(db)
     owners: dict[str, list[ForeignPathOwner]] = {}

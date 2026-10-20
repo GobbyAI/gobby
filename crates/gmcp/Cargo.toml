@@ -1,6 +1,6 @@
 [package]
 name = "gobby-mcp"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -25,8 +25,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["io-std", "macros", "rt", "sync", "time"] }
 ureq = { version = "2", features = ["json"] }
+unicode_names2 = "=2.0.0"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 temp-env = "0.3.6"
 

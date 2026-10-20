@@ -123,13 +123,13 @@ def first_executable(
             tokens = arguments
             continue
         if executable in {"uv", "uvx"}:
-            inner = _uv_run_arguments(arguments if executable == "uv" else ("run", *arguments))
+            inner = _uv_run_arguments(
+                arguments if executable == "uv" else ("run", *arguments), directories=directories
+            )
             if inner is None:
                 return None
             if inner[0] == "uv" and len(inner) > 1 and inner[1] in _UV_DIRECT_COMMANDS:
                 return "uv", inner[1:]  # Proven direct uv subcommand.
-            if directories is not None:
-                directory_options(arguments[: len(arguments) - len(inner)], directories)
             tokens = inner
         elif executable in {
             "timeout",
@@ -210,7 +210,9 @@ def directory_options(arguments: tuple[str, ...], directories: list[str | None])
             next(options, None)
 
 
-def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
+def _uv_run_arguments(
+    arguments: tuple[str, ...], *, directories: list[str | None] | None = None
+) -> tuple[str, ...] | None:
     """Resolve only known uv options, stopping at the child command boundary."""
     index = 0
     seen_run = False
@@ -222,12 +224,12 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
             index += 1
             continue
         if seen_run and token == "--":
-            child = arguments[index + 1 :]
-            return ("python", "-m", *child) if module and child else child or None
+            index += 1
+            break
         if not token.startswith("-"):
             child = arguments[index:]
             if seen_run:
-                return ("python", "-m", *child) if module else child
+                break
             if token in _UV_DIRECT_COMMANDS:
                 return ("uv", *child)
             return None
@@ -251,7 +253,12 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
             index += 1  # Attached short-option operand, e.g. -p3.14.
         else:
             return None
-    return None
+    child = arguments[index:]
+    if not seen_run or not child:
+        return None
+    if directories is not None:
+        directory_options(arguments[:index], directories)
+    return ("python", "-m", *child) if module else child
 
 
 def _launcher_arguments(executable: str, arguments: tuple[str, ...]) -> tuple[str, ...] | None:

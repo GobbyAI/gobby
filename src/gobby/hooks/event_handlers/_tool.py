@@ -12,6 +12,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_tool_path
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -542,7 +543,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         return landed if isinstance(landed, set) else set()
 
     def _notify_code_index(self, repo_root: Path, repo_relative_path: str) -> None:
-        if self._code_index_trigger is None:
+        if node_origin() or self._code_index_trigger is None:
             return
         try:
             from gobby.hooks.project_context import ProjectIdResolver

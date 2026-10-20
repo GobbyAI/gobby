@@ -22,11 +22,11 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.filename, "471_code_overlay_pins.sql");
     assert_eq!(
         identity.latest_asset.checksum,
-        "f3322c3d5e5182b07e1c9c87a5bfee26f5f3a60591f7a4e71cbc140099bbfea8"
+        "0442fc0551a1959898df7feebaf0ca03ebeb170a25febb00c3a2e73c256da751"
     );
     assert_eq!(
         identity.root_hash,
-        "676c76788c6e1d1cde6a2adad450881c84069ef144301d591a515d1f18c1604b"
+        "1c2b12a59d3e2585ac5e3c34bdc2f7f687d30028b4f0780a2687dc527eb81023"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

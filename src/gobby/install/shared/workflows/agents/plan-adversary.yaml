@@ -183,7 +183,7 @@ step_workflow:
         Review the plan plan-writer passes you, send findings over send_message
         until consensus. Verify the writer's committed consensus entry and SHA,
         then send a line starting EVENT=CONSENSUS SHA=<commit> to the writer and
-        coordinator. SHA must be a 7-40 character hexadecimal commit ID.
+        coordinator. SHA must be the full 40-character lowercase hexadecimal commit ID.
         The successful send_message handler enters stamp; do not call set_variable.
       allowed_tools: "all"
       blocked_tools:
@@ -230,6 +230,9 @@ step_workflow:
         send_message with EVENT=CONSENSUS_WITHDRAWN SHA=<consensus SHA> NOTE= to the coordinator. This
         returns to review and blocks stamping until a new consensus event;
         verify a committed V1 entry and send a new consensus event before stamping.
+        Withdrawal also requires a full 40-character lowercase hexadecimal SHA.
+        If legacy consensus state has no recorded SHA, use the commit being re-reviewed;
+        the withdrawal clears consensus and returns to review without approving that commit.
       allowed_tools: "all"
       allowed_mcp_tools: "all"
       blocked_tools:

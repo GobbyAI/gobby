@@ -447,13 +447,15 @@ fn session_ids_stay_one_path_segment() -> Result<()> {
             ("get_variable", ".."),
         ] {
             let arguments = json!({"session_id": session_id, "name": "x", "value": 1});
-            let error = gmcp
-                .call_tool(tool, arguments)
-                .expect_err("an empty or dot-only session_id must be refused");
+            let id = gmcp.request("tools/call", json!({"name": tool, "arguments": arguments}))?;
+            let response = gmcp.messages.recv_timeout(RESPONSE_TIMEOUT)?;
+            assert_eq!(response["id"], id, "invalid input response identity");
+            assert_eq!(response["error"]["code"], -32602, "invalid params code");
+            let error = response["error"]["message"]
+                .as_str()
+                .context("invalid input error message")?;
             assert!(
-                error
-                    .to_string()
-                    .contains("session_id must name one session"),
+                error.contains("session_id must name one session"),
                 "{error}"
             );
         }

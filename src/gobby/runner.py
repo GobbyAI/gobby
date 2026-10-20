@@ -387,7 +387,7 @@ async def run_gobby(
     from gobby.cli.utils import get_gobby_home
     from gobby.config.bootstrap import load_bootstrap, node_daemon_refusal, resolve_bootstrap_path
     from gobby.deployment import deployment_token
-    from gobby.runner_backend import watch_supervisor
+    from gobby.runner_backend import supervisor_fd, watch_supervisor
     from gobby.runner_init import StartRefusal
     from gobby.runner_pid_file import SupervisedPidOwnership, claim_pid_file, probe_daemon_lock
     from gobby.runtime_grants.lease_view import RuntimeLeaseView
@@ -415,7 +415,7 @@ async def run_gobby(
             ownership_resolution.release()
         raise
     if ownership_resolution is None:
-        if "GOBBY_SUPERVISOR_FD" in os.environ:
+        if supervisor_fd() is not None:
             ownership_resolution = SupervisedPidOwnership()
         elif os.name == "nt":
             from gobby.runner_windows import claim_windows_pid
@@ -615,10 +615,11 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
 
-    from gobby.runner_backend import take_front_door_secret
+    from gobby.runner_backend import take_front_door_secret, take_supervisor_fd
     from gobby.utils.spawn import seal_inherited_descriptors
 
-    # Read and close the secret's pipe before any child can inherit it.
+    # Consume process-only launch markers before sealing descriptors and spawning children.
+    take_supervisor_fd()
     take_front_door_secret()
     seal_inherited_descriptors()
 
