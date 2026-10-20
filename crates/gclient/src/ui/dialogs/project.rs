@@ -14,9 +14,9 @@ use ratatui::Frame;
 
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
-    action_button_row_rects, centered_popup_rect, modal_choice_rows, render_action_button,
-    render_modal_description, render_modal_header, render_modal_shell, render_panel_shell,
-    ActionButtonSpec,
+    action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_description,
+    render_action_button, render_modal_description, render_modal_header, render_modal_shell,
+    render_panel_shell, ActionButtonSpec,
 };
 
 use super::{input_line, primary_button_style, secondary_button_style, WorktreeChoice};
@@ -280,7 +280,16 @@ pub fn render_remove_worktree(
     error: Option<&str>,
 ) -> Vec<Rect> {
     let p = &chrome.palette;
-    let Some(popup) = centered_popup_rect(area, POPUP_WIDTH, REMOVE_WORKTREE_HEIGHT) else {
+    let inner_width = POPUP_WIDTH
+        .min(area.width.saturating_sub(4))
+        .saturating_sub(2);
+    let error_rows = error
+        .map_or(1, |error| {
+            modal_description(error, Style::default()).line_count(inner_width.max(1))
+        })
+        .clamp(1, usize::from(area.height.saturating_sub(9).max(1))) as u16;
+    let popup_height = REMOVE_WORKTREE_HEIGHT.saturating_add(error_rows.saturating_sub(1));
+    let Some(popup) = centered_popup_rect(area, POPUP_WIDTH, popup_height) else {
         return Vec::new();
     };
     let Some(inner) = render_panel_shell(frame, popup, p.red, p.panel_bg) else {
@@ -293,7 +302,7 @@ pub fn render_remove_worktree(
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(error_rows),
         Constraint::Min(0),
     ])
     .areas::<5>(inner);

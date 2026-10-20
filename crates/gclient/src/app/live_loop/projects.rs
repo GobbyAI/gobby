@@ -866,9 +866,14 @@ pub(super) fn daemon_reason(error: &DaemonError) -> String {
         return detail.clone();
     };
     let detail_value = body.get("detail").unwrap_or(&body);
-    ["message", "error_code", "error"]
+    ["git_error", "message", "error_code", "error"]
         .iter()
-        .find_map(|key| detail_value.get(key).and_then(|value| value.as_str()))
+        .find_map(|key| {
+            detail_value
+                .get(key)
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+        })
         .or_else(|| detail_value.as_str())
         .map_or_else(|| detail.clone(), str::to_owned)
 }
