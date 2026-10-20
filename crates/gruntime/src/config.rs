@@ -288,7 +288,7 @@ pub(crate) async fn effective(State(state): State<Arc<RuntimeState>>) -> Respons
     }
 }
 
-fn json_response(status: StatusCode, body: Value) -> Response<Body> {
+pub(crate) fn json_response(status: StatusCode, body: Value) -> Response<Body> {
     let mut response = Response::new(Body::from(body.to_string()));
     *response.status_mut() = status;
     response

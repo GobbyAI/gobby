@@ -50,7 +50,7 @@ from .utils import (
 from .utils import (
     stop_daemon as stop_daemon_util,
 )
-from .utils_process import get_port_listener_pid
+from .utils_process import ProcessConnectionsUnavailable, get_port_listener_pid
 
 logger = logging.getLogger(__name__)
 
@@ -651,11 +651,15 @@ def status(ctx: click.Context) -> None:
 
     http_port = config.daemon_port
     reported_is_live = _is_process_alive(reported_pid)
+    listener_unavailable: str | None = None
     try:
         listener_pid = get_port_listener_pid(http_port)
     except (OSError, psutil.Error) as exc:
         logger.debug("Failed to inspect HTTP port %s ownership: %s", http_port, exc)
         listener_pid = None
+    except ProcessConnectionsUnavailable as exc:
+        listener_pid = None
+        listener_unavailable = str(exc)
     listener_is_live = (
         listener_pid is not None
         and listener_pid != reported_pid
@@ -671,6 +675,10 @@ def status(ctx: click.Context) -> None:
         notes.append(
             f"Note: PID mismatch: {pid_source} reports {reported_pid}; "
             f"HTTP port {http_port} is owned by PID {listener_pid}"
+        )
+    if listener_unavailable is not None:
+        notes.append(
+            f"Note: cannot inspect HTTP port {http_port} listener ownership: {listener_unavailable}"
         )
 
     if pid is None:

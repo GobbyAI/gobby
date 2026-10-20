@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 import psutil
 
-from gobby.agents.srt_socket_paths import srt_mux_tmpdir
+from gobby.agents.srt_socket_paths import existing_srt_mux_tmpdir, srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.spawn import run
@@ -87,13 +87,9 @@ def pinned_monitor_identities(
     probes no socket and reads no record, so a broker the registry lost still survives a
     restart. Adoption and subscription trust still go through _verified_recorded_broker.
     """
-    try:
-        directory = srt_mux_tmpdir()
-    except OSError:
-        # No broker can sit under a directory that cannot be ensured. Failing here would
-        # abort the whole reap and leave every child alive.
+    socket_path = _broker_socket_path()
+    if socket_path is None:
         return {}
-    socket_path = directory / f"v-{SRT_RELEASE.runner_sha256[:12]}"
     uid = os.getuid()
     identities: dict[int, float] = {}
     for process in children:
@@ -111,14 +107,29 @@ def pinned_monitor_identities(
     return identities
 
 
+def _broker_socket_path() -> Path | None:
+    """Return the shared broker's socket path, or None when no broker can be verified here.
+
+    Restart preservation and recorded-broker trust both select the broker through this one
+    guard. It reads the root and creates nothing. The reap runs before any child is
+    terminated, so an unusable root must cost only the broker, never the kill loop.
+    """
+    try:
+        directory = existing_srt_mux_tmpdir()
+    except OSError:
+        return None
+    return directory / f"v-{SRT_RELEASE.runner_sha256[:12]}"
+
+
 def _verified_recorded_broker() -> tuple[int, float] | None:
     """Return the owner-recorded broker only when every pinned field still holds.
 
     Same-uid code can write the record, so the broker must answer the probe as the
     listener of this socket and match the live process on every field.
     """
-    directory = srt_mux_tmpdir()
-    path = directory / f"v-{SRT_RELEASE.runner_sha256[:12]}"
+    path = _broker_socket_path()
+    if path is None:
+        return None
     record = _read_owner_record(path)
     if record is None:
         return None

@@ -11,17 +11,16 @@ from pathlib import Path
 import pytest
 
 from gobby.guard_set_g import (
-    durable_hosts as _durable_hosts,
+    ended_durable_hosts,
+    leaked_hosts,
 )
 from gobby.guard_set_g import (
     finalize_pidfile_host as _finalize_pidfile_host,
 )
 from gobby.guard_set_g import (
-    leaked_hosts,
-)
-from gobby.guard_set_g import (
     snapshot_gterm_hosts as _gterm_hosts,
 )
+from tests.conftest import OPERATOR_GOBBY_HOME
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
     select_native_binary,
@@ -62,8 +61,8 @@ def managed_composer_tmpdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Guard set G group 7 for this suite: no host leaks, no durable host ends.
 
-    A durable host (state directory outside every temp root, such as the daemon's
-    ``~/.gobby`` host) that exists before the session must still exist after it;
+    A production host (state directory under Gobby home) that exists before the
+    session must still exist after it;
     ending one would take every native terminal on the machine down with it.
     Ownership and cleanup come from ``gobby.guard_set_g`` so the executable
     guard and this fixture cannot drift.
@@ -75,11 +74,6 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
     roots: tuple[Path, ...] = (tmp_path_factory.getbasetemp().resolve(),)
     if run_tmp:
         roots += (Path(run_tmp).resolve(),)
-    temp_roots: tuple[Path, ...] = (
-        *roots,
-        Path(tempfile.gettempdir()).resolve(),
-        Path("/tmp").resolve(),
-    )
     after = _gterm_hosts()
     leaked = leaked_hosts(before, after, roots)
     for pid, socket_dir in leaked.items():
@@ -91,11 +85,7 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
         "tests/terminals leaked gterm host processes that use this session's temp roots: "
         f"before={sorted(before)} after={sorted(final)} remaining={sorted(remaining)}"
     )
-    ended = {
-        pid: socket_dir
-        for pid, socket_dir in _durable_hosts(before, temp_roots).items()
-        if final.get(pid) != socket_dir
-    }
+    ended = ended_durable_hosts(before, final, production_home=OPERATOR_GOBBY_HOME)
     assert not ended, (
         "tests/terminals ended durable gterm host processes it did not start: "
         f"before={sorted(before)} after={sorted(final)} ended={sorted(ended)}"

@@ -183,7 +183,9 @@ def _reviewer_message(
                 record for record in parked if not _same_task(db, record.get("task"), event)
             ],
         }
-    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
+    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(
+        db, event, session_id, parked_candidates=parked
+    ):
         changes = _clear_candidate() if same_unit else {}
         remaining = [
             record
@@ -193,7 +195,9 @@ def _reviewer_message(
         if remaining != parked:
             changes["parked_candidates"] = remaining
         return changes
-    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(db, event, session_id):
+    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(
+        db, event, session_id, parked_candidates=parked
+    ):
         matching = [
             record
             for record in parked
@@ -233,6 +237,13 @@ def _reviewer_message(
         if _approved(db, session_id, event.task.id, event.sha):
             return _clear_candidate()
     return {}
+
+
+def _returns_to_implement(fields: dict[str, str]) -> bool:
+    """A pre-land BOUNCE, or a PROOF_REQUEST for evidence or a landed retest."""
+    if fields.get("EVENT") == "PROOF_REQUEST":
+        return True
+    return fields.get("EVENT") == "CANDIDATE_VERDICT" and fields.get("VERDICT") == "BOUNCE"
 
 
 def advance_seat(
@@ -309,11 +320,11 @@ def advance_seat(
             if (
                 message.to_session == session_id
                 and _same_task(db, state.get("assigned_task_id"), event)
-                and event.fields.get("EVENT") == "CANDIDATE_VERDICT"
-                and event.fields.get("VERDICT") == "BOUNCE"
+                and _returns_to_implement(event.fields)
                 and is_task_reviewer(db, event)
                 and _linked_candidate_matches(db, session_id, event)
             ):
+                # The flag returns the claim to implement with shell access; link_commit clears it.
                 changes = {"bounced": True, "implementation_complete": False}
         if changes:
             return {**changes, "_seat_consumed_messages": consumed + [message.id]}

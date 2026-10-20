@@ -45,15 +45,13 @@ def _dedupe_configs_by_id(configs: list[MCPServerConfig]) -> list[MCPServerConfi
 
 async def _acquire_connection_lock(manager: Any, server_id: str) -> asyncio.Lock:
     lock = cast(asyncio.Lock, manager._lazy_connector.get_connection_lock(server_id))
+    config = manager._configs.get(server_id)
+    timeout = config.connect_timeout if config is not None else manager.connection_timeout
     try:
-        await asyncio.wait_for(lock.acquire(), timeout=manager.connection_timeout)
+        await asyncio.wait_for(lock.acquire(), timeout=timeout)
     except TimeoutError as exc:
-        config = manager._configs.get(server_id)
         label = config.name if config is not None else server_id
-        error = MCPError(
-            f"Timed out waiting for connection lock for '{label}' "
-            f"after {manager.connection_timeout}s"
-        )
+        error = MCPError(f"Timed out waiting for connection lock for '{label}' after {timeout}s")
         manager._lazy_connector.mark_failed(server_id, str(error))
         raise error from exc
     return lock
@@ -80,8 +78,14 @@ async def _connect_with_retries(
     retry_config = manager._lazy_connector.retry_config
     last_error: Exception | None = None
     label = config.name
+    deadline = time.monotonic() + config.connect_timeout
+    attempts = 0
 
     for attempt in range(retry_config.max_retries + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        attempts += 1
         try:
             state = manager._lazy_connector.get_state(server_id)
             if state:
@@ -89,7 +93,7 @@ async def _connect_with_retries(
 
             session = await asyncio.wait_for(
                 manager._connect_server(config),
-                timeout=manager.connection_timeout,
+                timeout=remaining,
             )
 
             if session:
@@ -102,14 +106,17 @@ async def _connect_with_retries(
             last_error = exc
             manager._lazy_connector.mark_failed(server_id, str(exc))
         except TimeoutError:
-            last_error = MCPError(f"Connection timeout after {manager.connection_timeout}s")
+            last_error = MCPError(f"Connection timeout after {config.connect_timeout}s")
             manager._lazy_connector.mark_failed(server_id, str(last_error))
+            break
         except Exception as exc:
             last_error = exc
             manager._lazy_connector.mark_failed(server_id, str(exc))
 
         if attempt < retry_config.max_retries:
             delay = retry_config.get_delay(attempt)
+            if delay >= deadline - time.monotonic():
+                break
             logging.getLogger("gobby.mcp.manager").warning(
                 "Connection to '%s' failed (attempt %s/%s), retrying in %.1fs: %s",
                 label,
@@ -121,7 +128,7 @@ async def _connect_with_retries(
             await asyncio.sleep(delay)
 
     raise MCPError(
-        f"Failed to connect to '{label}' after {retry_config.max_retries + 1} attempts: {last_error}"
+        f"Failed to connect to '{label}' after {attempts} attempts: {last_error}"
     ) from last_error
 
 

@@ -29,6 +29,7 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
     HookEvent,
     HookEventType,
@@ -79,6 +80,8 @@ def is_action_first_reason(reason: str) -> bool:
 
 def _saved_mcp_result(text: str, session_id: object) -> str:
     """Return the full MCP result Claude saved to disk in place of its pointer."""
+    if node_origin():
+        return text
     match = _MCP_RESULT_SAVED_NOTICE.match(text)
     if match is None or not isinstance(session_id, str) or not session_id:
         return text

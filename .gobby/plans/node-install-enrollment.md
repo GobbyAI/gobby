@@ -1513,7 +1513,7 @@ Targets:
 - `crates/gdaemon/src/nodes/release_target/tests.rs`
 - `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: declares the new `release_target` module and adds the `HubNodes` field
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: the `HubNodes` literal in the Unix `run` gains the resolver; the file has two `run` variants
-- `crates/gdaemon/tests/nodes.rs::channel_door`
+- `crates/gdaemon/tests/common/channel.rs::channel_door`
 - `crates/gdaemon/src/nodes/channel.rs::send_ack`
 - `crates/gdaemon/src/nodes/channel.rs::hub_channel`
 - `crates/gdaemon/src/nodes/release_frames.rs`
@@ -1541,7 +1541,7 @@ Python surface replaced: none (D5).
 
 Research context:
 - `crates/gdaemon/src/serve.rs::run` builds `HubNodes` with `db`, `registry` and
-  `timing`; `crates/gdaemon/tests/nodes.rs::channel_door` builds one too.
+  `timing`; `crates/gdaemon/tests/common/channel.rs::channel_door` builds one too.
 - GitHub allows 60 unauthenticated API requests an hour per address; a 10-minute
   cache spends at most six, plus operator-forced refreshes.
 - Planned checks: as 4.1, plus `-E 'test(release_target::)'`.
@@ -1867,6 +1867,14 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   gobby#16993. Round 2 closed F1 to F7, N1 to N5, H1 and H2 at 76fd814, 7724de5 and
   a09dde3, and left one gate: #15977's ruling on the two new Python files. D24
   records that ruling at a223af6. The stale M1 is withdrawn for a fresh derivation.
+- 2026-10-18: Drift repair by Plan Writer gobby#16767 for Plan Adversary gobby#16993's
+  report. #24594 (Internal node-command route) at f6506a102a moved `channel_door`
+  into `crates/gdaemon/tests/common/channel.rs`, so 4.2's target and research context
+  name that file. The stale M1 stays until consensus.
+- 2026-10-18: Renewed consensus between Plan Writer gobby#16767 and Plan Adversary
+  gobby#16993 on the drift repair at 8ca533b. Orchestrator #15977 ruled that Josh's
+  18:02 approval carries to the restamp. The stale M1 is withdrawn for a fresh
+  derivation.
 
 ## M1 Task Manifest
 `kind: manifest`

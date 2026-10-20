@@ -484,6 +484,32 @@ def test_reported_workspace_is_durable_before_200(
     assert live_path not in {w.worktree_path for w in hub_rows}
 
 
+@pytest.mark.parametrize("mode", ["worktree", "clone"])
+def test_unlaunched_exit_does_not_record_workspace(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    _machines(temp_db)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    path = f"/node-only/unlaunched/{uuid.uuid4()}"
+    exit_report = _exit(run.run_id, run.terminal_id, _workspace(path, mode))
+    exit_report["launched"] = False
+
+    with _client(temp_db, monkeypatch) as client:
+        epoch = node_reports.node_report_inbox().hub_epoch
+        result = _post(client, "report", _report(epoch, 1, exits=[exit_report]))
+        worktrees = _workspace_rows(temp_db, "worktrees")
+        clones = _workspace_rows(temp_db, "clones")
+        node_reports.node_report_inbox.cache_clear()
+
+    assert result == (200, {})
+    assert [row for row in worktrees if row["path"] == path] == []
+    assert [row for row in clones if row["path"] == path] == []
+
+
 def test_reported_workspace_moves_updated_at(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

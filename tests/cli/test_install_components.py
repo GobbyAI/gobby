@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
+import stat
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -69,6 +72,7 @@ class TestRegistry:
             "embedding",
             "ide-settings",
             "gclient",
+            "gmcp",
             "gterm",
             "srt",
         }
@@ -80,6 +84,7 @@ class TestRegistry:
             "embedding",
             "ide-settings",
             "gclient",
+            "gmcp",
             "gterm",
             "srt",
         }
@@ -87,6 +92,70 @@ class TestRegistry:
     def test_embedding_overrides_any_set(self) -> None:
         assert not EmbeddingOverrides().any_set
         assert EmbeddingOverrides(dim=3).any_set
+
+
+def test_gmcp_component_promotes_client_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, runtime: MagicMock
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ".gobby"))
+    promoted: list[Path] = []
+
+    def install_gmcp(bin_dir: Path) -> str:
+        promoted.append(bin_dir)
+        (bin_dir / "gmcp").write_bytes(b"gmcp")
+        return "gmcp-sha"
+
+    def claim_singleton() -> None:
+        raise AssertionError("binary install claimed the daemon singleton")
+
+    monkeypatch.setattr("gobby.cli.install_setup._install_gmcp_from_submodule", install_gmcp)
+    monkeypatch.setattr("gobby.cli.install_setup._write_gmcp_version_stamp", MagicMock())
+    monkeypatch.setattr("gobby.cli.install_files_home.acquire_install_maintenance", claim_singleton)
+    bin_dir = tmp_path / "bin"
+
+    results = run_install_components(
+        ("gmcp",),
+        project_path=tmp_path,
+        no_interactive=True,
+        embedding=None,
+        runtime=runtime,
+        bin_dir=bin_dir,
+    )
+
+    assert results["gmcp"]["success"] is True
+    assert promoted == [bin_dir]
+
+
+def test_gmcp_component_records_daemon_start_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, runtime: MagicMock
+) -> None:
+    home = tmp_path / ".gobby"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+
+    def install_gmcp(bin_dir: Path) -> str:
+        (bin_dir / "gmcp").write_bytes(b"gmcp")
+        return "promoted"
+
+    monkeypatch.setattr("gobby.cli.install_setup._install_gmcp_from_submodule", install_gmcp)
+    monkeypatch.setattr("gobby.cli.install_setup._write_gmcp_version_stamp", MagicMock())
+
+    run_install_components(
+        ("gmcp",),
+        project_path=tmp_path,
+        no_interactive=True,
+        embedding=None,
+        runtime=runtime,
+        bin_dir=home / "bin",
+    )
+
+    start = home / "gmcp-daemon-start.json"
+    assert json.loads(start.read_text(encoding="utf-8")) == [
+        sys.executable,
+        "-m",
+        "gobby.cli",
+        "start",
+    ]
+    assert stat.S_IMODE(start.stat().st_mode) == 0o644
 
 
 class TestRequireInstalled:

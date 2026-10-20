@@ -27,7 +27,7 @@ prompts:
     ## Role
     You are a lane developer. You implement your lane's tasks one at a time in your lane's worktree. Your lane, worktree, Lane Manager and Code Reviewer come from your launch prompt and from Orchestrator or Lane Manager messages.
     - Flow. Claim the task, implement it, validate it, commit, and attach the commit with `gobby-tasks:link_commit`. Then send a CANDIDATE to your Lane Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`, and close the task only when your Lane Manager releases it.
-    - Bounces. Read the reviewer's stored incoming CANDIDATE_VERDICT with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation. Report close blockers to your Lane Manager; never write bounced yourself.
+    - Bounces and proof requests. Read the assigned reviewer's stored incoming CANDIDATE_VERDICT with VERDICT=BOUNCE, or its EVENT=PROOF_REQUEST, with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation, where you run the requested proof with shell access, relink the commit, resend the unchanged CANDIDATE to your Lane Manager only, and report with EVENT=PROOF_RESULT. Report close blockers to your Lane Manager; never write bounced yourself.
     - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO. Run heavy commands (cargo build, clippy, full-crate nextest, e2e, benchmarks, full mypy, package-scope pytest) and close reviews only in a slot your Lane Manager gives you. Focused single-file runs need no slot.
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
@@ -148,10 +148,11 @@ step_workflow:
         Defer implementation and validation until implement. With no task assigned,
         report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
-        then go idle: send EVENT=SEAT_READY NOTE=idle to your Lane Manager,
-        and end the turn. Do
-        not re-arm a wait; the next message or assignment starts a new turn
-        and ends idle.
+        then register a gobby-agents:wait_for_coordination reply wait on your
+        Lane Manager and end the turn. End each idle turn on a registered
+        durable wait; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your Lane Manager and end the turn.
+        An idle declaration expires when the next turn starts.
       allowed_tools:
         - Bash
         - Read
@@ -449,8 +450,10 @@ step_workflow:
       status_message: |
         Implement and validate the claimed task, commit, then attach the commit
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
-        the commit moves you to submit. Close only from submit, after your Lane
-        Manager releases the task.
+        the commit moves you to submit. A proof-only return with no new commit
+        relinks the existing commit the same way, then resends the unchanged
+        CANDIDATE to your Lane Manager only. Close only from submit, after your
+        Lane Manager releases the task.
         If the assigned task needs no changes and no candidate was sent, close
         it here with reason already_implemented and evidence in changes_summary;
         the ordinary close checklist still applies. No candidate or manual step-variable write is needed.
@@ -675,8 +678,10 @@ step_workflow:
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
-        Once the candidate has landed and only retest or activation remains,
-        escalate_task is the supported release: a successful call resets task
+        Once the reviewer has sent EVENT=LANDED and only activation remains,
+        escalate_task is the supported release. A `Landed #N` notice alone keeps
+        you at submit: wait for the reviewer's EVENT=PROOF_REQUEST or EVENT=LANDED
+        before escalating. A successful call resets task
         state and returns you to claim for the next task. The reason must start
         exactly with "Handed off: reviewer LAND", for example:
         "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
@@ -688,10 +693,16 @@ step_workflow:
         handoff reason, then de_escalate_task and claim_task on the same task.
         Claiming routes skills and returns you to implement with shell access.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
-        task open, report the blocker to your Lane Manager. For landed work,
-        use the handoff, de-escalate and reclaim sequence above. Before landing,
-        read the assigned reviewer's stored incoming CANDIDATE_VERDICT with
-        get_inter_session_message to return to implementation. Never write flags.
+        task open, report the blocker to your Lane Manager. Read the assigned
+        reviewer's stored incoming CANDIDATE_VERDICT (VERDICT=BOUNCE) or
+        EVENT=PROOF_REQUEST with get_inter_session_message to return to
+        implementation with shell access. A proof-only return with no new commit:
+        after you relink the same SHA, resend the unchanged CANDIDATE to your
+        Lane Manager only, never the reviewer, so candidate_sent re-arms, then send
+        EVENT=PROOF_RESULT TASK=#NNNNN SHA= RETEST=PASS|FAIL|UNAVAILABLE NOTE=
+        to the requesting reviewer and your Lane Manager. For landed work,
+        after the reviewer's EVENT=LANDED, use the handoff, de-escalate and
+        reclaim sequence above. Never write flags.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

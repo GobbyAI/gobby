@@ -19,6 +19,58 @@ _ASSIGNMENT = re.compile(r"[ \t]+=[ \t]+")
 _SHORT = re.compile(r"(\S+\.py):(\d+): in (\w+)")
 _LOCATION = re.compile(r"(\S+\.py):(\d+):(?:[ \t].*)?")
 _DEFINITION = re.compile(r"    (?:async )?def \w+\(|    @")
+_FAILURE_SECTION_BOUNDARY_RE = re.compile(
+    r"^(?:_+\s+(?![_\s]+$)\S.*\s+_+|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
+    r"\s*(?:FAIL|PASS)\s+\S+::\S+\s+\S+\s*$|"
+    r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b|"
+    # Bound Rust sections too: the evaluator shares this renderer boundary.
+    r"\s*(?:[A-Z][A-Z-]*|TRY \d+ [A-Z-]+)\s+\[\s*[\d.]+s\]|"
+    r"-{3,4} (?:\S+ std(?:out|err) -{4}|STD(?:OUT|ERR):\s))",
+    re.IGNORECASE,
+)
+
+
+def _failure_section(lines: list[str], start: int) -> str:
+    end = min(len(lines), start + 120)
+    for boundary in range(start + 1, end):
+        if _FAILURE_SECTION_BOUNDARY_RE.match(lines[boundary]):
+            end = boundary
+            break
+    return "\n".join(lines[start:end])
+
+
+def runtime_pytest_stub_sections(
+    output: str,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    cache: PythonModuleCache | None = None,
+) -> tuple[tuple[str, str, str], ...]:
+    """Return source-proven sections and their unambiguous terminal stub frames."""
+    output = re.split(r"(?m)^-+\s+Captured (?:stdout|stderr|log)\b", output)[0]
+    recalled = recalled_pytest_sections(output, evidence, run, cache)
+    if recalled:
+        return tuple(
+            (header["name"], section, terminal)
+            for section, terminal in recalled
+            if (header := _PYTEST_FAILURE_HEADER_RE.fullmatch(section.splitlines()[0])) is not None
+        )
+    source_output = runtime_pytest_output(output, evidence, run, cache)
+    if source_output is None:
+        return ()
+    lines = output.splitlines()
+    sections: list[tuple[str, str, str]] = []
+    for index, line in enumerate(lines):
+        header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
+        if header is None:
+            continue
+        section = runtime_pytest_output(_failure_section(lines, index), evidence, run, cache)
+        if section is None or section not in source_output:
+            continue
+        terminal = terminal_runtime_frame(section, "\n".join(lines[index:]))
+        if terminal is not None:
+            sections.append((header["name"], section, terminal))
+    return tuple(sections)
 
 
 def _snapshot(
@@ -80,6 +132,115 @@ def _short_source_matches(
     # Pytest short style strips exactly this one located source row, then prefixes four spaces.
     # Locals after it cannot extend this span, even when they match another source row.
     return 0 < line <= len(source) and row == "    " + source[line - 1].strip()
+
+
+def recalled_pytest_sections(
+    output: str,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    cache: PythonModuleCache | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Bind RTK's dedented short reports without treating repr text as boundaries.
+
+    A recall receipt binds the report to its original run. Each section must consist
+    entirely of short frames and terminal E rows, with no locals or metadata.
+    A counted full report may skip well-formed non-stub failures. Historical source
+    proves each credited section's test and final frame;
+    intermediate library frames provide no attribution. Captured output is cut off
+    by the caller before parsing.
+    """
+    if (
+        re.fullmatch(r"(?:uv run )?rtk recall [0-9a-f]{12,64}", run.output_recovered_from or "")
+        is None
+    ):
+        return ()
+    rows = output.splitlines()
+    full_report = bool(rows and re.fullmatch(r"=+ test session starts =+", rows[0]))
+    expected_failures: int | None = None
+    if full_report:
+        banners = [index for index, row in enumerate(rows) if re.fullmatch(r"=+ FAILURES =+", row)]
+        summary = re.fullmatch(
+            r"=+ (\d+) failed(?:, \d+ passed)? in \d+(?:\.\d+)?s(?: \([\d:]+\))? =+",
+            rows[-1],
+        )
+        if len(banners) != 1 or summary is None:
+            return ()
+        start = banners[0]
+        # A complete pytest envelope cannot carry earlier traceback/exception rows.
+        if any(
+            _PYTEST_FAILURE_HEADER_RE.fullmatch(row)
+            or _SHORT.fullmatch(row)
+            or row.startswith(("E ", "E\t"))
+            for row in rows[:start]
+        ):
+            return ()
+        expected_failures = int(summary[1])
+        rows = rows[start + 1 : -1]
+    sections: list[tuple[str, str]] = []
+    failure_count = 0
+    index = 0
+    while index < len(rows):
+        if not rows[index]:
+            index += 1
+            continue
+        header = _PYTEST_FAILURE_HEADER_RE.fullmatch(rows[index])
+        if header is None:
+            return ()
+        section = [rows[index]]
+        failure_count += 1
+        index += 1
+        frames: list[tuple[re.Match[str], str]] = []
+        while index < len(rows) and (frame := _SHORT.fullmatch(rows[index])) is not None:
+            if index + 1 == len(rows):
+                return ()
+            source = rows[index + 1]
+            rendered = source[4:] if full_report and source.startswith("    ") else source
+            if (
+                not rendered
+                or rendered != rendered.strip()
+                or rendered.startswith(("E ", "E\t"))
+                or (full_report and not source.startswith("    "))
+            ):
+                return ()
+            frames.append((frame, "    " + rendered))
+            section.extend((rows[index], "    " + rendered))
+            index += 2
+            if index < len(rows) and re.fullmatch(
+                r"[ \t]+\^+" if full_report else r"\^+", rows[index]
+            ):
+                index += 1
+        if not frames:
+            return ()
+        exceptions: list[str] = []
+        while index < len(rows) and rows[index].startswith(("E ", "E\t")):
+            exceptions.append(rows[index])
+            index += 1
+        if not exceptions:
+            return ()
+        creditable = (
+            len(frames) >= 2
+            and len(exceptions) == 1
+            and re.fullmatch(r"E[ \t]+NotImplementedError(?::[^\n]*)?", exceptions[0]) is not None
+        )
+        if not creditable:
+            if not full_report:
+                return ()
+            continue
+        section.append(exceptions[0])
+        first, last = frames[0], frames[-1]
+        name = header["name"].split("[", 1)[0].rsplit(".", 1)[-1]
+        if (
+            first[0][3] == name
+            and _short_source_matches(*first, evidence, run, cache)
+            and _short_source_matches(*last, evidence, run, cache)
+        ):
+            terminal = "\n".join((last[0][0], last[1], exceptions[0]))
+            # Only the first frame establishes node identity; a helper deeper in
+            # a sibling's traceback cannot lend its path to the section header.
+            sections.append(("\n".join(section[:3]), terminal))
+    if expected_failures is not None and failure_count != expected_failures:
+        return ()
+    return tuple(sections)
 
 
 def _long_source_matches(

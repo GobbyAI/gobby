@@ -31,6 +31,7 @@ from gobby.adapters.droid_contract import (
     DroidDecisionStyle,
     get_droid_contract,
 )
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
     HookEvent,
     HookEventType,
@@ -176,7 +177,8 @@ class DroidAdapter(BaseAdapter):
             if isinstance(notification_kind, str):
                 normalized_kind = notification_kind.casefold()
                 transcript_path = normalized_data.get("transcript_path")
-                interaction_visible = droid_transcript_has_tool_id(
+                # A node delivery skips the hub transcript read and takes the no-file result.
+                interaction_visible = not node_origin() and droid_transcript_has_tool_id(
                     transcript_path if isinstance(transcript_path, str) else None,
                     event.wait_token,
                 )
@@ -209,6 +211,7 @@ class DroidAdapter(BaseAdapter):
                     normalized_reason in {"cancelled", "canceled", "user_interrupt"}
                     or stopped_by_user
                 )
+                and not node_origin()
                 and droid_transcript_confirms_turn_cancellation(
                     transcript_path if isinstance(transcript_path, str) else None,
                     event.provider_turn_key,

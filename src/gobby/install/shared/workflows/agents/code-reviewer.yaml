@@ -137,8 +137,11 @@ step_workflow:
       description: "Wait for a routed CANDIDATE"
       status_message: |
         Read a routed CANDIDATE with gobby-agents:get_inter_session_message.
-        Its stored incoming task/SHA starts review. For idle, send
-        EVENT=SEAT_READY NOTE=idle to your coordinator, then end the turn.
+        Its stored incoming task/SHA starts review. End each idle turn on a
+        registered gobby-agents:wait_for_coordination reply wait on your
+        coordinator; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your coordinator and end the turn.
+        An idle declaration expires when the next turn starts.
         Read stored incoming resume/withdraw messages to update parked units.
         For your own parked unit, send an exact CANDIDATE_RESUMED or
         CANDIDATE_WITHDRAWN event to your coordinator.
@@ -233,8 +236,12 @@ step_workflow:
       status_message: |
         On BOUNCE, send the CANDIDATE_VERDICT line. For a LAND requiring landing, record the
         independent_review_approval receipt, send the LAND verdict, then call
-        land_commit on the same SHA and follow its response: retest when
-        retest_required, LAND_PENDING and retry on receipt_pending, LAND_BLOCKED
+        land_commit on the same SHA and follow its response: when
+        retest_required, send EVENT=PROOF_REQUEST to the author and wait for its
+        EVENT=PROOF_RESULT (timeout 900; re-arm after any other author message)
+        without running the retest yourself, then
+        send LANDED with RETEST=UNAVAILABLE and a NOTE if none arrives; LAND_PENDING
+        and retry on receipt_pending, LAND_BLOCKED
         and wait on a refusal. Once a receipt_id returns, send EVENT=ALREADY_LANDED
         with the original receipt_id and landed_by_session_id when already_landed
         is true and landed_by_session_id names another session (neither your

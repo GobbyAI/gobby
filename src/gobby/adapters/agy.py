@@ -23,6 +23,7 @@ from gobby.adapters.degradation import (
     persist_kwargs_from_hook_response,
     truncate_context_for_adapter,
 )
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
     HookEvent,
     HookEventType,
@@ -83,7 +84,11 @@ class AgyAdapter(ACPHookAdapter):
             None,
         ):
             event.event_type = HookEventType.BEFORE_MODEL
-        if event.event_type is HookEventType.BEFORE_AGENT and not event.data.get("prompt"):
+        if (
+            event.event_type is HookEventType.BEFORE_AGENT
+            and not event.data.get("prompt")
+            and not node_origin()
+        ):
             from gobby.sessions.transcripts.agy import read_current_user_prompt
 
             prompt = read_current_user_prompt(event.data.get("transcript_path"))

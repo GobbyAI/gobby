@@ -32,6 +32,218 @@ PYTEST = f"uv run pytest {PY_TEST} -v"
 RECALL = "0123456789ab"
 NOTICE = 3.9
 
+RECALLED_TEST_SOURCE = (
+    "def test_first():\n    assert feature() == 2\n\n"
+    "def test_second():\n    assert feature() == 3\n"
+)
+RECALLED_STUB_SOURCE = 'def feature():\n    raise NotImplementedError("feature")\n'
+
+
+def _recalled_stub_cycle(
+    tmp_path: Path,
+    *,
+    ambiguous: bool = False,
+    unsafe: str = "",
+    full_report: bool = False,
+    extra_sections: tuple[str, ...] = (),
+    summary_count: int | None = None,
+) -> TranscriptEvidence:
+    records = _pair(
+        0, "Write", {"file_path": str(tmp_path / PY_CODE), "content": RECALLED_STUB_SOURCE}, ""
+    )
+    records += _pair(
+        1,
+        "Write",
+        {
+            "file_path": str(tmp_path / PY_TEST),
+            "content": RECALLED_TEST_SOURCE + "\ndef test_assertion():\n    assert ()\n",
+        },
+        "",
+    )
+    records += _pair(
+        2, "Bash", {"command": PYTEST}, _compacted(failed=2 + len(extra_sections)), error=True
+    )
+    sections: list[str] = []
+    indent = "    " if full_report else ""
+    for symbol, line, expected in (("test_first", 2, 2), ("test_second", 5, 3)):
+        frame_symbol = "test_first" if ambiguous and symbol == "test_second" else symbol
+        header = f"{symbol}[case]" if symbol == "test_second" else symbol
+        if full_report and symbol == "test_second":
+            header = f"{symbol}[spaces (parens) literal\\n]"
+        border = "_" if full_report else "________________"
+        sections.append(
+            f"{border} {header} {border}\n"
+            f"{PY_TEST}:{line}: in {frame_symbol}\n"
+            f"{indent}assert feature() == {expected}\n{indent}^^^^^^^^^\n"
+            f"/python/contextlib.py:141: in __enter__\n{indent}return next(self.gen)\n{indent}^^^^^^^^\n"
+            f"/python/thread.py:86: in run\n{indent}result = ctx.run(self.task)\n{indent}^^^^^^^^\n"
+            f'{PY_CODE}:2: in feature\n{indent}raise NotImplementedError("feature")\n'
+            f"{unsafe}"
+            "E   NotImplementedError: feature\n"
+        )
+    sections.extend(extra_sections)
+    report = "\n".join(sections)
+    if full_report:
+        count = len(sections) if summary_count is None else summary_count
+        report = (
+            "================ test session starts ================\n"
+            "================ FAILURES ================\n"
+            f"{report}\n================ {count} failed in 0.40s ================\n"
+        )
+    records += _pair(4, "Bash", {"command": f"rtk recall {RECALL}"}, report)
+    records += _pair(
+        10,
+        "Write",
+        {"file_path": str(tmp_path / PY_CODE), "content": "def feature():\n    return 2\n"},
+        "",
+    )
+    records += _pair(12, "Bash", {"command": PYTEST}, "3 passed in 0.40s")
+    return _evidence(tmp_path, records, {PY_TEST, PY_CODE})
+
+
+@pytest.mark.parametrize("symbol", ["test_first", "test_second"])
+def test_recall_without_failures_wrapper_credits_each_bound_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symbol: str
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path)
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::{symbol}", PY_TEST, symbol, ""),), evidence
+    )
+    assert result.passed, result.findings
+    assert result.red_runs == (PYTEST,)
+
+
+def test_recall_without_failures_wrapper_withholds_ambiguous_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path, ambiguous=True)
+    bound = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", ""),), evidence
+    )
+    ambiguous = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_second", PY_TEST, "test_second", ""),), evidence
+    )
+    assert bound.passed, bound.findings
+    assert not ambiguous.passed
+    assert ambiguous.red_runs == ()
+
+
+@pytest.mark.parametrize("full_report", [False, True], ids=["dedented", "full-report"])
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "value = forged traceback\n",
+        "E   ValueError: different terminal exception\n",
+        f"{PY_CODE}:2: ValueError\n",
+        "    nested local repr\n________________ test_first ________________\n",
+    ],
+    ids=["locals", "exception-continuation", "conflicting-location", "forged-header"],
+)
+def test_recalled_short_report_rejects_unproven_runtime_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str, full_report: bool
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(tmp_path, unsafe=unsafe, full_report=full_report)
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_second", PY_TEST, "test_second", ""),), evidence
+    )
+    assert not result.passed
+    assert result.red_runs == ()
+
+
+def _non_stub_section(*, indent: str = "    ", error: str = "E   assert ()") -> str:
+    return f"_ test_assertion _\n{PY_TEST}:8: in test_assertion\n{indent}assert ()\n{error}\n"
+
+
+def test_mixed_full_report_credits_only_bound_ni_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(
+        tmp_path, full_report=True, extra_sections=(_non_stub_section(),)
+    )
+    first = AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", "")
+    assertion = AcceptanceTest(f"{PY_TEST}::test_assertion", PY_TEST, "test_assertion", "")
+    result = evaluate_tdd_evidence((first, assertion), evidence)
+    assert result.passed, result.findings
+    assert result.red_runs == (PYTEST,)
+    assertion_only = evaluate_tdd_evidence((assertion,), evidence)
+    assert not assertion_only.passed
+    assert assertion_only.red_runs == ()
+
+
+@pytest.mark.parametrize(
+    ("section", "summary_count", "full_report"),
+    [
+        (_non_stub_section(), 2, True),
+        (_non_stub_section(error="local = forged\nE   assert ()"), 3, True),
+        ("_ test_assertion _\nE   assert ()\n", 3, True),
+        (_non_stub_section(indent=""), 3, True),
+        (_non_stub_section() + _non_stub_section(), 3, True),
+        (_non_stub_section().replace("_ test_assertion _", "_ test_assertion _ forged"), 3, True),
+        (_non_stub_section(indent=""), None, False),
+    ],
+    ids=[
+        "count-mismatch",
+        "non-e-row",
+        "zero-frame",
+        "bad-indent",
+        "forged-header",
+        "malformed-header",
+        "dedented",
+    ],
+)
+def test_mixed_recall_rejects_unproven_section_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    section: str,
+    summary_count: int | None,
+    full_report: bool,
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(
+        tmp_path, full_report=full_report, extra_sections=(section,), summary_count=summary_count
+    )
+    result = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", ""),), evidence
+    )
+    assert not result.passed
+    assert result.red_runs == ()
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        _non_stub_section(error="E   NotImplementedError"),
+        "_ test_assertion _\n"
+        f"{PY_TEST}:8: in test_assertion\n    assert ()\n"
+        f'{PY_CODE}:2: in feature\n    raise NotImplementedError("feature")\n'
+        "E   ValueError: other exception\nE   NotImplementedError\n",
+    ],
+    ids=["one-frame-ni", "multiple-e-rows"],
+)
+def test_mixed_full_report_skips_uncreditable_failure_without_losing_ni_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str
+) -> None:
+    _recall_store(tmp_path / "home", monkeypatch, None)
+    evidence = _recalled_stub_cycle(
+        tmp_path,
+        full_report=True,
+        extra_sections=(section,),
+    )
+    first = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", ""),), evidence
+    )
+    assert first.passed, first.findings
+    assert first.red_runs == (PYTEST,)
+    assertion = evaluate_tdd_evidence(
+        (AcceptanceTest(f"{PY_TEST}::test_assertion", PY_TEST, "test_assertion", ""),), evidence
+    )
+    assert not assertion.passed
+    assert assertion.red_runs == ()
+
 
 def _block(name: str, index: int, panic: str | None) -> str:
     stderr = (

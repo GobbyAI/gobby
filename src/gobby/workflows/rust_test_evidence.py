@@ -25,6 +25,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks.checkout_reads import (
+    CheckoutReadUnavailable,
+    event_machine_id,
+    node_origin,
+    path_facts,
+)
+
 _NEW_TEXT_KEYS = ("new_str", "new_string", "newStr", "new_text", "newText", "replacement")
 _OLD_TEXT_KEYS = ("old_str", "old_string", "oldStr", "old_text", "oldText", "old")
 _CONTENT_KEYS = ("content",)
@@ -54,7 +61,10 @@ def rust_edit_is_test_writing(path: str, tool_input: Any) -> bool:
     changes = list(_iter_changes(tool_input, path))
     if not changes:
         return False
-    on_disk = _read_absolute_text(path)
+    try:
+        on_disk = _read_absolute_text(path)
+    except CheckoutReadUnavailable:
+        return False
     return all(_change_is_test_only(on_disk, change) for change in changes)
 
 
@@ -315,6 +325,17 @@ def _read_absolute_text(path: str) -> str | None:
     candidate = Path(path)
     if not candidate.is_absolute():
         return None
+    if node_origin():
+        fact = path_facts([path], read_limit=8_388_608).files[0]
+        if fact.truncated or fact.kind == "outside":
+            raise CheckoutReadUnavailable(
+                "truncated" if fact.truncated else "outside", event_machine_id() or ""
+            )
+        if fact.kind != "file":
+            return None
+        if fact.data is None:
+            raise CheckoutReadUnavailable("missing_data", event_machine_id() or "")
+        return fact.data.decode("utf-8", errors="replace")
     try:
         return candidate.read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):

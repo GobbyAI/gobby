@@ -34,6 +34,7 @@ from ._install_prompts import (
     _run_voice_install,
 )
 from .install_setup import configure_ide_terminals, provision_impeccable
+from .install_setup_gmcp import daemon_start_argv, write_daemon_start_command
 from .install_setup_impeccable import remove_impeccable_runtime
 from .install_setup_rtk import (
     RtkInstallStatus,
@@ -74,12 +75,13 @@ COMPONENTS: tuple[str, ...] = (
     "embedding",
     "ide-settings",
     "gclient",
+    "gmcp",
     "gterm",
     "srt",
 )
 CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "droid", "agy"})
 # Components that leave something behind to remove. voice, embedding, and
-# ide-settings only write configuration, and gclient, gterm, and srt install
+# ide-settings only write configuration, and gclient, gmcp, gterm, and srt install
 # Gobby's own runtime under ~/.gobby; none of them has an uninstall.
 UNINSTALLABLE_COMPONENTS: tuple[str, ...] = (
     "claude",
@@ -105,6 +107,7 @@ COMPONENT_LABELS: dict[str, str] = {
     "embedding": "Embedding",
     "ide-settings": "IDE settings",
     "gclient": "gclient",
+    "gmcp": "gmcp",
     "gterm": "gterm",
     "srt": "SRT runner",
 }
@@ -205,7 +208,7 @@ def reconcile_rtk_step(
 
 
 def _workspace_client_version(name: str) -> str:
-    crate_dir = {"gclient": "gclient", "gterm": "gterminal"}[name]
+    crate_dir = {"gclient": "gclient", "gmcp": "gmcp", "gterm": "gterminal"}[name]
     for root in Path(__file__).resolve().parents:
         manifest = root / "crates" / crate_dir / "Cargo.toml"
         if (root / "Cargo.toml").is_file() and manifest.is_file():
@@ -229,6 +232,7 @@ def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
     bin_dir.mkdir(parents=True, exist_ok=True)
     installer = {
         "gclient": install_setup._install_gclient_from_submodule,
+        "gmcp": install_setup._install_gmcp_from_submodule,
         "gterm": install_setup._install_gterm_from_submodule,
     }[name]
     try:
@@ -239,6 +243,10 @@ def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
         version = _workspace_client_version(name)
         if name == "gclient":
             install_setup._write_gclient_version_stamp(bin_dir, version)
+        elif name == "gmcp":
+            install_setup._write_gmcp_version_stamp(bin_dir, version)
+            if outcome == "promoted":
+                write_daemon_start_command(get_gobby_home(), daemon_start_argv())
         else:
             install_setup._write_gterm_version_stamp(bin_dir, version)
     return {"success": bool(outcome), "outcome": outcome}
@@ -306,7 +314,7 @@ def run_install_components(
         elif name == "ide-settings":
             configure_ide_terminals()
             results["ide-settings"] = {"success": True}
-        elif name in {"gclient", "gterm"}:
+        elif name in {"gclient", "gmcp", "gterm"}:
             target = bin_dir if bin_dir is not None else get_gobby_home() / "bin"
             results[name] = promote_client_binary(name, target)
         elif name == "srt":

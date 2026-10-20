@@ -15,6 +15,7 @@ import re
 import sqlite3
 import stat
 import zlib
+from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -65,23 +66,37 @@ def retained_red_output(run: TranscriptValidationRun, production_at: datetime) -
     return retained
 
 
+def unauthenticated_retained_note(run: TranscriptValidationRun, production_at: datetime) -> str:
+    """Rejection suffix naming a background run whose retained output fails authentication."""
+    path = run.background_output_path
+    if path is None or retained_red_output(run, production_at) is not None:
+        return ""
+    return f"; its retained full output at {path} could not be authenticated"
+
+
 def delivered_proof_runs(
     run: TranscriptValidationRun, production_at: datetime | None
-) -> list[TranscriptValidationRun]:
+) -> Iterator[TranscriptValidationRun]:
     """Each pre-cutoff delivery proved alone, then the authenticated full output.
 
     Deliveries are never joined: a newline between two reads would make unrelated
     lines adjacent to a failure section. Without a production cutoff there is no
-    retained output to authenticate, so only the deliveries are returned.
+    retained output to authenticate, so only the deliveries are yielded. Lazy, so
+    the retained output is read only when no earlier delivery has already proved RED.
     """
-    runs = [
-        replace(run, output=delivery.text, output_truncated=delivery.truncated)
-        for delivery in recovered_deliveries(run, production_at)
-    ]
-    retained = retained_red_output(run, production_at) if production_at is not None else None
+    for delivery in recovered_deliveries(run, production_at):
+        yield replace(run, output=delivery.text, output_truncated=delivery.truncated)
+    if production_at is None:
+        return
+    retained = retained_red_output(run, production_at)
     if retained is not None:
-        runs.append(replace(run, output=retained))
-    return runs
+        recalls = set(_RECALL_HINT_RE.findall(run.output or ""))
+        # Preserve the authenticated SQLite recall's provenance for strict
+        # source-bound traceback parsing, just as a native recall receipt does.
+        recovered_from = run.output_recovered_from
+        if run.background_output_path is None and len(recalls) == 1:
+            recovered_from = f"rtk recall {recalls.pop()}"
+        yield replace(run, output=retained, output_recovered_from=recovered_from)
 
 
 def _job_output(run: TranscriptValidationRun, production_at: datetime) -> str | None:
@@ -193,4 +208,9 @@ def _contains_delivered(delivered: str, truncated: bool, retained: str) -> bool:
     return verified
 
 
-__all__ = ["RETAINED_OUTPUT_FLUSH_GRACE", "delivered_proof_runs", "retained_red_output"]
+__all__ = [
+    "RETAINED_OUTPUT_FLUSH_GRACE",
+    "delivered_proof_runs",
+    "retained_red_output",
+    "unauthenticated_retained_note",
+]

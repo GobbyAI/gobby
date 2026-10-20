@@ -25,7 +25,8 @@ def test_published_state_is_explicit_for_managed_binaries() -> None:
     unpublished = version_pins.UNPUBLISHED_MANAGED_BINS
     is_published = version_pins.is_published
 
-    assert unpublished == frozenset({"gterm", "gclient"})
+    assert unpublished == frozenset({"gterm", "gclient", "gmcp"})
     assert is_published("gterm") is False
     assert is_published("gclient") is False
+    assert is_published("gmcp") is False
     assert is_published("gdaemon") is True

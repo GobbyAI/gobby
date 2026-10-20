@@ -20,6 +20,7 @@ axum = { version = "0.8", default-features = false }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool", "route-family"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 anyhow = "1"
@@ -29,4 +30,3 @@ tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-postgres = "0.7.18"
 tower-service = "0.3"
-uuid = { version = "1", features = ["v4"] }

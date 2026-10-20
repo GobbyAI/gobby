@@ -1,0 +1,426 @@
+{
+  "source": "gobby#16717 original stored envelopes, supported session API; #24741 regression data, no historical credit",
+  "implementation": {"session":"gobby#16717","timestamp":"2026-10-17T04:58:51+00:00","source_line":14613,"tool_call_id":"call-d3e7018c-56e8-4868-bc3e-be861e69fd06-106","tool_name":"write","arguments":{"file_path":"/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py","content":"\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is a context variable separate from MCP session context.\n``asyncio.create_task`` and ``asyncio.to_thread`` copy it into work the\nrequest starts. An unbound context is hub-internal work and skips ownership.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.storage.machines import LocalMachineManager\nfrom gobby.utils.machine_id import require_machine_id\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates.\"\"\"\n    return _caller_scope.set(CallerScope(user_id=user_id, database=database))\n\n\ndef bind_decision(decision: Any, database: Any) -> Token[CallerScope | None] | None:\n    \"\"\"Bind an allowed decision. Break-glass stays unbound.\"\"\"\n    if getattr(decision, \"break_glass\", False):\n        return None\n    user_id = getattr(decision, \"user_id\", None)\n    return bind_caller(user_id if isinstance(user_id, str) else None, database)\n\n\ndef reset_caller(token: Token[CallerScope | None] | None) -> None:\n    \"\"\"Clear a binding. No token means the path stayed unbound.\"\"\"\n    if token is not None:\n        _caller_scope.reset(token)\n\n\ndef require_machine_owned(machine_id: str | None) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine.\"\"\"\n    scope = current_caller()\n    if scope is None:\n        return\n    if scope.user_id is None:\n        raise NodeCommandError(\"machine_not_owned\", stage=\"none\")\n    if scope.database is None:\n        raise NodeCommandError(\"machine_not_found\", stage=\"none\")\n\n    resolved = machine_id or require_machine_id()\n    machine = LocalMachineManager(scope.database).get(resolved)\n    if machine is None:\n        raise NodeCommandError(\"machine_not_found\", stage=\"none\")\n    if machine.owner_user_id != scope.user_id:\n        raise NodeCommandError(\"machine_not_owned\", stage=\"none\")\n"},"result":{"status":"completed","error":null,"sessionUpdate":"tool_call_update","toolCallId":"call-d3e7018c-56e8-4868-bc3e-be861e69fd06-106","native_status":"completed","type":"SearchReplace","absolute_path":"/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py","tool_output_for_prompt":"Wrote file successfully to /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py.","diff":{"path":"/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py","oldText":"\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n","newText_matches_content":true},"EditsApplied":{"old_string_matches_oldText":true,"new_string_matches_content":true}}},
+  "green": {"session":"gobby#16717","timestamp":"2026-10-17T13:55:17+00:00","source_line":14911,"tool_call_id":"call-e9e33b79-82f9-463b-b6f4-e1b94c6eef13-154","tool_name":"run_terminal_command","arguments":{"command":"DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py -q","description":"Run admitted #24595 GREEN rerun","block_until_ms":600000},"result":{"status":"completed","error":null,"sessionUpdate":"tool_call_update","toolCallId":"call-e9e33b79-82f9-463b-b6f4-e1b94c6eef13-154","native_status":"completed","rawOutput":{"type":"Bash","command":"DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run rtk pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py -q","exit_code":0,"truncated":false,"timed_out":false,"total_bytes":27,"current_dir":"/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode","output_for_prompt":"exit: 0\nPytest: 6 passed in 17.69s\n"}}},
+  "creations": [
+    {
+      "id": "call-a4fa3562-6ea7-4ba1-b496-8f3b6bb33fd8-120",
+      "timestamp": "2026-10-17T02:09:10+00:00",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py",
+        "old_string": "",
+        "new_string": "\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n"
+      },
+      "result": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-a4fa3562-6ea7-4ba1-b496-8f3b6bb33fd8-120",
+        "status": "completed",
+        "content": [
+          {
+            "type": "diff",
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py",
+            "oldText": "",
+            "newText": "\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n",
+            "_meta": {
+              "details": [
+                {
+                  "old_string": "",
+                  "old_line": 1,
+                  "new_string": "\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n",
+                  "new_line": 1,
+                  "context_before": "",
+                  "context_after": "",
+                  "line_prefix": ""
+                }
+              ]
+            }
+          }
+        ],
+        "rawOutput": {
+          "type": "SearchReplace",
+          "EditsApplied": {
+            "old_string": "",
+            "new_string": "\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n",
+            "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py has been created successfully.",
+            "tool_output_for_prompt_concise": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py has been created.",
+            "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/src/gobby/hub/caller_scope.py",
+            "edits": {
+              "details": [
+                {
+                  "old_string": "",
+                  "old_line": 1,
+                  "new_string": "\"\"\"Request-scoped caller identity for machine ownership checks.\n\nThe binding is separate from MCP session context: it covers every HTTP request\nand WebSocket message. Behavior stays unimplemented until the RED tests run.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom contextvars import ContextVar, Token\nfrom dataclasses import dataclass\nfrom typing import Any\n\n\n@dataclass(frozen=True, slots=True)\nclass CallerScope:\n    \"\"\"The user and database bound for the current request, if any.\"\"\"\n\n    user_id: str | None\n    database: Any\n\n\n_caller_scope: ContextVar[CallerScope | None] = ContextVar(\"gobby_caller_scope\", default=None)\n\n\ndef current_caller() -> CallerScope | None:\n    \"\"\"Return the bound caller, or None when this task is unbound.\"\"\"\n    return _caller_scope.get()\n\n\ndef bind_caller(user_id: str | None, database: Any) -> Token[CallerScope | None]:\n    \"\"\"Bind a caller for this task and the tasks it creates. Not implemented.\"\"\"\n    del user_id, database\n    raise NotImplementedError\n\n\ndef require_machine_owned(machine_id: str) -> None:\n    \"\"\"Allow the call only when the bound user owns the machine. Not implemented.\"\"\"\n    del machine_id\n    raise NotImplementedError\n",
+                  "new_line": 1,
+                  "context_before": "",
+                  "context_after": "",
+                  "line_prefix": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "call-a4fa3562-6ea7-4ba1-b496-8f3b6bb33fd8-121",
+      "timestamp": "2026-10-17T02:09:11+00:00",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/hub/test_caller_scope.py",
+        "old_string": "",
+        "new_string": "\"\"\"Caller scope keeps a request on machines its user owns.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom datetime import UTC, datetime\nfrom uuid import UUID, uuid4\n\nimport pytest\n\nfrom gobby.hub.caller_scope import bind_caller, current_caller, require_machine_owned\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.utils.machine_id import get_machine_id\n\nTEST_USER_ID = \"20000000-0000-4000-8000-000000000001\"\nOTHER_USER_ID = \"20000000-0000-4000-8000-000000000002\"\n\n\nclass _RecordingDB:\n    \"\"\"In-memory machines table that counts lookups.\"\"\"\n\n    def __init__(self, owners: dict[str, str]) -> None:\n        self.owners = owners\n        self.calls = 0\n\n    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:\n        self.calls += 1\n        machine_id = str(params[0])\n        owner = self.owners.get(machine_id)\n        if owner is None:\n            return None\n        now = datetime.now(UTC)\n        return {\n            \"id\": machine_id,\n            \"owner_user_id\": owner,\n            \"first_seen\": now,\n            \"last_seen\": now,\n            \"ref\": 1,\n        }\n\n\ndef _hub_id() -> str:\n    return str(UUID(get_machine_id()))\n\n\ndef _owned_db() -> tuple[_RecordingDB, str, str]:\n    hub = _hub_id()\n    remote = str(uuid4())\n    return _RecordingDB({hub: TEST_USER_ID, remote: TEST_USER_ID}), hub, remote\n\n\ndef _expect_error(machine_id: str, code: str) -> None:\n    with pytest.raises(NodeCommandError) as raised:\n        require_machine_owned(machine_id)\n    assert raised.value.code == code\n    assert raised.value.stage == \"none\"\n\n\ndef test_require_machine_owned() -> None:\n    database, hub, remote = _owned_db()\n    unknown = str(uuid4())\n\n    require_machine_owned(hub)\n    require_machine_owned(unknown)\n    assert database.calls == 0\n\n    missing_user = bind_caller(None, database)\n    try:\n        calls_before = database.calls\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n        assert database.calls == calls_before\n    finally:\n        missing_user.var.reset(missing_user)\n\n    no_database = bind_caller(TEST_USER_ID, None)\n    try:\n        _expect_error(hub, \"machine_not_found\")\n        _expect_error(remote, \"machine_not_found\")\n    finally:\n        no_database.var.reset(no_database)\n\n    owner = bind_caller(TEST_USER_ID, database)\n    try:\n        require_machine_owned(hub)\n        require_machine_owned(remote)\n        _expect_error(unknown, \"machine_not_found\")\n    finally:\n        owner.var.reset(owner)\n\n    other = bind_caller(OTHER_USER_ID, database)\n    try:\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n    finally:\n        other.var.reset(other)\n\n    assert current_caller() is None\n\n\ndef test_binding_reaches_child_tasks() -> None:\n    database, _hub, _remote = _owned_db()\n\n    async def _seen_user() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    def _seen_user_sync() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    async def _run() -> None:\n        token = bind_caller(TEST_USER_ID, database)\n        try:\n            child = asyncio.create_task(_seen_user())\n            assert await child == TEST_USER_ID\n            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID\n        finally:\n            token.var.reset(token)\n        assert current_caller() is None\n\n    asyncio.run(_run())\n"
+      },
+      "result": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-a4fa3562-6ea7-4ba1-b496-8f3b6bb33fd8-121",
+        "status": "completed",
+        "content": [
+          {
+            "type": "diff",
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/hub/test_caller_scope.py",
+            "oldText": "",
+            "newText": "\"\"\"Caller scope keeps a request on machines its user owns.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom datetime import UTC, datetime\nfrom uuid import UUID, uuid4\n\nimport pytest\n\nfrom gobby.hub.caller_scope import bind_caller, current_caller, require_machine_owned\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.utils.machine_id import get_machine_id\n\nTEST_USER_ID = \"20000000-0000-4000-8000-000000000001\"\nOTHER_USER_ID = \"20000000-0000-4000-8000-000000000002\"\n\n\nclass _RecordingDB:\n    \"\"\"In-memory machines table that counts lookups.\"\"\"\n\n    def __init__(self, owners: dict[str, str]) -> None:\n        self.owners = owners\n        self.calls = 0\n\n    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:\n        self.calls += 1\n        machine_id = str(params[0])\n        owner = self.owners.get(machine_id)\n        if owner is None:\n            return None\n        now = datetime.now(UTC)\n        return {\n            \"id\": machine_id,\n            \"owner_user_id\": owner,\n            \"first_seen\": now,\n            \"last_seen\": now,\n            \"ref\": 1,\n        }\n\n\ndef _hub_id() -> str:\n    return str(UUID(get_machine_id()))\n\n\ndef _owned_db() -> tuple[_RecordingDB, str, str]:\n    hub = _hub_id()\n    remote = str(uuid4())\n    return _RecordingDB({hub: TEST_USER_ID, remote: TEST_USER_ID}), hub, remote\n\n\ndef _expect_error(machine_id: str, code: str) -> None:\n    with pytest.raises(NodeCommandError) as raised:\n        require_machine_owned(machine_id)\n    assert raised.value.code == code\n    assert raised.value.stage == \"none\"\n\n\ndef test_require_machine_owned() -> None:\n    database, hub, remote = _owned_db()\n    unknown = str(uuid4())\n\n    require_machine_owned(hub)\n    require_machine_owned(unknown)\n    assert database.calls == 0\n\n    missing_user = bind_caller(None, database)\n    try:\n        calls_before = database.calls\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n        assert database.calls == calls_before\n    finally:\n        missing_user.var.reset(missing_user)\n\n    no_database = bind_caller(TEST_USER_ID, None)\n    try:\n        _expect_error(hub, \"machine_not_found\")\n        _expect_error(remote, \"machine_not_found\")\n    finally:\n        no_database.var.reset(no_database)\n\n    owner = bind_caller(TEST_USER_ID, database)\n    try:\n        require_machine_owned(hub)\n        require_machine_owned(remote)\n        _expect_error(unknown, \"machine_not_found\")\n    finally:\n        owner.var.reset(owner)\n\n    other = bind_caller(OTHER_USER_ID, database)\n    try:\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n    finally:\n        other.var.reset(other)\n\n    assert current_caller() is None\n\n\ndef test_binding_reaches_child_tasks() -> None:\n    database, _hub, _remote = _owned_db()\n\n    async def _seen_user() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    def _seen_user_sync() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    async def _run() -> None:\n        token = bind_caller(TEST_USER_ID, database)\n        try:\n            child = asyncio.create_task(_seen_user())\n            assert await child == TEST_USER_ID\n            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID\n        finally:\n            token.var.reset(token)\n        assert current_caller() is None\n\n    asyncio.run(_run())\n",
+            "_meta": {
+              "details": [
+                {
+                  "old_string": "",
+                  "old_line": 1,
+                  "new_string": "\"\"\"Caller scope keeps a request on machines its user owns.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom datetime import UTC, datetime\nfrom uuid import UUID, uuid4\n\nimport pytest\n\nfrom gobby.hub.caller_scope import bind_caller, current_caller, require_machine_owned\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.utils.machine_id import get_machine_id\n\nTEST_USER_ID = \"20000000-0000-4000-8000-000000000001\"\nOTHER_USER_ID = \"20000000-0000-4000-8000-000000000002\"\n\n\nclass _RecordingDB:\n    \"\"\"In-memory machines table that counts lookups.\"\"\"\n\n    def __init__(self, owners: dict[str, str]) -> None:\n        self.owners = owners\n        self.calls = 0\n\n    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:\n        self.calls += 1\n        machine_id = str(params[0])\n        owner = self.owners.get(machine_id)\n        if owner is None:\n            return None\n        now = datetime.now(UTC)\n        return {\n            \"id\": machine_id,\n            \"owner_user_id\": owner,\n            \"first_seen\": now,\n            \"last_seen\": now,\n            \"ref\": 1,\n        }\n\n\ndef _hub_id() -> str:\n    return str(UUID(get_machine_id()))\n\n\ndef _owned_db() -> tuple[_RecordingDB, str, str]:\n    hub = _hub_id()\n    remote = str(uuid4())\n    return _RecordingDB({hub: TEST_USER_ID, remote: TEST_USER_ID}), hub, remote\n\n\ndef _expect_error(machine_id: str, code: str) -> None:\n    with pytest.raises(NodeCommandError) as raised:\n        require_machine_owned(machine_id)\n    assert raised.value.code == code\n    assert raised.value.stage == \"none\"\n\n\ndef test_require_machine_owned() -> None:\n    database, hub, remote = _owned_db()\n    unknown = str(uuid4())\n\n    require_machine_owned(hub)\n    require_machine_owned(unknown)\n    assert database.calls == 0\n\n    missing_user = bind_caller(None, database)\n    try:\n        calls_before = database.calls\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n        assert database.calls == calls_before\n    finally:\n        missing_user.var.reset(missing_user)\n\n    no_database = bind_caller(TEST_USER_ID, None)\n    try:\n        _expect_error(hub, \"machine_not_found\")\n        _expect_error(remote, \"machine_not_found\")\n    finally:\n        no_database.var.reset(no_database)\n\n    owner = bind_caller(TEST_USER_ID, database)\n    try:\n        require_machine_owned(hub)\n        require_machine_owned(remote)\n        _expect_error(unknown, \"machine_not_found\")\n    finally:\n        owner.var.reset(owner)\n\n    other = bind_caller(OTHER_USER_ID, database)\n    try:\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n    finally:\n        other.var.reset(other)\n\n    assert current_caller() is None\n\n\ndef test_binding_reaches_child_tasks() -> None:\n    database, _hub, _remote = _owned_db()\n\n    async def _seen_user() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    def _seen_user_sync() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    async def _run() -> None:\n        token = bind_caller(TEST_USER_ID, database)\n        try:\n            child = asyncio.create_task(_seen_user())\n            assert await child == TEST_USER_ID\n            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID\n        finally:\n            token.var.reset(token)\n        assert current_caller() is None\n\n    asyncio.run(_run())\n",
+                  "new_line": 1,
+                  "context_before": "",
+                  "context_after": "",
+                  "line_prefix": ""
+                }
+              ]
+            }
+          }
+        ],
+        "rawOutput": {
+          "type": "SearchReplace",
+          "EditsApplied": {
+            "old_string": "",
+            "new_string": "\"\"\"Caller scope keeps a request on machines its user owns.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom datetime import UTC, datetime\nfrom uuid import UUID, uuid4\n\nimport pytest\n\nfrom gobby.hub.caller_scope import bind_caller, current_caller, require_machine_owned\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.utils.machine_id import get_machine_id\n\nTEST_USER_ID = \"20000000-0000-4000-8000-000000000001\"\nOTHER_USER_ID = \"20000000-0000-4000-8000-000000000002\"\n\n\nclass _RecordingDB:\n    \"\"\"In-memory machines table that counts lookups.\"\"\"\n\n    def __init__(self, owners: dict[str, str]) -> None:\n        self.owners = owners\n        self.calls = 0\n\n    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:\n        self.calls += 1\n        machine_id = str(params[0])\n        owner = self.owners.get(machine_id)\n        if owner is None:\n            return None\n        now = datetime.now(UTC)\n        return {\n            \"id\": machine_id,\n            \"owner_user_id\": owner,\n            \"first_seen\": now,\n            \"last_seen\": now,\n            \"ref\": 1,\n        }\n\n\ndef _hub_id() -> str:\n    return str(UUID(get_machine_id()))\n\n\ndef _owned_db() -> tuple[_RecordingDB, str, str]:\n    hub = _hub_id()\n    remote = str(uuid4())\n    return _RecordingDB({hub: TEST_USER_ID, remote: TEST_USER_ID}), hub, remote\n\n\ndef _expect_error(machine_id: str, code: str) -> None:\n    with pytest.raises(NodeCommandError) as raised:\n        require_machine_owned(machine_id)\n    assert raised.value.code == code\n    assert raised.value.stage == \"none\"\n\n\ndef test_require_machine_owned() -> None:\n    database, hub, remote = _owned_db()\n    unknown = str(uuid4())\n\n    require_machine_owned(hub)\n    require_machine_owned(unknown)\n    assert database.calls == 0\n\n    missing_user = bind_caller(None, database)\n    try:\n        calls_before = database.calls\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n        assert database.calls == calls_before\n    finally:\n        missing_user.var.reset(missing_user)\n\n    no_database = bind_caller(TEST_USER_ID, None)\n    try:\n        _expect_error(hub, \"machine_not_found\")\n        _expect_error(remote, \"machine_not_found\")\n    finally:\n        no_database.var.reset(no_database)\n\n    owner = bind_caller(TEST_USER_ID, database)\n    try:\n        require_machine_owned(hub)\n        require_machine_owned(remote)\n        _expect_error(unknown, \"machine_not_found\")\n    finally:\n        owner.var.reset(owner)\n\n    other = bind_caller(OTHER_USER_ID, database)\n    try:\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n    finally:\n        other.var.reset(other)\n\n    assert current_caller() is None\n\n\ndef test_binding_reaches_child_tasks() -> None:\n    database, _hub, _remote = _owned_db()\n\n    async def _seen_user() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    def _seen_user_sync() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    async def _run() -> None:\n        token = bind_caller(TEST_USER_ID, database)\n        try:\n            child = asyncio.create_task(_seen_user())\n            assert await child == TEST_USER_ID\n            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID\n        finally:\n            token.var.reset(token)\n        assert current_caller() is None\n\n    asyncio.run(_run())\n",
+            "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/hub/test_caller_scope.py has been created successfully.",
+            "tool_output_for_prompt_concise": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/hub/test_caller_scope.py has been created.",
+            "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/hub/test_caller_scope.py",
+            "edits": {
+              "details": [
+                {
+                  "old_string": "",
+                  "old_line": 1,
+                  "new_string": "\"\"\"Caller scope keeps a request on machines its user owns.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom datetime import UTC, datetime\nfrom uuid import UUID, uuid4\n\nimport pytest\n\nfrom gobby.hub.caller_scope import bind_caller, current_caller, require_machine_owned\nfrom gobby.hub.node_client import NodeCommandError\nfrom gobby.utils.machine_id import get_machine_id\n\nTEST_USER_ID = \"20000000-0000-4000-8000-000000000001\"\nOTHER_USER_ID = \"20000000-0000-4000-8000-000000000002\"\n\n\nclass _RecordingDB:\n    \"\"\"In-memory machines table that counts lookups.\"\"\"\n\n    def __init__(self, owners: dict[str, str]) -> None:\n        self.owners = owners\n        self.calls = 0\n\n    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:\n        self.calls += 1\n        machine_id = str(params[0])\n        owner = self.owners.get(machine_id)\n        if owner is None:\n            return None\n        now = datetime.now(UTC)\n        return {\n            \"id\": machine_id,\n            \"owner_user_id\": owner,\n            \"first_seen\": now,\n            \"last_seen\": now,\n            \"ref\": 1,\n        }\n\n\ndef _hub_id() -> str:\n    return str(UUID(get_machine_id()))\n\n\ndef _owned_db() -> tuple[_RecordingDB, str, str]:\n    hub = _hub_id()\n    remote = str(uuid4())\n    return _RecordingDB({hub: TEST_USER_ID, remote: TEST_USER_ID}), hub, remote\n\n\ndef _expect_error(machine_id: str, code: str) -> None:\n    with pytest.raises(NodeCommandError) as raised:\n        require_machine_owned(machine_id)\n    assert raised.value.code == code\n    assert raised.value.stage == \"none\"\n\n\ndef test_require_machine_owned() -> None:\n    database, hub, remote = _owned_db()\n    unknown = str(uuid4())\n\n    require_machine_owned(hub)\n    require_machine_owned(unknown)\n    assert database.calls == 0\n\n    missing_user = bind_caller(None, database)\n    try:\n        calls_before = database.calls\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n        assert database.calls == calls_before\n    finally:\n        missing_user.var.reset(missing_user)\n\n    no_database = bind_caller(TEST_USER_ID, None)\n    try:\n        _expect_error(hub, \"machine_not_found\")\n        _expect_error(remote, \"machine_not_found\")\n    finally:\n        no_database.var.reset(no_database)\n\n    owner = bind_caller(TEST_USER_ID, database)\n    try:\n        require_machine_owned(hub)\n        require_machine_owned(remote)\n        _expect_error(unknown, \"machine_not_found\")\n    finally:\n        owner.var.reset(owner)\n\n    other = bind_caller(OTHER_USER_ID, database)\n    try:\n        _expect_error(hub, \"machine_not_owned\")\n        _expect_error(remote, \"machine_not_owned\")\n    finally:\n        other.var.reset(other)\n\n    assert current_caller() is None\n\n\ndef test_binding_reaches_child_tasks() -> None:\n    database, _hub, _remote = _owned_db()\n\n    async def _seen_user() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    def _seen_user_sync() -> str | None:\n        scope = current_caller()\n        return None if scope is None else scope.user_id\n\n    async def _run() -> None:\n        token = bind_caller(TEST_USER_ID, database)\n        try:\n            child = asyncio.create_task(_seen_user())\n            assert await child == TEST_USER_ID\n            assert await asyncio.to_thread(_seen_user_sync) == TEST_USER_ID\n        finally:\n            token.var.reset(token)\n        assert current_caller() is None\n\n    asyncio.run(_run())\n",
+                  "new_line": 1,
+                  "context_before": "",
+                  "context_after": "",
+                  "line_prefix": ""
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "partials": [
+    {
+      "timestamp": "2026-10-17T04:41:54+00:00",
+      "source_line": 14198,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-33",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "from gobby.storage.machines import LocalMachineManager\nfrom gobby.utils.break_glass import BREAK_GLASS_HEADER",
+        "new_string": "from gobby.storage.machines import LocalMachineManager\nfrom gobby.terminals.leases import TerminalLeaseRegistry\nfrom gobby.utils.break_glass import BREAK_GLASS_HEADER"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-33",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "from gobby.storage.machines import LocalMachineManager\nfrom gobby.utils.break_glass import BREAK_GLASS_HEADER",
+            "newText": "from gobby.storage.machines import LocalMachineManager\nfrom gobby.terminals.leases import TerminalLeaseRegistry\nfrom gobby.utils.break_glass import BREAK_GLASS_HEADER"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:07+00:00",
+      "source_line": 14201,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-34",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "    service.bind_runtime(\n        front_door_secret=_FRONT_DOOR_SECRET,\n        local_machine_id=get_machine_id(),\n    )",
+        "new_string": "    service.bind_runtime(\n        grant_service=None,\n        clock=None,\n        front_door_secret=_FRONT_DOOR_SECRET,\n        local_machine_id=get_machine_id(),\n    )"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-34",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "    service.bind_runtime(\n        front_door_secret=_FRONT_DOOR_SECRET,\n        local_machine_id=get_machine_id(),\n    )",
+            "newText": "    service.bind_runtime(\n        grant_service=None,\n        clock=None,\n        front_door_secret=_FRONT_DOOR_SECRET,\n        local_machine_id=get_machine_id(),\n    )"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:10+00:00",
+      "source_line": 14204,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-35",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "def test_http_request_binds_resolved_user(http_server: HTTPServer, tmp_path: Path) -> None:",
+        "new_string": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_http_request_binds_resolved_user(http_server: HTTPServer, tmp_path: Path) -> None:"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-35",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "def test_http_request_binds_resolved_user(http_server: HTTPServer, tmp_path: Path) -> None:",
+            "newText": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_http_request_binds_resolved_user(http_server: HTTPServer, tmp_path: Path) -> None:"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:11+00:00",
+      "source_line": 14207,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-36",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "        http_server.auth_service.bind_runtime(\n            front_door_secret=TEST_FRONT_DOOR_SECRET,\n            local_machine_id=get_machine_id(),\n        )",
+        "new_string": "        http_server.auth_service.bind_runtime(\n            grant_service=None,\n            clock=None,\n            front_door_secret=TEST_FRONT_DOOR_SECRET,\n            local_machine_id=get_machine_id(),\n        )"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-36",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "        http_server.auth_service.bind_runtime(\n            front_door_secret=TEST_FRONT_DOOR_SECRET,\n            local_machine_id=get_machine_id(),\n        )",
+            "newText": "        http_server.auth_service.bind_runtime(\n            grant_service=None,\n            clock=None,\n            front_door_secret=TEST_FRONT_DOOR_SECRET,\n            local_machine_id=get_machine_id(),\n        )"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:12+00:00",
+      "source_line": 14210,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-37",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "def test_http_ownership_matrix(",
+        "new_string": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_http_ownership_matrix("
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-37",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "def test_http_ownership_matrix(",
+            "newText": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_http_ownership_matrix("
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:12+00:00",
+      "source_line": 14213,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-38",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "    http_server.auth_service.bind_runtime(\n        front_door_secret=TEST_FRONT_DOOR_SECRET,\n        local_machine_id=str(TEST_FRONT_DOOR_IDENTITY[\"X-Gobby-Machine-Id\"]),\n    )",
+        "new_string": "    http_server.auth_service.bind_runtime(\n        grant_service=None,\n        clock=None,\n        front_door_secret=TEST_FRONT_DOOR_SECRET,\n        local_machine_id=str(TEST_FRONT_DOOR_IDENTITY[\"X-Gobby-Machine-Id\"]),\n    )"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-38",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "    http_server.auth_service.bind_runtime(\n        front_door_secret=TEST_FRONT_DOOR_SECRET,\n        local_machine_id=str(TEST_FRONT_DOOR_IDENTITY[\"X-Gobby-Machine-Id\"]),\n    )",
+            "newText": "    http_server.auth_service.bind_runtime(\n        grant_service=None,\n        clock=None,\n        front_door_secret=TEST_FRONT_DOOR_SECRET,\n        local_machine_id=str(TEST_FRONT_DOOR_IDENTITY[\"X-Gobby-Machine-Id\"]),\n    )"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:13+00:00",
+      "source_line": 14216,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-39",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "        super().__init__(\n            config=WebSocketConfig(),\n            mcp_manager=cast(MCPClientManager, MagicMock()),\n            auth_callback=_unused,\n            db_executor=cast(Any, _InlineExecutor()),\n        )\n        self.observations: list[_Observation] = []",
+        "new_string": "        super().__init__(\n            config=WebSocketConfig(),\n            mcp_manager=cast(MCPClientManager, MagicMock()),\n            auth_callback=_unused,\n            db_executor=cast(Any, _InlineExecutor()),\n        )\n        self.lease_registry = TerminalLeaseRegistry(daemon_epoch=\"test-epoch\")\n        self.observations: list[_Observation] = []"
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-39",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "        super().__init__(\n            config=WebSocketConfig(),\n            mcp_manager=cast(MCPClientManager, MagicMock()),\n            auth_callback=_unused,\n            db_executor=cast(Any, _InlineExecutor()),\n        )\n        self.observations: list[_Observation] = []",
+            "newText": "        super().__init__(\n            config=WebSocketConfig(),\n            mcp_manager=cast(MCPClientManager, MagicMock()),\n            auth_callback=_unused,\n            db_executor=cast(Any, _InlineExecutor()),\n        )\n        self.lease_registry = TerminalLeaseRegistry(daemon_epoch=\"test-epoch\")\n        self.observations: list[_Observation] = []"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-17T04:42:13+00:00",
+      "source_line": 14219,
+      "id": "call-75ca3d0b-512f-49e7-a108-f623865625d8-40",
+      "tool_name": "search_replace",
+      "arguments": {
+        "file_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "old_string": "def test_websocket_messages_bind_connection_user(",
+        "new_string": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_websocket_messages_bind_connection_user("
+      },
+      "result": {
+        "kind": "json",
+        "truncated": false,
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-75ca3d0b-512f-49e7-a108-f623865625d8-40",
+        "native_status": "completed",
+        "type": "SearchReplace",
+        "absolute_path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+        "tool_output_for_prompt": "The file /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py has been updated successfully.",
+        "diffs": [
+          {
+            "path": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode/tests/servers/test_caller_scope_binding.py",
+            "oldText": "def test_websocket_messages_bind_connection_user(",
+            "newText": "@pytest.mark.usefixtures(\"isolated_http_runtime\")\ndef test_websocket_messages_bind_connection_user("
+          }
+        ]
+      }
+    }
+  ],
+  "runs": [
+    {
+      "session": "gobby#16717",
+      "timestamp": "2026-10-17T04:47:41+00:00",
+      "source_line": 14321,
+      "id": "call-89714464-b7f0-4a27-9bda-d88d0707ddf5-54",
+      "tool_name": "run_terminal_command",
+      "arguments": {
+        "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py -q",
+        "description": "Run admitted #24595 RED pytest",
+        "block_until_ms": 600000
+      },
+      "result": {
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-89714464-b7f0-4a27-9bda-d88d0707ddf5-54",
+        "native_status": "completed",
+        "rawOutput": {
+          "type": "Bash",
+          "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run rtk pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py -q",
+          "exit_code": 1,
+          "truncated": false,
+          "timed_out": false,
+          "total_bytes": 1688,
+          "current_dir": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode",
+          "output_for_prompt": "exit: 1\nPytest: 0 passed, 6 failed in 5.24s\n\nFailures:\n1. [FAIL] test_require_machine_owned\n     tests/hub/test_caller_scope.py:63: in test_require_machine_owned\n     src/gobby/hub/caller_scope.py:39: in require_machine_owned\n     raise NotImplementedError\n\n2. [FAIL] test_binding_reaches_child_tasks\n     tests/hub/test_caller_scope.py:122: in test_binding_reaches_child_tasks\n     /Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runne...\n     /Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runne...\n\n3. [FAIL] test_authenticate_resolves_caller_user\n     tests/servers/test_caller_scope_binding.py:173: in test_authenticate_resolves_caller_user\n     assert cookie.user_id == TEST_USER_ID\n     E   AssertionError: assert None == '20000000-0000-4000-8000-000000000001'\n\n4. [FAIL] test_http_request_binds_resolved_user\n     tests/servers/test_caller_scope_binding.py:238: in test_http_request_binds_resolved_user\n     assert owner.json()[\"bound\"] is True\n     E   assert False is True\n\n5. [FAIL] test_http_ownership_matrix\n     tests/servers/test_caller_scope_binding.py:351: in test_http_ownership_matrix\n     src/gobby/hub/caller_scope.py:39: in require_machine_owned\n     raise NotImplementedError\n\n6. [FAIL] test_websocket_messages_bind_connection_user\n     tests/servers/test_caller_scope_binding.py:623: in test_websocket_messages_bind_connection_user\n     /Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runne...\n     /Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runne...\n[full output: rtk recall d2a5a3014199]\n"
+        }
+      }
+    },
+    {
+      "session": "gobby#16717",
+      "timestamp": "2026-10-17T04:48:09+00:00",
+      "source_line": 14327,
+      "id": "call-aab8053d-0170-479b-9c68-b4b2ddff80f3-55",
+      "tool_name": "run_terminal_command",
+      "arguments": {
+        "command": "rtk recall d2a5a3014199",
+        "description": "Read full RED pytest failure output"
+      },
+      "result": {
+        "status": "completed",
+        "error": null,
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-aab8053d-0170-479b-9c68-b4b2ddff80f3-55",
+        "native_status": "completed",
+        "rawOutput": {
+          "type": "Bash",
+          "command": "rtk recall d2a5a3014199",
+          "exit_code": 0,
+          "truncated": false,
+          "timed_out": false,
+          "total_bytes": 4487,
+          "current_dir": "/Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode",
+          "output_for_prompt": "exit: 0\n============================= test session starts ==============================\nplatform darwin -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0\nrootdir: /Users/josh/.gobby/worktrees/gobby/lane-5-hub-mode\nconfigfile: pyproject.toml\nplugins: mock-3.15.1, xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, asyncio-1.3.0, cov-7.0.0\nasyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 6 items\n\ntests/hub/test_caller_scope.py FF                                        [ 33%]\ntests/servers/test_caller_scope_binding.py FFFF                          [100%]\n\n=================================== FAILURES ===================================\n__________________________ test_require_machine_owned __________________________\ntests/hub/test_caller_scope.py:63: in test_require_machine_owned\n    require_machine_owned(hub)\nsrc/gobby/hub/caller_scope.py:39: in require_machine_owned\n    raise NotImplementedError\nE   NotImplementedError\n_______________________ test_binding_reaches_child_tasks _______________________\ntests/hub/test_caller_scope.py:122: in test_binding_reaches_child_tasks\n    asyncio.run(_run())\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runners.py:204: in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runners.py:127: in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/base_events.py:719: in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\ntests/hub/test_caller_scope.py:113: in _run\n    token = bind_caller(TEST_USER_ID, database)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nsrc/gobby/hub/caller_scope.py:33: in bind_caller\n    raise NotImplementedError\nE   NotImplementedError\n____________________ test_authenticate_resolves_caller_user ____________________\ntests/servers/test_caller_scope_binding.py:173: in test_authenticate_resolves_caller_user\n    assert cookie.user_id == TEST_USER_ID\nE   AssertionError: assert None == '20000000-0000-4000-8000-000000000001'\nE    +  where None = AuthDecision(allowed=True, code=None, message=None, status_code=401, principal=None, grant=None, bearer_claims=None, user_id=None, machine_id=None, key_id=None, break_glass=False).user_id\n____________________ test_http_request_binds_resolved_user _____________________\ntests/servers/test_caller_scope_binding.py:238: in test_http_request_binds_resolved_user\n    assert owner.json()[\"bound\"] is True\nE   assert False is True\n------------------------------ Captured log call -------------------------------\nWARNING  gobby.servers.app_factory:_app_lifecycle.py:301 Failed to start InteractiveAttentionMonitor: Interactive attention monitor requires a detection registry\n__________________________ test_http_ownership_matrix __________________________\ntests/servers/test_caller_scope_binding.py:351: in test_http_ownership_matrix\n    require_machine_owned(hub)\nsrc/gobby/hub/caller_scope.py:39: in require_machine_owned\n    raise NotImplementedError\nE   NotImplementedError\n_________________ test_websocket_messages_bind_connection_user _________________\ntests/servers/test_caller_scope_binding.py:623: in test_websocket_messages_bind_connection_user\n    asyncio.run(_native_and_unowned())\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runners.py:204: in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/runners.py:127: in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/asyncio/base_events.py:719: in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\ntests/servers/test_caller_scope_binding.py:576: in _native_and_unowned\n    _assert_observed(\ntests/servers/test_caller_scope_binding.py:551: in _assert_observed\n    assert observation.bound is bound\nE   AssertionError: assert False is True\nE    +  where False = _Observation(bound=False, user_id=None, off_loop=False, outcome='ok', machine_id=None, stage=None).bound\n============================== 6 failed in 5.24s ===============================\n"
+        }
+      }
+    }
+  ]
+}

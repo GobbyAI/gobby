@@ -37,13 +37,11 @@ from gobby.sessions.transcripts.base import (
 )
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_background import (
-    deliver_output,
     pending_background_run,
     recover_background_receipt,
 )
 from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
-    OutputDelivery,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -69,6 +67,7 @@ from gobby.tasks.transcript_evidence_transfer import (
     decode_cooperatively,
     encode,
 )
+from gobby.tasks.transcript_git_sources import confirm_git_restore, is_git_source_command
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
 )
@@ -86,9 +85,13 @@ from gobby.tasks.transcript_output_retention import (
     _drop_settled_command_output,
     _retained_output,
 )
+from gobby.tasks.transcript_output_retention import (
+    recover_rtk_output as _recover_rtk_output,
+)
 from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    native_created_source,
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
@@ -601,7 +604,12 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
-    output, output_truncated = _extract_output(outcome.result)
+    recall = _RTK_RECALL_RE.fullmatch(outcome.command.strip())
+    output, output_truncated = (
+        _extract_output(outcome.result, max_chars=64_000)
+        if recall
+        else _extract_output(outcome.result)
+    )
     provenance = outcome.result.get("outcome_provenance")
     outcome_fields = outcome.result
     if provenance == "codex.functions_exec.wrapper":
@@ -671,7 +679,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             validation_segments=segments,
         )
     )
-    _recover_rtk_output(state, outcome.result)
+    _recover_rtk_output(state.runs, outcome.result)
 
 
 def _validation_segments(
@@ -717,6 +725,13 @@ def _record_validation_run(
         native_result = result.get("tool_result", result) if isinstance(result, dict) else result
         output = native_result.get("content") if isinstance(native_result, dict) else native_result
         written_path = pending.arguments.get("file_path")
+        created_source = (
+            native_created_source(pending.arguments, result, pending.call_id)
+            if confirmed
+            and state.session.source == "grok"
+            and _tool_basename(pending.name) == "search_replace"
+            else None
+        )
         creation_receipt = (
             confirmed
             and _tool_basename(pending.name) == "write"
@@ -726,12 +741,18 @@ def _record_validation_run(
                 output == f"File created successfully at: {written_path}"
                 or output.startswith(f"File created successfully at: {written_path} ")
             )
-        )
+        ) or created_source is not None
         state.edits[:] = [
             replace(
                 edit,
                 source_confirmed=confirmed,
                 source_confirmed_at=completed_at if confirmed else None,
+                source_after=created_source
+                if created_source is not None
+                and not any(
+                    prior.path == edit.path and prior.order < edit.order for prior in state.edits
+                )
+                else edit.source_after,
                 source_created=bool(
                     creation_receipt
                     and not any(
@@ -751,8 +772,6 @@ def _record_validation_run(
         return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
-    # A literal recall carries the original failure sections, often larger than
-    # the ordinary command summary. Keep that native receipt bounded separately.
     recall = _RTK_RECALL_RE.fullmatch(command.strip())
     output, output_truncated = (
         _extract_output(result, max_chars=64_000) if recall else _extract_output(result)
@@ -763,7 +782,8 @@ def _record_validation_run(
         aggregate_status_is_trustworthy=(
             not match.is_compound
             if match
-            else not classify_validation_command_equivalence(command).wrapped
+            else is_git_source_command(command)
+            or not classify_validation_command_equivalence(command).wrapped
         ),
     )
     if outcome == "unknown":
@@ -771,6 +791,8 @@ def _record_validation_run(
             f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
+    if outcome == "success":
+        confirm_git_restore(state.edits, state.runs, pending, state.repo_path, completed_at)
     output, output_truncated = _retained_output(command, segments, output, output_truncated)
     state.runs.append(
         TranscriptValidationRun(
@@ -801,57 +823,7 @@ def _record_validation_run(
             if isinstance(description, str) and description.strip()
             else None,
         )
-    _recover_rtk_output(state, result)
-
-
-def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
-    """Attach a native recall receipt to its unique original failed test run."""
-    receipt = state.runs[-1]
-    match = _RTK_RECALL_RE.fullmatch(receipt.command.strip())
-    if match is None or receipt.wrapped:
-        return
-    # Retrieval output contains the old pytest failure. Its transport outcome,
-    # rather than those historical failure counts, certifies the recall itself.
-    outcome, exit_code, unknown_reason = _extract_outcome(result)
-    if outcome != "success" or not receipt.output or receipt.output_truncated:
-        return
-    state.runs[-1] = replace(
-        receipt, outcome=outcome, exit_code=exit_code, unknown_reason=unknown_reason
-    )
-    reference = re.compile(rf"(?m)^[ \t]*\[full output: rtk recall {match.group(1)}\][ \t]*\r?$")
-    originals = [
-        index
-        for index, run in enumerate(state.runs[:-1])
-        if run.outcome == "failure"
-        and "test" in run.categories
-        and (
-            reference.search(run.output or "")
-            or re.fullmatch(
-                rf"(?:uv run )?rtk recall {match.group(1)}(?: --full)?",
-                run.output_recovered_from or "",
-            )
-        )
-    ]
-    if len(originals) != 1:
-        return
-    index = originals[0]
-    original = state.runs[index]
-    if original.output_deliveries:
-        # Gate 12 replays a recovered job's deliveries, so the recall must be one.
-        state.runs[index] = deliver_output(
-            original,
-            OutputDelivery(
-                receipt.completed_at, receipt.command, receipt.output, False, appends=False
-            ),
-        )
-        return
-    state.runs[index] = replace(
-        original,
-        output=receipt.output,
-        output_truncated=False,
-        output_recovered_from=receipt.command,
-        output_recovered_at=receipt.completed_at,
-    )
+    _recover_rtk_output(state.runs, result)
 
 
 def _shell_write_paths(
@@ -910,7 +882,7 @@ def _record_edit(
             else None
         )
         old, new = arguments.get("old_string"), arguments.get("new_string")
-        python_edit = basename == "edit" and task_file.endswith(".py")
+        python_edit = basename in {"edit", "search_replace"} and task_file.endswith(".py")
         fragment: str | None = None
         replaced: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None

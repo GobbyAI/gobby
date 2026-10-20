@@ -2871,20 +2871,43 @@ async def test_recovered_rtk_reference_remains_ambiguous_for_a_later_duplicate(
     assert compacted in (reds[1].output or "")
 
 
-async def test_codex_native_recall_keeps_the_failed_execution_outcome(tmp_path: Path) -> None:
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+@pytest.mark.parametrize(
+    ("padding_lines", "expected"),
+    [(0, True), (1000, True), (3000, False)],
+    ids=["small", "above-default-limit", "above-recall-limit"],
+)
+async def test_codex_native_recall_keeps_the_failed_execution_outcome(
+    tmp_path: Path, nested: bool, padding_lines: int, expected: bool
+) -> None:
     transcript = tmp_path / "codex-recall.jsonl"
     compacted = "Pytest: 0 passed, 1 failed\n[full output: rtk recall d1965a04eb04]"
-    raw = "tests/test_original.py:3: AssertionError: assert False\n1 failed in 0.01s"
-    records = _codex_direct_exec_pair(
-        command="uv run pytest tests/test_original.py -q",
-        call_id="original-red",
-        result=_pty_chunk(f"Process exited with code 1\nOutput:\n{compacted}"),
+    raw = (
+        "Captured setup diagnostic\n" * padding_lines
+        + "tests/test_original.py:3: AssertionError: assert False\n1 failed in 0.01s"
     )
-    recalled = _codex_direct_exec_pair(
-        command="rtk recall d1965a04eb04",
-        call_id="recall",
-        result=_pty_chunk(f"Process exited with code 0\nOutput:\n{raw}"),
-    )
+    if nested:
+        records = _codex_nested_exec_pair(
+            command="uv run pytest tests/test_original.py -q",
+            call_id="original-red",
+            result={"exit_code": 1, "output": compacted},
+        )
+        recalled = _codex_nested_exec_pair(
+            command="rtk recall d1965a04eb04",
+            call_id="recall",
+            result={"exit_code": 0, "output": raw},
+        )
+    else:
+        records = _codex_direct_exec_pair(
+            command="uv run pytest tests/test_original.py -q",
+            call_id="original-red",
+            result=_pty_chunk(f"Process exited with code 1\nOutput:\n{compacted}"),
+        )
+        recalled = _codex_direct_exec_pair(
+            command="rtk recall d1965a04eb04",
+            call_id="recall",
+            result=_pty_chunk(f"Process exited with code 0\nOutput:\n{raw}"),
+        )
     recalled[0]["timestamp"] = (BASE_TIME + timedelta(seconds=2)).isoformat()
     recalled[1]["timestamp"] = (BASE_TIME + timedelta(seconds=3)).isoformat()
     _write_jsonl(transcript, [*records, *recalled])
@@ -2902,10 +2925,16 @@ async def test_codex_native_recall_keeps_the_failed_execution_outcome(tmp_path: 
     assert (red.outcome, red.exit_code) == ("failure", 1)
     assert (receipt.outcome, receipt.exit_code) == ("success", 0)
     assert red.order < receipt.order
-    assert red.output == receipt.output
-    assert raw in (red.output or "")
-    assert red.output_recovered_from == receipt.command
-    assert red.output_recovered_at == receipt.completed_at
+    assert receipt.output_truncated is (not expected)
+    if expected:
+        assert red.output == receipt.output
+        assert raw in (red.output or "")
+        assert red.output_recovered_from == receipt.command
+        assert red.output_recovered_at == receipt.completed_at
+    else:
+        assert red.output_recovered_from is None
+        assert red.output_recovered_at is None
+        assert compacted in (red.output or "")
 
 
 _RED4_COMMAND = (

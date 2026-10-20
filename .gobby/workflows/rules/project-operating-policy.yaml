@@ -254,23 +254,23 @@ rules:
         delivery: on_receipt
         template: |
           ## Project Operating Policy
-          - Load brevity(max) at start/compact/clear; apply to all messages/reports.
-          - Josh: resolve_operator_conversation(channel="gobby-telegram"); never hardcode IDs.
-          - get_variable(name="project_policy") supplies full lanes and role_launch_defaults/launch_defaults. Read before routing/launching/handoff; Reporter/Consolidator also read their role_guidance before work; pass defaults and lane/lane_epic/worktree/first_job explicitly. Bundled definitions/runbooks inherit and stay project-agnostic.
+          - Load brevity(max) at start/compact/clear; use throughout.
+          - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
+          - Before routing/launch/handoff: get_variable(name="project_policy") for lanes/role_launch_defaults/launch_defaults. Reporter/Consolidator read role_guidance before work. Pass defaults+lane/lane_epic/worktree/first_job; bundles inherit, project-agnostic.
           - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
           - Current lanes: list_tasks(label="lane").
-          - Lanes 1-4 first; 5-9 heavy/close only if no 1-4 waiting; stage 5-9 launches by load/backlog. New tasks stay in lanes; existing outsiders stay. Found work to ORCH, low priority unless blocking lane work/landing; only blockers preempt lane tasks. Fold findings resolved by existing lane work.
-          - Never move/sweep/fold/reparent #22978 Triage descendants, #22225 Annotate, or operator-placed tasks without Josh. Parent proves placement; never change deferred-by-josh.
-          - One task/seat includes pending candidates; read-only prep allowed. On ORCH direction, reviewer-LANDed work waiting landing/activation/close may escalate_task using project_policy.handoff_reason_template. De-escalate/close after landing+LM release.
-          - No task rebalancing; add developer/reviewer seats for parallel work. Seat moves allowed.
-          - ORCH creates worktrees only: lane-N-<name>[-K] stays with seat. Never per-task trees. Next task, clean+committed: git switch -c <branch> 0.5.0. Planners main 0.5.0; reviewers developer tree.
+          - Lanes1-4 first;5-9 heavy/close only if none waiting; stage launches by load/backlog. New tasks in lanes; outsiders stay. Found work to ORCH: low unless blocking lane work/landing; only blockers preempt; fold findings existing work resolves.
+          - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
+          - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); de-escalate/close after landing+LM release.
+          - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
+          - ORCH alone creates trees: lane-N-<name>[-K], retained per seat, never per task. Next task, clean+committed: git switch -c <branch> 0.5.0. Planners main; reviewers developer tree.
           - Backlog cap 20: candidate-sent/open tasks across lanes, except planning/operator-decision parks/closure-enabling work. Assign only <=20; park operator-review closes.
           - close preview is deterministic only; actual close requires explicit LM release. close_review_busy: wait reviewer+release, retry.
-          - Hold after two consecutive 5-minute load readings>60; lift after two consecutive <36. One reading/equality does nothing. Never invent/change thresholds/admission/escalation without Josh approval via Assistant. Report load only if breaching.
+          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
           - RM grants heavy cap 6: build/clippy/full-crate/e2e/bench; cargo CARGO_BUILD_JOBS=3. Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
-          - Game Goblins 04:45–06:45 CT: no restart/cutover, low load; never rerun jobs.
-          - Before crate releases, read project_policy.release_guidance.
-          - Assistant/ORCH: operator-opened panes; others: team-coordination/team-lane/team-planning runbooks.
+          - Game Goblins04:45–06:45 CT: no restart/cutover, low load; never rerun.
+          - Crate release: read project_policy.release_guidance first.
+          - Assistant/ORCH: operator panes; others: team-coordination/team-lane/team-planning.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected

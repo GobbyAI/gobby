@@ -7,6 +7,7 @@ import hashlib
 import subprocess
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -151,6 +152,7 @@ def _successful_transcript(task: Task, *, command: str) -> TranscriptEvidence:
     )
 
 
+# FIXME(#24760): Remove the temporary gate-12 override when enforcement is restored.
 async def _evaluate_named_test_close(
     task: Task,
     *,
@@ -161,6 +163,8 @@ async def _evaluate_named_test_close(
     diff_text: AsyncMock | None = None,
     transcript: TranscriptEvidence | None = None,
     repo_path: str = "/repo",
+    enforce_tdd: bool = True,
+    run_close_review: bool = True,
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -194,6 +198,9 @@ async def _evaluate_named_test_close(
     )
 
     with (
+        patch.object(lifecycle, "_TEMPORARILY_SKIP_TDD_EVIDENCE", False)
+        if enforce_tdd
+        else nullcontext(),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value=repo_path),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
@@ -236,9 +243,44 @@ async def _evaluate_named_test_close(
             commit_sha="abc123",
             project_path=None,
             response_detail="diagnostic",
+            run_close_review=run_close_review,
         )
 
     return evaluation, tdd_check
+
+
+# FIXME(#24760): Remove these temporary bypass cases when the operator restores gate 12.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["label", "skill", "criteria"])
+@pytest.mark.parametrize("run_close_review", [False, True], ids=["preview", "real"])
+async def test_operator_temporary_gate12_skip_preserves_close_review(
+    trigger: str, run_close_review: bool
+) -> None:
+    task = _task(criteria="Behavior is pinned. test: `tests/test_example.py::test_example`.")
+    if trigger == "label":
+        task = replace(task, labels=["tdd:required"])
+    elif trigger == "skill":
+        task = replace(task, additional_skills=["test-driven-development"])
+    else:
+        task = replace(
+            task, validation_criteria=(task.validation_criteria or "") + " test-driven-development."
+        )
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task,
+        tdd_result=TddEvidenceResult(
+            passed=False, skipped=False, findings=("No historical red evidence.",)
+        ),
+        enforce_tdd=False,
+        run_close_review=run_close_review,
+    )
+
+    gate12 = next(gate for gate in evaluation.gates if gate.item == 12)
+    gate13 = next(gate for gate in evaluation.gates if gate.item == 13)
+    assert gate12.status == "skipped"
+    assert "operator" in gate12.message.lower()
+    assert "temporary" in gate12.message.lower()
+    assert gate13.status == ("passed" if run_close_review else "not_run")
+    tdd_check.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -636,6 +678,75 @@ async def test_close_tracked_script_git_runs_off_the_event_loop(tmp_path: Path) 
     )
     records = evaluation.extra["validation_commands"]["criterion_commands"]
     assert records[0]["status"] == "satisfied"
+
+
+@pytest.mark.asyncio
+async def test_close_landed_credit_git_runs_off_the_event_loop(tmp_path: Path) -> None:
+    root = tmp_path / "close"
+    other = tmp_path / "landed"
+    root.mkdir()
+    other.mkdir()
+    (other / "tests").mkdir()
+    (other / "tests" / "test_example.py").write_text("# Landed checkout test fixture.\n")
+    task = _task()
+    evidence = _successful_transcript(
+        task, command=f"uv run pytest {other}/tests/test_example.py -q"
+    )
+    audit = _successful_transcript(
+        task,
+        command=(
+            "uv run gobby test-types audit tests/test_example.py "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new"
+        ),
+    )
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            replace(evidence.validation_runs[0], workdir=str(other), output="1 passed in 0.01s"),
+            replace(
+                audit.validation_runs[0],
+                matcher_id="gobby-test-types-audit",
+                categories=("type_check",),
+                order=2,
+                workdir=str(root),
+            ),
+        ),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def git(argv: list[str], **_kwargs: Any) -> str:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        args = tuple(argv[1:])
+        calls.append(args)
+        if "--git-common-dir" in args:
+            return str(root / ".git")
+        if "symbolic-ref" in args:
+            return "refs/heads/0.5.0"
+        if "--show-toplevel" in args:
+            return str(other)
+        if "--verify" in args:
+            return "a" * 40
+        return ""
+
+    with (
+        patch.object(lifecycle, "select_close_candidate", return_value=("a" * 40, None)),
+        patch("gobby.tasks.close_test_coverage._same_bytes", return_value=False),
+        patch("gobby.tasks.close_integration_credit.run_git_command", side_effect=git),
+    ):
+        evaluation, _ = await _evaluate_named_test_close(
+            task,
+            tdd_result=None,
+            named_tests=False,
+            linked=("a" * 40,),
+            net_paths=NetCommitPaths(changed=frozenset({"tests/test_example.py"})),
+            transcript=evidence,
+            repo_path=str(root),
+        )
+
+    gate = next(gate for gate in evaluation.gates if gate.name == "validation_commands")
+    assert gate.status == "passed", gate.message
+    assert ("status", "--porcelain=v1", "--untracked-files=all") in calls
 
 
 @pytest.mark.asyncio
@@ -1167,6 +1278,7 @@ async def test_non_tdd_task_without_tests_still_skips_gates_11_and_12() -> None:
     tdd_check.assert_not_called()
 
 
+# FIXME(#24760): Remove this test's gate-12 override when enforcement is restored.
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("scope_justification", "justification_error", "continues"),
@@ -1255,6 +1367,7 @@ async def test_scope_justification_controls_downstream_close_evidence(
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", diff),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
+        patch.object(lifecycle, "_TEMPORARILY_SKIP_TDD_EVIDENCE", False),
         patch.object(lifecycle, "evaluate_tdd_evidence", tdd),
         patch.object(lifecycle, "evaluate_close_review", review),
         patch(
