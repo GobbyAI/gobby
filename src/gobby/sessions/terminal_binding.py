@@ -6,7 +6,7 @@ import math
 import os
 import subprocess
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import psutil
 
@@ -132,7 +132,8 @@ def repair_native_terminal_binding(
         )
         if inspection.state != terminal_ownership.OwnershipState.OWNED:
             return refused
-        process = psutil.Process((verified_session.terminal_context or {})["parent_pid"])
+        # OWNED carries the process created by our psutil factory, with normalized PID.
+        process = cast(psutil.Process, inspection.process)
         observed_name = process.name()
         if observed_name != session.source or "app-server" in process.cmdline():
             return TerminalBindingResult(

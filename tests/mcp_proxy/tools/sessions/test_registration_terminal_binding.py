@@ -53,6 +53,7 @@ def _local_machine() -> Iterator[None]:
     "missing_identity,refusal",
     [
         (False, None),
+        (False, "digit_string"),
         (True, None),
         (False, "recycled_cli"),
         (False, "recycled_shell"),
@@ -123,7 +124,9 @@ async def test_register_repairs_existing_unbound_native_pane(
     host.create_time.return_value = 120.0
     holder = MagicMock(pid=8003)
     holder.create_time.return_value = 130.0
-    if refusal == "recycled_cli":
+    if refusal == "digit_string":
+        manager.backfill_terminal_context(session.id, {"parent_pid": "8001"})
+    elif refusal == "recycled_cli":
         seat.create_time.return_value = 210.0
     elif refusal == "recycled_shell":
         shell.create_time.return_value = 200.0
@@ -184,7 +187,7 @@ async def test_register_repairs_existing_unbound_native_pane(
                 machine_id=LOCAL_MACHINE_ID,
                 project_id=sample_project["id"],
             )
-        if refusal:
+        if refusal and refusal != "digit_string":
             assert result["terminal_binding"]["status"] == "unbound"
             assert result["terminal_binding"]["reason"]
             unbound = terminals.get(terminal_id)
