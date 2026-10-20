@@ -34,6 +34,38 @@ const AREA: Rect = Rect {
 /// to `ui/dialogs.rs`), used to locate the popup's inner rows.
 const CONFIRM_CLOSE_POPUP: (u16, u16) = (64, 6);
 
+#[test]
+fn worktree_delete_refusal_wraps_until_recovery_is_visible() {
+    for width in [100, 48] {
+        let area = Rect::new(0, 0, width, 30);
+        let mut chrome = Chrome::dark();
+        chrome.dialog = Some(Dialog::RemoveWorktree {
+            worktree_id: "wt-1".into(),
+            branch: "plan-writer-277".into(),
+            path: "/repo-wt/plan-writer-277".into(),
+            tabs: 0,
+            panes: 0,
+            error: Some("Refusing to delete branch 'plan-writer-277': it is not merged into 'main'. Merge it first, or pass force_delete_branch=True to deliberately abandon its commits.".into()),
+        });
+        let terminal = render(width, area.height, |frame| {
+            render_dialog(frame, area, &chrome);
+        });
+        let text = rect_rows(&terminal, area).join(" ");
+        assert!(
+            text.contains("Merge it first"),
+            "recovery clipped at width {width}: {text}"
+        );
+        assert!(
+            text.contains("abandon its commits."),
+            "reason clipped at width {width}: {text}"
+        );
+        assert!(
+            text.contains("Cancel"),
+            "actions clipped at width {width}: {text}"
+        );
+    }
+}
+
 /// herdr's confirm-close acts on the sidebar's selected workspace. gclient's
 /// sidebar rows are roster terminals, so its close scope is the terminal.
 const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal(PaneId(1));

@@ -11428,6 +11428,17 @@ async fn worktree_flows_round_trip_the_daemon() {
     mock.enqueue(
         "DELETE",
         "/api/source-control/worktrees/wt-1",
+        409,
+        json!({"detail": {
+            "success": false,
+            "git_deleted": false,
+            "git_error": "Branch 'feature' is not merged into '0.5.0'. Merge it first.",
+            "message": "Git worktree deletion failed; DB record was preserved",
+        }}),
+    );
+    mock.enqueue(
+        "DELETE",
+        "/api/source-control/worktrees/wt-1",
         200,
         json!({"ok": true}),
     );
@@ -11598,6 +11609,19 @@ async fn worktree_flows_round_trip_the_daemon() {
     );
     remove_worktree(&mut workspace, &mut chrome, "wt-1")
         .await
+        .expect("unmerged checkout refusal");
+    assert!(
+        matches!(
+            &chrome.dialog,
+            Some(Dialog::RemoveWorktree { error: Some(error), .. })
+                if error == "Branch 'feature' is not merged into '0.5.0'. Merge it first."
+        ),
+        "the dialog must show the Git refusal and recovery: {:?}",
+        chrome.dialog
+    );
+    assert_eq!(children(&workspace), ["wt-1", "wt-2"]);
+    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+        .await
         .expect("remove worktree");
     workspace
         .drain_live_events()
@@ -11610,7 +11634,13 @@ async fn worktree_flows_round_trip_the_daemon() {
         .filter(|request| request.method == "DELETE")
         .map(|request| request.target)
         .collect();
-    assert_eq!(deletes, ["/api/source-control/worktrees/wt-1"]);
+    assert_eq!(
+        deletes,
+        [
+            "/api/source-control/worktrees/wt-1",
+            "/api/source-control/worktrees/wt-1"
+        ]
+    );
     assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
     assert_eq!(chrome.mode, Mode::Terminal);
     assert!(
