@@ -114,6 +114,28 @@ def test_input_after_the_flagged_chunk_stays_a_draft_after_the_record() -> None:
     assert ledger.read("t1") == _DRAFT
 
 
+def test_submit_observation_timeout_preserves_draft_without_a_future_credit() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+
+    ledger.record_submit("t1", input_timeout=0.001)
+
+    assert ledger.read("t1") == _DRAFT
+    ledger.observe_host_event(_host(2, submit=True))
+    assert ledger.read("t1") == _DRAFT
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _EMPTY
+
+
+def test_submit_observation_timeout_preserves_an_unproven_gap() -> None:
+    ledger = _tracked()
+    ledger.resume_host("e1", 5, since=0, gap=True)
+
+    ledger.record_submit("t1", input_timeout=0.001)
+
+    assert ledger.read("t1") == _GAP
+
+
 def test_record_without_a_new_flagged_write_does_not_move_the_clean_point() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1))

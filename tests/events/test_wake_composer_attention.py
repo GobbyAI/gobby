@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -12,11 +13,13 @@ import pytest
 
 from gobby.events.live_wake import ActivityProbe
 from gobby.events.wake import WakeDispatcher
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead, WriteKind
+from gobby.terminals.host_events import InputActivityEvent
 from tests.events.test_wake import FakeSession
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
@@ -331,3 +334,97 @@ async def test_spawned_agent_wakes_raise_no_seat_item(
 
     assert result["skipped"] == "composer_unconfirmed"
     assert agent.attention.get(agent.entry_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later_draft", [False, True])
+async def test_native_submit_before_host_event_preserves_following_wake(
+    seat: Seat,
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+    later_draft: bool,
+) -> None:
+    """A provider can consume Enter before the host stream reaches the daemon."""
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    terminals = MagicMock()
+    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend="native")
+    handlers = EventHandlers(terminal_manager=terminals)
+    monkeypatch.setattr(handlers, "_composer_ledger", lambda: composer_ledger)
+    loop = asyncio.get_running_loop()
+    waiting = asyncio.Event()
+    original_wait = threading.Condition.wait_for
+
+    def observe_wait(
+        condition: threading.Condition,
+        predicate: Callable[[], bool],
+        timeout: float | None = None,
+    ) -> bool:
+        loop.call_soon_threadsafe(waiting.set)
+        return original_wait(condition, predicate, timeout)
+
+    monkeypatch.setattr(threading.Condition, "wait_for", observe_wait)
+    acknowledgement = asyncio.create_task(
+        asyncio.to_thread(handlers._record_composer_submit, seat.session.id)
+    )
+    wait_started = asyncio.create_task(waiting.wait())
+    try:
+        # Old code finishes immediately; corrected code waits for its Enter event.
+        await asyncio.wait(
+            {acknowledgement, wait_started}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        for seq, submit in ((1, False), (2, True), (3, False)):
+            if seq == 3 and not later_draft:
+                continue
+            composer_ledger.observe_host_event(
+                InputActivityEvent(
+                    terminal_id=TERMINAL_ID,
+                    host_terminal_id="host-terminal-1",
+                    attachment_id="operator-1",
+                    kind="input",
+                    bytes=1,
+                    interrupt=None,
+                    epoch=HOST_EPOCH,
+                    seq=seq,
+                    submit=submit,
+                )
+            )
+        await acknowledgement
+        terminals.get_live_for_session.assert_called_once_with(seat.session.id)
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert result["delivered"] is (not later_draft)
+        if later_draft:
+            assert result["decline_reason"] == "composer_occupied"
+            seat.pane_sender.assert_not_awaited()
+        else:
+            seat.pane_sender.assert_awaited_once()
+    finally:
+        wait_started.cancel()
+        await asyncio.gather(wait_started, acknowledgement, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("backend", "worker"), [("native", False), ("tmux", True)])
+async def test_submit_acknowledgement_wait_never_blocks_the_host_reader_loop(
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    worker: bool,
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="prompt\r")
+    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
+    terminals = MagicMock()
+    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend=backend)
+    handlers = EventHandlers(terminal_manager=terminals)
+    monkeypatch.setattr(handlers, "_composer_ledger", lambda: composer_ledger)
+
+    def refuse_wait(*args: object, **kwargs: object) -> bool:
+        pytest.fail("Only native hook workers can wait for host input")
+
+    monkeypatch.setattr(threading.Condition, "wait_for", refuse_wait)
+    if worker:
+        await asyncio.to_thread(handlers._record_composer_submit, "seat-session")
+    else:
+        handlers._record_composer_submit("seat-session")
+    terminals.get_live_for_session.assert_called_once_with("seat-session")
+    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("empty")

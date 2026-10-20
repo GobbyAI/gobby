@@ -121,6 +121,7 @@ class ComposerLedger:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._input_changed = threading.Condition(self._lock)
         self._seq = 0
         self._entries: dict[str, _Entry] = {}
         self._host: tuple[str, int] | None = None
@@ -275,16 +276,33 @@ class ComposerLedger:
                 entry.clean_seq = entry.pending_seq
                 self._next()
 
-    def record_submit(self, terminal_id: str, *, adopt: bool = False) -> None:
+    def record_submit(
+        self, terminal_id: str, *, adopt: bool = False, input_timeout: float = 0.0
+    ) -> None:
         """A provider recorded a submit: flagged input up to now left the composer.
 
         The prompt reached the composer, so no dialog held the input before it. With
         ``adopt``, an untracked terminal whose input the ledger observes, such as one
         bound before the ledger existed, starts clean at the submit: the provider just
         consumed its composer.
+
+        A native hook worker may wait briefly for input still in the host event
+        stream. Wait only for an observed submit; the hook never leaves a credit
+        that could consume unrelated future input after a timeout.
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
+            if entry is not None and input_timeout > 0:
+                observed = entry
+                self._input_changed.wait_for(
+                    lambda: (
+                        self._entries.get(terminal_id) is not observed
+                        or observed.flagged_seq > observed.clean_seq
+                        or observed.unflagged_seq > observed.clean_seq
+                    ),
+                    timeout=input_timeout,
+                )
+                entry = self._entries.get(terminal_id)
             if entry is None:
                 if adopt:
                     self._entries[terminal_id] = _Entry(clean_seq=self._next())
@@ -390,6 +408,7 @@ class ComposerLedger:
     def _next(self) -> int:
         self._seq += 1
         self.version += 1
+        self._input_changed.notify_all()
         return self._seq
 
     def _human(self, entry: _Entry, *, submit: bool | None, interrupt: bool) -> None:

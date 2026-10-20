@@ -209,7 +209,18 @@ class EventHandlersBase:
         composer = self._composer_terminal(session_id)
         if composer is not None:
             ledger, terminal = composer
-            ledger.record_submit(terminal.id, adopt=terminal.backend == "native")
+            native = terminal.backend == "native"
+            # PTY delivery precedes async host-event observation. A hook worker
+            # can overtake its Enter, leaving consumed input marked as a draft.
+            # Allow one second for that stream to catch up, without blocking the
+            # owner loop that reads it or clearing any post-Enter human input.
+            input_timeout = 0.0
+            if native:
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    input_timeout = 1.0
+            ledger.record_submit(terminal.id, adopt=native, input_timeout=input_timeout)
 
     def _record_queued_composer_submit(
         self,
