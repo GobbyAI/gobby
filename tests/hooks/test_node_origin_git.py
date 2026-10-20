@@ -7,6 +7,7 @@ seam and starts no local git process for them. Local deliveries spawn as before.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import subprocess
 import threading
@@ -19,6 +20,7 @@ import pytest
 from gobby.hooks import _normalization_git, checkout_reads, code_navigation_recovery
 from gobby.hooks.checkout_reads import delivery_scope
 from gobby.utils import daemon_git, spawn
+from gobby.workflows import tdd_paths
 from gobby.workflows.tdd_paths import _git_out
 from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
 
@@ -26,6 +28,77 @@ pytestmark = pytest.mark.unit
 
 _TIMEOUT = 5.0
 _OTHER_NODE = "machine-c"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_text", [None, "\udcff"])
+async def test_node_git_round_trips_non_utf8_bytes(
+    node: FakeNode, spawned: list[list[str]], tmp_path: Path, input_text: str | None
+) -> None:
+    cwd = str(tmp_path)
+    node.set_git(NODE_MACHINE, stdout=b"\xff\0")
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+        result = await daemon_git.DaemonGitService().run(
+            ["status", "--porcelain", "-z"], cwd=cwd, timeout=_TIMEOUT, input_text=input_text
+        )
+    assert isinstance(result, daemon_git.GitOk)
+    assert result.stdout == "\udcff\0"
+    assert os.fsencode(result.stdout) == b"\xff\0"
+    stdin = node.requests[0][2]["query"]["stdin"]
+    assert stdin == (None if input_text is None else base64.b64encode(b"\xff").decode("ascii"))
+    assert spawned == []
+
+
+@pytest.mark.asyncio
+async def test_node_git_decodes_stderr_like_local_worker(
+    node: FakeNode, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def completed(
+        args: list[str], *, cwd: str, timeout: float, input_bytes: bytes | None
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(args, 3, stdout=b"", stderr=b"\xff")
+
+    monkeypatch.setattr(checkout_reads, "run_git_async", completed)
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), str(tmp_path)):
+        result = await daemon_git.DaemonGitService().run(
+            ["log"], cwd=str(tmp_path), timeout=_TIMEOUT
+        )
+    assert isinstance(result, daemon_git.GitFailed)
+    assert result.returncode == 3
+    assert result.stderr == "\udcff"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node_first", [False, True])
+async def test_worktree_identity_cache_is_machine_scoped(
+    node: FakeNode, spawned: list[list[str]], tmp_path: Path, node_first: bool
+) -> None:
+    cwd = str(tmp_path.resolve())
+    subprocess.run(["git", "-C", cwd, "init", "-q"], check=True)
+    spawned.clear()
+    node.set_git(NODE_MACHINE, stdout=b"/node/root\n/node/common\n")
+    node.set_git(_OTHER_NODE, stdout=b"/other/root\n/other/common\n")
+    machines = (
+        [NODE_MACHINE, None, _OTHER_NODE] if node_first else [None, NODE_MACHINE, _OTHER_NODE]
+    )
+    expected = {
+        None: tmp_path.resolve(),
+        NODE_MACHINE: Path("/node/root"),
+        _OTHER_NODE: Path("/other/root"),
+    }
+    tdd_paths._git_identity.cache_clear()
+    try:
+        for machine in machines + machines:
+            with delivery_scope(machine, asyncio.get_running_loop(), cwd):
+                root = await asyncio.to_thread(
+                    tdd_paths.same_repo_worktree_root, tmp_path, tmp_path
+                )
+            assert root == expected[machine]
+        assert [machine for machine, _, _, _ in node.requests] == [NODE_MACHINE, _OTHER_NODE]
+        assert all(request[2]["query"]["args"][0] == "rev-parse" for request in node.requests)
+        assert len(spawned) == 1
+    finally:
+        tdd_paths._git_identity.cache_clear()
 
 
 @pytest.fixture

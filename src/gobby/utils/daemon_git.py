@@ -471,7 +471,9 @@ class DaemonGitService:
                 "checkout_read_unavailable: env_unsupported "
                 f"(machine {checkout_reads.event_machine_id()})",
             )
-        input_bytes = None if input_text is None else input_text.encode()
+        input_bytes = (
+            None if input_text is None else input_text.encode("utf-8", errors="surrogateescape")
+        )
         try:
             done = await checkout_reads.run_git_async(
                 list(argv[1:]), cwd=cwd, timeout=timeout, input_bytes=input_bytes
@@ -480,8 +482,8 @@ class DaemonGitService:
             return GitTimeout("timeout", argv, timeout, stderr="Git timed out on the node")
         except checkout_reads.CheckoutReadUnavailable as exc:
             return GitFailed("failed", argv, None, "", str(exc))
-        stdout = done.stdout.decode(errors="replace")
-        stderr = done.stderr.decode(errors="replace")
+        stdout = done.stdout.decode("utf-8", errors="surrogateescape")
+        stderr = done.stderr.decode("utf-8", errors="surrogateescape")
         if done.returncode == 0:
             return GitOk("ok", argv, stdout, stderr, 0)
         return GitFailed("failed", argv, done.returncode, stdout, stderr)

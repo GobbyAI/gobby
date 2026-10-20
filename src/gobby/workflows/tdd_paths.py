@@ -34,8 +34,9 @@ def same_repo_worktree_root(resolved: Path, project: Path) -> Path | None:
     if not start.exists() or not project.exists():
         return None
     try:
-        worktree_top, worktree_common = _git_identity(str(start.resolve()))
-        _project_top, project_common = _git_identity(str(project.resolve()))
+        machine = checkout_reads.event_machine_id()
+        worktree_top, worktree_common = _git_identity(str(start.resolve()), machine)
+        _project_top, project_common = _git_identity(str(project.resolve()), machine)
     except _GitLookupFailed:
         return None
     if not worktree_top or not worktree_common or worktree_common != project_common:
@@ -44,8 +45,8 @@ def same_repo_worktree_root(resolved: Path, project: Path) -> Path | None:
 
 
 @lru_cache(maxsize=512)
-def _git_identity(directory: str) -> tuple[str | None, str | None]:
-    """Return (toplevel, common dir) for one directory, from a single git call."""
+def _git_identity(directory: str, machine: str | None) -> tuple[str | None, str | None]:
+    """Cache one directory's identity per machine, from a single git call."""
     text = _git_out(
         Path(directory),
         "rev-parse",
