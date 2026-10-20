@@ -38,7 +38,7 @@ async def test_startup_provisions_break_glass_before_runtime(
     credential_home = config_path.parent if config_path is not None else home
     credential_home.mkdir(exist_ok=True)
     monkeypatch.setenv("GOBBY_HOME", str(home))
-    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
+    monkeypatch.setattr("gobby.runner_backend._supervisor_fd", None)
     database_url = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
     monkeypatch.setattr(
         "gobby.config.bootstrap.load_bootstrap",

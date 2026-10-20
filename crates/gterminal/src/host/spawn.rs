@@ -196,6 +196,7 @@ pub fn spawn_prepared(
         .args(argv)
         .current_dir(cwd)
         .env_remove("CODEX_THREAD_ID")
+        .env_remove("GOBBY_SUPERVISOR_FD")
         .envs(env.iter().cloned())
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
