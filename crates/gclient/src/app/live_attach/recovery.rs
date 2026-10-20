@@ -6,6 +6,10 @@
 
 use super::*;
 
+#[cfg(test)]
+#[path = "recovery/tests.rs"]
+mod tests;
+
 impl Workspace<LiveDaemon> {
     /// Starts recovering a pane whose frame source failed. The waits run in
     /// the returned step, which the live loop polls beside itself: awaited
@@ -151,11 +155,31 @@ impl Workspace<LiveDaemon> {
         }
     }
 
-    pub(in crate::app) fn host_recovery_stale(&self, pane_id: PaneId, started: Instant) {
-        if let Some(mut record) = self.pane_record(pane_id, Some("host_reconnect")) {
-            record.started = started;
-            record.warn("frame_recovery_gave_up", "stale");
+    pub(in crate::app) fn host_recovery_gave_up(
+        &self,
+        pane_id: PaneId,
+        terminal_id: &str,
+        generation: Generation,
+        started: Instant,
+        error_class: &str,
+    ) {
+        let attachment_id = self
+            .panes
+            .get(&pane_id)
+            .filter(|pane| pane.terminal_id == terminal_id)
+            .map(|pane| pane.attachment_id())
+            .filter(|attachment| !attachment.is_empty())
+            .map(str::to_owned);
+        RecoveryRecord {
+            pane_id,
+            terminal_id: terminal_id.to_owned(),
+            attachment_id,
+            transport: Some(Transport::Direct),
+            generation,
+            stage: "host_reconnect",
+            started,
         }
+        .warn("frame_recovery_gave_up", error_class);
     }
 
     /// Applies one recovery step, returning the next when there is one.
@@ -187,7 +211,28 @@ impl Workspace<LiveDaemon> {
             {
                 self.release_attachment(&record.terminal_id, attachment);
             }
-            record.warn("frame_recovery_gave_up", "stale");
+            let mut error_class = "stale";
+            if let RecoveryStep::DirectAttached {
+                request_id,
+                outcome,
+                ..
+            } = step
+            {
+                let owns_flight = self.daemon.generation() == generation
+                    && self.panes.get(&pane_id).is_some_and(|pane| matches!(
+                        &pane.attach,
+                        AttachState::Attaching { request_id: waiting, generation: attaching, .. }
+                        if waiting == &request_id && *attaching == generation
+                    ));
+                if owns_flight {
+                    // Only the tombstone guard rejected our current request.
+                    // Finish its refusal without clearing a superseding flight.
+                    self.finish_direct_attach(pane_id, generation, outcome);
+                    self.clear_fallback_flight(pane_id);
+                    error_class = "tombstoned";
+                }
+            }
+            record.warn("frame_recovery_gave_up", error_class);
             return Ok(None);
         }
         match step {
@@ -324,6 +369,13 @@ impl Workspace<LiveDaemon> {
             return false;
         };
         if self.daemon.generation() != generation {
+            return false;
+        }
+        if matches!(step, RecoveryStep::DirectAttached { .. })
+            && step
+                .won_attachment()
+                .is_some_and(|id| pane.tombstones.contains(id))
+        {
             return false;
         }
         match step {

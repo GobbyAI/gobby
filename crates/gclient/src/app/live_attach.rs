@@ -138,7 +138,17 @@ impl Workspace<LiveDaemon> {
     ) -> bool {
         match outcome {
             Ok((reply, attachment, locator, source)) => {
-                self.install_direct_source(pane_id, &reply, attachment, &locator, source);
+                if self.panes[&pane_id].tombstones.contains(&attachment) {
+                    self.panes
+                        .get_mut(&pane_id)
+                        .expect("pane exists")
+                        .refuse_attach(
+                            "attachment_reused",
+                            "daemon reused a tombstoned attachment id",
+                        );
+                } else {
+                    self.install_direct_source(pane_id, &reply, attachment, &locator, source);
+                }
             }
             Err(FrameError::Finalized { .. }) => self.retire_pane_attachment(pane_id),
             Err(error) => {

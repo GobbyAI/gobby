@@ -26,7 +26,7 @@ use tokio::time::Instant;
 
 use crate::app::live_attach::RecoveryFuture;
 use crate::app::{PaneId, Workspace};
-use crate::daemon::LiveDaemon;
+use crate::daemon::{Generation, LiveDaemon};
 use crate::frame_source::{
     AttachLocator, FrameError, PaneFrameSource, Transport, UnixSocketFrameSource,
 };
@@ -44,6 +44,7 @@ pub(in crate::app) const HOST_RECOVERY_RETRY_MAX: Duration = Duration::from_mill
 pub(in crate::app) struct HostRecovery {
     pane_id: PaneId,
     terminal_id: String,
+    generation: Generation,
     epoch: String,
     /// When the reconnect began, for the completion record's `elapsed_ms`.
     started: Instant,
@@ -188,6 +189,7 @@ impl Workspace<LiveDaemon> {
         self.host_recovering.insert(pane_id);
         self.host_recovered.remove(&pane_id);
         let epoch = locator.frame_host_epoch.clone();
+        let generation = self.daemon.generation();
         let started = Instant::now();
         let cancel = Arc::new(HostCancel::new());
         let future_cancel = Arc::clone(&cancel);
@@ -251,6 +253,7 @@ impl Workspace<LiveDaemon> {
             HostRecovery {
                 pane_id,
                 terminal_id,
+                generation,
                 epoch,
                 started,
                 outcome,
@@ -269,14 +272,18 @@ impl Workspace<LiveDaemon> {
         let HostRecovery {
             pane_id,
             terminal_id,
+            generation,
             epoch,
             started,
             outcome,
         } = recovery;
-        self.host_recovering.remove(&pane_id);
         let live = self.panes.get(&pane_id).is_some_and(|pane| {
             pane.terminal_id == terminal_id && pane.expected_host_epoch == epoch
         });
+        let owns_slot = live || !self.panes.contains_key(&pane_id);
+        if owns_slot {
+            self.host_recovering.remove(&pane_id);
+        }
         match outcome {
             HostRecoveryOutcome::Restored(source) if live => {
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
@@ -308,15 +315,19 @@ impl Workspace<LiveDaemon> {
             }
             HostRecoveryOutcome::Restored(_) => {
                 // A different terminal image answered: not ours.
-                if let Some(pane) = self.panes.get_mut(&pane_id) {
-                    pane.fallback_in_flight = false;
-                }
-                self.host_recovery_stale(pane_id, started);
+                self.host_recovery_gave_up(pane_id, &terminal_id, generation, started, "stale");
                 None
             }
             HostRecoveryOutcome::Cancelled => {
                 // The pane was closed or replaced: drop the slots with it.
-                self.host_recovered.remove(&pane_id);
+                if owns_slot {
+                    self.host_recovered.remove(&pane_id);
+                }
+                self.host_recovery_gave_up(pane_id, &terminal_id, generation, started, "cancelled");
+                None
+            }
+            HostRecoveryOutcome::Failed if !live => {
+                self.host_recovery_gave_up(pane_id, &terminal_id, generation, started, "stale");
                 None
             }
             HostRecoveryOutcome::Failed => {
