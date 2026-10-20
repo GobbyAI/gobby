@@ -71,8 +71,8 @@ struct ExportView: View {
             pendingDelete = offsets.first.map { files[$0] }
           }
         } header: {
-          // Primary, not the default secondary: the secondary header fails the contrast audit.
-          Text("Staged exports").foregroundStyle(.primary)
+          // Use the explicit semantic color; hierarchical .primary inherits the gray list header.
+          Text("Staged exports").foregroundStyle(Color.primary)
         }
         Section {
           Button("Refresh exports", systemImage: "arrow.clockwise") { refresh() }
@@ -93,7 +93,7 @@ struct ExportView: View {
             refresh()
           }
         } header: {
-          Text("Interrupted transfers").foregroundStyle(.primary)
+          Text("Interrupted transfers").foregroundStyle(Color.primary)
         }
       }
       .navigationDestination(for: URL.self) { file in

@@ -120,11 +120,12 @@ final class ExportUITests: XCTestCase {
       app.launchArguments += ["-UIPreferredContentSizeCategoryName", textSize]
     }
     app.launch()
-    let found = app.staticTexts.matching(Self.stagedNamePredicate).firstMatch
-      .waitForExistence(timeout: 10)
-    if !found { capture(app, named: "\(variant.name)-no-row") }
+    let list = app.tables.firstMatch.exists ? app.tables.firstMatch : app.collectionViews.firstMatch
     XCTAssertTrue(
-      found, "\(variant.name): no staged export row appeared; stage a ZIP before running this test")
+      list.waitForExistence(timeout: 10), "\(variant.name): export list did not appear")
+    // List rows below the viewport may not exist in the accessibility tree at XXXL.
+    // Reveal them before the interaction tests query or activate them.
+    _ = stagedRow(in: app)
     return app
   }
 
