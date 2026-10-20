@@ -126,8 +126,14 @@ branch authenticates lease admin separately and ordinary requests before dispatc
 Keep lease-admin's call credential behavior unchanged. The ordinary call accepts a
 mutable request and an allow-browser decision from the family allowlist. The new
 cookie module owns parsing/hash/query logic; the front door owns HTTP decisions.
-Use the exact same method/path matcher as family claims, including wildcard and
-percent-encoded paths, so a handler cannot run outside the verified allowlist.
+Repair and reuse the existing gruntime path_matches function: its current wildcard
+branch consumes the first actual segment in the tuple match, then checks only later
+segments. Count that consumed segment when deciding whether the remainder is
+nonempty. This fixes flat files and hook-generated encoded nested paths without
+adding a second matcher. Use this same corrected matcher for the auth predicate and
+family claims. Cover flat a.rs, encoded src%2Fa.rs, literal nested src/a.rs and an
+empty remainder; reject the empty remainder. Preserve the family's existing path
+normalization and exact method matching.
 `crates/gcodeindex/src/family.rs` is created by #24694 and contains NATIVE_ROUTES.
 Expose a read-only browser-read predicate there; do not duplicate five path strings
 in gdaemon. The predicate excludes GET paths that do not match a row and all HEAD,
@@ -141,12 +147,14 @@ in `src/gobby/storage/auth.py` is the compatibility reference, not an edit targe
 Existing session row deletion is the revocation mechanism. The typed extension is
 in-process only; clear any prior BrowserSession before authentication.
 
-**Granularity:** more than six production Targets; verifier, its request boundary,
+**Granularity:** seven acceptance items and more than six production Targets;
+verifier, its request boundary,
 shared extension/allowlist and release carriers must ship atomically. Route claim
 activation is independently testable and stays in 1.2. No second session lifecycle
 is introduced; the existing issuer/logout retain ownership.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test browser_cookie`.
+Also run `CARGO_BUILD_JOBS=3 cargo test -p gobby-runtime browser_file_remainder_matches_hook_urls`.
 Run database cases only against isolated fixture schemas in the test hub; a missing
 test database is a failure for the acceptance run. Exact row-expiry boundary,
 logout, malformed headers and resolver failure are table-driven Rust cases.
@@ -179,6 +187,7 @@ Consumers unchanged:
 - 1.1.4 - Database failures and five-second total resolution timeout return 503 with no native handler or Python fallback; invalid cookies on the five reads return 401. test: `crates/gdaemon/tests/browser_cookie.rs::resolver_failure_is_unavailable`.
 - 1.1.5 - Hash fixture, SQL expiry boundary and absence of cache match the documented contract. test: `crates/gdaemon/tests/browser_cookie.rs::postgres_cookie_contract`.
 - 1.1.6 - Affected shipped Rust version, lockfile and existing pin advance together. file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.
+- 1.1.7 - The shared path_matches matcher counts the consumed wildcard remainder: a.rs, src%2Fa.rs and src/a.rs match the file row, empty remainder does not; auth predicate and family claims agree. test: `crates/gruntime/src/lib.rs::browser_file_remainder_matches_hook_urls`.
 
 ### 1.2 Claim cookie callers on exactly five native rows [category: code] (depends: 1.1, #24665, #24666)
 `kind: deliverable`
@@ -235,7 +244,7 @@ Consumers unchanged:
 - `tests/install/test_version_pins.py` — no-edit-reason: reads the managed pin by key or compares it to its crate manifest; literal synchronization flows through without changing this consumer.
 
 **Acceptance:**
-- 1.2.1 - Every five-row GET is claimed for a verified browser and returns native payload/error shapes; POST, HEAD, runtime, node and unlisted paths gain no browser claim. test: `crates/gcodeindex/tests/family_browser.rs::only_graph_reads_claim_browser`.
+- 1.2.1 - Every five-row GET is claimed for a verified browser and returns native payload/error shapes; flat a.rs, encoded src%2Fa.rs and literal src/a.rs file paths work for browser and API-key callers, while an empty file remainder is rejected. Auth predicate and family matcher agree. POST, HEAD, runtime, node and unlisted paths gain no browser claim. test: `crates/gcodeindex/tests/family_browser.rs::only_graph_reads_claim_browser`.
 - 1.2.2 - Unknown/expired/missing cookies and unsupported bearer callers receive 401 on the five reads with zero backend hits; valid API keys retain native behavior. test: `crates/gdaemon/tests/browser_cookie.rs::graph_reads_never_fall_back_to_python`.
 - 1.2.3 - Existing caller lists and gates outside the five rows remain identical, including Caller::ALL. test: `crates/gcodeindex/tests/family_browser.rs::other_native_authority_is_unchanged`.
 - 1.2.4 - Affected shipped Rust versions, lockfile and literal pins match the incremented merged-base versions. file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.
@@ -256,8 +265,10 @@ same-origin fetches and returns null/empty on failures. Its consumer is
 `web/src/components/code-graph/CodeGraphExplorer.tsx::CodeGraphExplorer`. Therefore
 asserting only that the page renders can hide an auth/routing failure. Drive the
 actual consumer and inspect all five network responses and visible graph/search
-results. The hook and UI require no production edit. The new support file owns only
-isolated fixture startup/seeding and cleanup, not mock route interception.
+results. The hook and UI require no production edit. The new TypeScript support
+file only consumes Rust-owned fixture metadata, creates
+the isolated browser context and sets its HttpOnly cookie; Rust owns all process,
+seeding and cleanup lifetimes. No API-route interception is allowed.
 `web/playwright.config.ts` already sets testDir to tests and supports
 PLAYWRIGHT_BASE_URL. Supply the isolated running fixture URL explicitly so Playwright
 does not silently start a frontend against Josh's daemon.
@@ -271,20 +282,39 @@ with the Rust library. No production database, real login password, stored brows
 profile or installed daemon mutation is used. Fail fixture setup when graph/database
 services are unavailable; never skip required proof. Rust proof verifies direct hub
 and node relay requests, cookie forwarding, logout and foreign-machine exclusion.
-The browser receives its HttpOnly session through fixture setup; never expose it to
-page JavaScript. It loads real CodeGraphExplorer and exercises overview, file,
-neighbors, blast radius and search. Save exact commands and test output.
+The Rust browser_graph acceptance process keeps seeded hub/node services alive
+while it owns the browser proof. It reserves an ephemeral loopback frontend port,
+then starts installed Vite from web with `npx vite --host 127.0.0.1 --port <port>
+--strictPort` and GOBBY_DAEMON_PORT set to its fixture hub port. A bind race fails
+setup rather than choosing the user's daemon. Wait at most 30 seconds for frontend
+HTTP readiness and hub readiness. Then invoke `npx playwright test
+tests/code-graph-cookie.spec.ts --workers=1` from web as a child with
+PLAYWRIGHT_BASE_URL set to that Vite URL. This suppresses Playwright's own server;
+the Rust process is the explicit frontend owner. Bound Playwright to 180 seconds
+and the entire fixture lifetime to 300 seconds.
 
-Planned verification (heavy slots required): `CARGO_BUILD_JOBS=3 cargo test -p
-gobby-daemon --test browser_graph`, then from web, with PLAYWRIGHT_BASE_URL set to the
-fixture URL, `npx playwright test tests/code-graph-cookie.spec.ts --workers=1`.
-No Python test harness or new dependencies. Rust test setup and TypeScript fixtures
-are kept together as one cross-process acceptance outcome.
+Pass one owner-only temporary JSON file through GOBBY_CODE_GRAPH_FIXTURE_FILE,
+containing the project id, loopback frontend/hub/node URLs and fixture session token.
+Do not pass credentials in process arguments or print the file contents. TypeScript
+support validates metadata bounds and loopback URLs, sets the HttpOnly cookie for
+the frontend origin in a new isolated context, and never exposes the token to page
+JavaScript. Keep fixture state and metadata until Playwright completes. The browser
+loads real CodeGraphExplorer and exercises overview, file (flat and nested),
+neighbors, blast radius and search. Save exact commands and redacted test output.
+On success, child failure, readiness timeout, panic or cancellation, terminate and
+reap Vite/Playwright process groups, stop hub/node, remove the metadata file and
+clean only fixture-owned database/graph identifiers. Rust cleanup guards and bounded
+child waits own that teardown; TypeScript closes its browser context in finally.
+
+Planned verification (one heavy slot): `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon
+--test browser_graph -- --test-threads=1`. Its browser_fixture_lifecycle test runs
+Vite and Playwright before Rust teardown. There is no independent second command
+against a dead fixture. No Python harness, new helper binary or new dependency.
 
 **Acceptance:**
 - 2.1.1 - Hub and relaying-node requests return fixture symbols/edges for all five reads with a valid cookie and zero backend graph-route hits; foreign machine symbols remain invisible. test: `crates/gdaemon/tests/browser_graph.rs::hub_and_node_cookie_graph_reads`.
 - 2.1.2 - Real browser graph load, file expansion, neighbors, blast radius and search succeed through gdaemon; removing/revoking the session makes fresh requests fail with 401 and no stale-success assertion. test: `web/tests/code-graph-cookie.spec.ts::code_graph_uses_native_cookie_reads`.
-- 2.1.3 - The fixture uses isolated state/ports/data and fails on missing prerequisites; response payload checks cannot pass against mocked API routes or an empty graph. test: `crates/gdaemon/tests/browser_graph.rs::fixture_is_isolated_and_requires_graph_data`.
+- 2.1.3 - The Rust-owned Vite/Playwright lifecycle keeps isolated state/ports/data alive until browser completion, fails on missing prerequisites, and cleans all child processes/data on failure; response payload checks cannot pass against mocked routes or an empty graph. test: `crates/gdaemon/tests/browser_graph.rs::browser_fixture_lifecycle`.
 
 ## P3: Retire Python and reconcile public evidence
 `kind: framing`
@@ -299,12 +329,14 @@ Targets:
 - `src/gobby/code_index/context.py::*` — scope-reason: delete four read methods and helpers/imports with no surviving callers.
 - `tests/servers/routes/test_code_index_routes.py::*` — operation: delete — scope-reason: only tests deleted Python routes after prerequisite retirement.
 - `tests/code_index/test_code_index_context.py::*` — scope-reason: delete tests and fixtures of the retired methods only.
+- `tests/test_wiki_retirement_contract.py::test_retired_http_routes_use_normal_missing_route`
 - `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: delete status keys for exactly the five retired graph reads.
 - `docs/contracts/parity-ledger.md`
 - `docs/reference-audit/code-index.json::*` — scope-reason: point five graph-read implementation records at native handlers.
 - `tests/contracts/http/manifest.json::*` — scope-reason: retain cases and set code_index origin to gdaemon.
 - `tests/contracts/http/README.md`
 - `crates/gdaemon/tests/code_graph_retirement.rs`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: transfer code_index cases to executable authenticated native replay while preserving other families.
 
 **Research context:** `create_code_index_router` owns graph_overview, graph_file,
 graph_symbol_neighbors, graph_blast_radius and graph_search. Delete that file only
@@ -320,19 +352,41 @@ and edits the same context; it must not depend back on this plan.
 The five status keys are HTTP GET /api/code-index/graph, /graph/file/{file_path:path},
 /graph/symbol/{symbol_id}/neighbors, /graph/blast-radius and /graph/search. Remove the
 keys with the Python routes; regenerate the committed ledger using existing
-`uv run python scripts/generate_parity_ledger.py`. Retain native corpus cases and
-switch origin; never drop request coverage merely to avoid a dead recorder.
+`uv run python scripts/generate_parity_ledger.py`. Retain exactly the two cases
+supplied by #24708, code_index_search_disabled and
+code_index_overview_disabled, unchanged in their JSON files; switch code_index origin
+to gdaemon. These cover disabled-gate responses only. Successful reads for all five
+routes remain the responsibility of 2.1, not five invented corpus cases.
 Re-point graph_search's audit implementation to family/search.rs and the other four
 to family/graph.rs with their actual indexed handler symbols after prerequisites
 land. Refresh the audit's source-audit/rust-capability verification fields. Do not
 claim future Rust symbols already exist in this checkout.
 
-Add Rust source-inventory checks plus the real routing proof from 2.1; do not add
-Python replacement tests. Delete obsolete Python test definitions/imports only.
+The existing Rust http_contracts replay owner must take over both cases when
+origin changes: its current start_front_door uses no resolver and its backend-up
+branch expects a proxy hit. Add a code_index-only branch composing the real
+CodeIndexFamily against isolated disabled configuration and a fixed test credential
+resolver. Inject that fixture's API-key credential into these two replay requests;
+never use production credentials. Assert each stored status/body (503 with the
+recorded route-specific detail), normalized headers and zero backend hits for both
+up/down backend states. Keep every other family's replay path unchanged. Name the
+new focused Rust test code_index_native_cases_replay_equal; reuse existing replay,
+normalization and backend-stub helpers, not a generic new harness. The two disabled
+cases do not require indexed data; configure the real family before its database
+access gate and fail if the intended disabled state is not active.
+
+The wiki retirement test currently asserts code-index clear exists in OpenAPI;
+#24710 changes that assertion to search. Delete only that final obsolete code-index
+presence assertion in test_retired_http_routes_use_normal_missing_route, preserving
+all wiki missing-route assertions. Its no-edit disposition was incorrect. Add Rust
+source-inventory checks plus the real routing proof from 2.1; do not add Python
+replacement tests. Python test changes remain deletion-only.
 Run existing focused Python regressions with the isolated DATABASE_URL and
 GOBBY_TEST_PROTECT=1; use uv for all Python commands. Planned commands: `cargo test
 -p gobby-daemon --test code_graph_retirement`; `uv run pytest tests/code_index/test_code_index_context.py
- tests/test_parity_ledger.py -q` with those required environment variables; rerun 2.1.
+ tests/test_parity_ledger.py tests/test_wiki_retirement_contract.py -q` with those
+required environment variables; `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test
+http_contracts code_index_native_cases_replay_equal`; rerun 2.1.
 
 **Granularity:** more than six production Targets. Router deletion, its mount,
 context caller deletion and derived public records are one retirement transaction:
@@ -341,13 +395,12 @@ cleanup remains independently closeable in 3.2.
 
 Consumers unchanged:
 - `src/gobby/servers/app_factory.py` — no-edit-reason: continues calling register_routes for surviving routers without naming the deleted router.
-- `tests/test_wiki_retirement_contract.py` — no-edit-reason: asserts wiki retirement while using the shared route factory; code-index removal changes no wiki expectation.
 
 **Acceptance:**
 - 3.1.1 - Obligation 9.8.1: all five Python handlers and router file/mount/export plus the four context reads and newly dead helpers are absent; all five native cookie reads still load. test: `crates/gdaemon/tests/code_graph_retirement.rs::python_graph_reads_are_retired`.
 - 3.1.2 - Obligation 9.8.3: five status keys leave proxied, generated ledger matches inventory, and five audit records point to existing native handlers with fresh verification. test: `crates/gdaemon/tests/code_graph_retirement.rs::ledger_and_audit_name_native_graph_handlers`.
-- 3.1.3 - Corpus keeps the five read cases at gdaemon origin and replays equal; no recorder targets retired Python routes. test: `crates/gdaemon/tests/code_graph_retirement.rs::corpus_keeps_native_graph_cases`.
-- 3.1.4 - No imports/callers of deleted handlers/context methods remain; existing live-context regression tests and native browser proof pass after deletion. behavior: "Rust/TypeScript browser proof remains green after Python retirement".
+- 3.1.3 - Both existing disabled search/overview corpus JSON cases remain unchanged at gdaemon origin and execute through the real native family with an isolated fixed credential, matching stored status/body and zero backend hits; other families keep their replay behavior. test: `crates/gdaemon/tests/http_contracts.rs::code_index_native_cases_replay_equal`.
+- 3.1.4 - No imports/callers of deleted handlers/context methods remain; existing live-context and wiki retirement regressions plus native browser proof pass after deletion. behavior: "Rust/TypeScript browser proof remains green after Python retirement".
 
 ### 3.2 Delete unused gateway methods and obsolete floors [category: refactor] (depends: 3.1, #24670)
 `kind: deliverable`
@@ -445,3 +498,21 @@ state and exact command/result receipts. Never run the full pytest suite.
 8d65292e-775d-4eb2-b8dc-9b5dc55719bf. Replaces historical draft/M1; preserves obligations
 9.8.1–9.8.3. No fresh Security/adversary/operator approval is claimed. Expansion,
 landing, activation and task closure remain Orchestrator-owned.
+
+2026-10-20 correction: accepted all four findings from Plan Adversary gobby#17272,
+message c9f61602-e5ea-4895-a7bb-0eca7a312ab9, on historical candidate e244f4f3:
+COOKIE-PA-01 repairs the reused wildcard matcher and URL boundary coverage;
+COOKIE-PA-02 deletes the wiki contract's obsolete code-index presence assertion;
+COOKIE-PA-03 transfers the two existing corpus cases to authenticated native Rust
+replay; COOKIE-PA-04 gives the Rust acceptance process ownership of Vite/Playwright
+through cleanup. No new deliverable or Python runtime/test is added. Security LAND
+receipt fff30c9b-115c-423b-9acb-25616349ceb1 certifies only the preceding candidate;
+this correction requires fresh Security/adversary review before Josh approval.
+
+Correction validation: canonical worktree command above exits 0 with three phases
+and no warning, skipped check or checkout mismatch. The YAML Target remains
+symbol-bearing in this checkout: gcode outline resolves project-operating-policy;
+gcode evidence range 92–95 is complete with no warnings, excerpt hash
+bac25eb57444a458cf55e71524d26cdcb835793e3eac29382f3fba7f133285ec.
+No index mutation was necessary to obtain this result; the adversary's earlier
+checkout/index diagnostics are preserved as limitations of that earlier run.
