@@ -108,6 +108,24 @@ def node(monkeypatch: pytest.MonkeyPatch) -> FakeNode:
     return fake
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("machine", [None, NODE_MACHINE])
+async def test_git_lookup_preserves_non_utf8_output(
+    node: FakeNode, tmp_path: Path, machine: str | None
+) -> None:
+    cwd = str(tmp_path)
+    subprocess.run(["git", "-C", cwd, "init", "-q"], check=True)
+    expected = os.fsdecode(b"directory-\xff")
+    # Git config can carry arbitrary bytes even on filesystems that reject such names.
+    subprocess.run(["git", "-C", cwd, "config", "test.binary", expected], check=True)
+    node.set_git(NODE_MACHINE, stdout=b"directory-\xff\n")
+    with delivery_scope(machine, asyncio.get_running_loop(), cwd):
+        value = await asyncio.to_thread(_git_out, tmp_path, "config", "--get", "test.binary")
+    assert value == expected
+    assert value is not None
+    assert os.fsencode(value) == b"directory-\xff"
+
+
 @pytest.fixture
 def spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[list[str]]]:
     """Record every local git process start: the shared spawn helper and daemon_git's spawn."""

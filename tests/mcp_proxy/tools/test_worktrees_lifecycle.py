@@ -849,7 +849,7 @@ async def test_delete_worktree_success(
             force=False,
             delete_branch=True,
             force_delete_branch=False,
-            branch_name="b1",
+            branch_name=None,
             base_branch="main",
             merged_into=None,
         )
@@ -963,7 +963,7 @@ async def test_delete_worktree_uncommitted_changes(
             force=True,
             delete_branch=True,
             force_delete_branch=False,
-            branch_name="b1",
+            branch_name=None,
             base_branch="main",
             merged_into=None,
         )
@@ -1196,13 +1196,16 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
     mock_git_manager: MagicMock,
+    tmp_path: Path,
 ) -> None:
     """If git returns failure after deleting the path, DB cleanup still completes."""
+    worktree_path = tmp_path / "removed-by-git"
+    worktree_path.mkdir()
     wt = Worktree(
         id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         project_id="p1",
         branch_name="b1",
-        worktree_path="/tmp/p1",
+        worktree_path=str(worktree_path),
         base_branch="main",
         status="active",
         created_at=_VALID_TIMESTAMP,
@@ -1214,13 +1217,15 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.delete.return_value = True
     mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
-    mock_git_manager.delete_worktree.return_value.success = False
-    mock_git_manager.delete_worktree.return_value.error = "Git delete failed after unlink"
 
-    with patch("pathlib.Path.exists", side_effect=[True, True, False]):
-        result = await registry.call(
-            "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
-        )
+    async def delete_after_unlink(*_args: object, **_kwargs: object) -> MagicMock:
+        worktree_path.rmdir()
+        return MagicMock(success=False, error="Git delete failed after unlink")
+
+    mock_git_manager.delete_worktree.side_effect = delete_after_unlink
+    result = await registry.call(
+        "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
+    )
 
     assert result["success"] is True
     mock_git_manager.prune_worktrees.assert_called_once()

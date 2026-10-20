@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -232,6 +233,97 @@ async def test_explicit_target_cannot_delete_a_detached_worktree(
     assert result["error_code"] == "merged_into_requires_source_branch"
     assert Path(worktree.worktree_path).exists()
     storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["0.5.0", "refs/heads/0.5.0"])
+async def test_missing_detached_checkout_is_removed_only_after_landing_proof(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    target: str,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(Path(worktree.worktree_path), "checkout", "--detach")
+    worktree.branch_name = None
+    shutil.rmtree(worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into=target)
+
+    assert result["success"] is True, result
+    storage.delete.assert_called_once_with(worktree.id)
+    assert worktree.worktree_path not in _git(repo, "worktree", "list", "--porcelain")
+    assert _git(repo, "branch", "--list", "child") == "child"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target", [None, "main", "landed", "origin/0.5.0", "refs/remotes/origin/0.5.0", "child-alias"]
+)
+async def test_missing_detached_checkout_refuses_unproven_landing_targets(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    target: str | None,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(Path(worktree.worktree_path), "checkout", "--detach")
+    worktree.branch_name = None
+    shutil.rmtree(worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into=target)
+
+    assert result["success"] is False
+    storage.delete.assert_not_called()
+    assert worktree.worktree_path in _git(repo, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.asyncio
+async def test_missing_detached_checkout_preserves_unlanded_commit(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    checkout = Path(worktree.worktree_path)
+    _git(checkout, "checkout", "--detach")
+    _git(checkout, "commit", "--allow-empty", "-m", "unlanded detached work")
+    unlanded = _git(checkout, "rev-parse", "HEAD")
+    worktree.branch_name = None
+    shutil.rmtree(checkout)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="0.5.0")
+
+    assert result["success"] is False
+    storage.delete.assert_not_called()
+    assert unlanded in _git(repo, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.asyncio
+async def test_missing_detached_checkout_preserves_locked_registration(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(Path(worktree.worktree_path), "checkout", "--detach")
+    _git(repo, "worktree", "lock", worktree.worktree_path)
+    worktree.branch_name = None
+    shutil.rmtree(worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="0.5.0")
+
+    assert result["success"] is False
+    storage.delete.assert_not_called()
+    assert worktree.worktree_path in _git(repo, "worktree", "list", "--porcelain")
 
 
 @pytest.mark.asyncio

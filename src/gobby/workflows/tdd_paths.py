@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from functools import lru_cache
@@ -70,14 +71,13 @@ def _git_out(cwd: Path, *args: str) -> str | None:
             ["git", "-C", str(cwd), *args],
             check=False,
             capture_output=True,
-            text=True,
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise _GitLookupFailed from exc
     if completed.returncode != 0:
         return None
-    return completed.stdout.strip() or None
+    return os.fsdecode(completed.stdout).strip() or None
 
 
 def _node_git_out(cwd: Path, args: tuple[str, ...]) -> str | None:
@@ -88,4 +88,4 @@ def _node_git_out(cwd: Path, args: tuple[str, ...]) -> str | None:
         raise _GitLookupFailed from exc
     if completed.returncode != 0:
         return None
-    return completed.stdout.decode(errors="replace").strip() or None
+    return os.fsdecode(completed.stdout).strip() or None

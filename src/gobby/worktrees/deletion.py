@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -267,6 +268,7 @@ async def _delete_git_worktree(
         git_manager,
         worktree_path=worktree.worktree_path,
         branch_name=worktree.branch_name,
+        merged_into=request.merged_into if not request.force_delete_branch else None,
     )
     if retry_error is not None:
         return WorktreeDeletionResult(success=False, git_deleted=False, error=retry_error)
@@ -343,15 +345,21 @@ async def probe_missing_worktree_git_state(
     *,
     worktree_path: str | Path,
     branch_name: str | None,
+    merged_into: str | None = None,
 ) -> tuple[bool, str | None]:
     """Confirm a missing checkout and branch need no repeated Git deletion.
 
-    Returns ``(True, None)`` only after pruning a missing worktree registration.
+    Returns ``(True, None)`` only after removing a missing worktree registration.
+    A detached registration needs an explicit landing target and Git's recorded HEAD.
     A present path or branch returns ``(False, None)`` so normal deletion still runs.
     """
     if Path(worktree_path).exists():
         return False, None
     if not branch_name:
+        if merged_into is not None:
+            return await _remove_missing_detached_worktree(
+                git_manager, Path(worktree_path), merged_into
+            )
         return False, "Cannot verify missing worktree without its source branch"
     try:
         branch_result = await git_manager.run_git_command(
@@ -367,6 +375,54 @@ async def probe_missing_worktree_git_state(
     prune_result = await git_manager.prune_worktrees()
     if not prune_result.success:
         return False, prune_result.error or "Failed to prune missing git worktree"
+    return True, None
+
+
+async def _remove_missing_detached_worktree(
+    git_manager: WorktreeGitManager, worktree_path: Path, merged_into: str
+) -> tuple[bool, str | None]:
+    """Remove only a missing detached registration whose recorded HEAD is landed."""
+    target_ref = merged_into if merged_into.startswith("refs/") else f"refs/heads/{merged_into}"
+    if merged_into.startswith("origin/") or not target_ref.startswith("refs/heads/"):
+        return False, "Missing detached worktree requires a local landing branch"
+    try:
+        valid = await git_manager.run_git_command(["check-ref-format", target_ref], timeout=5)
+        symbolic = await git_manager.run_git_command(
+            ["symbolic-ref", "--quiet", target_ref], timeout=5
+        )
+        if valid.returncode != 0 or symbolic.returncode != 1:
+            return False, "Missing detached worktree requires a direct local landing branch"
+        records = [
+            item
+            for item in await git_manager.list_worktrees()
+            if Path(item.path).resolve() == worktree_path.resolve()
+        ]
+        if len(records) != 1:
+            return False, "Cannot verify the missing detached worktree's Git registration"
+        record = records[0]
+        if (
+            not record.is_detached
+            or record.branch is not None
+            or record.is_bare
+            or record.locked
+            or not record.commit
+        ):
+            return False, "Cannot verify an unlocked detached worktree HEAD"
+        merged = await git_manager.run_git_command(
+            ["merge-base", "--is-ancestor", record.commit, target_ref], timeout=10
+        )
+        if merged.returncode != 0:
+            return False, "Missing detached worktree HEAD is not proven landed"
+        if worktree_path.exists() or worktree_path.is_symlink():
+            return False, "Missing detached worktree path reappeared; registration preserved"
+        # Target just this registration. A global prune could retire unrelated unlanded roots.
+        removed = await git_manager.run_git_command(
+            ["worktree", "remove", str(worktree_path)], timeout=30
+        )
+        if removed.returncode != 0:
+            return False, removed.stderr.strip() or "Failed to remove missing detached worktree"
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return False, f"Failed to verify missing detached worktree: {exc}"
     return True, None
 
 
