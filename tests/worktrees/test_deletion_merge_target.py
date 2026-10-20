@@ -399,6 +399,49 @@ async def test_already_unregistered_missing_checkout_cleans_merged_branch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("branch_state", ["merged", "unmerged", "absent"])
+async def test_missing_pruned_checkout_preserves_unmerged_branch_without_explicit_target(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    branch_state: str,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(repo, "branch", "-f", "main", "0.5.0")
+    worktree.base_branch = "main"
+    if branch_state == "unmerged":
+        _git(Path(worktree.worktree_path), "commit", "--allow-empty", "-m", "unlanded child")
+    child_head = _git(repo, "rev-parse", "child")
+    other = repo.parent / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), "main")
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unrelated_head = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    shutil.rmtree(worktree.worktree_path)
+    _git(repo, "worktree", "remove", worktree.worktree_path)
+    if branch_state == "absent":
+        _git(repo, "branch", "-d", "child")
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id)
+
+    assert result["success"] is (branch_state != "unmerged")
+    if branch_state == "unmerged":
+        assert result["error"]
+        storage.delete.assert_not_called()
+        assert _git(repo, "rev-parse", "child") == child_head
+    else:
+        storage.delete.assert_called_once_with(worktree.id)
+        assert _git(repo, "branch", "--list", "child") == ""
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    assert str(other) in remaining
+    assert unrelated_head in remaining
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure_state", ["missing", "unlinked", "force"])
 async def test_git_remove_failure_preserves_unrelated_unlanded_registration(
     landed_worktree: tuple[Path, Worktree], failure_state: str

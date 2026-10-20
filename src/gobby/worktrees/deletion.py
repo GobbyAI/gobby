@@ -324,10 +324,12 @@ async def _delete_git_worktree(
             message=result.message,
         )
 
-    registration_gone, probe_error = await worktree_registration_is_absent(
-        git_manager, Path(worktree.worktree_path)
+    git_already_deleted, probe_error = await probe_missing_worktree_git_state(
+        git_manager,
+        worktree_path=worktree.worktree_path,
+        branch_name=worktree.branch_name,
     )
-    if registration_gone:
+    if git_already_deleted:
         return None
     return WorktreeDeletionResult(
         success=False,

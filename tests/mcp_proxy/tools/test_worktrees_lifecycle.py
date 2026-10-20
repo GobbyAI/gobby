@@ -1195,7 +1195,7 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
     mock_git_manager: MagicMock,
     tmp_path: Path,
 ) -> None:
-    """If git returns failure after deleting the path, DB cleanup still completes."""
+    """A partial Git failure allows cleanup once the path, branch, and registration are gone."""
     worktree_path = tmp_path / "removed-by-git"
     worktree_path.mkdir()
     wt = Worktree(
@@ -1221,6 +1221,7 @@ async def test_delete_worktree_continues_when_git_failure_removed_path(
 
     mock_git_manager.delete_worktree.side_effect = delete_after_unlink
     mock_git_manager.run_git_command.side_effect = [
+        MagicMock(returncode=1, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="worktree /tmp/repo\0HEAD abc\0\0", stderr=""),
     ]
     result = await registry.call(
