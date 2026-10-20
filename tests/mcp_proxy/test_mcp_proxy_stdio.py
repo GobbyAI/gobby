@@ -1686,12 +1686,22 @@ class TestDaemonProxyMethods:
         with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
             mock_req.side_effect = [
                 {"success": True, "mcp_servers": {"srv1": {}, "srv2": {}}},  # details
+                {
+                    "success": True,
+                    "servers": [{"name": "srv1", "discovery_timeout": 90.0}],
+                },  # discovery budgets
                 {"success": True, "tools": [{"name": "t1"}]},  # srv1 tools
                 {"success": True, "tools": [{"name": "t2"}]},  # srv2 tools
             ]
             result = await proxy.list_tools()
             assert result["success"] is True
-            assert len(result["servers"]) == 2
+            assert result["servers"] == [
+                {"name": "srv1", "tools": [{"name": "t1"}]},
+                {"name": "srv2", "tools": [{"name": "t2"}]},
+            ]
+            mock_req.assert_any_await("GET", "/api/mcp/servers", session_id=None)
+            mock_req.assert_any_await("GET", "/api/mcp/srv1/tools", session_id=None, timeout=90.0)
+            mock_req.assert_any_await("GET", "/api/mcp/srv2/tools", session_id=None, timeout=30.0)
 
     @pytest.mark.asyncio
     async def test_get_tool_schema_success(self) -> None:
