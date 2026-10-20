@@ -457,6 +457,8 @@ step_workflow:
         If the assigned task needs no changes and no candidate was sent, close
         it here with reason already_implemented and evidence in changes_summary;
         the ordinary close checklist still applies. No candidate or manual step-variable write is needed.
+        An assigned research or no-commit leaf with no candidate may also close
+        here with its research evidence; preview uses the same ownership check.
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
@@ -490,7 +492,7 @@ step_workflow:
           when: >-
             tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
             and not (
-              tool_input.get('reason') == 'already_implemented'
+              not vars.get('candidate_sent')
               and tool_input.get('task_id') is not None
               and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
             )
@@ -678,7 +680,8 @@ step_workflow:
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
-        Once the reviewer has sent EVENT=LANDED and only activation remains,
+        Once the reviewer has sent EVENT=LANDED and only activation or the
+        closing seat's landed retest remains,
         escalate_task is the supported release. A `Landed #N` notice alone keeps
         you at submit: wait for the reviewer's EVENT=PROOF_REQUEST or EVENT=LANDED
         before escalating. A successful call resets task
@@ -692,6 +695,14 @@ step_workflow:
         To resume implementation or a directed retest after landing, use that
         handoff reason, then de_escalate_task and claim_task on the same task.
         Claiming routes skills and returns you to implement with shell access.
+        The reviewer sends LANDED immediately with RETEST=UNAVAILABLE when you
+        own the landed retest. After reclaiming, test in your own worktree at
+        a clean HEAD with candidate <= HEAD <= integration tip, including the
+        landed merge SHA, under a fresh Release Manager GO. Report the landed
+        merge SHA, the same test set, commands, results and tested HEAD in your
+        later EVENT=PROOF_RESULT to the reviewer and Lane Manager. Pending or
+        failing proof holds close release; a failure goes to the Orchestrator
+        to reopen the task. Activation and close release gates still apply.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
         task open, report the blocker to your Lane Manager. Read the assigned
         reviewer's stored incoming CANDIDATE_VERDICT (VERDICT=BOUNCE) or

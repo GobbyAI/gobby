@@ -745,26 +745,88 @@ async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabas
     await run.intake(task)
     await run.approve(task, SHA, "independent_review_approval", SESSION_ID)
     assert run.step == "verdict"
-    request = f"EVENT=PROOF_REQUEST TASK={task.id} SHA={SHA} NOTE=retest"
-    assert await run.admits(
-        "gobby-agents",
-        "send_message",
-        {"target": "session", "target_id": OWNER_ID, "content": request},
+    await run.send(
+        f"EVENT=LANDED TASK={task.id} SHA={SHA} RETEST=UNAVAILABLE NOTE=closer owns retest",
+        OWNER_ID,
     )
+    assert run.step == "await"
     source = (
         AGENTS_DIR.parents[1] / "skills/gobby/references/agents/procedures/code-reviewer.md"
     ).read_text()
     retest = next(line for line in source.splitlines() if "- Retest." in line)
-    assert "EVENT=PROOF_REQUEST" in retest
-    assert "EVENT=PROOF_RESULT" in retest
+    assert "Send EVENT=LANDED immediately" in retest
     assert "RETEST=UNAVAILABLE" in retest
-    assert "re-arm" in retest
+    assert "wait for" not in retest
     assert "main checkout" not in retest
+    landed = next(line for line in source.splitlines() if "- Landed." in line)
+    assert "wait for" not in landed
+
+
+async def test_developer_landed_retest_unlocks_shell_without_proof_result(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    run, task, sha, _ = linked_developer
+    assert not await run.admits_native("Bash", {"command": "git status"})
+    await run.incoming(
+        f"EVENT=LANDED TASK={task.id} SHA={sha} RETEST=UNAVAILABLE NOTE=closer owns retest",
+        PEER_ID,
+    )
+    assert run.step == "submit"
+    handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
+    await run.call("gobby-tasks", "escalate_task", handoff)
+    assert run.step == "claim"
+    assert run.vars["_developer_handoff_tasks"] == [task.id]
+    await run.call("gobby-tasks", "de_escalate_task", {"task_id": task.id, "reason": "Retest"})
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert run.vars["assigned_task_id"] == task.id
+    assert await run.admits_native("Bash", {"command": "git status"})
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_developer_closes_unsubmitted_no_commit_research(
+    temp_db: HubDatabase, preview: bool, use_ref: bool
+) -> None:
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    task_ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": task_ref}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    assert not task.commits
+    assert not run.vars["candidate_sent"]
+    assert run.vars["_developer_handoff_tasks"] == []
+    arguments = {
+        "task_id": task_ref if use_ref else task.id,
+        "preview": preview,
+        "changes_summary": "Research complete; no code changes required.",
+    }
+    assert await run.admits("gobby-tasks", "close_task", arguments)
+    foreign = run.task(owner=PEER_ID)
+    assert not await run.admits("gobby-tasks", "close_task", {**arguments, "task_id": foreign.id})
+    assert not await run.admits("gobby-tasks", "close_task", {"preview": preview})
 
 
 def test_developer_submit_releases_only_after_reviewer_landed() -> None:
     source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
-    assert "Once the reviewer has sent EVENT=LANDED and only activation remains" in source
+    assert (
+        "Once the reviewer has sent EVENT=LANDED and only activation or the closing seat's "
+        "landed retest remains"
+    ) in source
+    assert "candidate <= HEAD <= integration tip" in source
     assert "A `Landed #N` notice alone keeps you at submit" in source
     assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
     assert "Once the candidate has landed" not in source

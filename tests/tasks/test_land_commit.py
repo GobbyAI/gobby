@@ -762,6 +762,10 @@ async def test_moved_tip_with_disjoint_paths_lands_merge_commit(case: LandingCas
     assert (result["mode"], result["retest_required"]) == ("merge", True)
     assert result["landed_tip"] == result["merge_commit"] == merge
     assert "focused verification commands" in result["retest_procedure"]
+    assert "Send EVENT=LANDED immediately" in result["retest_procedure"]
+    assert "RETEST=UNAVAILABLE" in result["retest_procedure"]
+    assert "clean HEAD" in result["retest_procedure"]
+    assert "wait for" not in result["retest_procedure"]
     assert case.git("rev-list", "--parents", "-n", "1", merge).split() == [merge, moved, sha]
     assert case.git("log", "-1", "--format=%s", merge) == (
         f"chore: land reviewed {sha[:10]} for #{task.seq_num}"
@@ -1374,6 +1378,8 @@ async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCas
     assert first["already_landed"] is False
     assert replay["retest_required"] is True
     assert "focused verification commands" in replay["retest_procedure"]
+    assert "Send EVENT=LANDED immediately" in replay["retest_procedure"]
+    assert "RETEST=UNAVAILABLE" in replay["retest_procedure"]
     assert pending["receipt_pending"] is True
     assert (retried["mode"], retried["landed_tip"], retried["activation_class"]) == (
         "merge",
