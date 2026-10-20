@@ -1212,7 +1212,7 @@ def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) 
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
 
-@pytest.mark.parametrize("later_input", [None, "draft", "submitted"])
+@pytest.mark.parametrize("later_input", [None, "draft", "submitted", "gap", "interrupt"])
 @pytest.mark.parametrize(("source", "command"), [("codex", "/compact"), ("droid", "/compress")])
 def test_confirmed_compact_accounts_for_submit_before_continuation(
     session_db: HubDatabase,
@@ -1226,7 +1226,9 @@ def test_confirmed_compact_accounts_for_submit_before_continuation(
     composer_ledger.observe_write(
         target, origin="daemon", kind="text", payload=f"{command}\r", submit=True
     )
-    if later_input:
+    if later_input in {"gap", "interrupt"}:
+        composer_ledger.block(target, "gap" if later_input == "gap" else "interrupt")
+    elif later_input:
         composer_ledger.observe_write(
             target,
             origin="operator",
@@ -1258,7 +1260,10 @@ def test_confirmed_compact_accounts_for_submit_before_continuation(
         )
 
     assert scheduled is True
-    assert observed == ["draft" if later_input else "empty"]
+    expected = (
+        "blocked" if later_input in {"gap", "interrupt"} else "draft" if later_input else "empty"
+    )
+    assert observed == [expected]
 
 
 @pytest.mark.parametrize("marker", [False, True])
@@ -1267,8 +1272,9 @@ def test_compact_does_not_acknowledge_unrelated_held_text(
 ) -> None:
     target = "unrelated-held-terminal"
     composer_ledger.record_spawn(target, "")
+    payload = "other prompt" if marker else "/compact"
     composer_ledger.observe_write(
-        target, origin="daemon", kind="text", payload="other prompt", submit=True
+        target, origin="daemon", kind="text", payload=payload, submit=True
     )
     before = composer_ledger.read(target)
     if marker:
