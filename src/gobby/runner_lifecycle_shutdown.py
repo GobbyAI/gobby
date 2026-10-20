@@ -738,11 +738,11 @@ async def _run_async_shutdown_cleanup(
             definition_revision_listener.close,
             "Definition revision listener shutdown",
         )
+    drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
     host = getattr(runner, "terminal_host_manager", None)
     if host is not None:
         # The host outlives every shutdown intent; only an explicit operator
         # opt-in (`gobby stop --terminals`, `shutdown?terminals=true`) drains it.
-        drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
         stop = getattr(host, "stop", None)
         if callable(stop):
             await _best_effort(
@@ -770,7 +770,7 @@ async def _run_async_shutdown_cleanup(
             lambda: reap_remaining_child_processes(
                 preserve_agents=True,
                 preserved_agent_pids=preserved_agent_pids,
-                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART,
+                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART or not drain_host,
             ),
             "Child process reap",
         )

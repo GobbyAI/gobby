@@ -71,8 +71,15 @@ def _section(text: str, heading: str) -> str:
 
 
 def _copied_sections(name: str) -> dict[str, str]:
-    prompt = _raw(name)["prompts"]["agent"]
+    prompt = _reporter_procedure() if name == "reporter" else _raw(name)["prompts"]["agent"]
     return {heading: flat(_section(prompt, heading)) for heading in COPIED_HEADINGS}
+
+
+def _reporter_procedure() -> str:
+    return (
+        get_bundled_agents_path().parents[1]
+        / "skills/gobby/references/agents/procedures/reporter.md"
+    ).read_text()
 
 
 @pytest.mark.parametrize("name", NEW_SEATS)
@@ -87,7 +94,12 @@ def test_new_seat_loads_as_a_seat_agent_definition(name: str) -> None:
     assert body.version == "1.0"
     assert (body.provider, body.model, body.checkout_mode) == ("inherit", None, "inherit")
     assert body.step_workflow is None
-    assert body.workflows.variables == {}
+    expected_variables = (
+        {"_seat_procedure": "gobby:references/agents/procedures/reporter.md"}
+        if name == "reporter"
+        else {}
+    )
+    assert body.workflows.variables == expected_variables
 
 
 @pytest.mark.parametrize(
@@ -146,6 +158,8 @@ def test_rule_selectors_carry_the_seat_baseline_only(name: str) -> None:
     expected = {"tag:default", "tag:worker-safety"}
     if name != "recovery-steward":
         expected.add("name:no-send-keys")
+    if name == "reporter":
+        expected.add("name:require-seat-procedure")
     assert include == expected
 
 
@@ -166,10 +180,14 @@ def test_no_send_keys_resolves_for_every_new_seat_except_the_steward(
 
 
 @pytest.mark.parametrize("name", NEW_SEATS)
-def test_new_seat_prompts_open_with_a_role_and_copy_the_shared_sections(name: str) -> None:
+def test_new_seat_prompts_open_with_a_role_and_supply_the_shared_sections(name: str) -> None:
     prompt = AgentDefinitionBody.model_validate(_raw(name)).prompt_for("agent")
 
     assert prompt.lstrip().startswith("## Role")
+    if name == "reporter":
+        assert "## Required procedures" in prompt
+        assert 'path="references/agents/procedures/reporter.md"' in prompt
+        prompt = _reporter_procedure()
     for heading in COPIED_HEADINGS:
         assert heading in prompt, heading
     assert _copied_sections(name) == _copied_sections("release-manager")
@@ -255,7 +273,7 @@ def test_recovery_steward_resumes_idle_composers_with_literal_keystrokes() -> No
 
 
 def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
-    prompt = flat(_raw("reporter")["prompts"]["agent"])
+    prompt = flat(_reporter_procedure())
 
     for phrase in (
         "gobby-agents:list_running_agents",

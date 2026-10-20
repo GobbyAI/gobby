@@ -1675,7 +1675,7 @@ class TestShutdownDaemonServices:
         reap_remaining_child_processes.assert_awaited_once_with(
             preserve_agents=True,
             preserved_agent_pids=set(),
-            preserve_srt_monitor=False,
+            preserve_srt_monitor=True,
         )
         shutdown_telemetry.assert_called_once_with()
         runner.database.close.assert_called_once_with()

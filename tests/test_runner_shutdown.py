@@ -1485,7 +1485,22 @@ class TestStopShutdownAgentPreservation:
     """#18974: STOP-intent shutdown parks agent runs instead of cancelling them."""
 
     @pytest.mark.asyncio
-    async def test_stop_shutdown_never_cancels_agent_runs(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "shutdown_intent,drain_terminals,preserve_monitor",
+        [
+            pytest.param(ShutdownIntent.STOP, False, True, id="stop-retain-host"),
+            pytest.param(ShutdownIntent.STOP, True, False, id="stop-drain-host"),
+            pytest.param(ShutdownIntent.RESTART, False, True, id="restart-retain-host"),
+            pytest.param(ShutdownIntent.RESTART, True, True, id="restart-drain-host"),
+        ],
+    )
+    async def test_shutdown_preserves_agent_runs_and_retained_monitors(
+        self,
+        tmp_path: Path,
+        shutdown_intent: ShutdownIntent,
+        drain_terminals: bool,
+        preserve_monitor: bool,
+    ) -> None:
         run = SimpleNamespace(
             id="run-preserved",
             pid=4242,
@@ -1496,7 +1511,10 @@ class TestStopShutdownAgentPreservation:
         run_storage.list_active_for_machine.return_value = [run]
         reap = AsyncMock()
         runner = SimpleNamespace(
-            _shutdown_intent=ShutdownIntent.STOP,
+            _shutdown_intent=shutdown_intent,
+            _drain_terminals_on_shutdown=drain_terminals,
+            terminal_host_manager=SimpleNamespace(begin_shutdown=MagicMock(), stop=AsyncMock()),
+            startup_config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
             http_server=SimpleNamespace(
                 services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
                 _hook_manager=SimpleNamespace(
@@ -1553,8 +1571,11 @@ class TestStopShutdownAgentPreservation:
             "list_active_for_machine"
         }
         reap.assert_awaited_once_with(
-            preserve_agents=True, preserved_agent_pids={4242}, preserve_srt_monitor=False
+            preserve_agents=True,
+            preserved_agent_pids={4242},
+            preserve_srt_monitor=preserve_monitor,
         )
+        runner.terminal_host_manager.stop.assert_awaited_once_with(drain_host=drain_terminals)
         runner.agent_lifecycle_monitor.stop.assert_awaited_once()
 
     @pytest.mark.asyncio

@@ -96,6 +96,11 @@ RUNBOOK_INPUTS = frozenset(
     {"workspace", "writer_title", "enhancer_title", "adversary_title", "seats"}
 )
 SEAT_AGENTS = {"writer": "plan-writer", "enhancer": "plan-enhancer", "adversary": "plan-adversary"}
+SEAT_RUNTIMES = {
+    "plan-writer": ("codex", "gpt-5.4"),
+    "plan-enhancer": ("codex", "gpt-5.4"),
+    "plan-adversary": ("grok", "grok-4"),
+}
 # The amendment's layout: Adversary splits right of Writer, Enhancer splits below it.
 SPLIT_AXES = {"right": "horizontal", "down": "vertical"}
 _INPUT_REF = re.compile(r"\$\{\{\s*inputs\.(\w+)\s*\}\}")
@@ -157,8 +162,9 @@ def rig(
     for agent in _catalogue(_installed_runbook(postgres_db)).values():
         row = definitions.get_by_name(agent)
         assert row is not None and row.enabled, f"{agent} is not an enabled definition"
-        providers[agent] = str(row.definition_json["provider"])
-        seats.append((providers[agent], str(row.definition_json["model"])))
+        provider, model = SEAT_RUNTIMES[agent]
+        providers[agent] = provider
+        seats.append((provider, model))
     # The stand-ins refuse capability probes, so the spawn gate reads these rows.
     seed_seat_catalog(postgres_db, seats)
     path, standins = curated_path(root, providers.values())
@@ -263,6 +269,17 @@ def live(
     )
     write_project_marker(checkout, project_id=PROJECT_ID, name="E2E Test Project")
     LocalProjectCheckoutManager(postgres_db).rebind(MACHINE_ID, PROJECT_ID, str(checkout))
+    # Bundled seats inherit their runtime. This isolated placement test supplies
+    # project-local choices, which also survive global template sync on restart.
+    definitions = AgentDefinitionManager(postgres_db)
+    for agent, (provider, model) in SEAT_RUNTIMES.items():
+        row = definitions.get_by_name(agent)
+        assert row is not None
+        definitions.create(
+            agent,
+            {**row.definition_json, "provider": provider, "model": model},
+            project_id=PROJECT_ID,
+        )
     machine = LocalMachineManager(postgres_db).upsert_seen(MACHINE_ID, TEST_USER_ID)
     assert machine.ref is not None
     token = daemon_token(daemon_instance.gobby_home)
