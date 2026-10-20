@@ -303,7 +303,7 @@ fn insert_set(body: &mut Map<String, Value>, arguments: &JsonObject, key: &str) 
 }
 
 /// Percent-encodes a path segment the way Python's `quote(segment, safe="")` does.
-fn quote(segment: &str) -> String {
+pub(crate) fn quote(segment: &str) -> String {
     let mut quoted = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-' | b'~') {
