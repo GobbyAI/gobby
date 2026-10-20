@@ -108,6 +108,88 @@ async def test_artifact_cleanup_preserves_missing_unlanded_registrations(
     assert unlanded in remaining
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merged", [False, True])
+@pytest.mark.parametrize("merge_target", ["main", "parent"])
+async def test_artifact_cleanup_recovers_missing_registered_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    merged: bool,
+    merge_target: str,
+) -> None:
+    from gobby.build.control_artifacts import BuildArtifactSummary, delete_artifacts
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    project = _checkout_project(temp_db, repo, monkeypatch, name="missing-checkout-clean")
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=project.id, title="Missing checkout", validation_criteria="Keep unlanded work."
+    )
+    base_sha = _git(repo, "rev-parse", "main")
+    if merge_target != "main":
+        _git(repo, "branch", merge_target, "main")
+    target = tmp_path / "target"
+    _git(repo, "worktree", "add", "-b", "task/missing", str(target), "main")
+    _git(target, "commit", "--allow-empty", "-m", "task work")
+    if merged:
+        _git(repo, "switch", merge_target)
+        _git(repo, "merge", "--ff-only", "task/missing")
+        _git(repo, "switch", "main")
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/missing",
+        worktree_path=str(target),
+        base_branch="main",
+        task_id=task.id,
+    )
+    tasks.artifacts.set_artifacts_atomic(
+        task.id,
+        worktree_id=worktree.id,
+        worktree_path=str(target),
+        base_commit_sha=base_sha,
+        target_branch=merge_target,
+    )
+    other = tmp_path / "unrelated-detached"
+    _git(repo, "worktree", "add", "--detach", str(other), base_sha)
+    _git(other, "commit", "--allow-empty", "-m", "unlanded unrelated work")
+    unrelated_head = _git(other, "rev-parse", "HEAD")
+    admin = Path(_git(other, "rev-parse", "--git-dir"))
+    shutil.rmtree(other)
+    os.utime(admin / "gitdir", (0, 0))
+    shutil.rmtree(target)
+    artifact = BuildArtifactSummary(
+        family="worktree", task_id=task.id, path=str(target), artifact_id=worktree.id
+    )
+
+    await delete_artifacts(temp_db, project.id, [artifact], force=False)
+
+    assert artifact.deleted is merged
+    refs = tasks.artifacts.get_artifacts(task.id)
+    remaining = _git(repo, "worktree", "list", "--porcelain")
+    if merged:
+        assert artifact.error is None
+        assert worktrees.get(worktree.id) is None
+        assert refs.worktree_id is None
+        assert refs.worktree_path is None
+        assert "task/missing" not in _branches(repo)
+        assert str(target) not in remaining
+    else:
+        assert artifact.error is not None
+        assert worktrees.get(worktree.id) is not None
+        assert refs.worktree_id == worktree.id
+        assert refs.worktree_path == str(target)
+        assert "task/missing" in _branches(repo)
+        assert str(target) in remaining
+    assert str(other) in remaining
+    assert unrelated_head in remaining
+
+
 def _checkout_project(
     temp_db: HubDatabase,
     root: Path,

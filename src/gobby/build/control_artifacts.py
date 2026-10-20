@@ -270,38 +270,32 @@ async def delete_artifacts(
                 if occupied is not None:
                     artifact.error = occupied
                     continue
-                git_removed = False
-                if path.exists():
-                    # The merged-branch preflight must check the branch's actual
-                    # merge target: the task's declared target branch when its
-                    # ref still exists (a child epic lands on its parent
-                    # integration branch, not the base its worktree was created
-                    # from). A target already deleted by this cleanup falls back
-                    # to the stored base, which the landed target was merged to.
-                    preflight_base = (
-                        stored_worktree.base_branch if stored_worktree is not None else None
-                    )
-                    if artifact.task_id is not None:
-                        target_branch = task_manager.artifacts.get_artifacts(
-                            artifact.task_id
-                        ).target_branch
-                        if target_branch and (
-                            await _local_branch_exists(worktree_git, target_branch)
-                        ):
-                            preflight_base = target_branch
-                    worktree_result = await worktree_git.delete_worktree(
-                        path,
-                        force=force,
-                        delete_branch=True,
-                        branch_name=(
-                            stored_worktree.branch_name if stored_worktree is not None else None
-                        ),
-                        base_branch=preflight_base,
-                    )
-                    if not worktree_result.success and path.exists():
-                        artifact.error = worktree_result.error or worktree_result.message
-                        continue
-                    git_removed = worktree_result.success
+                # Missing directories can retain registered branches; apply the
+                # same merged-branch preflight before removing their metadata.
+                # Check the task's actual merge target when its ref still exists;
+                # a deleted target falls back to the stored base it landed on.
+                preflight_base = (
+                    stored_worktree.base_branch if stored_worktree is not None else None
+                )
+                if artifact.task_id is not None:
+                    target_branch = task_manager.artifacts.get_artifacts(
+                        artifact.task_id
+                    ).target_branch
+                    if target_branch and (await _local_branch_exists(worktree_git, target_branch)):
+                        preflight_base = target_branch
+                worktree_result = await worktree_git.delete_worktree(
+                    path,
+                    force=force,
+                    delete_branch=True,
+                    branch_name=(
+                        stored_worktree.branch_name if stored_worktree is not None else None
+                    ),
+                    base_branch=preflight_base,
+                )
+                if not worktree_result.success and path.exists():
+                    artifact.error = worktree_result.error or worktree_result.message
+                    continue
+                git_removed = worktree_result.success
                 if not git_removed:
                     absent, probe_error = await worktree_registration_is_absent(worktree_git, path)
                     if not absent:
