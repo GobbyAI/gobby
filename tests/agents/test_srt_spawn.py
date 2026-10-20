@@ -30,10 +30,14 @@ def test_srt_runner_uses_portable_preflight_and_finally_cleanup() -> None:
 
     assert "[process.execPath, '--version']" in runner
     assert "/usr/bin/true" not in runner
-    cleanup = runner.split("} finally {", maxsplit=1)[1]
+    main = runner.split("async function main() {", maxsplit=1)[1]
+    cleanup = main.split("} finally {", maxsplit=1)[1]
     assert "process.off(signal, handler)" in cleanup
     assert "unsubscribe()" in cleanup
-    assert "await SandboxManager.reset()" in cleanup
+    assert "await Promise.race([" in cleanup
+    assert "SandboxManager.reset()," in cleanup
+    assert "new Error('SRT cleanup timed out')" in cleanup
+    assert "clearTimeout(timer)" in cleanup
 
 
 @pytest.mark.parametrize(

@@ -567,7 +567,7 @@ asyncio.run(main())
 
 
 _PINNED_RESTART_PROGRAM = r"""
-import asyncio, hashlib, logging, os, subprocess, sys, tempfile
+import asyncio, hashlib, logging, os, shlex, subprocess, sys, tempfile
 from dataclasses import replace
 from pathlib import Path
 from gobby.agents import srt_monitor, srt_runtime
@@ -587,11 +587,18 @@ srt_monitor.SRT_RELEASE = replace(
 
 
 async def main() -> None:
+    if mode == 'shim-node':
+        shim_dir = directory / 'node-bin'
+        shim_dir.mkdir()
+        shim = shim_dir / 'node'
+        shim.write_text('#!/bin/sh\nexec ' + shlex.quote(str(node)) + ' "$@"\n')
+        shim.chmod(0o755)
+        os.environ['PATH'] = str(shim_dir) + os.pathsep + os.environ['PATH']
     await asyncio.to_thread(srt_monitor.ensure_srt_monitor, node=node, runner=runner, env=os.environ)
     broker = srt_monitor._children[-1]
     noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
     try:
-        if mode == 'registry-missing':
+        if mode in {'registry-missing', 'shim-node'}:
             srt_monitor._children[:] = [child for child in srt_monitor._children if child is not broker]
         else:
             del srt_monitor._child_started[broker.pid]
@@ -636,7 +643,7 @@ def _run_pinned_restart_reap(
     )
 
 
-@pytest.mark.parametrize("mode", ["registry-missing", "identity-missing"])
+@pytest.mark.parametrize("mode", ["registry-missing", "identity-missing", "shim-node"])
 def test_restart_reap_keeps_pinned_broker_the_registry_lost(
     monitor_harness: MonitorHarness, mode: str
 ) -> None:
@@ -930,6 +937,71 @@ def test_recorded_broker_is_verified_outside_the_monitor_lock(
     monkeypatch.setattr(srt_monitor, "_verified_recorded_broker", verify)
     srt_monitor.live_monitor_identities()
     assert held == [False]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["missing", "timeout", "nonzero", "relative", "absent", "directory", "not-executable", "nul"],
+)
+def test_verified_monitor_paths_refuses_invalid_node_probe(
+    monitor_harness: MonitorHarness, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    harness = monitor_harness
+    launcher = harness.root / "node-launcher"
+    plain_file = harness.root / "plain-file"
+    plain_file.touch(mode=0o644)
+    output = {
+        "relative": "node",
+        "absent": str(harness.root / "missing-node"),
+        "directory": str(harness.root),
+        "not-executable": str(plain_file),
+        "nul": "/invalid\0node",
+    }.get(failure, "")
+    program = "process.stdout.write(" + json.dumps(output + "\n") + ");process.stdin.resume()"
+    if failure == "timeout":
+        program = "process.stdin.resume()"
+    elif failure == "nonzero":
+        program = "process.exit(1)"
+    pid_file = harness.root / "probe.pid"
+    program = (
+        "require('fs').writeFileSync("
+        + json.dumps(str(pid_file))
+        + ", String(process.pid));"
+        + program
+    )
+    launcher.write_text(
+        "#!/bin/sh\nexec "
+        + shlex.quote(str(harness.node))
+        + " --eval "
+        + shlex.quote(program)
+        + "\n"
+    )
+    launcher.chmod(0o755)
+    if failure == "missing":
+        launcher.unlink()
+    monkeypatch.setattr("gobby.agents.srt_monitor.shutil.which", lambda _name: str(launcher))
+    monkeypatch.setattr("gobby.agents.srt_runtime.srt_install_root", lambda: harness.root)
+
+    assert srt_monitor.verified_monitor_paths() is None
+    assert pid_file.exists() is (failure != "missing")
+    assert not pid_file.exists() or not psutil.pid_exists(int(pid_file.read_text()))
+
+
+def test_verified_monitor_paths_refuses_a_shim_printing_another_executable(
+    monitor_harness: MonitorHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = monitor_harness
+    shim = harness.root / "lying-node"
+    shim.write_text(
+        "#!/bin/sh\nprintf '%s\\n' "
+        + shlex.quote(str(harness.node))
+        + "\nread -r release || true\n"
+    )
+    shim.chmod(0o755)
+    monkeypatch.setattr("gobby.agents.srt_monitor.shutil.which", lambda _name: str(shim))
+    monkeypatch.setattr("gobby.agents.srt_runtime.srt_install_root", lambda: harness.root)
+
+    assert srt_monitor.verified_monitor_paths() is None
 
 
 def test_unreadable_listener_pid_is_none_not_a_failed_probe() -> None:

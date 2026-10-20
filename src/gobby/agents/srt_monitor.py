@@ -7,7 +7,9 @@ import fcntl
 import json
 import os
 import re
+import selectors
 import shutil
+import signal
 import socket
 import stat
 import struct
@@ -37,6 +39,48 @@ _LOCAL_PEERPID = 2  # macOS sys/un.h
 _PROBE_TIMEOUT_SECONDS = 2
 
 
+def _node_executable(launcher: str) -> str | None:
+    """Resolve a launcher only when its live process agrees with Node's self-report."""
+    try:
+        with subprocess.Popen(
+            [
+                launcher,
+                "--eval",
+                "process.stdout.write(process.execPath + '\\n');process.stdin.resume()",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        ) as probe:
+            try:
+                if probe.stdout is None:
+                    return None
+                with selectors.DefaultSelector() as ready:
+                    ready.register(probe.stdout, selectors.EVENT_READ)
+                    if not ready.select(_PROBE_TIMEOUT_SECONDS):
+                        return None
+                    output = os.read(probe.stdout.fileno(), 4096)
+                if not output.endswith(b"\n") or output.count(b"\n") != 1:
+                    return None
+                executable = Path(os.fsdecode(output[:-1]))
+                if not executable.is_absolute():
+                    return None
+                executable = executable.resolve(strict=True)
+                if not executable.is_file() or not os.access(executable, os.X_OK):
+                    return None
+                actual = Path(psutil.Process(probe.pid).exe()).resolve(strict=True)
+                if actual != executable or probe.poll() is not None:
+                    return None
+                return str(executable)
+            finally:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(probe.pid, signal.SIGKILL)
+                probe.wait(timeout=_PROBE_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError, psutil.Error, UnicodeError, ValueError):
+        return None
+
+
 def live_monitor_identities() -> dict[int, float]:
     """Return only live brokers whose creation identity still matches our child or record."""
     with _lock:
@@ -58,10 +102,11 @@ def live_monitor_identities() -> dict[int, float]:
 
 
 def verified_monitor_paths() -> tuple[str, str] | None:
-    """Return the realpaths of the installed node and runner that a pinned broker must run.
+    """Return the actual Node executable and installed runner a pinned broker must run.
 
     Lock-free and hash-free: verify_srt_installation takes the install lock on the
-    shutdown path, and a runner-changing cutover makes it raise.
+    shutdown path, and a runner-changing cutover makes it raise. A bounded Node
+    probe resolves launchers such as version-manager shims to the executable.
     """
     # Local import keeps srt_runtime out of this module's load. srt_runtime imports
     # this module lazily too, so neither module's load pulls in the other.
@@ -71,11 +116,11 @@ def verified_monitor_paths() -> tuple[str, str] | None:
     if found is None:
         return None
     try:
-        node = str(Path(found).resolve(strict=True))
         runner = str((srt_install_root() / "runner.mjs").resolve(strict=True))
     except OSError:
         return None
-    return node, runner
+    node = _node_executable(found)
+    return (node, runner) if node is not None else None
 
 
 def pinned_monitor_identities(
