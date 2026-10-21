@@ -11,7 +11,7 @@ There are 530 open tasks. Josh's subtrees, #22978 Triage and #22225 Annotate, we
   - P1 removes the close relay. That covers 25 tasks: gate 8, 10, 12 and close-review defects, the #23640 subtree, Gate 10 reuse under #24538, the #24617 host harness, and three post-0.5.0 or Triage items.
   - P2 and P3 change landing authority, receipts, reporting and seat lifecycle. That covers 11 tasks, including the whole #23542 reviewer-landing epic (4 tasks).
   - #23817 is superseded by Decision 7.
-  - Nine rows carry a *verify* caveat.
+  - Eight rows carry a *verify* caveat.
 - **Related but not moot:** 23 rows, chiefly:
   - The #23561 content-ownership tree. Gate 9 survives as invariant 3.
   - Restart and cutover-hold defects. Release restarts remain.
