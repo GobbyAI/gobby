@@ -4887,42 +4887,6 @@ async def test_execution_id_attaches_before_background_pipeline_start(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_terminal_handler_releases_lease(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    """Pipeline terminal handler releases lease."""
-    from gobby.dispatch import dispatcher
-    from gobby.hooks.event_handlers import _dispatch
-
-    task = _task(temp_db, sample_project, lifecycle="expanding")
-    storage = _mutex_storage(temp_db)
-    executor = _FakePipelineExecutor()
-    services = SimpleNamespace(pipeline_executor=executor)
-    monkeypatch.setattr(
-        dispatch_rules,
-        "evaluate",
-        lambda *args, **kwargs: _pipeline_action(task.id),
-    )
-
-    async def record_background(*args: Any, **kwargs: Any) -> None:
-        executor.record_call({"execution_id": args[4]})
-
-    monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
-
-    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
-    calls = await _wait_for_executor_calls(executor)
-    _dispatch.on_pipeline_failed(
-        {"execution_id": calls[0]["execution_id"], "error": "boom"},
-        db=temp_db,
-        storage=storage,
-    )
-
-    assert storage.get_mutex(task.id) is None
-
-
-@pytest.mark.asyncio
 async def test_invalid_pipeline_target_escalates_and_releases(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,

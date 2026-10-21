@@ -1,6 +1,8 @@
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
+import yaml
 from jsonschema.validators import validator_for
 
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -11,6 +13,7 @@ TASKLESS_AGENT_PATH = Path(
     "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
 )
 STAGED_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+TASKLESS_PROCEDURE = "references/agents/procedures/plan-adversary-taskless-old.md"
 
 
 def test_finding_schema_parity_with_adversary_contracts() -> None:
@@ -48,9 +51,13 @@ def test_finding_schema_parity_with_adversary_contracts() -> None:
         }
     )
 
-    contracts = TASKLESS_AGENT_PATH.read_text(encoding="utf-8") + STAGED_AGENT_PATH.read_text(
+    taskless_agent: dict[str, Any] = yaml.safe_load(TASKLESS_AGENT_PATH.read_text(encoding="utf-8"))
+    procedure_ref = f"gobby:{TASKLESS_PROCEDURE}"
+    assert taskless_agent["workflows"]["variables"]["_seat_procedure"] == procedure_ref
+    assert procedure_ref in taskless_agent["step_workflow"]["variables"]["required_skills"]
+    contracts = (Path("src/gobby/install/shared/skills/gobby") / TASKLESS_PROCEDURE).read_text(
         encoding="utf-8"
-    )
+    ) + STAGED_AGENT_PATH.read_text(encoding="utf-8")
     assert "severity: <blocking | nit>" in contracts
     assert "fix: <concrete plan change>" in contracts
 
