@@ -595,6 +595,15 @@ async def test_backend_ports_behind_front_door(
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_transcript_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Subsystem unit tests must not start real worker processes. Tests of
+        # prewarm ordering and failure below supply their own controlled fake.
+        monkeypatch.setattr(
+            "gobby.tasks.transcript_evidence_pool.prewarm_transcript_evidence_pool",
+            AsyncMock(),
+        )
+
     @pytest.mark.asyncio
     async def test_init_servers_wires_shared_codex_client_to_chat_backends(self) -> None:
         from gobby.ai import (
@@ -863,10 +872,16 @@ class TestInitSubsystems:
             expected_dim=768,
         )
         runner.lifecycle_manager.start.assert_awaited_once()
-        assert {
-            "subsystem": "Embeddings",
-            "error": "LM Studio server start failed: boom",
-        } in tracker.errors
+        assert tracker.errors == [
+            {
+                "subsystem": "Embeddings",
+                "error": "LM Studio server start failed: boom",
+            },
+            {
+                "subsystem": "Pipeline recovery",
+                "error": "skipped: workflow loader unavailable",
+            },
+        ]
         assert tracker.done is True
 
     @pytest.mark.asyncio
