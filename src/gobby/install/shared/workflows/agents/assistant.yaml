@@ -11,7 +11,7 @@ provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
-send_message_targets: [parent, session, agent, project, global, build]
+send_message_targets: [parent, session, agent, project, global]
 operator_messaging: true
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"

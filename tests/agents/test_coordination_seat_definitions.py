@@ -38,8 +38,8 @@ SURFACES = {
     "inbox-manager": ["spawn", "persona"],
 }
 SEND_MESSAGE_TARGETS = {
-    "assistant": {"parent", "session", "agent", "project", "global", "build"},
-    "orchestrator": {"parent", "session", "agent", "project", "global", "build"},
+    "assistant": {"parent", "session", "agent", "project", "global"},
+    "orchestrator": {"parent", "session", "agent", "project", "global"},
     "lane-manager": {"parent", "session", "project"},
     "release-manager": {"parent", "session", "project"},
     "inbox-manager": {"parent", "session"},
