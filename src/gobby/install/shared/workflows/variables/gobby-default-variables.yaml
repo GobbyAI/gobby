@@ -52,6 +52,9 @@ variables:
   claimed_task_acceptance_test_paths:
     value: []
     description: "Acceptance test paths derived from claimed task validation criteria"
+  claimed_task_tdd_obligations:
+    value: {}
+    description: "Named RED test obligations per claimed task, derived from validation criteria"
   claimed_task_is_source_work:
     value: false
     description: "Whether any task claimed by this session is category code, refactor, or test"

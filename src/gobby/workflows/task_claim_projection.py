@@ -109,6 +109,7 @@ def merge_claimed_task_projection(
                     "unresolvable_claimed_task_extra_skills",
                     "claimed_task_requires_tdd",
                     "claimed_task_acceptance_test_paths",
+                    "claimed_task_tdd_obligations",
                     "claimed_task_is_source_work",
                 ),
             ):

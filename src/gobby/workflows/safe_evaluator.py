@@ -563,7 +563,6 @@ def build_condition_helpers(
     from gobby.hooks.code_navigation_recovery import navigation_requires_index
     from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 
-    from .approval_brace_guard import approval_brace_spelling
     from .condition_helpers import (
         _event_and_tool_paths,
         _is_tdd_code_path,
@@ -667,7 +666,6 @@ def build_condition_helpers(
             "shell_command_runs_ocr_review": shell_command_runs_ocr_review,
             "shell_command_consumes_code_review": shell_command_consumes_code_review,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,
-            "approval_brace_spelling": approval_brace_spelling,
             "remote_fetch_execution": remote_fetch_execution,
             "task_commit_project_path_allowlist_violation": (
                 task_commit_project_path_allowlist_violation

@@ -836,53 +836,12 @@ no live session owns. The edit gate's refusal prints the command. The CLI sends
 one request to the daemon, carrying only the bootstrap operator API key from
 `~/.gobby/bootstrap.yaml`; run `gobby auth login` first if that key is missing.
 The daemon records the approval only when gdaemon verified that key at its front
-door. Browser sessions get 403 and change nothing. Agent bearers, forged identities and
-requests with no valid credential get 401. Each path stays approved only while its
-content matches what it was at approval. Agents cannot run it:
-`block-dirty-path-approval-cli` refuses a shell command that names the subcommand.
-`block-protected-approval-brace-spelling` also refuses an unquoted brace word that can
-produce the basename `gobby` or `approve-dirty-paths` anywhere in argv. An arbitrary
-launcher can execute an argument, so the guard also refuses `echo gobb{y..y}`. Quote
-or escape braces when relaying that spelling as data. Ordinary brace data such as
-`echo {a,b}`, `cp f{,.bak}`, `ls {gobby,x}.md` and `pytest tests/{a,b}.py` stays allowed.
-The guard matches alternatives and ranges symbolically against those two names; it
-never generates their Cartesian expansions. Unsupported ambiguous expressions fail
-closed. Quoted and escaped braces stay literal.
-`block-gobby-command-word-expansion` refuses an unquoted `{` or `}` in a gobby command
-word, including a one-letter range such as `g{o..o}bby`, and an unquoted `{`, `}`, `$`
-or backtick in a gobby group,
-subcommand or global option value (`--config VALUE`, `--config=VALUE`), because the brace
-or expansion can reach the subcommand. A `$` or backtick inside double quotes (`"$x"`)
-counts in a group or subcommand word too, because the shell expands it there. A
-double-quoted `--config` value does not split, so it is allowed. The executable word of
-any other command is refused when it holds an unquoted `{`, `}`, `$` or backtick, or a
-`$` or backtick inside double quotes, after any leading shell assignments (`X=1`) and the
-optional `uv run`, `uvx`, `uv tool run`, `env`, `nohup`, `time`, `command`, `exec`, `nice`,
-`timeout`, `xargs`, `sudo` and `doas` prefixes with their options: spell the
-executable literally. Every value-taking option of those prefixes is skipped in both
-`--opt VALUE` and `--opt=VALUE` forms (for example `uv run --project`, `--directory`,
-`--python`, `-p` and `--with`, `uvx --from`, `env -u`, `-C`, `-P` and `-S`, `time -o`,
-`exec -a`, `nice -n`, `timeout -k` and `-s`, and `xargs -I`, `-n` and `-P`). `timeout`'s
-duration operand and an `env NAME=VALUE` argument are skipped too. A value or argument
-holding an unquoted `{`, `}`, `$` or backtick is refused, because it can split or expand
-into the executable; quote it if it is literal data. A lone `{}` is literal, so
-`xargs -I {}` is allowed. A leading assignment's value is not split, so it is not checked.
-A lone `{` or `}` followed by whitespace is the shell's group keyword, not an executable.
-Single-quoted and escaped braces, `$` and backticks are literal data, and a double-quoted
-brace is literal too. The command matcher does no brace expansion.
-A shell or `eval` command (`sh`, `bash`, `zsh`, `dash`, `ksh`, `eval`) whose text names
-the subcommand is refused, with quote and backslash noise between its letters, so a payload
-the matcher cannot parse is refused too. The matcher also re-parses a `sh -c` payload or
-`eval` argument as a command, so `eval "$X"` is refused because its executable is `$X`.
-`find -exec`, `-execdir`, `-ok` and `-okdir` run their words as a command and get the same
-checks. `sudo` and `doas` also refuse unknown options and shell or login payloads that
-contain expansion syntax or name the approval subcommand. The CLI reads and sends the
-local operator key, so an agent invoking it through a launcher does not receive the
-401 that a direct API request with an agent bearer receives. The shell rules must
-refuse those CLI invocations.
-`block-gobby-cli-expansion` refuses a command that names the subcommand inside a
-substitution or backtick, or that builds a `gobby sessions` subcommand from a variable or a
-substitution.
+door. Managed agent bearers, cookies, and unauthenticated requests get 403 and
+change nothing. Each path stays approved only while its content matches what it
+was at approval. Agents cannot run it: `block-dirty-path-approval-cli` refuses a
+shell command that names the subcommand, and `block-gobby-cli-expansion` refuses
+a command that names it inside a substitution or backtick, or that builds a
+`gobby sessions` subcommand from a variable or a substitution.
 A managed execution's database role cannot read or write session state.
 
 `summarize` creates archival output; it never stages a recoverable handoff.
