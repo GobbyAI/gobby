@@ -347,7 +347,8 @@ step_workflow:
       status_message: |
         Read the claimed task with get_task(task_id=assigned_task_id). The
         completion routes stored additional_skills and TDD automatically.
-        Read offloaded cards in full and load path-specific skills before edits.
+        Read offloaded cards in full with get_tool_result and load path-specific
+        skills before edits.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

@@ -628,7 +628,7 @@ def test_reference_contract_5_2_3() -> None:
                     path,
                     action["path"],
                 )
-    assert migrated == 20
+    assert migrated == 19
 
 
 async def test_pipelines_runbooks_topic_is_registered(temp_db: HubDatabase) -> None:

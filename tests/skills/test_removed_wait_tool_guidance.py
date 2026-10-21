@@ -10,23 +10,13 @@ pytestmark = pytest.mark.unit
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills"
 WORKFLOWS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
 UPDATED_SKILLS = ("plan/expansion.md", "plan/review.md")
-WAKE_DRIVEN_GUIDANCE = (
-    pytest.param(
-        SKILLS_DIR / "gobby/references/source-control/merge-campaigns.md", id="merge-expert"
-    ),
-    pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),
-)
+WAKE_DRIVEN_GUIDANCE = (pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),)
 REVIEW_DISPATCH_GUIDANCE = (
     pytest.param(SKILLS_DIR / "gobby/references/review/epic.md", id="review"),
     pytest.param(WORKFLOWS_DIR / "agents/epic-reviewer.yaml", id="epic-reviewer"),
     pytest.param(WORKFLOWS_DIR / "review.yaml", id="review-workflow"),
 )
-CAPTURE_GUIDANCE = (
-    pytest.param(
-        SKILLS_DIR / "gobby/references/source-control/merge-campaigns.md", id="merge-expert"
-    ),
-    pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),
-)
+CAPTURE_GUIDANCE = (pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),)
 
 
 _WHITESPACE_RUN = re.compile(r"\s+")
@@ -47,6 +37,16 @@ def _guidance_text(path: Path) -> str:
             [content, *(reference.read_text() for reference in sorted(references.glob("*.md")))]
         )
     return _WHITESPACE_RUN.sub(" ", content)
+
+
+def test_merge_campaign_lands_workspaces_directly() -> None:
+    body = _guidance_text(SKILLS_DIR / "gobby/references/source-control/merge-campaigns.md")
+
+    for tool in ("merge_worktree", "merge_clone", "verify_in_worktree"):
+        assert tool in body
+    for retired in ("merge-worker", "spawn_agent", "wait_for_agent", "record_merge_result"):
+        assert retired not in body
+    assert not (SKILLS_DIR / "gobby/references/agents/procedures/merge-worker.md").exists()
 
 
 @pytest.mark.parametrize("skill_name", UPDATED_SKILLS)

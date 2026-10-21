@@ -49,6 +49,7 @@ RETIRED_PIPELINES = (
 )
 RETIRED_AGENTS = (
     "merge-orchestrator",
+    "merge-worker",
     "backend-developer",
     "frontend-developer",
     "fullstack-developer",

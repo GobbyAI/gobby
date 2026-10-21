@@ -791,6 +791,7 @@ class TestSpawnAgentDefaults:
 class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
 
+    @pytest.mark.asyncio
     async def test_dispatch_batch_worker_is_one_shot(self, mock_runner: MagicMock) -> None:
         body = make_agent_definition(
             name="developer",

@@ -30,7 +30,6 @@ RUN_SPECIFICS = re.compile(
 PROCEDURE_ROLES = [
     "code-reviewer",
     "lane-manager",
-    "merge-worker",
     "orchestrator",
     "plan-adversary-old",
     "plan-adversary-taskless-old",
