@@ -454,7 +454,7 @@ floor carriers; the prerequisite-owned worker/pruner state machines are excluded
 - 3.2.2 - Both obsolete floors and their imports/exports/tests are deleted; MIN_GCODE_GRAPH_VERSION and live version checks remain; gateway stays below 1,000 lines. test: `crates/gdaemon/tests/code_graph_retirement.rs::obsolete_gateway_floors_are_absent`.
 - 3.2.3 - Root/crates AGENTS and project operating rule no longer prescribe the maintenance floor; activation records the installed-row reconciliation and cross-plan release notification. file: `AGENTS.md`, `crates/AGENTS.md`, `.gobby/workflows/rules/project-operating-policy.yaml`.
 
-## V1: Verification and review gates
+## V3: Verification and review gates
 `kind: verification`
 
 Observed research: clean prepared checkout f983bc43f03d5cbf691c860b419e758eb1cb2c98,
@@ -491,8 +491,22 @@ waives them. New code leaves 1.1/1.2 use TDD with actual Rust RED/GREEN evidence
 regressions. All heavy tests require a Lane Manager slot, CARGO_BUILD_JOBS=3, isolated
 state and exact command/result receipts. Never run the full pytest suite.
 
-## V2: Plan provenance
+## V1 Plan Changelog
 `kind: framing`
+
+2026-10-21 UTC — Agreed narrative consensus. Writer gobby#17269 and Plan Adversary
+gobby#17272 agree on narrative commit 0d8d18b29a85760c703b88cfb8dc558391c115f4,
+plan SHA256 72c9a3e1ff36cbdd78482cebfc853474a8c19649b9e80a2b0fd7e85ffad52187.
+Adversary approval message bd9d26fb-305a-4e37-b020-4a262cb38536 resolves
+COOKIE-PA-01 through COOKIE-PA-04 with no remaining findings or product questions.
+Fresh Security plan-only LAND receipt 4d14dea4-86bb-4273-8deb-356f84046f26,
+message aa89c2fb-a6f5-448f-819b-13e61f42e90f, approves those same narrative bytes
+with no findings. This entry and the verification-heading renumbering are metadata
+only; all five deliverables, decisions, acceptance items and prerequisite gates are
+unchanged. The adversary must verify this committed entry before its formal
+EVENT=CONSENSUS and server-derived M1 stamp. Security must confirm the metadata-only
+revision. Josh approval of the stamped plan remains required before expansion;
+actual hub-node completion and refreshed pre-expansion validation remain mandatory.
 
 2026-10-20: fresh Rust/TypeScript design under Orchestrator ruling
 8d65292e-775d-4eb2-b8dc-9b5dc55719bf. Replaces historical draft/M1; preserves obligations
