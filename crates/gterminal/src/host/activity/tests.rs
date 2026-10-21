@@ -58,6 +58,31 @@ fn text_paste_and_unknown_edits_remain_human_input() {
 }
 
 #[test]
+fn terminal_replies_are_control_not_human_edits() {
+    for input in [
+        &b"\x1b[12;40R"[..],
+        b"\x1b[?62;22;52c",
+        b"\x1b[>1;10;0c",
+        b"\x1b[0n",
+        b"\x1b[?2026;2$y",
+        b"\x1b[?0u",
+        b"\x1bP>|xterm(371)\x1b\\",
+        b"\x1b]11;rgb:0000/0000/0000\x07",
+    ] {
+        assert_eq!(
+            classify_input(input),
+            (InputEffect::Control, false),
+            "{input:?}"
+        );
+    }
+    // A reply never hides typed text that arrives in the same chunk.
+    assert_eq!(
+        classify_input(b"\x1b[12;40Rtyped"),
+        (InputEffect::Edit, false)
+    );
+}
+
+#[test]
 fn enter_submits_after_ignoring_reports() {
     for input in [&b"\r"[..], b"\x1bOM", b"hello\r", b"\x1b[I\r\x1b[O"] {
         assert_eq!(

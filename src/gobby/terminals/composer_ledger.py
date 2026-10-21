@@ -75,8 +75,16 @@ STATE_VERSION = 1
 _HUMAN_ORIGINS = frozenset({"operator", "attention"})
 _INTERRUPT_KEYS = frozenset({"escape", "ctrl_c"})
 _CURSOR_KEYS = frozenset({"up", "down", "left", "right"})
+# Terminal replies are answers the viewer gives to the program's own queries (cursor
+# position, device attributes, DSR, DECRPM, kitty flags, DCS, OSC). They edit nothing,
+# so a composer holding only replies stays empty.
+_TERMINAL_REPLIES = (
+    r"\x1b\[\d+;\d+R|\x1b\[0n|\x1b\[>[\d;]*c|\x1b\[\?[\d;]*c|\x1b\[\?[\d;]*\$y|"
+    r"\x1b\[\?\d+u|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+)
 _INPUT_CONTROLS = re.compile(
     r"\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[IO]|"
+    rf"{_TERMINAL_REPLIES}|"
     r"(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])"
 )
 

@@ -54,17 +54,22 @@ def _seat(
     sample_project: dict[str, Any],
     *,
     agent_depth: int = 0,
+    source: str | None = None,
 ) -> Seat:
     with pytest.MonkeyPatch.context() as identity:
         patch_local_machine_id(identity, MACHINE_ID)
         row = session_manager.register(
             external_id=f"gap-seat-{agent_depth}",
             machine_id=MACHINE_ID,
-            source="codex",
+            source=source or "codex",
             project_id=sample_project["id"],
         )
     session = SeatSession(
-        id=row.id, ref=row.ref, agent_depth=agent_depth, terminal_context={"tmux_pane": "%7"}
+        id=row.id,
+        ref=row.ref,
+        agent_depth=agent_depth,
+        terminal_context={"tmux_pane": "%7"},
+        source=source,
     )
     sessions = MagicMock()
     sessions.get.return_value = session
@@ -236,6 +241,43 @@ async def test_text_input_still_withholds_wake(
     assert result["delivered"] is False
     assert result["skipped"] == "composer_occupied"
     seat.pane_sender.assert_not_awaited()
+
+
+@pytest.fixture(params=["codex", "claude"])
+def cli_seat(
+    request: pytest.FixtureRequest,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> Iterator[Seat]:
+    built = _seat(temp_db, session_manager, sample_project, source=request.param)
+    yield built
+    _cancel_retries(built.dispatcher)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", ["\x1b[12;40R", "\x1b[?62;22;52c"])
+async def test_terminal_reply_input_allows_following_wake_for_each_cli(
+    cli_seat: Seat, composer_ledger: ComposerLedger, payload: str
+) -> None:
+    # An idle pane whose only input is a terminal reply to a query is empty, not a draft.
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
+    result = await cli_seat.dispatcher.dispatch_live_wake(cli_seat.session.id)
+    assert result["delivered"] is True
+    cli_seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_operator_draft_still_withholds_wake_for_each_cli(
+    cli_seat: Seat, composer_ledger: ComposerLedger
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="typed")
+    result = await cli_seat.dispatcher.dispatch_live_wake(cli_seat.session.id)
+    assert result["delivered"] is False
+    assert result["skipped"] == "composer_occupied"
+    cli_seat.pane_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio

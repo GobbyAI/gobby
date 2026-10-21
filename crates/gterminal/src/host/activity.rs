@@ -16,7 +16,7 @@ pub(crate) enum InputEffect {
 }
 
 static CONTROLS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?-u:\x1b\[M[\s\S]{3})|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[IO]|(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])")
+    Regex::new(r"(?-u:\x1b\[M[\s\S]{3})|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[IO]|(?-u:\x1b\[\d+;\d+R|\x1b\[0n|\x1b\[>[\d;]*c|\x1b\[\?[\d;]*c|\x1b\[\?[\d;]*\$y|\x1b\[\?\d+u|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))|(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])")
         .expect("constant input control pattern")
 });
 

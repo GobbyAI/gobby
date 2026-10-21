@@ -209,6 +209,16 @@ def test_operator_writes_are_human_input_and_enter_flags_their_submit() -> None:
         "\x1bOC",
         "\x1bOD",
         "\x1b[1;5C",
+        # Terminal replies to the program's own queries: CPR, DA1, DA2, DSR, DECRPM,
+        # kitty keyboard flags, DCS and OSC. The viewer answers them, never a person.
+        "\x1b[12;40R",
+        "\x1b[?62;22;52c",
+        "\x1b[>1;10;0c",
+        "\x1b[0n",
+        "\x1b[?2026;2$y",
+        "\x1b[?0u",
+        "\x1bP>|xterm(371)\x1b\\",
+        "\x1b]11;rgb:0000/0000/0000\x07",
     ],
 )
 def test_non_text_human_input_preserves_composer_state(origin: WriteOrigin, payload: str) -> None:
@@ -220,7 +230,9 @@ def test_non_text_human_input_preserves_composer_state(origin: WriteOrigin, payl
     assert ledger.read("t1") == _DRAFT
 
 
-@pytest.mark.parametrize("payload", ["typed", "é", "\x1b[Atyped", "\x1b[200~paste\r\x1b[201~"])
+@pytest.mark.parametrize(
+    "payload", ["typed", "é", "\x1b[Atyped", "\x1b[12;40Rtyped", "\x1b[200~paste\r\x1b[201~"]
+)
 def test_text_and_bracketed_paste_remain_drafts(payload: str) -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
