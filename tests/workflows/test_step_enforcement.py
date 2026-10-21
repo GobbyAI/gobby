@@ -208,7 +208,11 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
     variables = SessionVariableManager(db)
     storage = LocalSkillManager(db)
     router = storage.create_skill(name="gobby", description="Router", content="# Router")
-    references = ["references/code-index/overview.md", "references/tasks/overview.md"]
+    references = [
+        "references/agents/procedures/task-close-reviewer.md",
+        "references/code-index/overview.md",
+        "references/tasks/overview.md",
+    ]
     files: list[SkillFile] = []
     for path in references:
         content = (shared / "skills/gobby" / path).read_text()
