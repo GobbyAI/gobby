@@ -166,7 +166,7 @@ class TestWorkerSafetySync:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.agent_scope == ["developer", "qa-reviewer", "doc-reviewer"]
+        assert body.agent_scope == ["developer"]
 
     def test_all_rules_are_valid_pydantic(
         self, db: HubDatabase, manager: RuleDefinitionManager

@@ -245,9 +245,7 @@ def test_review_producers_do_not_reference_review_learning() -> None:
         "epic": SKILLS_ROOT / "gobby/references/review/epic.md",
         "outcomes": SKILLS_ROOT / "gobby/references/review/outcomes.md",
         "evidence": SKILLS_ROOT / "gobby/references/review/evidence.md",
-        "qa-reviewer": WORKFLOWS / "qa-reviewer.yaml",
         "epic-reviewer": WORKFLOWS / "epic-reviewer.yaml",
-        "trajectory-monitor": WORKFLOWS / "trajectory-monitor.yaml",
         "feedback-reviewer": WORKFLOWS / "feedback-reviewer.yaml",
         "task-close-reviewer": WORKFLOWS / "task-close-reviewer.yaml",
     }

@@ -111,7 +111,6 @@ async def test_pull_gate_blocks_ordinary_tools(engine: RuleEngine, tool: str) ->
     [
         "surface-memories-on-turn-start",
         "inject-plan-reviewer-lessons",
-        "inject-qa-reviewer-lessons",
     ],
 )
 def test_context_injection_waits_for_pull(temp_db: HubDatabase, rule_name: str) -> None:

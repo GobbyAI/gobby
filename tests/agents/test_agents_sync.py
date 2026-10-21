@@ -429,17 +429,17 @@ class TestSyncBundledAgents:
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        yaml_file = agents_dir / "analyst.yaml"
+        yaml_file = agents_dir / "researcher.yaml"
         yaml_file.write_text(
-            "name: analyst\n"
-            "description: PLACEHOLDER ideation agent\n"
+            "name: researcher\n"
+            "description: PLACEHOLDER research agent\n"
             "enabled: false\n"
             "provider: claude\n"
             "model: haiku\n"
             "prompts:\n"
             "  agent: |\n"
             "    PLACEHOLDER\n"
-            "    placeholder_agent:analyst:not_implemented\n"
+            "    placeholder_agent:researcher:not_implemented\n"
             "workflows:\n  rule_selectors:\n    include: []\n"
         )
 
@@ -447,21 +447,21 @@ class TestSyncBundledAgents:
             sync_bundled_agents(db)
 
             yaml_file.write_text(
-                "name: analyst\n"
-                "description: Discovery analyst\n"
+                "name: researcher\n"
+                "description: Discovery researcher\n"
                 "enabled: true\n"
                 "provider: codex\n"
                 "model: gpt-5.6-sol\n"
                 "reasoning_effort: high\n"
                 "prompts:\n"
-                "  agent: Real ideation agent\n"
+                "  agent: Real research agent\n"
                 "workflows:\n  rule_selectors:\n    include: []\n"
             )
             result = sync_bundled_agents(db)
 
         assert result["updated"] == 1
         mgr = _mgr(db)
-        row = mgr.get_by_name("analyst")
+        row = mgr.get_by_name("researcher")
         assert row is not None
         assert row.enabled is True
         body = _parse_body(row)
@@ -789,9 +789,9 @@ class TestSyncBundledAgents:
     def test_sync_repairs_agents_swept_before_the_origin_marker(
         self, tmp_path: Path, definition_db: PostgresHubDatabase
     ) -> None:
-        """The four rows swept in the 2026-09-06 batch return with unchanged bodies."""
+        """The retained researcher row from the old sweep returns with an unchanged body."""
         db = definition_db
-        names = ("analyst", "architect", "product-manager", "researcher")
+        names = ("researcher",)
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -1108,8 +1108,18 @@ class TestSyncBundledAgents:
         # Check for agents from the new-format bundled definitions
         assert "default" in names
         assert "developer" in names
-        assert "qa-reviewer" in names
-        assert "doc-reviewer" in names
+        assert set(names).isdisjoint(
+            {
+                "analyst",
+                "architect",
+                "product-manager",
+                "qa-reviewer",
+                "doc-reviewer",
+                "trajectory-monitor",
+                "qa-dev",
+            }
+        )
+        assert "expansion-qa" in names
         close_reviewer = mgr.get_by_name("task-close-reviewer")
         assert close_reviewer is not None
         assert _parse_body(close_reviewer).reasoning_effort is None
@@ -1120,10 +1130,7 @@ class TestSyncBundledAgents:
         assert all(
             n in names
             for n in (
-                "analyst",
                 "researcher",
-                "architect",
-                "product-manager",
                 "plan-adversary",
             )
         )

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
-import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -14,40 +12,10 @@ pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _agent(name: str) -> dict[str, Any]:
-    path = ROOT / f"src/gobby/install/shared/workflows/agents/{name}.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(data, dict)
-    return cast(dict[str, Any], data)
-
-
-def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    steps = cast(list[dict[str, Any]], agent["step_workflow"]["steps"])
-    matches = [step for step in steps if step["name"] == name]
-    assert len(matches) == 1
-    return matches[0]
-
-
 def test_standalone_test_architect_definition_removed() -> None:
     path = ROOT / "src/gobby/install/shared/workflows/agents/test-architect.yaml"
 
     assert not path.exists()
-
-
-def test_architect_loads_test_architecture_methodology() -> None:
-    agent = _agent("architect")
-    load_skill = _step(agent, "load_skill")
-    draft = _step(agent, "draft")
-    success_hooks = load_skill.get("on_mcp_success", [])
-
-    assert agent["name"] == "architect"
-    assert 'get_skill(name="architecture")' in agent["prompts"]["agent"]
-    assert 'get_skill(name="test-architecture")' not in agent["prompts"]["agent"]
-    assert "## Architecture Brief" in agent["prompts"]["agent"]
-    assert "## Test Architecture" in agent["prompts"]["agent"]
-    assert 'get_skill(name="architecture")' in load_skill["status_message"]
-    assert any(hook["when"] == "tool_input.name == 'architecture'" for hook in success_hooks)
-    assert "## Test Architecture" in draft["status_message"]
 
 
 def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:

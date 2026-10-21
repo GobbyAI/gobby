@@ -142,24 +142,6 @@ rules:
               }
             },
             "role_launch_defaults": {
-              "analyst": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "architect": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "deprecated/qa-dev": {
-                "provider": "claude"
-              },
-              "doc-reviewer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium"
-              },
               "epic-reviewer": {
                 "provider": "codex",
                 "model": "gpt-5.6-sol",
@@ -193,16 +175,6 @@ rules:
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "medium"
               },
-              "product-manager": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "qa-reviewer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium"
-              },
               "task-close-reviewer": {
                 "provider": "codex",
                 "model": "gpt-6-luna",
@@ -212,11 +184,6 @@ rules:
                 "provider": "codex",
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "xhigh"
-              },
-              "trajectory-monitor": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium"
               }
             }
           }

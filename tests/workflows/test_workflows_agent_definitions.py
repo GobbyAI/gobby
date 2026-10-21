@@ -153,16 +153,11 @@ def test_close_task_success_handlers_require_closed_output() -> None:
 
 def test_build_smoke_agent_runtime_mappings() -> None:
     agents = (
-        "analyst",
-        "architect",
         "tech-writer",
-        "qa-reviewer",
-        "doc-reviewer",
         "epic-reviewer",
         "plan-adversary",
         "plan-enhancer",
         "plan-writer",
-        "product-manager",
         "developer",
         "researcher",
     )
@@ -218,12 +213,8 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
             assert phrase not in prompt, path.name
 
     agents_with_updated_claim_steps = (
-        "analyst",
-        "architect",
         "developer",
-        "product-manager",
         "tech-writer",
-        "trajectory-monitor",
     )
     for agent_name in agents_with_updated_claim_steps:
         status = _step(_agent(agent_name), "claim")["status_message"]
@@ -324,39 +315,6 @@ def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() 
     assert "[category: test] leaves" in skill_text
 
 
-def test_architect_requires_architecture_and_test_architecture_sections() -> None:
-    agent = _agent("architect")
-    load_skill = _step(agent, "load_skill")
-
-    assert 'get_skill(name="architecture")' in agent["prompts"]["agent"]
-    assert 'get_skill(name="test-architecture")' not in agent["prompts"]["agent"]
-    assert "## Architecture Brief" in agent["prompts"]["agent"]
-    assert "## Test Architecture" in agent["prompts"]["agent"]
-    assert "tool_input.name == 'architecture'" in str(load_skill.get("on_mcp_success"))
-
-
-def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
-    agent = _agent("qa-reviewer")
-    review = _step(agent, "review")
-    transitions = review["transitions"]
-
-    instructions = agent["prompts"]["agent"]
-    assert "approve_review" in instructions
-    assert "reject_review" in instructions
-    assert "escalate_task" in instructions
-    assert 'reason="qa_approved"' not in instructions
-    assert "close_task belongs" in instructions
-
-    blocked_tools = _blocked_mcp_tools(review)
-    assert "gobby-tasks:close_task" in blocked_tools
-
-    success_hooks = review["on_mcp_success"]
-    assert any(hook["tool"] == "approve_review" for hook in success_hooks)
-    assert any(hook["tool"] == "reject_review" for hook in success_hooks)
-    assert not any(hook["tool"] == "close_task" for hook in success_hooks)
-    assert transitions == [{"to": "terminate", "when": "vars.review_complete"}]
-
-
 @pytest.mark.parametrize("agent_name", ["tech-writer"])
 def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> None:
     agent = _agent(agent_name)
@@ -445,18 +403,14 @@ def test_tdd_discipline_skills_are_bundled() -> None:
     assert "language warnings with focused native validation" in discipline
 
 
-def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
-    qa = _agent("qa-reviewer")
+def test_epic_reviewer_checks_tdd_required_evidence() -> None:
     epic = _agent("epic-reviewer")
     epic_skill = (SKILLS_DIR / "gobby/references/review/evidence.md").read_text() + (
         SKILLS_DIR / "gobby/references/review/outcomes.md"
     ).read_text()
 
-    qa_review = _step(qa, "review")["status_message"]
     epic_review = _step(epic, "review")["status_message"]
     for text in (
-        qa["prompts"]["agent"],
-        qa_review,
         epic["prompts"]["agent"],
         epic_review,
     ):
@@ -467,8 +421,6 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
         assert "missing baseline" in text.lower()
         assert "unsupported-language" in text.lower()
         assert "repo-native validation" in text.lower()
-    assert "red evidence" in qa["prompts"]["agent"].lower()
-    assert "contains red, green" in qa_review.lower()
     assert "checked red, green" in epic["prompts"]["agent"].lower()
     assert "red/green" in epic_review
     for marker in (

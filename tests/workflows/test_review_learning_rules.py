@@ -23,10 +23,7 @@ pytestmark = pytest.mark.unit
 # EXTERNAL_SESSION_ID would fail with `invalid input syntax for type uuid`.
 EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
-CLASS_INJECTION_RULE_FILES = (
-    "inject-plan-reviewer-lessons.yaml",
-    "inject-qa-reviewer-lessons.yaml",
-)
+CLASS_INJECTION_RULE_FILES = ("inject-plan-reviewer-lessons.yaml",)
 
 
 @pytest.mark.parametrize("filename", CLASS_INJECTION_RULE_FILES)
@@ -363,7 +360,6 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
             "plan",
             ["reviewer-miss"],
         ),
-        "inject-qa-reviewer-lessons": (["qa-reviewer"], "code", ["qa-miss"]),
     }
 
     expected_by_agent: dict[str, tuple[str, list[str]]] = {}
@@ -398,8 +394,6 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
             return {"success": True, "result": {}}
         assert server == "gobby-review-learning"
         class_calls.append(args)
-        if args["lesson_types"] == ["qa-miss"]:
-            return {"success": True, "result": {"count": 0, "lessons": []}}
         return {
             "success": True,
             "result": {
@@ -436,10 +430,7 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
             "lesson_types": lesson_types,
             "limit": 3,
         }
-        if lesson_types == ["qa-miss"]:
-            assert "<review-guidance>" not in (response.context or "")
-        else:
-            assert "<review-guidance>" in (response.context or "")
+        assert "<review-guidance>" in (response.context or "")
 
     for variables in (
         {**base_variables, "_agent_type": "developer"},
