@@ -118,6 +118,15 @@ def _characters(
             quote != "'"
             and char == "$"
             and index + 1 < len(raw)
+            and raw[index + 1] in "0123456789@*#?$!-"
+        ):
+            index += 2
+            result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
+            continue
+        if (
+            quote != "'"
+            and char == "$"
+            and index + 1 < len(raw)
             and raw[index + 1] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
         ):
             index += 2
@@ -305,7 +314,9 @@ def _word_syntax(raw: str) -> tuple[bool, bool]:
             expansion = True
             continue
         if quote not in {"'", "$'"} and char == "$" and index + 1 < len(raw):
-            if raw[index + 1] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+            if raw[index + 1] in (
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789@*#?$!-"
+            ):
                 expansion = True
         if quote == "$'" and char == "'":
             quote = ""
