@@ -402,3 +402,39 @@ def test_path_named_like_a_data_command_is_an_unknown_head() -> None:
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo() if true; then "$@"; fi; P=/josh/.local/bin/gobby; '
+        "D=approve-dirty-paths; echo /Users${P} se$()ssions $D s7 --checkout /repo a.txt",
+        'echo() if true; then "$@"; fi; echo /Users${P} sessions list',
+        'echo() { "$@"; }; echo /Users${P} sessions list',
+        'function echo { "$@"; }; echo /Users${P} sessions list',
+        "alias echo=x\necho /Users${P} sessions list",
+        "enable -n echo; echo /Users${P} sessions list",
+        "hash -p /x/gobby cat; cat /Users${P} se$()ssions $D",
+        ". /tmp/f; echo /Users${P} se$()ssions $D",
+        "source /tmp/f; echo /Users${P} se$()ssions $D",
+        'eval "$(cat /tmp/f)"; echo /Users${P} se$()ssions $D',
+        "BASH_ENV=/tmp/f bash -c 'echo /Users${P} se$()ssions $D'",
+        "ENV=/tmp/f; echo /Users${P} se$()ssions $D",
+        "builtin enable -n echo; echo /Users${P} sessions list",
+        "command alias echo=x; echo /Users${P} sessions list",
+        "command builtin enable -n echo; echo /Users${P} sessions list",
+        "echo /Users${P} sessions list; alias echo=x",
+        "echo /Users${P} sessions list; bash -c 'alias echo=x'",
+        "echo /Users${P} sessions list; bash -c 'echo() { true; }'",
+        "bash -c 'echo /Users${P} sessions list'; alias echo=x",
+        "echo /Users${P} sessions list; echo BASH_ENV=/tmp/f",
+        "echo /Users${P} sessions list; echo ENV=/tmp/f",
+        'alias x=y; export PATH="$HOME/bin:$PATH"',
+        'alias x=y; gobby --config="$X" tasks list',
+    ],
+)
+def test_shell_setup_disables_data_narrowing_for_the_whole_text(command: str) -> None:
+    """Evaluate inert shell text only; never run setup or approval commands."""
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")

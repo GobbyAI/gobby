@@ -11,7 +11,7 @@ import fnmatch
 import re
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
-from gobby.hooks._normalization_compound import command_substitution_bodies
+from gobby.hooks._normalization_compound import command_substitution_bodies, shell_function_bodies
 from gobby.hooks._normalization_env import _ASSIGNMENT
 from gobby.hooks._normalization_shell import (
     ShellScan,
@@ -519,6 +519,56 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     return operands
 
 
+def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
+    """Shell setup invalidates every data-head assumption in the submitted text."""
+    functions = shell_function_bodies(text, scan)
+    if functions and functions[1]:
+        return True
+    if any(token.value.startswith(("BASH_ENV=", "ENV=")) for token in scan.tokens):
+        return True
+    for words in stages:
+        # _unwrap projects eval into sh -c. Preserve that literal head here;
+        # the NUL marker cannot be an executable shell command name.
+        unwrapped = _unwrap(["\0eval" if word == "eval" else word for word in words])
+        if unwrapped and unwrapped[0] in {"alias", "enable", "hash", "source", ".", "\0eval"}:
+            return True
+    return False
+
+
+def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]:
+    """Preflight all bodies before choosing any data exemptions."""
+    subjects: list[tuple[str, ShellScan]] = []
+    strict = False
+    pending = [(command, 0)]
+    seen: set[str] = set()
+    while pending:
+        text, depth = pending.pop()
+        if text in seen:
+            continue
+        seen.add(text)
+        if depth > _MAX_DEPTH:
+            raise _AmbiguousSyntax("Shell nesting limit")
+        scan = scan_shell_command(text)
+        strict |= _shell_setup(text, scan, _decoded_stages(text))
+        for subject in executable_command_subjects(text):
+            scan = scan_shell_command(subject)
+            stages = _decoded_stages(subject)
+            strict |= _shell_setup(subject, scan, stages)
+            scripts = _wrapper_scripts(stages)
+            scripts.extend(_shell_input_scripts(subject))
+            pending.extend((script, depth + 1) for script in scripts)
+            # Correlated subjects retain substitution bodies with spaces.
+            # Inspect their owner as one word; executable bodies already
+            # have independent subjects from executable_command_subjects.
+            if "$(" in subject or "`" in subject:
+                masked, _ = command_substitution_bodies(subject, scan.spans, depth=depth)
+                if masked != subject:
+                    subject = masked
+                    scan = scan_shell_command(subject)
+            subjects.append((subject, scan))
+    return subjects, strict
+
+
 def _approval_spelling(command: object, *, command_slots: bool) -> bool:
     """Refuse an unquoted brace word capable of producing a protected basename.
 
@@ -529,42 +579,22 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
         return False
     if not command_slots and not any(char in command for char in "{}"):
         return False
-    pending = [(command, 0)]
-    seen: set[str] = set()
     try:
-        while pending:
-            text, depth = pending.pop()
-            if text in seen:
-                continue
-            seen.add(text)
-            if depth > _MAX_DEPTH:
-                raise _AmbiguousSyntax("Shell nesting limit")
-            for subject in executable_command_subjects(text):
-                # Correlated subjects retain substitution bodies with spaces.
-                # Inspect their owner as one word; executable bodies already
-                # have independent subjects from executable_command_subjects.
-                scan = scan_shell_command(subject)
-                if "$(" in subject or "`" in subject:
-                    masked, _ = command_substitution_bodies(subject, scan.spans, depth=depth)
-                    if masked != subject:
-                        subject = masked
-                        scan = scan_shell_command(subject)
-                if command_slots and _command_slots(subject):
-                    return True
-                config_operands = _config_operands(subject, scan)
-                data_operands = _data_operands(subject, scan)
-                if any(
-                    _protected_word(
-                        subject[start + data_operands.get((start, end), 0) : end],
-                        data_operand=(start, end) in data_operands,
-                    )
-                    for start, end in scan.spans
-                    if (start, end) not in config_operands
-                ):
-                    return True
-                scripts = _wrapper_scripts(_decoded_stages(subject))
-                scripts.extend(_shell_input_scripts(subject))
-                pending.extend((script, depth + 1) for script in scripts)
+        subjects, strict = _approval_subjects(command)
+        for subject, scan in subjects:
+            if command_slots and _command_slots(subject):
+                return True
+            config_operands = set() if strict else _config_operands(subject, scan)
+            data_operands = {} if strict else _data_operands(subject, scan)
+            if any(
+                _protected_word(
+                    subject[start + data_operands.get((start, end), 0) : end],
+                    data_operand=(start, end) in data_operands,
+                )
+                for start, end in scan.spans
+                if (start, end) not in config_operands
+            ):
+                return True
     except (ValueError, RecursionError):
         return True
     return False
