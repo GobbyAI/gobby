@@ -21,27 +21,35 @@ sent. Pane focus state would clear after x minutes after the last [activity]."
 
 Outcomes:
 
-- The daemon knows, per attachment, whether a gclient pane is focused, through
-  one new websocket verb, and clears it when the lease ends or is taken
-  over (1.1).
-- Operator comms wakes to a seat whose terminal is held by a focused gclient
-  attachment are withheld as `pane_focused` and re-dispatched, with the
-  existing #24768 wipe, the moment focus ends (1.2).
-- gclient owns the idle clock: it reports focus when it holds the focused
+- The daemon knows, per attachment, whether the lease holder's pane is
+  focused, in gclient or in the web terminal, through one new websocket verb,
+  and clears it when the lease ends or is taken over (1.1).
+- Operator comms wakes to a seat whose terminal is held by a focused
+  attachment of either viewer are withheld as `pane_focused` and
+  re-dispatched, with the existing #24768 wipe, the moment focus ends (1.2).
+- gclient owns its idle clock: it reports focus when it holds the focused
   pane, and reports focus lost after `focus_hold_seconds` (default 300,
   configurable) without user activity in that pane (2.1).
+- The web terminal sends the same report with the same idle clock: focus once
+  it holds the lease, focus lost after `focusHoldSeconds` (default 300,
+  configurable in Settings) without activity, and switching to another
+  application no longer drops its lease (3.1).
 
 Task #24770 criterion 1 names four leaves. This plan carries them in three:
 the daemon per-attachment focus state is 1.1, the wake-dispatch hold and
 release is 1.2, and the gclient focus signal and its idle-timeout expiry are
 both 2.1, because one gclient struct owns the report and the clock, and a
-signal shipped without its expiry would hold wakes indefinitely. Each leaf
+signal shipped without its expiry would hold wakes indefinitely. Task
+#24784 adds 3.1, the web terminal's report and expiry, under Josh's
+2026-10-21 ruling that web viewers count as focused (decision 22). Each leaf
 names its tests in its acceptance items and states its activation class.
 
 Activation classes: P1 is daemon code and lands with a daemon restart. P2 is
 a gclient crate change and lands with a gclient rebuild and install through
 `promote_workspace_binary_set`; gclient is promoted separately from the
-coherent `gcode`/`gdaemon`/`ghook` set.
+coherent `gcode`/`gdaemon`/`ghook` set. P3 is web UI code and lands with
+`uv run gobby ui build` and a browser reload; it needs no restart and no
+binary install.
 
 ## Decision Record
 `kind: framing`
@@ -77,10 +85,10 @@ Planner decisions:
    with `terminal_take_control` and `terminal_release_control`, which the
    daemon processes off the read loop in per-terminal order (#22709).
 9. **Focus-held predicate** (daemon): the terminal's lease holder is a live
-   attachment with `viewer == "gclient"` and `focused` true. Web viewers hold
-   the lease but send no focus report, so they never hold a wake. A holder
-   that is not focused never holds a wake either. The daemon clears `focused`
-   when the attachment releases the lease, is displaced by a takeover, or is
+   attachment with `focused` true, whatever its viewer (decision 22). gclient
+   (2.1) and the web terminal (3.1) both send the report. A holder that is
+   not focused never holds a wake. The daemon clears `focused` when the
+   attachment releases the lease, is displaced by a takeover, or is
    finalized, so a stale report cannot outlive the lease.
 10. **Rejected: idle expiry releases the lease instead of a focus flag**
     (researcher follow-up, relayed by the Orchestrator 2026-10-21). It reuses
@@ -147,6 +155,66 @@ Planner decisions:
 21. **Landing order.** Promote gclient 0.1.67 only after the P1 daemon
     restart: against a pre-1.1 daemon every `terminal_focus` report draws an
     `Unknown message type` warning and an error frame (`server.py` ~636-637).
+
+Josh's ruling on web viewers (task #24784, relayed by the Orchestrator
+gobby#17281, 2026-10-21):
+
+22. "Why wouldn't a web viewer count as focused? If the user is on the web ui
+    and typing, we should protect that too right? The goal is to prevent the
+    daemon from injecting into the composer when the user has focus and is
+    typing, and release that restriction when they're done." And, to a
+    web-terminal leaf sending the same `terminal_focus` report with the same
+    idle timer: "Yes, send it." Decision 9 no longer excludes web viewers,
+    and 3.1 is that leaf. Rulings 1-6 and decisions 7-21 stand unchanged.
+
+Planner decisions for the web terminal:
+
+23. **Web focus rides the web lease.** The web terminal already takes the
+    lease when its pane gains DOM focus (`TerminalTab.tsx`
+    `takeControlOnFocus`) and releases it when focus leaves the pane (the
+    pane's `onBlur` calls `releaseControl`). Focusing another pane, the chat,
+    or any other control in the page therefore ends focus through the
+    release path that 1.1 already clears, as a gclient focus move does. The
+    report rides on that lease: `terminal_focus {focused: true}` once this
+    attachment holds the lease, and `focused: false` on idle expiry while
+    the lease is kept.
+24. **A window switch does not end web focus** (ruling 4). The browser fires
+    the pane's blur when the window loses focus, which today releases the
+    lease. `useTmuxSessions`'s `releaseControl` returns without releasing
+    when `document.hasFocus()` is false, so switching to another application
+    keeps the lease and the focus. On return the browser refocuses the pane,
+    and its repeated take is the holder's retry, which the registry grants
+    (`leases.py` ~463). A click elsewhere inside the page still releases,
+    because the document keeps focus. Consequence: a web pane left focused
+    in a background window keeps the lease, so a gclient pane focused on the
+    same terminal observes until its first keystroke takes over
+    (`send_live_input`, `takeover: true`), as it already does against any
+    peer holder.
+25. **Web activity** is any `keydown`, `paste`, `pointerdown` or `wheel`
+    event in the document while this attachment holds the lease, captured by
+    document-level listeners that the focus report installs. Pointer motion
+    does not count, as in decision 16. The page has one focused element, and
+    while the pane holds the lease the pane has focus or the window is in
+    the background, so these events are the operator at the pane; a click
+    elsewhere in the page releases the lease anyway. Renderer protocol
+    replies never count: the renderer's `onData` carries keystrokes and
+    terminal replies alike, so the report watches DOM input, never the write
+    path.
+26. **Web preference** `focusHoldSeconds` lives in the web UI's client
+    settings: `Settings` in `web/src/hooks/useSettings.ts`, default 300 in
+    `DEFAULT_SETTINGS`, persisted per browser in the `gobby-settings`
+    localStorage entry like `density`, and kept out of `PERSISTABLE_KEYS`
+    because the daemon's `ui_settings` API has no such field. Settings,
+    Appearance, edits it as a seconds field; `0` disables expiry. It lives in
+    the browser for the reason gclient's lives in `prefs.toml`: the idle
+    clock belongs to the client (ruling 5). The focus report reads it through
+    a new `readFocusHoldSeconds()` each time it arms its timer, so a change
+    applies from the next activity without threading settings through
+    `TerminalTab.tsx`.
+27. **Order:** 3.1 depends on 1.1 and, like 2.1, reaches users only after the
+    P1 restart (decision 21). It needs no golden-corpus edit: 2.1 owns the
+    corpus entry, and the web builds its frame in `tmuxSessionMessages.ts`
+    like every other verb.
 
 ## As-Is Facts
 `kind: framing`
@@ -228,6 +296,29 @@ Line numbers are navigation hints at HEAD `9f76e9f6e2`.
   live-wake lock and schedules the followup. `set_terminal_manager` (~215-217)
   is the pattern for a late-bound service. `_dispatch_web_chat_wake` and
   `_web_chat_no_live_result` (~865-918) have no consumer outside `wake.py`.
+- Web terminal (read at HEAD `ac3182b54f` for #24784):
+  `useTmuxSessions` (`web/src/hooks/useTmuxSessions.ts`, 830 lines) owns the
+  terminal websocket and the lease through `createControlLease`
+  (`web/src/hooks/terminalControlLease.ts` ~96-401), whose snapshot carries
+  `holder`; `hasControl` is `lease.holder === streamingId` (~712), and
+  `releaseControl` (~685) calls `control.release()`. `TerminalTab.tsx` (986
+  lines) wires `TerminalView`'s `onFocus` to `takeControlOnFocus` (~592-595)
+  and `onBlur` to `keyboard.close()` then `releaseControl()` (~845-848).
+  `TerminalView.tsx` (936 lines) raises both from its wrapper and ignores
+  focus moves inside the pane (`stayedInside`). Frame builders live in
+  `web/src/hooks/tmuxSessionMessages.ts` (`terminalReleaseControlMessage`
+  ~154-163). The lease registry grants a repeated take by the holder as a
+  retry (`leases.py` ~463). Client settings: `Settings`, `DEFAULT_SETTINGS`,
+  `normalizePersistedSettings` and `useSettings` in
+  `web/src/hooks/useSettings.ts` (546 lines); client-only keys such as
+  `density` persist to the `gobby-settings` localStorage entry and stay out
+  of `PERSISTABLE_KEYS`, and
+  `web/src/components/settings/sections/AppearanceSection.tsx::AppearanceControls`
+  renders them. Typed `Settings` and `UseSettingsReturn` fixtures live in
+  `web/src/__tests__/settingsSliderFocus.test.ts` and
+  `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx`.
+  The daemon serves `web/dist` from disk (`src/gobby/servers/_app_ui.py`
+  ~292-331), rebuilt by `uv run gobby ui build`.
 - Telegram: `TelegramActionController._deliver_inbound`
   (`src/gobby/communications/telegram_actions.py` ~135-184) logs wake outcomes
   at debug since `9f76e9f6e2`; no queued-message notice remains.
@@ -255,7 +346,12 @@ Line numbers are navigation hints at HEAD `9f76e9f6e2`.
   verb up from the golden corpus.
 - Tests run as
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <path>`;
-  Rust as `CARGO_BUILD_JOBS=3 cargo test -p gobby-client --test <name>`.
+  Rust as `CARGO_BUILD_JOBS=3 cargo test -p gobby-client --test <name>`;
+  web from `web/` as `npx vitest run <files>`, `npm run type-check` and
+  `npm run lint:js`.
+- `TerminalTab.tsx` (986 lines) and `TerminalView.tsx` (936 lines) are over
+  the 850 trigger; 3.1 edits neither, and keeps `useTmuxSessions.ts` under
+  850 by putting its logic in a new module.
 
 ## P1: Daemon focus state and wake hold
 `kind: framing`
@@ -283,7 +379,8 @@ Targets:
   `False` for a stale or finalized attachment. When `focused` is `False` and
   the record is the terminal's holder, call the focus observer.
 - `focus_held(terminal_id) -> bool`: the holder record exists, is not
-  finalized, has `viewer == "gclient"` and `focused`. Pure read, no lock
+  finalized, and has `focused`, whatever its viewer (decision 9). Pure read,
+  no lock
   (same discipline as `holder_info`, ~415-424).
 - `set_focus_observer(observer: Callable[[str], None] | None)`: one slot,
   mirroring `set_holder_observer` (~429-436). The observer is synchronous;
@@ -292,7 +389,11 @@ Targets:
   (~445-446) and before awaiting the holder observer. It runs under the lease
   lock,
   so it must only schedule work (1.2's `release_focus_hold` pops a dict and
-  creates tasks).
+  creates tasks). `_notify_holder` gains a keyword `holder_changed: bool =
+  True`; `take_control`'s repeated-take retry branch (~463-469), where the
+  holder does not change, passes `False` and the focus observer is skipped,
+  so a web refocus after a window switch (decision 24) does not re-dispatch
+  a held wake.
 - `release_control` (~487-508) and `finalize` (~510-575) set
   `record.focused = False` on the record they release, and `take_control`
   (~449-485) clears it on the displaced holder's record when `takeover`
@@ -326,9 +427,9 @@ hits only `server.py`).
 Golden corpus: the `focus.json` fixture, its manifest entry, `GOLDEN_NAMES`
 and the count updates ship in 2.1 (decision 20). Document the verb as a new
 row in the `docs/contracts/gterm-protocols.md` message table: client to
-daemon, `terminal_id`, `attachment_id`, `focused`; no reply; a gclient state
-report that the daemon clears on release, finalize, and takeover; web viewers
-do not send it.
+daemon, `terminal_id`, `attachment_id`, `focused`; no reply; a viewer state
+report, sent by gclient (2.1) and the web terminal (3.1), that the daemon
+clears on release, finalize, and takeover.
 
 Observed checks: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_lease_authority.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_golden.py tests/events/test_comms_wake.py tests/events/test_wake_native_terminal.py tests/terminals/test_composition_roots.py -q`
 ran at HEAD `b2190c8f2f` during planning as a baseline: 103 passed in 30 s.
@@ -340,9 +441,9 @@ Activation: daemon code; live after a daemon restart, announced with a
 
 **Acceptance:**
 
-- 1.1.1 - `_Attachment` carries `focused`, default `False`; `focus_held` is true only for a live `gclient` holder with `focused` set, false for a web holder and for a focused non-holder. test: `tests/terminals/test_lease_authority.py::test_focus_held_requires_a_focused_gclient_holder`.
+- 1.1.1 - `_Attachment` carries `focused`, default `False`; `focus_held` is true only for a live holder with `focused` set, whether its viewer is `gclient` or `web`, and false for an unfocused holder and for a focused non-holder. test: `tests/terminals/test_lease_authority.py::test_focus_held_requires_a_focused_holder_of_either_viewer`.
 - 1.1.2 - `release_control`, `finalize` and a `takeover` in `take_control` clear the released or displaced record's `focused`; a stale attachment makes `set_focus` return `False`. test: `tests/terminals/test_lease_authority.py::test_release_finalize_and_takeover_clear_focus`.
-- 1.1.3 - The focus observer fires synchronously with the terminal id on `set_focus(False)` of the holder and on every holder change from `_notify_holder`, with or without a holder observer installed, and is never awaited. test: `tests/terminals/test_lease_authority.py::test_focus_observer_fires_on_focus_loss_and_holder_change`.
+- 1.1.3 - The focus observer fires synchronously with the terminal id on `set_focus(False)` of the holder and on every holder change from `_notify_holder`, with or without a holder observer installed, never on the holder's repeated-take retry, and is never awaited. test: `tests/terminals/test_lease_authority.py::test_focus_observer_fires_on_focus_loss_and_holder_change`.
 - 1.1.4 - `terminal_focus` reaches `set_focus` through the websocket type map, sends no reply, and is an off-loop message type. test: `tests/servers/test_terminal_ws_lease.py::test_terminal_focus_marks_the_holder_and_sends_nothing`.
 - 1.1.5 - `message_classes.py` holds the message-class sets and predicates and `server.py` is under 850 lines. file: `src/gobby/servers/websocket/message_classes.py`.
 - 1.1.6 - The protocol contract documents `terminal_focus`. behavior: "terminal_focus" row in `docs/contracts/gterm-protocols.md`.
@@ -374,7 +475,7 @@ Consumers unchanged:
 `PANE_FOCUSED = "pane_focused"`, adds it to `RETRYABLE_WAKE_SKIPS`, and a
 `pane_focused_result(session_id, *, method)` shaped like
 `composer_occupied_result` (~118-132) with `skipped: "pane_focused"` and
-`reason: "gclient pane focused; delivered when focus ends"`.
+`reason: "terminal pane focused; delivered when focus ends"`.
 
 `WakeDispatcher` (`wake.py`) gains, following `set_terminal_manager`
 (~215-217): `set_lease_registry(registry)` storing `self._lease_registry`
@@ -449,15 +550,17 @@ calls either symbol (`gcode grep -w _dispatch_web_chat_wake src/ tests/` and
 
 Docs: `docs/guides/sessions.md` (~599) and `docs/guides/agents.md` (~546)
 name `composer_occupied` as the withheld reason for an operator draft. Add
-`pane_focused` beside it: an operator comms wake to a seat whose pane a
-gclient window holds focused is withheld and delivered, with the composer
-cleared, when focus ends by idle timeout or by focusing another pane.
+`pane_focused` beside it: an operator comms wake to a seat whose pane is
+held focused in gclient or the web terminal is withheld and delivered, with
+the composer cleared, when focus ends by idle timeout or by focusing another
+pane.
 
 Test shape: `tests/events/test_comms_wake.py::test_operator_comms_wake_replaces_idle_composer_only`
 (~167-220) builds a seat with a native terminal row, a `ComposerLedger`
 draft and a system-originated comms message; new tests reuse `_seat` and
 set a `TerminalLeaseRegistry` on the dispatcher with an attached `gclient`
-record that holds the lease and has `focused=True`. The release test replaces
+record that holds the lease and has `focused=True`; the 1.2.4 test adds a
+focused `web` record, which holds like gclient. The release test replaces
 `_composer_retry_wait` with a parked wait (as
 `test_wake_composer_attention.py` ~112 does) so only the release path can
 deliver, then calls `release_focus_hold` and awaits the created task. The
@@ -481,10 +584,10 @@ Activation: daemon code; live after a daemon restart, announced with a
 
 **Acceptance:**
 
-- 1.2.1 - With a focused `gclient` holder and a pending operator comms wake, `dispatch_live_wake` returns `skipped: "pane_focused"`, writes nothing to the terminal, records the hold, and the result is retryable. test: `tests/events/test_comms_wake.py::test_operator_comms_wake_holds_while_the_pane_is_focused`.
+- 1.2.1 - With a focused holder and a pending operator comms wake, `dispatch_live_wake` returns `skipped: "pane_focused"`, writes nothing to the terminal, records the hold, and the result is retryable. test: `tests/events/test_comms_wake.py::test_operator_comms_wake_holds_while_the_pane_is_focused`.
 - 1.2.2 - `release_focus_hold` re-dispatches the held session once and the wake lands with `clear_before_submit=True`; a second release is a no-op. test: `tests/events/test_comms_wake.py::test_focus_release_dispatches_the_held_wake_with_a_wipe`.
 - 1.2.3 - An open transcript turn withholds as `composer_unconfirmed` before the focus hold is consulted, and an `active` row withholds as `session_active`. test: `tests/events/test_comms_wake.py::test_active_turn_protection_outranks_the_focus_hold`.
-- 1.2.4 - A web holder, an unfocused gclient holder, a registry-less dispatcher, and a pending wake that is not an operator comms wake all take today's path. test: `tests/events/test_comms_wake.py::test_focus_hold_applies_only_to_comms_wakes_with_a_focused_gclient_holder`.
+- 1.2.4 - A focused `web` holder holds like a focused `gclient` holder, while an unfocused holder of either viewer, a registry-less dispatcher, and a pending wake that is not an operator comms wake all take today's path. test: `tests/events/test_comms_wake.py::test_focus_hold_applies_only_to_comms_wakes_with_a_focused_holder`.
 - 1.2.5 - The batch path returns `pane_focused` for a focused recipient and still sends to the others in one host exchange. test: `tests/events/test_wake_native_terminal.py::test_batch_wake_holds_a_focused_recipient_and_sends_the_rest`.
 - 1.2.6 - `init_terminal_wiring` binds the lease registry to the dispatcher and the dispatcher's `release_focus_hold` as the focus observer; the front-door branch binds neither. test: `tests/terminals/test_composition_roots.py::test_terminal_wiring_binds_focus_release_to_the_wake_dispatcher`.
 - 1.2.7 - `wake_web_chat.py` carries the web-chat wake path and `wake.py` is under 1,000 lines. file: `src/gobby/events/wake_web_chat.py`.
@@ -661,6 +764,181 @@ activation.
 - 2.1.7 - `focus.json` is listed in the golden manifest after `release_control.json`, `GOLDEN_NAMES` lists it at the same position, and the Python corpus test round-trips it with 44 names and 45 files. test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
 - 2.1.8 - The gclient corpus test replays the 44-name manifest against `GOLDEN_NAMES`. test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.
 
+## P3: Web terminal idle focus report
+`kind: framing`
+
+Web UI work. Lands with `uv run gobby ui build` and a browser reload; no
+daemon restart and no binary install. Ship only after P1's restart has
+landed 1.1 (decision 27).
+
+### 3.1 Web terminal reports pane focus and its idle expiry [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `web/src/hooks/terminalFocusReport.ts`
+- `web/src/hooks/useTmuxSessions.ts::useTmuxSessions`
+- `web/src/hooks/tmuxSessionMessages.ts::*` — scope-reason: add `terminalFocusMessage` beside `terminalReleaseControlMessage`
+- `web/src/hooks/useSettings.ts::*` — scope-reason: add `focusHoldSeconds` to `Settings`, `DEFAULT_SETTINGS` and `normalizePersistedSettings`, add `updateFocusHoldSeconds` to `useSettings`, export `readFocusHoldSeconds`
+- `web/src/components/settings/sections/AppearanceSection.tsx::*` — scope-reason: add the focus-hold field to `AppearanceControls`
+- `docs/guides/web-ui.md`
+- `web/src/hooks/__tests__/terminalFocusReport.test.ts`
+- `web/src/hooks/__tests__/useTmuxSessions.test.ts::*` — scope-reason: report wiring and window-blur tests; stub `document.hasFocus` in the existing release tests
+- `web/src/hooks/__tests__/useSettings.test.ts::*` — scope-reason: `focusHoldSeconds` default, normalization and localStorage persistence
+- `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx::*` — scope-reason: the seconds field; the typed fixture gains the key and updater
+- `web/src/__tests__/settingsSliderFocus.test.ts::*` — scope-reason: the typed `Settings` and `UseSettingsReturn` fixtures gain the key and updater
+
+Consumers unchanged:
+- `web/src/components/activity/terminal/TerminalTab.tsx` — no-edit-reason: calls `useTmuxSessions(projectId)` and wires `onFocus` and `onBlur` to `takeControl` and `releaseControl`; the hook's signature and result shape do not change, and the window check lives inside `releaseControl`.
+- `web/src/components/activity/terminal/TerminalView.tsx` — no-edit-reason: raises `onFocus` and `onBlur` as today; activity is captured at the document.
+- `web/src/hooks/terminalControlLease.ts` — no-edit-reason: the report reads the lease through the hook's snapshot, and `release()` is unchanged.
+- `web/src/components/activity/terminal/__tests__/terminalTabFixtures.ts` — no-edit-reason: mocks the hook result, whose shape does not change.
+- `web/src/components/activity/terminal/__tests__/TerminalTab.test.tsx` — no-edit-reason: mocks `useTmuxSessions`, so its blur assertion still sees `releaseControl` called once.
+- `web/src/components/activity/__tests__/SessionsTab.test.tsx` — no-edit-reason: mocks the hook result, whose shape does not change.
+- `web/src/components/activity/terminal/__tests__/TerminalTabViewport.test.tsx` — no-edit-reason: mocks the hook with its own `mockUseTmuxSessions`; the result shape does not change.
+- `web/src/__tests__/App.test.tsx` — no-edit-reason: mocks `useSettings` with an untyped object and never reads the new key.
+- `web/src/components/settings/sections/__tests__/ChatVoiceSection.test.tsx` — no-edit-reason: casts a partial fixture `as unknown as UseSettingsReturn`.
+- `web/src/components/settings/sections/__tests__/ProvidersModelsSection.test.tsx` — no-edit-reason: casts a partial fixture `as unknown as UseSettingsReturn`.
+- `src/gobby/config/registry.py` — no-edit-reason: `focusHoldSeconds` is client-only (decision 26), so no `ui_settings.*` key is added.
+
+**Research context:** the web pane already takes the lease on DOM focus and
+releases it when focus leaves the pane (decision 23), so the daemon learns of
+"focused something else" today. What is new is the report that the holder is
+focused, its idle expiry, and keeping the lease across a window switch
+(decision 24). Copied facts: `useTmuxSessions` owns the socket (`wsRef`), the
+attachment (`streamingIdRef`, `attachedTargetRef`) and the lease snapshot
+(`lease`, set by `createControlLease`'s `onChange: setLease`, ~147-155);
+`releaseControl` is `useCallback(() => control.release(), [control])`
+(~685); `TerminalTab.tsx` is the hook's only production caller, and every
+test that renders `TerminalTab` mocks the hook.
+
+New module `web/src/hooks/terminalFocusReport.ts`:
+
+```ts
+export interface FocusReportDeps {
+  socket: () => WebSocket | null;
+  terminalId: () => string | undefined;
+  holdSeconds: () => number;
+}
+
+export interface FocusReport {
+  sync: (holder: string | null, attachmentId: string | null) => void;
+  activity: () => void;
+  listen: (target: Document) => () => void;
+  dispose: () => void;
+}
+
+export function createFocusReport(deps: FocusReportDeps): FocusReport;
+```
+
+State: `held`, the attachment id this client holds the lease with, or
+`null`; `reported`, the attachment id last reported focused, or `null`; one
+timer.
+
+- `sync(holder, attachmentId)` runs after every lease or attachment change.
+  `held` becomes `holder` when `holder !== null && holder === attachmentId`,
+  else `null`. When `held` is `null`, clear the timer and set
+  `reported = null` without sending: release, takeover and finalize already
+  cleared the daemon's flag (1.1). Otherwise, when `reported !== held`,
+  report `focused: true` for `held`, set `reported = held`, and arm the
+  timer; the grant follows the operator focusing the pane, so it counts as
+  activity.
+- `activity()`: nothing when `held` is `null`. Otherwise, when `reported` is
+  `null` because the timer expired, report `focused: true` and set
+  `reported = held`; then re-arm.
+- Arming clears any timer, reads `deps.holdSeconds()`, and when it is above
+  `0` sets `window.setTimeout(expire, seconds * 1000)`; `0` never arms.
+- `expire` sends `focused: false` for `reported` and sets `reported = null`;
+  `held` and the lease stay, so the next keystroke lands directly.
+- A report is `terminalFocusMessage(terminalId, attachmentId, focused)` sent
+  only when `deps.socket()` is `OPEN`; otherwise it is dropped. A dropped
+  `true` is repaired by the reconnect's new attachment and lease, and a
+  dropped `false` by the daemon finalizing the lost attachment, which clears
+  `focused` (1.1).
+- `listen(document)` adds capture-phase passive listeners for `keydown`,
+  `paste`, `pointerdown` and `wheel` that call `activity`, and returns their
+  remover (decision 25). `dispose()` clears the timer and both states.
+
+A background tab's timers may be throttled to about once a minute, so an
+expiry in a hidden tab can land up to a minute late; that errs toward
+holding the wake, which ruling 4 accepts for a window switch.
+
+`terminalFocusMessage(terminalId, attachmentId, focused)` in
+`tmuxSessionMessages.ts` returns
+`JSON.stringify({type: "terminal_focus", terminal_id, attachment_id, focused})`,
+the same shape as the 2.1 golden fixture.
+
+Hook wiring in `useTmuxSessions`, at most 15 added lines so the file stays
+under 850:
+
+- `const [focusReport] = useState(() => createFocusReport({socket: () => wsRef.current, terminalId: () => attachedTargetRef.current?.terminal_id, holdSeconds: readFocusHoldSeconds}))`
+  beside `control`, inside the same eslint block.
+- `useEffect(() => focusReport.sync(lease.holder, streamingId), [focusReport, lease.holder, streamingId])`.
+- `useEffect(() => { const stop = focusReport.listen(document); return () => { stop(); focusReport.dispose(); }; }, [focusReport])`.
+- `releaseControl` returns early when `!document.hasFocus()`, with a comment
+  citing ruling 4 (decision 24), then calls `control.release()`. The unit
+  test stubs `hasFocus`, so V2 step 12 is the real-browser proof: if a
+  window switch still releases there, the executor defers the check with
+  `window.setTimeout(..., 0)` so focus settles before deciding.
+
+Preference (decision 26): `focusHoldSeconds: number` in `Settings`, `300` in
+`DEFAULT_SETTINGS`; `normalizePersistedSettings` keeps a finite non-negative
+number, floored to an integer, and drops anything else; `useSettings` gains
+`updateFocusHoldSeconds(seconds)` calling `updateSettings({focusHoldSeconds})`,
+which persists through the existing localStorage save, and the key stays out
+of `PERSISTABLE_KEYS`. Export
+`readFocusHoldSeconds(): number`, which returns
+`normalizePersistedSettings(loadFromLocalStorage()).focusHoldSeconds` or the
+default. In `AppearanceControls`, add an `AppearanceField` labelled
+"Terminal focus hold" with the description "Seconds without input before a
+focused terminal pane stops holding operator messages. 0 holds until focus
+moves." and an `Input` of `type="number"`, `min={0}`, `step={1}`,
+`inputMode="numeric"`, bound to `settings.focusHoldSeconds` and
+`updateFocusHoldSeconds`. The field is UI work: the executor loads the
+`impeccable` skill and follows `.impeccable.md`.
+
+Docs: in `docs/guides/web-ui.md` under **Navigation**, a paragraph stating
+that a focused web terminal pane holds operator messages addressed to its
+seat until **Terminal focus hold** seconds pass without input or focus
+leaves the pane, after which the daemon clears the composer and delivers;
+switching to another application keeps the hold; `0` disables the timeout.
+
+Test shape: `terminalFocusReport.test.ts` drives `createFocusReport` with a
+fake socket (`readyState` `WebSocket.OPEN`, recorded `send`) and
+`vi.useFakeTimers()`. `useTmuxSessions.test.ts` already records sent frames
+(`sentMessages(ws, type)`) and takes and releases control (~1509-1551); its
+new test grants the take, asserts one `terminal_focus` with
+`focused: true`, then mocks `document.hasFocus` to return `false`, calls
+`releaseControl`, and asserts no `terminal_release_control`. The existing
+release tests (~1548, ~1648) stub `document.hasFocus` to return `true`,
+because jsdom reports no focus for a hook rendered without a focused element.
+
+Observed checks: none run for this leaf; the web files were read at
+`ac3182b54f`. Planned, from `web/`:
+`npx vitest run src/hooks/__tests__/terminalFocusReport.test.ts src/hooks/__tests__/useTmuxSessions.test.ts src/hooks/__tests__/useSettings.test.ts src/components/settings/sections/__tests__/AppearanceSection.test.tsx src/__tests__/settingsSliderFocus.test.ts src/components/activity/terminal/__tests__/TerminalTab.test.tsx`,
+`npm run type-check`, and `npm run lint:js`.
+
+**Granularity:** five hand-maintained production files
+(`terminalFocusReport.ts`, `useTmuxSessions.ts`, `tmuxSessionMessages.ts`,
+`useSettings.ts`, `AppearanceSection.tsx`) plus one guide; one lifecycle
+owner (the focus report). Seven acceptance items cover one behavior, the web
+report with its expiry and its preference, which cannot ship apart: a report
+without expiry would hold wakes indefinitely, and an expiry without its
+preference would leave the default unconfigurable. One commit, one test run.
+
+Activation: web UI code; live after `uv run gobby ui build` rebuilds
+`web/dist` and the browser tab reloads. No daemon restart and no binary
+install, but ship only after the P1 restart (decision 27).
+
+**Acceptance:**
+
+- 3.1.1 - Once this attachment holds the lease, the report sends one `terminal_focus {focused: true}` for it, and a lease held by another attachment sends nothing. test: `web/src/hooks/__tests__/terminalFocusReport.test.ts::reportsFocusOnceWhenTheLeaseIsHeld`.
+- 3.1.2 - After `holdSeconds` without activity the report sends `focused: false` and keeps the lease; the next `keydown`, `paste`, `pointerdown` or `wheel` sends `focused: true` again, and `pointermove` does not. test: `web/src/hooks/__tests__/terminalFocusReport.test.ts::idleExpiryReportsFocusLostAndActivityRestoresIt`.
+- 3.1.3 - `holdSeconds` of `0` never expires, and losing the lease forgets the report without sending `focused: false`. test: `web/src/hooks/__tests__/terminalFocusReport.test.ts::zeroHoldNeverExpiresAndLosingTheLeaseForgetsTheReport`.
+- 3.1.4 - `useTmuxSessions` reports focus after a granted take, and `releaseControl` sends no `terminal_release_control` while `document.hasFocus()` is false. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::reportsFocusAfterTheTakeAndKeepsTheLeaseOnWindowBlur`.
+- 3.1.5 - `focusHoldSeconds` defaults to `300`, persists to localStorage without reaching the `ui_settings` payload, normalizes invalid values away, and `readFocusHoldSeconds` returns the stored value. test: `web/src/hooks/__tests__/useSettings.test.ts::focusHoldSecondsDefaultsPersistsLocallyAndReads`.
+- 3.1.6 - Settings, Appearance, renders the "Terminal focus hold" seconds field and routes a change to `updateFocusHoldSeconds`. test: `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx::routesAFocusHoldChangeToUpdateFocusHoldSeconds`.
+- 3.1.7 - The web UI guide documents the terminal focus hold and its setting. behavior: "Terminal focus hold" in `docs/guides/web-ui.md`.
+
 ## V1 Plan Changelog
 `kind: framing`
 
@@ -678,6 +956,21 @@ activation.
   `_notify_holder`'s early return, widened activity to any gclient input
   (decision 16) and fixed the landing order (decision 21). Round 2 found
   nothing further. No enhancer edits were received.
+- 2026-10-21: Amendment under task #24784 by plan-writer gobby#17295 on
+  Josh's ruling that web viewers count as focused (decision 22). Decision 9
+  dropped the `gclient` viewer condition, 1.1.1 and 1.2.4 now cover a focused
+  web holder, and P3 adds 3.1, the web terminal's `terminal_focus` report
+  with the same idle clock, a `focusHoldSeconds` client setting defaulting to
+  300, and a window switch that keeps the web lease (decisions 23-27). The
+  adversary-derived M1 was withdrawn for re-derivation.
+- 2026-10-21: Renewed consensus between plan-writer gobby#17295 and
+  plan-adversary gobby#17296 on the #24784 amendment after one review round,
+  reached on blob 73cde1e9fc. Round 1 added the `TerminalTabViewport.test.tsx`
+  consumer entry, widened the Appearance target to the whole file, skipped
+  the focus observer on the holder's repeated-take retry (`holder_changed`,
+  acceptance 1.1.3), and named a deferred `hasFocus` check as the fallback if
+  the real-browser window-switch check fails. No enhancer edits were
+  received.
 
 ## V2: Verification
 `kind: verification`
@@ -690,9 +983,10 @@ closes.
 1. Plan validation, the only planning-time check:
    `uv run gobby plans validate .gobby/plans/pane-focus-wake-gating.md -p /Users/josh/Projects/gobby`
    must pass with no errors.
-2. The tests named in the acceptance items of 1.1, 1.2 and 2.1 must pass in
-   each leaf's close validation, with `uv run ruff check src/`,
-   `uv run mypy src/` and `cargo clippy -p gobby-client` clean.
+2. The tests named in the acceptance items of 1.1, 1.2, 2.1 and 3.1 must
+   pass in each leaf's close validation, with `uv run ruff check src/`,
+   `uv run mypy src/`, `cargo clippy -p gobby-client`, and `npm run
+   type-check` and `npm run lint:js` in `web/` clean.
 3. Focus a seat's pane in gclient and type, then send that seat a Telegram
    DM. The composer must not change, the daemon log must show the wake
    withheld as `pane_focused`, and the Telegram side must stay silent (no
@@ -717,135 +1011,14 @@ closes.
    so the seat's turn reads the DM through hook context. After the timeout
    nothing must be typed into the pane and the daemon log must show the
    release skipped as `mailbox_read`.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Lease registry focus state and the terminal_focus verb
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: `_Attachment` carries `focused`, default `False`; `focus_held`
-    is true only for a live `gclient` holder with `focused` set, false for a web holder
-    and for a focused non-holder. test: `tests/terminals/test_lease_authority.py::test_focus_held_requires_a_focused_gclient_holder`.
-
-    1.1.2: `release_control`, `finalize` and a `takeover` in `take_control` clear
-    the released or displaced record''s `focused`; a stale attachment makes `set_focus`
-    return `False`. test: `tests/terminals/test_lease_authority.py::test_release_finalize_and_takeover_clear_focus`.
-
-    1.1.3: The focus observer fires synchronously with the terminal id on `set_focus(False)`
-    of the holder and on every holder change from `_notify_holder`, with or without
-    a holder observer installed, and is never awaited. test: `tests/terminals/test_lease_authority.py::test_focus_observer_fires_on_focus_loss_and_holder_change`.
-
-    1.1.4: `terminal_focus` reaches `set_focus` through the websocket type map, sends
-    no reply, and is an off-loop message type. test: `tests/servers/test_terminal_ws_lease.py::test_terminal_focus_marks_the_holder_and_sends_nothing`.
-
-    1.1.5: `message_classes.py` holds the message-class sets and predicates and `server.py`
-    is under 850 lines. file: `src/gobby/servers/websocket/message_classes.py`.
-
-    1.1.6: The protocol contract documents `terminal_focus`. behavior: "terminal_focus"
-    row in `docs/contracts/gterm-protocols.md`.'
-  labels:
-  - covers:pane-focus-wake-gating:1.1:1.1.1
-  - covers:pane-focus-wake-gating:1.1:1.1.2
-  - covers:pane-focus-wake-gating:1.1:1.1.3
-  - covers:pane-focus-wake-gating:1.1:1.1.4
-  - covers:pane-focus-wake-gating:1.1:1.1.5
-  - covers:pane-focus-wake-gating:1.1:1.1.6
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Operator comms wakes hold on a focused pane and dispatch on release
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: With a focused `gclient` holder and a pending operator
-    comms wake, `dispatch_live_wake` returns `skipped: "pane_focused"`, writes nothing
-    to the terminal, records the hold, and the result is retryable. test: `tests/events/test_comms_wake.py::test_operator_comms_wake_holds_while_the_pane_is_focused`.
-
-    1.2.2: `release_focus_hold` re-dispatches the held session once and the wake lands
-    with `clear_before_submit=True`; a second release is a no-op. test: `tests/events/test_comms_wake.py::test_focus_release_dispatches_the_held_wake_with_a_wipe`.
-
-    1.2.3: An open transcript turn withholds as `composer_unconfirmed` before the
-    focus hold is consulted, and an `active` row withholds as `session_active`. test:
-    `tests/events/test_comms_wake.py::test_active_turn_protection_outranks_the_focus_hold`.
-
-    1.2.4: A web holder, an unfocused gclient holder, a registry-less dispatcher,
-    and a pending wake that is not an operator comms wake all take today''s path.
-    test: `tests/events/test_comms_wake.py::test_focus_hold_applies_only_to_comms_wakes_with_a_focused_gclient_holder`.
-
-    1.2.5: The batch path returns `pane_focused` for a focused recipient and still
-    sends to the others in one host exchange. test: `tests/events/test_wake_native_terminal.py::test_batch_wake_holds_a_focused_recipient_and_sends_the_rest`.
-
-    1.2.6: `init_terminal_wiring` binds the lease registry to the dispatcher and the
-    dispatcher''s `release_focus_hold` as the focus observer; the front-door branch
-    binds neither. test: `tests/terminals/test_composition_roots.py::test_terminal_wiring_binds_focus_release_to_the_wake_dispatcher`.
-
-    1.2.7: `wake_web_chat.py` carries the web-chat wake path and `wake.py` is under
-    1,000 lines. file: `src/gobby/events/wake_web_chat.py`.
-
-    1.2.8: The guides name `pane_focused` beside `composer_occupied`. behavior: "pane_focused"
-    in `docs/guides/sessions.md` and `docs/guides/agents.md`.
-
-    1.2.9: `release_focus_hold` for a held session whose mailbox has no undelivered
-    message returns `skipped: "mailbox_read"`, writes nothing to the terminal and
-    clears no composer. test: `tests/events/test_comms_wake.py::test_focus_release_after_the_mailbox_was_read_sends_nothing`.'
-  labels:
-  - covers:pane-focus-wake-gating:1.2:1.2.1
-  - covers:pane-focus-wake-gating:1.2:1.2.2
-  - covers:pane-focus-wake-gating:1.2:1.2.3
-  - covers:pane-focus-wake-gating:1.2:1.2.4
-  - covers:pane-focus-wake-gating:1.2:1.2.5
-  - covers:pane-focus-wake-gating:1.2:1.2.6
-  - covers:pane-focus-wake-gating:1.2:1.2.7
-  - covers:pane-focus-wake-gating:1.2:1.2.8
-  - covers:pane-focus-wake-gating:1.2:1.2.9
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: gclient reports pane focus and its idle expiry
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '2.1.1: After the focused pane''s take is granted, gclient
-    sends one `terminal_focus {focused: true}` for that attachment and no second `terminal_take_control`.
-    test: `crates/gclient/tests/lease_control.rs::idle_expiry_reports_focus_lost_and_activity_restores_it`.
-
-    2.1.2: With `focus_hold_seconds = 1` and no activity, gclient sends `terminal_focus
-    {focused: false}` for the held pane without releasing the lease; a keystroke then
-    sends `focused: true` again and the key reaches `terminal_input`. test: `crates/gclient/tests/lease_control.rs::idle_expiry_reports_focus_lost_and_activity_restores_it`.
-
-    2.1.3: `FocusHold::sync` never marks idle when `hold_seconds` is `0`, and a focused-pane
-    change forgets the reported key without sending `focused: false`. test: `crates/gclient/src/app/live_loop/focus_hold.rs::zero_hold_never_expires_and_focus_moves_forget_the_key`.
-
-    2.1.4: `focus_hold_seconds` round-trips through `prefs.toml` with default `300`,
-    and an unknown key still fails to load. test: `crates/gclient/tests/startup.rs::prefs_round_trip_and_reject_unknown_keys`.
-
-    2.1.5: The user guide documents `focus_hold_seconds` and the focus hold behavior.
-    behavior: "focus_hold_seconds" in `docs/guides/gclient-user-guide.md`.
-
-    2.1.6: gclient ships as `0.1.67` in `Cargo.toml`, `Cargo.lock` and the managed
-    version pin. file: `src/gobby/install/version_pins.py`.
-
-    2.1.7: `focus.json` is listed in the golden manifest after `release_control.json`,
-    `GOLDEN_NAMES` lists it at the same position, and the Python corpus test round-trips
-    it with 44 names and 45 files. test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
-
-    2.1.8: The gclient corpus test replays the 44-name manifest against `GOLDEN_NAMES`.
-    test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.'
-  labels:
-  - covers:pane-focus-wake-gating:2.1:2.1.1
-  - covers:pane-focus-wake-gating:2.1:2.1.2
-  - covers:pane-focus-wake-gating:2.1:2.1.3
-  - covers:pane-focus-wake-gating:2.1:2.1.4
-  - covers:pane-focus-wake-gating:2.1:2.1.5
-  - covers:pane-focus-wake-gating:2.1:2.1.6
-  - covers:pane-focus-wake-gating:2.1:2.1.7
-  - covers:pane-focus-wake-gating:2.1:2.1.8
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: fullstack
-```
+10. In the web UI, focus the same seat's terminal pane and type, then send
+    the seat a Telegram DM. The composer must not change and the daemon log
+    must show `pane_focused`. Click the chat input: the composer must be
+    cleared and `[Gobby] Check messages` submitted.
+11. Repeat step 10 with **Terminal focus hold** set to `10` in Settings,
+    Appearance, and leave the pane untouched. The clear and submit must
+    follow the timeout, and typing afterwards must land with no take-back
+    prompt.
+12. Repeat step 10, then switch to another application before the timeout.
+    The wake must stay held until the timeout, and on return the pane must
+    still hold control.
