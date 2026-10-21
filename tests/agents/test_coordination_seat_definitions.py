@@ -518,3 +518,15 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "~/.gobby/bootstrap.yaml" in prompt
     assert "Keep one five-minute recurring reminder" in prompt
     assert "Lane, order, landing and close decisions belong to the Orchestrator" in prompt
+
+
+def test_inbox_manager_waits_for_confirmed_missing_landed_retest() -> None:
+    body = _load("inbox-manager")
+    assert body.prompts is not None
+    prompt = body.prompts.agent or ""
+    landing_relay = next(line for line in prompt.splitlines() if "a landing relay" in line)
+
+    assert "RETEST=FAIL" in landing_relay
+    assert "RETEST=UNAVAILABLE" not in landing_relay
+    assert "Forward `RETEST=UNAVAILABLE` only after the Lane Manager confirms" in prompt
+    assert "closing seat's `EVENT=PROOF_RESULT` is absent" in prompt

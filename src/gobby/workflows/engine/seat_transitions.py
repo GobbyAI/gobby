@@ -276,7 +276,7 @@ def _reviewer_message(
 
 
 def _returns_to_implement(fields: dict[str, str]) -> bool:
-    """A pre-land BOUNCE, or a PROOF_REQUEST for evidence or a landed retest."""
+    """A pre-land BOUNCE or PROOF_REQUEST for evidence."""
     if fields.get("EVENT") == "PROOF_REQUEST":
         return True
     return fields.get("EVENT") == "CANDIDATE_VERDICT" and fields.get("VERDICT") == "BOUNCE"

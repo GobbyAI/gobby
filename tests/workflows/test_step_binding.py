@@ -272,7 +272,7 @@ def test_missing_proxy_arguments_do_not_use_outer_keys() -> None:
 
 def _task_proxy(seats: _Seats, *, full_hooks: bool = False) -> ToolProxyService:
     """Use real proxy dispatch with step enforcement as the workflow adapter."""
-    engine = RuleEngine(seats.db)
+    engine = RuleEngine(seats.db, task_manager=LocalTaskManager(seats.db))
     handler = WorkflowHookHandler(
         rule_engine=engine,
         task_manager=LocalTaskManager(seats.db),
@@ -567,7 +567,7 @@ async def test_implement_no_work_close_releases_binding(
         (False, "already_implemented"),
     ],
 )
-async def test_implement_close_blocks_other_tasks_and_dispositions(
+async def test_implement_close_blocks_unsubmitted_work_and_other_tasks(
     seats: _Seats, tmp_path: Path, use_ref: bool, assigned: bool, reason: str | None
 ) -> None:
     tasks = LocalTaskManager(seats.db)
@@ -575,7 +575,10 @@ async def test_implement_close_blocks_other_tasks_and_dispositions(
     _seat(seats, seats.former, "implement")
     task = tasks.get_task(seats.task_id)
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, task.project_id, str(tmp_path))
-    if not assigned:
+    if assigned:
+        # No-commit assigned tasks may reach the checklist; committed work needs handoff.
+        tasks.link_commit(task.id, COMMIT)
+    else:
         task = tasks.create_task(
             task.project_id,
             "Unassigned close target",
