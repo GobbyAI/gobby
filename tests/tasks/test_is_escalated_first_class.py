@@ -12,7 +12,6 @@ pytestmark = pytest.mark.unit
 def test_no_helper_calls() -> None:
     scoped = source_texts(
         (
-            "src/gobby/dispatch",
             "src/gobby/tasks/state_semantics.py",
             "src/gobby/servers/routes/tasks.py",
         )

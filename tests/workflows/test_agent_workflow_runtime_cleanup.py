@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -16,24 +15,17 @@ import pytest
 from tests.fixtures.agent_definitions import make_agent_definition
 
 if TYPE_CHECKING:
-    from gobby.dispatch.actions import SpawnAgentAction
     from gobby.storage.hub.protocol import HubDatabase
 
-import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.agents import terminal_delivery
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
-from gobby.storage.tasks._updates import update_task
-from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec, stage_row
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
@@ -364,196 +356,6 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
     active = instance_manager.get_for_session(CHILD_SESSION_ID)
     assert active is not None
     assert active.current_step == "terminate"
-
-
-@pytest.mark.asyncio
-async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    from gobby.agents.sync import sync_bundled_agents
-    from gobby.dispatch import dispatcher
-
-    task_manager = LocalTaskManager(temp_db)
-    session_manager = SessionManager(temp_db)
-    parent = session_manager.register(
-        external_id="parent-session",
-        machine_id="21000000-0000-4000-8000-000000000001",
-        source="codex",
-        project_id=sample_project["id"],
-    )
-    child = session_manager.register(
-        external_id="child-session",
-        machine_id="21000000-0000-4000-8000-000000000001",
-        source="codex",
-        project_id=sample_project["id"],
-    )
-    task = task_manager.create_task(
-        project_id=sample_project["id"],
-        title="Review handoff task",
-        task_type="task",
-        category="code",
-        validation_criteria="Test task completion is observable.",
-    )
-    update_task(temp_db, task.id, allow_automation=True)
-    initialize_manifest(temp_db, task.id, [spec("development", 0)], by_session_id=child.id)
-    task_manager.stage_states.start_stage(task.id, "development", by_session_id=child.id)
-    task_manager.claim_task(task.id, child.id)
-
-    run_manager = LocalAgentRunManager(temp_db)
-    run = run_manager.create(
-        parent_session_id=parent.id,
-        child_session_id=child.id,
-        claimed_session_id=child.id,
-        provider="codex",
-        prompt="implement",
-        run_id="12f470f2-7232-5d24-bc3b-fda2500e4a6e",
-        task_id=task.id,
-    )
-    run_manager.start(run.id)
-    mutex = TaskDispatchMutexManager(temp_db)
-    mutex.acquire_mutex(
-        task.id,
-        holder="dispatcher",
-        kind="spawn_agent",
-        run_id=run.id,
-        ttl_seconds=300,
-    )
-
-    workflow_name = "worker-submit-steps"
-    workflow_data = {
-        "name": workflow_name,
-        "version": "1.0",
-        "enabled": False,
-        "variables": {"review_submitted": False},
-        "steps": [
-            {
-                "name": "implement",
-                "allowed_tools": "all",
-                "allowed_mcp_tools": "all",
-                "on_mcp_success": [
-                    {
-                        "server": "gobby-tasks-ops",
-                        "tool": "submit_for_review",
-                        "action": "set_variable",
-                        "variable": "review_submitted",
-                        "value": True,
-                    }
-                ],
-                "transitions": [{"to": "terminate", "when": "vars.review_submitted"}],
-            },
-            {
-                "name": "terminate",
-                "allowed_tools": "all",
-                "allowed_mcp_tools": "all",
-            },
-        ],
-        "exit_condition": "current_step == 'terminate'",
-    }
-    AgentDefinitionManager(temp_db).create(
-        name=workflow_name,
-        definition_json=json.dumps(workflow_data),
-        enabled=True,
-    )
-    from gobby.workflows.agent_models import AgentStepWorkflowBody
-    from gobby.workflows.step_instances import build_step_instance
-
-    instance_manager = AgentStepInstanceManager(temp_db)
-    instance_manager.save(
-        build_step_instance(
-            make_agent_definition(
-                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-                name="worker-submit",
-                surfaces=["spawn"],
-                step_workflow=AgentStepWorkflowBody.model_validate(
-                    {
-                        "variables": {"review_submitted": False},
-                        "exit_condition": "current_step == 'terminate'",
-                        "steps": workflow_data["steps"],
-                    }
-                ),
-            ),
-            session_id=child.id,
-            step_workflow_id=None,
-            current_step="implement",
-            variables={"review_submitted": False},
-        )
-    )
-
-    registry = stage_ops.create_stage_ops_registry(RegistryContext(task_manager=task_manager))
-    submit_review = registry.get_tool("submit_for_review")
-    assert submit_review is not None
-    with session_context_for_test(child.id):
-        handoff = await asyncio.to_thread(
-            submit_review,
-            task_id=task.id,
-            stage_name="development",
-            review_notes="ready for QA",
-        )
-    assert handoff.get("ok") is True, handoff
-    assert mutex.get_mutex(task.id) is None
-
-    runner = SimpleNamespace(
-        run_storage=run_manager,
-        get_run=run_manager.get,
-        _session_manager=SessionManager(temp_db),
-        complete_run=lambda run_id, result=None, **completion: run_manager.complete(
-            run_id,
-            result=result,
-            **completion,
-        )
-        is not None,
-    )
-    engine = RuleEngine(db=temp_db, runner=runner)
-    event = HookEvent(
-        event_type=HookEventType.AFTER_TOOL,
-        session_id=child.id,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-tasks-ops",
-                "tool_name": "submit_for_review",
-                "arguments": {"task_id": task.id, "stage_name": "development"},
-            },
-            "tool_output": {"success": True},
-        },
-    )
-
-    response = await engine.evaluate(
-        event,
-        child.id,
-        {"is_spawned_agent": True, "step_workflow_complete": False},
-    )
-    await terminal_delivery.drain_shielded_terminal_deliveries()
-
-    assert response.decision == "allow"
-    completed_run = run_manager.get(run.id)
-    assert completed_run is not None
-    assert completed_run.status == "success"
-    assert task_manager.get_task(task.id).claimed_by_session_id is None
-    assert stage_row(temp_db, task.id, "development")["state"] == "needs_review"
-    assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_for_session(child.id) is None
-
-    sync_bundled_agents(temp_db)
-    spawned: list[SpawnAgentAction] = []
-
-    def spawn_review(action: SpawnAgentAction, **_kwargs: object) -> str:
-        spawned.append(action)
-        return "175b4656-fe55-571c-b57a-44c83644b57e"
-
-    monkeypatch.setattr(dispatcher, "spawn_agent", spawn_review)
-
-    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
-
-    assert result.executed == 1
-    assert spawned[0].agent_slug == "qa-reviewer"
-    review_mutex = mutex.get_mutex(task.id)
-    assert review_mutex is not None
-    assert review_mutex.run_id == "175b4656-fe55-571c-b57a-44c83644b57e"
 
 
 def test_daemon_stop_retains_typed_instance_other_reasons_delete(

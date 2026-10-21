@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.dispatch.context import reload_candidate
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import (
@@ -1564,14 +1563,6 @@ class TestImportSeqNumPreservation:
         assert c.seq_num == 51
         assert p.path_cache == "50"
         assert c.path_cache == "50.51"
-
-        resolved = reload_candidate(
-            "50.51",
-            db=backup_manager.db,
-            project_id=sample_project["id"],
-        )
-        assert resolved is not None
-        assert resolved.id == c.id
 
     @pytest.mark.integration
     def test_import_path_cache_ignores_parent_from_other_project(

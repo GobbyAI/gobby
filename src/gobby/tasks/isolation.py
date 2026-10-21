@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from gobby.config.build import CheckoutMode
+CheckoutMode = Literal["none", "worktree", "clone"]
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager

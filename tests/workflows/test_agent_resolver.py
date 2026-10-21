@@ -13,7 +13,6 @@ import pytest
 import yaml
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
@@ -307,8 +306,8 @@ class TestStepfulAndSteplessConsumers:
     """Resolution, dry-run, and required-skills work for both agent shapes."""
 
     @pytest.mark.asyncio
-    async def test_stepful_and_stepless_resolution_dry_run_and_skills(
-        self, definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+    async def test_stepful_and_stepless_resolution_and_dry_run(
+        self, definition_db: PostgresHubDatabase
     ) -> None:
         _create_agent(
             definition_db,
@@ -336,26 +335,6 @@ class TestStepfulAndSteplessConsumers:
         assert stepful_eval.valid is True
         assert [trace.name for trace in stepful_eval.step_trace] == ["implement", "review"]
         assert not any(item.code == "NO_STEP_WORKFLOW" for item in stepful_eval.items)
-
-        project_id = str(uuid4())
-        monkeypatch.setattr(
-            "gobby.dispatch.skill_composition.LocalSkillManager.list_skills",
-            lambda self, **_kwargs: [],
-        )
-        stepless_skills = inspect_skill_composition(
-            definition_db,
-            project_id=project_id,
-            agent_body=stepless,
-            additional_skills=(),
-        )
-        stepful_skills = inspect_skill_composition(
-            definition_db,
-            project_id=project_id,
-            agent_body=stepful,
-            additional_skills=(),
-        )
-        assert stepless_skills.required_skills == ()
-        assert stepful_skills.required_skills == ("tdd",)
 
 
 class TestCachedHydratedAgent:

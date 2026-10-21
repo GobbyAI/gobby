@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import fields
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 from pydantic import BaseModel, ValidationError
 
 from gobby.config.app import DaemonConfig
-from gobby.config.build import BuildConfig, load_build_config
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.tasks import TaskExpansionConfig
@@ -92,36 +88,6 @@ def test_removed_fields_are_absent_from_config_models(
 def test_context_injection_and_dead_accessors_are_absent_from_daemon_config() -> None:
     assert "context_injection" not in DaemonConfig.model_fields
     assert all(not hasattr(DaemonConfig, accessor) for accessor in REMOVED_ACCESSORS)
-
-
-def test_build_config_keeps_only_the_consumed_agent_limit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    project_root = tmp_path / "project"
-    (home / ".gobby").mkdir(parents=True)
-    (project_root / ".gobby").mkdir(parents=True)
-    (home / ".gobby" / "build.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "cleanup_clones_on_merge": False,
-                "clones_dir": "/tmp/clones",
-                "default_isolation": "clone",
-                "default_skip_stages": ["research"],
-                "default_target_branch": "main",
-                "dispatch_interval_seconds": 15,
-                "max_active_agents": 4,
-                "stage_caps": "removed",
-            }
-        )
-    )
-    monkeypatch.setattr("gobby.config.build.Path.home", lambda: home)
-
-    config = load_build_config(project_root)
-
-    assert {field.name for field in fields(BuildConfig)} == {"max_active_agents"}
-    assert config.max_active_agents == 4
 
 
 @pytest.mark.parametrize("field_name", sorted(REMOVED_CODE_INDEX_FIELDS))

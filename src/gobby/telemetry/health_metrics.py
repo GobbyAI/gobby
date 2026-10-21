@@ -13,7 +13,6 @@ _LOG_SURFACES: Final = frozenset({"daemon", "hooks", "llm", "mcp", "automation",
 _LOG_SEVERITIES: Final = frozenset({"WARNING", "ERROR", "CRITICAL"})
 _AUTOMATION_OUTCOMES: Final = {
     "cron": frozenset({"fired", "succeeded", "failed"}),
-    "dispatcher": frozenset({"succeeded", "failed", "skipped"}),
     "pipeline-heartbeat": frozenset({"recovered", "failed"}),
 }
 

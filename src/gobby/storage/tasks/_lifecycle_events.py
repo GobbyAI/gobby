@@ -11,7 +11,7 @@ from gobby.failure_categories import FailureCategory
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model
 
-# Reason recorded by ``gobby build`` (see gobby.build.lifecycle_state.record_build_event).
+# Reason recorded by the retired build lifecycle, retained for stored audit history.
 # This is the durable, append-only signal that automation was ever started for a
 # task; stopping a build clears ``allow_automation`` but never removes this row,
 # so it remains the source of truth for "has this task ever been built".

@@ -25,7 +25,7 @@ CONTENT_TYPE_SYNC_TARGETS: dict[str, set[str]] = {
     "prompts": {"prompts"},
     "rules": {"rules"},
     "agents": {"agents"},
-    "workflows": {"pipelines", "variables", "build_profiles"},
+    "workflows": {"pipelines", "variables"},
 }
 REINSTALL_KINDS = ("rules", "agents", "pipelines", "variables")
 REINSTALL_TARGETS: dict[str, set[str]] = {

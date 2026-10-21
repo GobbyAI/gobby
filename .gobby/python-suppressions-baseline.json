@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 177,
+  "site_count": 175,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -531,26 +531,6 @@
         "method-assign"
       ],
       "statement": "handler . _execute_action = AsyncMock ( )"
-    },
-    {
-      "fingerprint": "6292774e0edb5379c73b38fb85282be06ebbb62a56ee97e074be17340c6214a3",
-      "path": "tests/dispatch/test_daemon_resume.py",
-      "symbol": "test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn",
-      "directive": "type: ignore",
-      "codes": [
-        "index"
-      ],
-      "statement": "assert captured [ \"metadata\" ] [ \"model\" ] == \"gpt-5\""
-    },
-    {
-      "fingerprint": "3e39104e3784af7f6a7b1921afb1f9775b04c933b0e9b969c22e4b1342a1ae93",
-      "path": "tests/dispatch/test_workspace_merge.py",
-      "symbol": "test_integration_mutex_allows_exactly_one_concurrent_lease_holder.acquire",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return _acquire_integration_mutex ( db , \"epic:123\" )"
     },
     {
       "fingerprint": "d5b44280ca99e548b83da36bc3bb83cb34bc6bdc33b63218f57c70a0f8248170",

@@ -26,7 +26,6 @@ SYNC_TARGETS: tuple[tuple[str, str, str], ...] = (
     ("pipelines", "gobby.workflows.sync_pipelines", "sync_bundled_pipelines"),
     ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),
     ("variables", "gobby.workflows.sync_variables", "sync_bundled_variables"),
-    ("build_profiles", "gobby.storage.build_profiles", "sync_bundled_build_profiles"),
     (
         "detection_manifests",
         "gobby.agents.detection.registry",

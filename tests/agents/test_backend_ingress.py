@@ -19,11 +19,6 @@ from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.cli.agents import spawn_agent_cmd
 from gobby.config.terminals import TerminalConfig
-from gobby.dispatch._planning_enhancement import _spawn_plan_enhancer
-from gobby.dispatch._rule_actions import _spawn_stage_agent
-from gobby.dispatch.actions import SpawnAgentAction
-from gobby.dispatch.spawn import spawn_agent as dispatch_spawn_agent
-from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -142,7 +137,7 @@ async def test_legacy_definition_spawn_returns_typed_refusal(temp_db: HubDatabas
 
 
 @pytest.mark.asyncio
-async def test_legacy_definition_is_refused_by_the_shared_resolver_and_dispatch(
+async def test_legacy_definition_is_refused_by_the_shared_resolver(
     temp_db: HubDatabase,
 ) -> None:
     project_id = "11111111-1111-4111-8111-111111110002"
@@ -156,30 +151,9 @@ async def test_legacy_definition_is_refused_by_the_shared_resolver_and_dispatch(
             (encode_json_value(legacy), row.id),
         )
 
-    # Every resolver consumer (dispatch, HTTP, hooks, personas) shares this refusal.
+    # Every resolver consumer (HTTP, hooks, personas) shares this refusal.
     with pytest.raises(AgentResolutionError, match=REJECTION):
         resolve_agent("legacy-dispatch", temp_db, project_id=project_id)
-
-    task_manager = MagicMock()
-    task_manager.get_task.return_value = SimpleNamespace(id=TASK_UUID, project_id=project_id)
-    services = SimpleNamespace(
-        database=temp_db,
-        task_manager=task_manager,
-        session_manager=MagicMock(),
-        agent_runner=MagicMock(),
-    )
-    action = SpawnAgentAction(
-        task_id=TASK_UUID, task_ref="#1", agent_slug="legacy-dispatch", prompt="go"
-    )
-    with (
-        patch("gobby.agents.readiness.spawn_readiness_blocker", return_value=None),
-        patch(
-            "gobby.dispatch.spawn.inspect_skill_composition",
-            side_effect=AssertionError("legacy definition passed agent resolution"),
-        ),
-        pytest.raises(DispatchSpawnFailed, match=REJECTION),
-    ):
-        await dispatch_spawn_agent(action, db=temp_db, services=services)
 
 
 @pytest.mark.asyncio
@@ -210,27 +184,8 @@ async def test_every_public_spawn_ingress_rejects_backend() -> None:
     assert cli.exit_code == 2
     assert "--terminal-backend" in cli.output
 
-    # Dispatch: the action has no field and both constructors build it without one.
-    assert "terminal_backend" not in {f.name for f in dataclasses.fields(SpawnAgentAction)}
-    with pytest.raises(TypeError, match="terminal_backend"):
-        cast(Any, SpawnAgentAction)(
-            task_id=TASK_UUID,
-            task_ref="#1",
-            agent_slug="backend-developer",
-            prompt="go",
-            terminal_backend="native",
-        )
-    stage = SimpleNamespace(name="planning", stage_name="planning", state="ready", position=0)
-    task = SimpleNamespace(id=TASK_UUID, ref="#1", additional_skills=())
-    context = SimpleNamespace(prompt_context={})
-    rule_action = _spawn_stage_agent(task, stage, context, "planner")
-    enhancement = _spawn_plan_enhancer(task, stage, context, round_number=1, max_rounds=2)
-    assert not hasattr(rule_action, "terminal_backend")
-    assert not hasattr(enhancement, "terminal_backend")
-
     # Every spawn_agent_impl forwarder passes no backend string.
     for forwarder in (
-        "src/gobby/dispatch/spawn.py",
         "src/gobby/scheduler/executor.py",
         "src/gobby/servers/routes/agent_spawn.py",
         "src/gobby/mcp_proxy/tools/spawn_agent/_factory.py",

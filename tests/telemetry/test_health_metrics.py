@@ -106,7 +106,6 @@ def test_automation_events_use_exact_allowlists_and_increments(
 
     assert _counter_values(reader, "automation_events_total") == {
         (("component", "cron"), ("outcome", "fired")): 2,
-        (("component", "dispatcher"), ("outcome", "skipped")): 1,
         (("component", "pipeline-heartbeat"), ("outcome", "recovered")): 1,
     }
 
@@ -233,50 +232,3 @@ def test_init_configures_health_metrics_after_meter_provider_and_file_logging(
         "file-logging:True",
         "health-metrics:True",
     ]
-
-
-@pytest.mark.asyncio
-async def test_dispatcher_boundary_records_fatal_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db: object,
-) -> None:
-    from gobby.dispatch import dispatcher
-
-    outcomes: list[tuple[str, str]] = []
-
-    async def fail_heartbeat(**_kwargs: object) -> dispatcher.HeartbeatResult:
-        raise RuntimeError("dispatcher failed")
-
-    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fail_heartbeat)
-    monkeypatch.setattr(
-        dispatcher,
-        "record_automation_event",
-        lambda component, outcome: outcomes.append((component, outcome)),
-    )
-
-    with pytest.raises(RuntimeError, match="dispatcher failed"):
-        await dispatcher.run_heartbeat(db=cast(Any, temp_db))
-
-    assert outcomes == [("dispatcher", "failed")]
-
-
-@pytest.mark.asyncio
-async def test_dispatcher_readiness_block_records_skip(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db: object,
-) -> None:
-    from gobby.agents import readiness
-    from gobby.dispatch import dispatcher
-
-    outcomes: list[tuple[str, str]] = []
-    monkeypatch.setattr(readiness, "spawn_readiness_blocker", lambda _services: "daemon offline")
-    monkeypatch.setattr(
-        dispatcher,
-        "record_automation_event",
-        lambda component, outcome: outcomes.append((component, outcome)),
-    )
-
-    result = await dispatcher.run_heartbeat(db=cast(Any, temp_db), services=object())
-
-    assert result.reason == "daemon offline"
-    assert outcomes == [("dispatcher", "skipped")]
