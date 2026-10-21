@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.workflows.condition_helpers import tdd_gate_open
-from gobby.workflows.tdd_paths import _git_identity
+from gobby.workflows.tdd_paths import _git_identity, same_repo_worktree_root
 
 _RELATIVE_TEST = "crates/x/tests.rs"
 
@@ -39,7 +39,7 @@ def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
     return main, worktree
 
 
-def test_worktree_absolute_acceptance_path_opens_gate_and_unrelated_suffix_stays_closed(
+def test_worktree_absolute_acceptance_path_without_server_authorization_stays_closed(
     tmp_path: Path,
 ) -> None:
     main, worktree = _repo_with_worktree(tmp_path)
@@ -49,7 +49,7 @@ def test_worktree_absolute_acceptance_path_opens_gate_and_unrelated_suffix_stays
         "tdd_tests_written": [str(written)],
     }
 
-    assert tdd_gate_open(variables, str(main)) is True
+    assert tdd_gate_open(variables, str(main)) is False
 
     unrelated = tmp_path / "unrelated" / _RELATIVE_TEST
     unrelated.parent.mkdir(parents=True)
@@ -108,8 +108,10 @@ def test_repeated_worktree_gate_checks_run_git_once_per_directory(
         "tdd_tests_written": [str(worktree / _RELATIVE_TEST)],
     }
 
-    assert tdd_gate_open(variables, str(main)) is True
-    assert tdd_gate_open(variables, str(main)) is True
+    assert tdd_gate_open(variables, str(main)) is False
+    assert tdd_gate_open(variables, str(main)) is False
+    assert same_repo_worktree_root(worktree / _RELATIVE_TEST, main) == worktree
+    assert same_repo_worktree_root(worktree / _RELATIVE_TEST, main) == worktree
     assert counts
     assert max(counts.values()) <= 1
 
@@ -147,4 +149,7 @@ def test_git_timeout_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     }
 
     assert tdd_gate_open(variables, str(main)) is False
-    assert tdd_gate_open(variables, str(main)) is True
+    assert same_repo_worktree_root(worktree / _RELATIVE_TEST, main) is None
+    assert timed_out is True
+    assert same_repo_worktree_root(worktree / _RELATIVE_TEST, main) == worktree
+    assert tdd_gate_open(variables, str(main)) is False
