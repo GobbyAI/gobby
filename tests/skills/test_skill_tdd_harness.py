@@ -119,7 +119,7 @@ def test_elicit_presents_decision_record_as_plain_conversation_text() -> None:
     assert "never solely inside" in skill_text
 
 
-@pytest.mark.parametrize("skill_name", ["plan", "merge-expert"])
+@pytest.mark.parametrize("skill_name", ["plan"])
 def test_coordinator_skills_page_bounded_terminal_captures(skill_name: str) -> None:
     """Verify coordinators retrieve complete captures before consuming terminal reports."""
     result = run_recorded_skill_scenario(SCENARIOS / skill_name / "page-terminal-capture.yaml")

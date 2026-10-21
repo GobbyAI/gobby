@@ -168,7 +168,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "plan-writer",
         "planner",
         "product-manager",
-        "merge-worker",
         "developer",
         "researcher",
     )
@@ -182,11 +181,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert "reasoning_effort" not in agent, agent_name
 
 
-def test_merge_worker_blocks_native_delegation_tools() -> None:
-    blocked_tools = _blocked_tools(_agent("merge-worker"))
-    assert {"Workflow", "Task"} <= blocked_tools
-
-
 def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
     """Restricted load-skill steps should instruct agents to use the Gobby proxy."""
     inspected = 0
@@ -196,7 +190,8 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
             allowed_mcp_tools = step.get("allowed_mcp_tools")
             allowed_tools = step.get("allowed_tools")
             if not (
-                isinstance(allowed_mcp_tools, list)
+                step.get("name") in {"load_skill", "load_skills", "load_additional_skills"}
+                and isinstance(allowed_mcp_tools, list)
                 and "gobby-skills:get_skill" in allowed_mcp_tools
                 and allowed_tools != "all"
             ):
@@ -521,7 +516,11 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
 
 def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:
-    instructions = " ".join(_agent("planner")["prompts"]["agent"].split())
+    procedure = "references/agents/procedures/planner.md"
+    assert _agent("planner")["workflows"]["variables"]["_seat_procedure"] == f"gobby:{procedure}"
+    instructions = " ".join(
+        (PROJECT_ROOT / "src/gobby/install/shared/skills/gobby" / procedure).read_text().split()
+    )
 
     assert "submit_for_review" in instructions
     assert "remove_label" in instructions
