@@ -284,3 +284,53 @@ def test_special_parameter_data_controls_stay_allowed(command: str) -> None:
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "P=/josh/.local/bin/go; D=approve-dirty-paths; /Users${P}bby se$()ssions $D s7 --checkout /repo a.txt",
+        "/Users${P}bby se$()ssions $D s7 --checkout /repo a.txt",
+        "unknown /Users${P}bby sessions list",
+        "unknown /Users$(true)bby sessions list",
+        "unknown /Users`true`bby sessions list",
+        "x$Ay sessions list",
+    ],
+)
+def test_expansion_introduced_basename_is_refused(command: str) -> None:
+    # Inert evaluator input: never resolve the paths or execute shell strings.
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command", ['cat "${dir}/${file}"', 'ls "${HOME}/.gobby/bin/gobby"', "ls /tmp/*by"]
+)
+def test_expansion_basename_data_and_literal_globs_stay_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    ("command", "refused"),
+    [
+        ('gobby --config="$X" tasks list', False),
+        ('gobby --config "path${X}" tasks list', False),
+        ('unknown --config="$X" tasks list', True),
+        ('unknown gobby --config="$X" tasks list', True),
+        ('g${X}obby --config="$X" tasks list', True),
+        ('gobb? --config="$X" tasks list', True),
+        ('gobby --other="$X" tasks list', True),
+        ('gobby --config="$X" tasks list; unknown --config="$X"', True),
+        ('gobby --config="$X" tasks list | unknown --config="$X"', True),
+        ('gobby tasks list; /Users${P}bby --config="$X" tasks list', True),
+    ],
+)
+def test_config_data_exemption_requires_the_literal_gobby_command(
+    command: str, refused: bool
+) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])") is refused

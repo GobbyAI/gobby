@@ -12,7 +12,14 @@ import re
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._normalization_compound import command_substitution_bodies
-from gobby.hooks._normalization_shell import scan_shell_command
+from gobby.hooks._normalization_env import _ASSIGNMENT
+from gobby.hooks._normalization_shell import (
+    ShellScan,
+    is_fd_duplication_token,
+    is_shell_input_redirection_token,
+    is_shell_output_redirection_token,
+    scan_shell_command,
+)
 from gobby.hooks._shell_execution_words import _unwrap
 
 from .engine.command_matching import (
@@ -29,6 +36,9 @@ _DATA_COMMANDS = frozenset(
     {"echo", "printf", "rg", "grep", "gcode", "cat", "ls", "wc", "git", "cp"}
 )
 type _Character = tuple[str, bool]
+# Literal input contributes one character at a time, so this marker cannot
+# collide with a glob star or any other character from the command text.
+_EXPANSION = "<expansion>"
 
 
 class _AmbiguousSyntax(ValueError):
@@ -112,7 +122,9 @@ def _characters(
                 continue
         if quote != "'" and (raw.startswith(("${", "$("), index) or char == "`"):
             index, _ = _expansion_span(raw, index)
-            result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
+            result.append(
+                (_EXPANSION if parameter_wildcard else "$", not quote or quoted_expansions)
+            )
             continue
         if (
             quote != "'"
@@ -121,7 +133,9 @@ def _characters(
             and raw[index + 1] in "0123456789@*#?$!-"
         ):
             index += 2
-            result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
+            result.append(
+                (_EXPANSION if parameter_wildcard else "$", not quote or quoted_expansions)
+            )
             continue
         if (
             quote != "'"
@@ -134,7 +148,9 @@ def _characters(
                 "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
             ):
                 index += 1
-            result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
+            result.append(
+                (_EXPANSION if parameter_wildcard else "$", not quote or quoted_expansions)
+            )
             continue
         if char == quote:
             quote = ""
@@ -251,6 +267,10 @@ def _matches(chars: list[_Character], target: str) -> bool:
                     continue
             if char == "/":
                 offsets = {0}
+            elif active and char == _EXPANSION:
+                # An expansion may supply a slash and any basename prefix,
+                # including after literal directory text emptied the states.
+                offsets = set(range(len(target) + 1))
             elif active and char == "*":
                 offsets = {end for offset in offsets for end in range(offset, len(target) + 1)}
             elif active and char == "?":
@@ -345,9 +365,9 @@ def _protected_word(raw: str) -> bool:
             if char == "/":
                 beginning = index + 1
         basename = chars[beginning:]
-        if not any(char == "*" and active for char, active in basename):
+        if not any(char in {"*", _EXPANSION} and active for char, active in basename):
             return False
-        if not any(char != "*" or not active for char, active in basename):
+        if not any(char not in {"*", _EXPANSION} or not active for char, active in basename):
             return False
     if any(active and char in "$`()" for char, active in chars):
         raise _AmbiguousSyntax("Dynamic expansion in brace word")
@@ -423,6 +443,41 @@ def _stage_slots(words: list[str], raw: list[str]) -> bool:
     return False
 
 
+def _config_operands(subject: str, scan: ShellScan) -> set[tuple[int, int]]:
+    """Find config data belonging to a literal gobby simple-command head."""
+    operands: set[tuple[int, int]] = set()
+    head: bool | None = None
+    config_value = False
+    redirection_value = False
+    for token, span in zip(scan.tokens, scan.spans, strict=True):
+        raw = subject[span[0] : span[1]]
+        if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
+            head, config_value, redirection_value = None, False, False
+            continue
+        if redirection_value:
+            redirection_value = False
+            continue
+        if is_fd_duplication_token(token):
+            continue
+        if is_shell_input_redirection_token(token) or is_shell_output_redirection_token(token):
+            redirection_value = True
+            continue
+        if head is None:
+            if _ASSIGNMENT.match(raw):
+                continue
+            head = token.value == "gobby" and not any(_word_syntax(raw))
+            continue
+        if head:
+            if config_value:
+                operands.add(span)
+                config_value = False
+            elif token.value == "--config":
+                config_value = True
+            elif token.value.startswith("--config="):
+                operands.add(span)
+    return operands
+
+
 def _approval_spelling(command: object, *, command_slots: bool) -> bool:
     """Refuse an unquoted brace word capable of producing a protected basename.
 
@@ -455,7 +510,12 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
                         scan = scan_shell_command(subject)
                 if command_slots and _command_slots(subject):
                     return True
-                if any(_protected_word(subject[start:end]) for start, end in scan.spans):
+                config_operands = _config_operands(subject, scan)
+                if any(
+                    _protected_word(subject[start:end])
+                    for start, end in scan.spans
+                    if (start, end) not in config_operands
+                ):
                     return True
                 scripts = _wrapper_scripts(_decoded_stages(subject))
                 scripts.extend(_shell_input_scripts(subject))
