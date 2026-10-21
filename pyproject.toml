@@ -111,8 +111,9 @@ constraint-dependencies = [
     "authlib>=1.6.12",
     # joserfc <1.6.8 has HMAC empty-key and unencoded-payload limit bypass advisories.
     "joserfc>=1.6.8",
-    # pillow <12.3.0 has multiple 2026 advisories (transitive via the voice stack).
-    "pillow>=12.3.0",
+    # pillow <13.0.0 has multiple 2026 advisories (transitive via the voice stack);
+    # see override-dependencies below.
+    "pillow>=13.0.0",
     # h2 <4.4.1 has PYSEC-2026-3628 / CVE-2026-71554 (duplicate Host header).
     "h2>=4.4.1",
     # torch <2.8.0 has GHSA-887c-mr87-cxwp; see override-dependencies below.
@@ -147,6 +148,10 @@ override-dependencies = [
     "gradio>=6.14.0",
     # chatterbox-tts==0.1.7 pins safetensors==0.5.3.
     "safetensors>=0.8.0",
+    # gradio 6.x pins pillow<13.0; pillow 12.3.0 carries nine 2026 advisories
+    # (CVE-2026-112395 and siblings) fixed in 13.0.0. Gobby's exercised paths do
+    # not use Pillow; the voice stack loads it transitively.
+    "pillow>=13.0.0",
 ]
 
 [build-system]
