@@ -313,13 +313,15 @@ def test_extracted_retest_procedures_keep_author_owned_proof(name: str) -> None:
     procedure = shared / f"skills/gobby/references/agents/procedures/{name}.md"
     content = procedure.read_text()
 
-    for protocol in ("PROOF_REQUEST", "PROOF_RESULT", "UNAVAILABLE"):
+    for protocol in ("PROOF_RESULT", "UNAVAILABLE"):
         assert protocol in content, f"{name} must retain the current {protocol} proof contract"
     assert "author" in content
+    # #24756: the reviewer sends LANDED at once; the closing seat owns the retest.
+    assert "PROOF_REQUEST" not in content
     assert "run them in the main checkout" not in content
     assert "the reviewer has run the retest" not in content
     if name == "code-reviewer":
-        assert "900" in content and "remaining budget" in content
-        assert "do not run anything" in content
+        assert "closing seat owns the landed retest" in content
+        assert "run no retest yourself" in content
     else:
         assert "confirm it with the author before raising found work" in content

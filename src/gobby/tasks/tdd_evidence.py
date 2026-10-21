@@ -106,13 +106,20 @@ _TDD_BEFORE_IMPLEMENTATION_PHRASE = "before implementation"
 
 def task_requires_tdd(
     *,
-    labels: Iterable[str],
-    additional_skills: Iterable[str],
+    labels: Iterable[str] | None,
+    additional_skills: Iterable[str] | None,
     validation_criteria: str | None,
     enforce_tdd: bool = False,
 ) -> bool:
-    """Return whether task metadata requires transcript-backed red/green evidence."""
-    if enforce_tdd or TDD_REQUIRED_LABEL in labels or TDD_SKILL in additional_skills:
+    """Return whether task metadata requires transcript-backed red/green evidence.
+
+    Stored tasks carry ``None`` for unset list columns, so both iterables are optional.
+    """
+    if (
+        enforce_tdd
+        or TDD_REQUIRED_LABEL in (labels or ())
+        or TDD_SKILL in (additional_skills or ())
+    ):
         return True
     if not validation_criteria:
         return False

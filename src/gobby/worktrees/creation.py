@@ -30,6 +30,7 @@ class SidecarWriter(Protocol):
         self,
         source_repo_path: str | Path,
         isolated_path: str | Path,
+        /,
         *,
         base_commit: str | None = None,
     ) -> None: ...
