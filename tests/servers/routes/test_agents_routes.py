@@ -1632,9 +1632,11 @@ class TestUpdateDefinitionNestedFields:
         {
             "api_base",
             "api_token",
+            "communications_admin",
             "execution_mode",
             "idle_ttl_seconds",
             "network",
+            "operator_messaging",
             "send_message_targets",
             "spawnable_agents",
         }
@@ -1664,10 +1666,16 @@ class TestUpdateDefinitionNestedFields:
         assert refused == self.IMMUTABLE_BODY_FIELDS | {"is_local"}
 
     @pytest.mark.parametrize(
-        "field, value", [("execution_mode", "interactive"), ("idle_ttl_seconds", 900)]
+        "field, value",
+        [
+            ("execution_mode", "interactive"),
+            ("idle_ttl_seconds", 900),
+            ("operator_messaging", True),
+            ("communications_admin", True),
+        ],
     )
     @pytest.mark.parametrize("method", ["post", "put"])
-    def test_run_lifetime_fields_are_not_api_editable(
+    def test_lifetime_and_permission_fields_are_not_api_editable(
         self, client: TestClient, field: str, value: object, method: str
     ) -> None:
         name = "lifetime-immutable"

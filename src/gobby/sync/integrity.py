@@ -40,7 +40,6 @@ BUNDLED_SYNC_CONTENT_TYPES: set[str] = {
     "pipelines",
     "rules",
     "variables",
-    "build_profiles",
     "detection_manifests",
     "mcp_templates",
 }
@@ -65,7 +64,6 @@ _GIT_PROTECTED_PATHS: tuple[str, ...] = (
     "prompts",
     "workflows",
     "rules",
-    "registry/build_profiles.yaml",
     "mcp",
     "detection",
 )
@@ -395,9 +393,6 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
         return None
 
     if parts[0] == "registry" and len(parts) >= 2:
-        # build_profiles is a single protected registry file, not a directory.
-        if parts[1] == "build_profiles.yaml":
-            return "build_profiles"
         logger.warning(
             "Unknown bundled registry file is ignored by sync integrity: %s",
             relative_path,

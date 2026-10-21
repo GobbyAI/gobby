@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-from gobby.build.observability import _subtree_tasks
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
@@ -125,7 +124,7 @@ def test_ready_and_blocked_readers_terminate_on_blocker_parent_cycle(
     assert blocked_ids == {blocked.id}
 
 
-def test_build_subtree_readers_and_cascade_bound_cycles(
+def test_build_state_cascade_bounds_cycles(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -145,7 +144,6 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
     manager.initialize_task_manifest(root.id, stage_names=["development"])
     temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
 
-    subtree = _subtree_tasks(manager, manager.get_task(root.id))
     updated = cascade_build_state_to_subtree(
         temp_db,
         root.id,
@@ -154,7 +152,6 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
         allow_automation=True,
     )
 
-    assert {task.id for task in subtree} == {root.id, child.id}
     assert updated.updated_count == 2
     assert manager.get_task(root.id).allow_automation is True
     assert manager.get_task(child.id).allow_automation is True

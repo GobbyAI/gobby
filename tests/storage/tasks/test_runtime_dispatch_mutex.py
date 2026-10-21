@@ -5,17 +5,21 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from threading import Barrier
+from typing import Any
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
-def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
-    from gobby.dispatch.mutex import RuntimeDispatchMutex
+def test_acquire_link_release_round_trip(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -33,7 +37,9 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
         now=datetime(2026, 1, 1, tzinfo=UTC),
     ) as mutex:
         mutex.attach("ac314d27-4314-5fe3-a0ab-01645086e137")
-        assert storage.get_mutex(task.id).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
+        linked = storage.get_mutex(task.id)
+        assert linked is not None
+        assert linked.run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
 
     attached = storage.get_mutex(task.id)
     assert attached is not None
@@ -41,9 +47,9 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
     assert RuntimeDispatchMutex.force_release_for_run(storage, attached.run_id) == 1
 
 
-def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
-    from gobby.dispatch.mutex import RuntimeDispatchMutex
+def test_detach_on_terminal_no_leak(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -64,9 +70,14 @@ def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
     assert storage.get_mutex(task.id) is None
 
 
-def test_runtime_mutex_uses_unique_holder_token_per_acquisition(temp_db, sample_project) -> None:
-    from gobby.dispatch.mutex import DispatchMutexUnavailableError, RuntimeDispatchMutex
+def test_runtime_mutex_uses_unique_holder_token_per_acquisition(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from gobby.storage.tasks._runtime_mutex import (
+        DispatchMutexUnavailableError,
+        RuntimeDispatchMutex,
+    )
 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -85,6 +96,7 @@ def test_runtime_mutex_uses_unique_holder_token_per_acquisition(temp_db, sample_
             acquired = True
             lease = storage.get_mutex(task.id)
             assert lease is not None
+            assert lease.lease_holder is not None
             assert lease.lease_holder.startswith("dispatcher:")
         except DispatchMutexUnavailableError:
             pass

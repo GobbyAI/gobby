@@ -156,7 +156,6 @@ uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json 
 GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v          # focused test file
 GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing
 uv run gobby pipelines list      # pipelines: list / run / approve / reject / import
-uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 ```
 
 Start the daemon only from the main checkout: `gobby start`/`restart` and
@@ -220,9 +219,6 @@ state inconsistent.
 
 - Templates vs enforcement: see `src/gobby/install/shared/AGENTS.md` for the
   sync/override contract (rule 8 above is the short version).
-- Dispatch: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
-  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/AGENTS.md` before
-  touching dispatch, build, or stage-registry code.
 - Rust workspace (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
   `gobby-hooks`→`ghook`, `gobby-terminal`→`gterm`,
   `gobby-client`→`gclient`, shared `gobby-core`. The daemon shells

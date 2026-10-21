@@ -108,6 +108,8 @@ const CREATE_REFUSED_KEYS = new Set([
   "network",
   "spawnable_agents",
   "send_message_targets",
+  "operator_messaging",
+  "communications_admin",
 ]);
 
 export function buildDuplicateAgentBody(

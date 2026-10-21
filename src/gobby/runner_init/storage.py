@@ -311,12 +311,6 @@ def init_startup_content(runner: GobbyRunner) -> None:
     if stage_sync.upserted > 0:
         logger.info("Synced %s bundled stage registry rows", stage_sync.upserted)
 
-    from gobby.storage.build_profiles import BuildProfileLoader
-
-    profile_sync = BuildProfileLoader().sync(runner.database)
-    if profile_sync.upserted > 0:
-        logger.info("Synced %s bundled build profile rows", profile_sync.upserted)
-
     from gobby.storage.prompts import LocalPromptManager
 
     runner.prompt_manager = LocalPromptManager(runner.database, dev_mode=runner._dev_mode)

@@ -15,9 +15,6 @@ from uuid import UUID
 import pytest
 from psycopg.pq import ExecStatus, TransactionStatus
 
-from gobby.build import lifecycle as build_lifecycle
-from gobby.build.options import BuildOptions
-from gobby.build.results import BuildResult
 from gobby.config.postgres_pool import PostgresPoolConfig
 
 pytestmark = pytest.mark.unit
@@ -279,66 +276,6 @@ async def test_interleaved_transactions_own_callbacks_and_lock_order(
     await asyncio.gather(first_transaction(), second_transaction())
 
     assert callbacks_run == ["second", "first"]
-
-
-@pytest.mark.asyncio
-async def test_build_dry_run_interleaving_keeps_transaction_locks_task_local(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _postgres_module()
-
-    class Connection:
-        info = _OPEN_TRANSACTION_INFO
-
-        @contextmanager
-        def transaction(self) -> Iterator[None]:
-            yield
-
-        def execute(self, sql: str, params: object = ()) -> object:
-            return object()
-
-    database = object.__new__(module.PostgresHubDatabase)
-    monkeypatch.setattr(database, "open", lambda: None)
-
-    @contextmanager
-    def pool_connection() -> Iterator[Connection]:
-        yield Connection()
-
-    monkeypatch.setattr(database, "_pool_connection", pool_connection)
-    both_builds_entered = asyncio.Event()
-    entered_count = 0
-
-    async def build_impl(
-        input_ref: str,
-        opts: BuildOptions,
-        *,
-        db: object,
-        project_id: str,
-        services: object | None,
-    ) -> BuildResult:
-        nonlocal entered_count
-        entered_count += 1
-        if entered_count == 2:
-            both_builds_entered.set()
-        await both_builds_entered.wait()
-        return BuildResult(
-            task_id=input_ref,
-            created=False,
-            initial_lifecycle=project_id,
-            applied_stages_skipped=[],
-            tick_dispatched=0,
-        )
-
-    monkeypatch.setattr(build_lifecycle, "_build_impl", build_impl)
-    opts = BuildOptions(dry_run=True)
-
-    results = await asyncio.gather(
-        build_lifecycle._build_dry_run("#first", opts, db=database, project_id="first-project"),
-        build_lifecycle._build_dry_run("#second", opts, db=database, project_id="second-project"),
-    )
-
-    assert entered_count == 2
-    assert [result.dry_run for result in results] == [True, True]
 
 
 @pytest.mark.asyncio

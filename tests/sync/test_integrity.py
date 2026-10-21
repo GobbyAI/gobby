@@ -507,9 +507,7 @@ class TestGetDirtyContentTypes:
     def test_unrelated_relative_path_returns_no_shared_path(self, tmp_path: Path) -> None:
         assert _to_shared_relative_path("README.md", tmp_path) is None
 
-    def test_maps_top_level_workflows_rules_variables_and_build_profiles(
-        self, tmp_path: Path
-    ) -> None:
+    def test_maps_top_level_workflows_rules_and_variables(self, tmp_path: Path) -> None:
         """Covers every DB-synced bundled root."""
         dirty = [
             "shared/workflows/dev.yaml",
@@ -521,17 +519,16 @@ class TestGetDirtyContentTypes:
 
         result = get_dirty_content_types(dirty, tmp_path)
 
-        assert result == {"pipelines", "rules", "variables", "build_profiles"}
+        assert result == {"pipelines", "rules", "variables"}
 
     def test_content_type_dirs_matches_sync_targets(self) -> None:
-        """Directory mappings plus explicit file mappings cover synced types."""
+        """Directory mappings cover the surviving sync targets."""
         from gobby.sync_registry import SYNC_TARGETS
 
         expected = {target[0] for target in SYNC_TARGETS}
-        explicit_file_targets = {"build_profiles"}
         assert BUNDLED_SYNC_CONTENT_TYPES == expected
-        assert set(CONTENT_TYPE_DIRS.values()) | explicit_file_targets == expected
-        assert "build_profiles" not in set(CONTENT_TYPE_DIRS.values())
+        assert set(CONTENT_TYPE_DIRS.values()) == expected
+        assert "build_profiles" not in expected
 
     def test_detection_manifest_tampering_blocks_its_sync_domain(self, tmp_path: Path) -> None:
         assert get_dirty_content_types(["shared/detection/codex.toml"], tmp_path) == {
@@ -541,13 +538,13 @@ class TestGetDirtyContentTypes:
     def test_every_synced_content_type_maps_a_protected_path(self, tmp_path: Path) -> None:
         from gobby.sync.integrity import _GIT_PROTECTED_PATHS
 
-        mapped = set(CONTENT_TYPE_DIRS.values()) | {"build_profiles"}
+        mapped = set(CONTENT_TYPE_DIRS.values())
         assert mapped == BUNDLED_SYNC_CONTENT_TYPES
         for relative_path, content_type in CONTENT_TYPE_DIRS.items():
             root = relative_path.split("/", 1)[0]
             assert root in _GIT_PROTECTED_PATHS or relative_path in _GIT_PROTECTED_PATHS
             assert content_type in BUNDLED_SYNC_CONTENT_TYPES
-        assert "registry/build_profiles.yaml" in _GIT_PROTECTED_PATHS
+        assert "registry/build_profiles.yaml" not in _GIT_PROTECTED_PATHS
         assert "mcp" in _GIT_PROTECTED_PATHS
         assert CONTENT_TYPE_DIRS["mcp"] == "mcp_templates"
         assert get_dirty_content_types(["shared/mcp/templates/openapi.yaml"], tmp_path) == {
