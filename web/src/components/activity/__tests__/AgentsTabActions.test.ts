@@ -51,6 +51,8 @@ function agentDefinition(): AgentDefInfo {
       network: "trusted",
       spawnable_agents: ["developer"],
       send_message_targets: ["parent", "session"],
+      operator_messaging: true,
+      communications_admin: true,
     },
     source: "installed",
     source_path: null,
@@ -160,6 +162,8 @@ describe("AgentsTabActions", () => {
     expect(body).not.toHaveProperty("network");
     expect(body).not.toHaveProperty("spawnable_agents");
     expect(body).not.toHaveProperty("send_message_targets");
+    expect(body).not.toHaveProperty("operator_messaging");
+    expect(body).not.toHaveProperty("communications_admin");
   });
 
   it("round-trips nested step_workflow through draft and save body", () => {
