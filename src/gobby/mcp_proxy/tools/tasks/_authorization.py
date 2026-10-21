@@ -9,8 +9,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
+from gobby.storage.sessions import SessionManager
+from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -68,6 +71,28 @@ def has_delegated_agent_run(
     return isinstance(run_id, str) and bool(run_id)
 
 
+def is_orchestrator_coordinator(task_manager: "LocalTaskManager", caller_session_id: str) -> bool:
+    """True when the caller is the enabled Orchestrator's local root session.
+
+    Josh, 2026-10-21: the Orchestrator is exempt from claim refusals. The
+    Assistant, though also an operator coordinator, is not. Lookup failures
+    fail closed.
+    """
+    try:
+        caller = SessionManager(task_manager.db).get(caller_session_id)
+        if caller is None:
+            return False
+        role = SessionVariableManager(task_manager.db).get_variable_subset(
+            caller.id, ("_agent_type",)
+        )
+        if role.get("_agent_type") != "orchestrator":
+            return False
+        return is_operator_coordinator(task_manager, caller)
+    except Exception as e:
+        logger.debug("Orchestrator authority lookup failed: %s", e)
+        return False
+
+
 def require_claim_authority(
     task_manager: "LocalTaskManager",
     task: "Task",
@@ -76,10 +101,10 @@ def require_claim_authority(
     """Refuse a mutation of a task claimed by another session.
 
     Returns None when authorized: the task is unclaimed, the caller is the
-    claiming session, or caller and owner share the task's agent-run
-    delegation lineage. A claimed task with no session context is refused;
-    unclaimed tasks stay open to operator and scripted flows that run
-    without session context.
+    claiming session, caller and owner share the task's agent-run
+    delegation lineage, or the caller is the Orchestrator. A claimed task
+    with no session context is refused; unclaimed tasks stay open to
+    operator and scripted flows that run without session context.
     """
     owner_session_id = get_claimed_session_id(task)
     if not owner_session_id:
@@ -102,6 +127,8 @@ def require_claim_authority(
         task_id=task.id,
         owner_session_id=owner_session_id,
     ):
+        return None
+    if is_orchestrator_coordinator(task_manager, caller_session_id):
         return None
     return task_error(
         f"Cannot {action}: task {task_ref} is claimed by session '{owner_session_id}'.",

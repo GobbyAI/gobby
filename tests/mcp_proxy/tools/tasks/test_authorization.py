@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_file
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._authorization import (
     has_delegated_agent_run,
+    is_orchestrator_coordinator,
     require_claim_authority,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -31,6 +32,7 @@ pytestmark = pytest.mark.unit
 OWNER_SESSION = "11111111-1111-4111-8111-aaaaaaaaaaaa"
 CALLER_SESSION = "11111111-1111-4111-8111-bbbbbbbbbbbb"
 TASK_UUID = "550e8400-e29b-41d4-a716-446655440000"
+_AUTH = "gobby.mcp_proxy.tools.tasks._authorization"
 
 
 def _task(claimed_by: str | None, **overrides: Any) -> Task:
@@ -88,6 +90,76 @@ class TestRequireClaimAuthority:
         with session_context_for_test(CALLER_SESSION):
             denied = require_claim_authority(task_manager, _task(OWNER_SESSION), "update_task")
         assert denied is None
+
+    def test_orchestrator_exempt_from_claim_conflict(self, task_manager: MagicMock) -> None:
+        with (
+            patch(f"{_AUTH}.is_orchestrator_coordinator", return_value=True) as check,
+            session_context_for_test(CALLER_SESSION),
+        ):
+            denied = require_claim_authority(task_manager, _task(OWNER_SESSION), "add_label")
+        assert denied is None
+        check.assert_called_once_with(task_manager, CALLER_SESSION)
+
+    def test_assistant_not_exempt_from_claim_conflict(self, task_manager: MagicMock) -> None:
+        caller = MagicMock(parent_session_id=None, machine_id="m1", project_id="p1")
+        with (
+            patch(f"{_AUTH}.SessionManager") as sessions,
+            patch(f"{_AUTH}.is_operator_coordinator", return_value=True),
+            patch(f"{_AUTH}.SessionVariableManager") as variables,
+            session_context_for_test(CALLER_SESSION),
+        ):
+            sessions.return_value.get.return_value = caller
+            variables.return_value.get_variable_subset.return_value = {"_agent_type": "assistant"}
+            denied = require_claim_authority(task_manager, _task(OWNER_SESSION), "add_label")
+        assert denied is not None
+        assert denied["error_code"] == "TASK_CLAIM_CONFLICT"
+
+    @pytest.mark.parametrize(
+        ("agent_type", "coordinator", "expected", "coordinator_checked"),
+        [
+            ("orchestrator", True, True, True),
+            ("orchestrator", False, False, True),
+            ("assistant", True, False, False),
+            ("developer", True, False, False),
+            (None, True, False, False),
+        ],
+    )
+    def test_orchestrator_check_roles(
+        self,
+        task_manager: MagicMock,
+        agent_type: str | None,
+        coordinator: bool,
+        expected: bool,
+        coordinator_checked: bool,
+    ) -> None:
+        caller = MagicMock(id=CALLER_SESSION)
+        with (
+            patch(f"{_AUTH}.SessionManager") as sessions,
+            patch(f"{_AUTH}.is_operator_coordinator", return_value=coordinator) as check,
+            patch(f"{_AUTH}.SessionVariableManager") as variables,
+        ):
+            sessions.return_value.get.return_value = caller
+            variables.return_value.get_variable_subset.return_value = {"_agent_type": agent_type}
+            result = is_orchestrator_coordinator(task_manager, CALLER_SESSION)
+        assert result is expected
+        sessions.assert_called_once_with(task_manager.db)
+        sessions.return_value.get.assert_called_once_with(CALLER_SESSION)
+        variables.return_value.get_variable_subset.assert_called_once_with(
+            CALLER_SESSION, ("_agent_type",)
+        )
+        assert check.called is coordinator_checked
+        if coordinator_checked:
+            check.assert_called_once_with(task_manager, caller)
+
+    def test_orchestrator_check_unknown_session_refused(self, task_manager: MagicMock) -> None:
+        with patch(f"{_AUTH}.SessionManager") as sessions:
+            sessions.return_value.get.return_value = None
+            assert is_orchestrator_coordinator(task_manager, CALLER_SESSION) is False
+        sessions.return_value.get.assert_called_once_with(CALLER_SESSION)
+
+    def test_orchestrator_check_fails_closed_on_lookup_error(self, task_manager: MagicMock) -> None:
+        with patch(f"{_AUTH}.SessionManager", side_effect=RuntimeError("db down")):
+            assert is_orchestrator_coordinator(task_manager, CALLER_SESSION) is False
 
 
 class TestHasDelegatedAgentRun:
