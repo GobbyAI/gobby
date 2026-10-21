@@ -717,3 +717,135 @@ closes.
    so the seat's turn reads the DM through hook context. After the timeout
    nothing must be typed into the pane and the daemon log must show the
    release skipped as `mailbox_read`.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Lease registry focus state and the terminal_focus verb
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `_Attachment` carries `focused`, default `False`; `focus_held`
+    is true only for a live `gclient` holder with `focused` set, false for a web holder
+    and for a focused non-holder. test: `tests/terminals/test_lease_authority.py::test_focus_held_requires_a_focused_gclient_holder`.
+
+    1.1.2: `release_control`, `finalize` and a `takeover` in `take_control` clear
+    the released or displaced record''s `focused`; a stale attachment makes `set_focus`
+    return `False`. test: `tests/terminals/test_lease_authority.py::test_release_finalize_and_takeover_clear_focus`.
+
+    1.1.3: The focus observer fires synchronously with the terminal id on `set_focus(False)`
+    of the holder and on every holder change from `_notify_holder`, with or without
+    a holder observer installed, and is never awaited. test: `tests/terminals/test_lease_authority.py::test_focus_observer_fires_on_focus_loss_and_holder_change`.
+
+    1.1.4: `terminal_focus` reaches `set_focus` through the websocket type map, sends
+    no reply, and is an off-loop message type. test: `tests/servers/test_terminal_ws_lease.py::test_terminal_focus_marks_the_holder_and_sends_nothing`.
+
+    1.1.5: `message_classes.py` holds the message-class sets and predicates and `server.py`
+    is under 850 lines. file: `src/gobby/servers/websocket/message_classes.py`.
+
+    1.1.6: The protocol contract documents `terminal_focus`. behavior: "terminal_focus"
+    row in `docs/contracts/gterm-protocols.md`.'
+  labels:
+  - covers:pane-focus-wake-gating:1.1:1.1.1
+  - covers:pane-focus-wake-gating:1.1:1.1.2
+  - covers:pane-focus-wake-gating:1.1:1.1.3
+  - covers:pane-focus-wake-gating:1.1:1.1.4
+  - covers:pane-focus-wake-gating:1.1:1.1.5
+  - covers:pane-focus-wake-gating:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Operator comms wakes hold on a focused pane and dispatch on release
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: With a focused `gclient` holder and a pending operator
+    comms wake, `dispatch_live_wake` returns `skipped: "pane_focused"`, writes nothing
+    to the terminal, records the hold, and the result is retryable. test: `tests/events/test_comms_wake.py::test_operator_comms_wake_holds_while_the_pane_is_focused`.
+
+    1.2.2: `release_focus_hold` re-dispatches the held session once and the wake lands
+    with `clear_before_submit=True`; a second release is a no-op. test: `tests/events/test_comms_wake.py::test_focus_release_dispatches_the_held_wake_with_a_wipe`.
+
+    1.2.3: An open transcript turn withholds as `composer_unconfirmed` before the
+    focus hold is consulted, and an `active` row withholds as `session_active`. test:
+    `tests/events/test_comms_wake.py::test_active_turn_protection_outranks_the_focus_hold`.
+
+    1.2.4: A web holder, an unfocused gclient holder, a registry-less dispatcher,
+    and a pending wake that is not an operator comms wake all take today''s path.
+    test: `tests/events/test_comms_wake.py::test_focus_hold_applies_only_to_comms_wakes_with_a_focused_gclient_holder`.
+
+    1.2.5: The batch path returns `pane_focused` for a focused recipient and still
+    sends to the others in one host exchange. test: `tests/events/test_wake_native_terminal.py::test_batch_wake_holds_a_focused_recipient_and_sends_the_rest`.
+
+    1.2.6: `init_terminal_wiring` binds the lease registry to the dispatcher and the
+    dispatcher''s `release_focus_hold` as the focus observer; the front-door branch
+    binds neither. test: `tests/terminals/test_composition_roots.py::test_terminal_wiring_binds_focus_release_to_the_wake_dispatcher`.
+
+    1.2.7: `wake_web_chat.py` carries the web-chat wake path and `wake.py` is under
+    1,000 lines. file: `src/gobby/events/wake_web_chat.py`.
+
+    1.2.8: The guides name `pane_focused` beside `composer_occupied`. behavior: "pane_focused"
+    in `docs/guides/sessions.md` and `docs/guides/agents.md`.
+
+    1.2.9: `release_focus_hold` for a held session whose mailbox has no undelivered
+    message returns `skipped: "mailbox_read"`, writes nothing to the terminal and
+    clears no composer. test: `tests/events/test_comms_wake.py::test_focus_release_after_the_mailbox_was_read_sends_nothing`.'
+  labels:
+  - covers:pane-focus-wake-gating:1.2:1.2.1
+  - covers:pane-focus-wake-gating:1.2:1.2.2
+  - covers:pane-focus-wake-gating:1.2:1.2.3
+  - covers:pane-focus-wake-gating:1.2:1.2.4
+  - covers:pane-focus-wake-gating:1.2:1.2.5
+  - covers:pane-focus-wake-gating:1.2:1.2.6
+  - covers:pane-focus-wake-gating:1.2:1.2.7
+  - covers:pane-focus-wake-gating:1.2:1.2.8
+  - covers:pane-focus-wake-gating:1.2:1.2.9
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: gclient reports pane focus and its idle expiry
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: After the focused pane''s take is granted, gclient
+    sends one `terminal_focus {focused: true}` for that attachment and no second `terminal_take_control`.
+    test: `crates/gclient/tests/lease_control.rs::idle_expiry_reports_focus_lost_and_activity_restores_it`.
+
+    2.1.2: With `focus_hold_seconds = 1` and no activity, gclient sends `terminal_focus
+    {focused: false}` for the held pane without releasing the lease; a keystroke then
+    sends `focused: true` again and the key reaches `terminal_input`. test: `crates/gclient/tests/lease_control.rs::idle_expiry_reports_focus_lost_and_activity_restores_it`.
+
+    2.1.3: `FocusHold::sync` never marks idle when `hold_seconds` is `0`, and a focused-pane
+    change forgets the reported key without sending `focused: false`. test: `crates/gclient/src/app/live_loop/focus_hold.rs::zero_hold_never_expires_and_focus_moves_forget_the_key`.
+
+    2.1.4: `focus_hold_seconds` round-trips through `prefs.toml` with default `300`,
+    and an unknown key still fails to load. test: `crates/gclient/tests/startup.rs::prefs_round_trip_and_reject_unknown_keys`.
+
+    2.1.5: The user guide documents `focus_hold_seconds` and the focus hold behavior.
+    behavior: "focus_hold_seconds" in `docs/guides/gclient-user-guide.md`.
+
+    2.1.6: gclient ships as `0.1.67` in `Cargo.toml`, `Cargo.lock` and the managed
+    version pin. file: `src/gobby/install/version_pins.py`.
+
+    2.1.7: `focus.json` is listed in the golden manifest after `release_control.json`,
+    `GOLDEN_NAMES` lists it at the same position, and the Python corpus test round-trips
+    it with 44 names and 45 files. test: `tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus`.
+
+    2.1.8: The gclient corpus test replays the 44-name manifest against `GOLDEN_NAMES`.
+    test: `crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest`.'
+  labels:
+  - covers:pane-focus-wake-gating:2.1:2.1.1
+  - covers:pane-focus-wake-gating:2.1:2.1.2
+  - covers:pane-focus-wake-gating:2.1:2.1.3
+  - covers:pane-focus-wake-gating:2.1:2.1.4
+  - covers:pane-focus-wake-gating:2.1:2.1.5
+  - covers:pane-focus-wake-gating:2.1:2.1.6
+  - covers:pane-focus-wake-gating:2.1:2.1.7
+  - covers:pane-focus-wake-gating:2.1:2.1.8
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: fullstack
+```
