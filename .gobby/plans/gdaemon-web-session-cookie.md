@@ -530,3 +530,152 @@ gcode evidence range 92–95 is complete with no warnings, excerpt hash
 bac25eb57444a458cf55e71524d26cdcb835793e3eac29382f3fba7f133285ec.
 No index mutation was necessary to obtain this result; the adversary's earlier
 checkout/index diagnostics are preserved as limitations of that earlier run.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Verify the cookie only for the five graph reads
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Valid cookies insert only the verified user''s BrowserSession;
+    absent, unknown, expired, deleted and malformed credentials cannot insert it.
+    test: `crates/gdaemon/tests/browser_cookie.rs::session_verification_and_revocation`.
+
+    1.1.2: All header fields and duplicate pairs obey Decision 5, including equal
+    duplicates and distinct duplicates split across header fields. test: `crates/gdaemon/tests/browser_cookie.rs::cookie_ambiguity_fails_closed`.
+
+    1.1.3: Authorization takes precedence; cookie-only requests never gain key/machine
+    identity or access to other route classes; spoofed identity headers are removed.
+    test: `crates/gdaemon/tests/browser_cookie.rs::credentials_do_not_cross_auth_boundaries`.
+
+    1.1.4: Database failures and five-second total resolution timeout return 503 with
+    no native handler or Python fallback; invalid cookies on the five reads return
+    401. test: `crates/gdaemon/tests/browser_cookie.rs::resolver_failure_is_unavailable`.
+
+    1.1.5: Hash fixture, SQL expiry boundary and absence of cache match the documented
+    contract. test: `crates/gdaemon/tests/browser_cookie.rs::postgres_cookie_contract`.
+
+    1.1.6: Affected shipped Rust version, lockfile and existing pin advance together.
+    file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.
+
+    1.1.7: The shared path_matches matcher counts the consumed wildcard remainder:
+    a.rs, src%2Fa.rs and src/a.rs match the file row, empty remainder does not; auth
+    predicate and family claims agree. test: `crates/gruntime/src/lib.rs::browser_file_remainder_matches_hook_urls`.'
+  labels:
+  - covers:gdaemon-web-session-cookie:1.1:1.1.1
+  - covers:gdaemon-web-session-cookie:1.1:1.1.2
+  - covers:gdaemon-web-session-cookie:1.1:1.1.3
+  - covers:gdaemon-web-session-cookie:1.1:1.1.4
+  - covers:gdaemon-web-session-cookie:1.1:1.1.5
+  - covers:gdaemon-web-session-cookie:1.1:1.1.6
+  - covers:gdaemon-web-session-cookie:1.1:1.1.7
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Claim cookie callers on exactly five native rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Every five-row GET is claimed for a verified browser
+    and returns native payload/error shapes; flat a.rs, encoded src%2Fa.rs and literal
+    src/a.rs file paths work for browser and API-key callers, while an empty file
+    remainder is rejected. Auth predicate and family matcher agree. POST, HEAD, runtime,
+    node and unlisted paths gain no browser claim. test: `crates/gcodeindex/tests/family_browser.rs::only_graph_reads_claim_browser`.
+
+    1.2.2: Unknown/expired/missing cookies and unsupported bearer callers receive
+    401 on the five reads with zero backend hits; valid API keys retain native behavior.
+    test: `crates/gdaemon/tests/browser_cookie.rs::graph_reads_never_fall_back_to_python`.
+
+    1.2.3: Existing caller lists and gates outside the five rows remain identical,
+    including Caller::ALL. test: `crates/gcodeindex/tests/family_browser.rs::other_native_authority_is_unchanged`.
+
+    1.2.4: Affected shipped Rust versions, lockfile and literal pins match the incremented
+    merged-base versions. file: `crates/gdaemon/Cargo.toml`, `Cargo.lock`, `src/gobby/install/version_pins.py`.'
+  labels:
+  - covers:gdaemon-web-session-cookie:1.2:1.2.1
+  - covers:gdaemon-web-session-cookie:1.2:1.2.2
+  - covers:gdaemon-web-session-cookie:1.2:1.2.3
+  - covers:gdaemon-web-session-cookie:1.2:1.2.4
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Prove the graph consumer through hub and node doors
+  category: test
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: Hub and relaying-node requests return fixture symbols/edges
+    for all five reads with a valid cookie and zero backend graph-route hits; foreign
+    machine symbols remain invisible. test: `crates/gdaemon/tests/browser_graph.rs::hub_and_node_cookie_graph_reads`.
+
+    2.1.2: Real browser graph load, file expansion, neighbors, blast radius and search
+    succeed through gdaemon; removing/revoking the session makes fresh requests fail
+    with 401 and no stale-success assertion. test: `web/tests/code-graph-cookie.spec.ts::code_graph_uses_native_cookie_reads`.
+
+    2.1.3: The Rust-owned Vite/Playwright lifecycle keeps isolated state/ports/data
+    alive until browser completion, fails on missing prerequisites, and cleans all
+    child processes/data on failure; response payload checks cannot pass against mocked
+    routes or an empty graph. test: `crates/gdaemon/tests/browser_graph.rs::browser_fixture_lifecycle`.'
+  labels:
+  - covers:gdaemon-web-session-cookie:2.1:2.1.1
+  - covers:gdaemon-web-session-cookie:2.1:2.1.2
+  - covers:gdaemon-web-session-cookie:2.1:2.1.3
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: developer
+- title: Delete the five routes and their context consumers atomically
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: Obligation 9.8.1: all five Python handlers and router
+    file/mount/export plus the four context reads and newly dead helpers are absent;
+    all five native cookie reads still load. test: `crates/gdaemon/tests/code_graph_retirement.rs::python_graph_reads_are_retired`.
+
+    3.1.2: Obligation 9.8.3: five status keys leave proxied, generated ledger matches
+    inventory, and five audit records point to existing native handlers with fresh
+    verification. test: `crates/gdaemon/tests/code_graph_retirement.rs::ledger_and_audit_name_native_graph_handlers`.
+
+    3.1.3: Both existing disabled search/overview corpus JSON cases remain unchanged
+    at gdaemon origin and execute through the real native family with an isolated
+    fixed credential, matching stored status/body and zero backend hits; other families
+    keep their replay behavior. test: `crates/gdaemon/tests/http_contracts.rs::code_index_native_cases_replay_equal`.
+
+    3.1.4: No imports/callers of deleted handlers/context methods remain; existing
+    live-context and wiki retirement regressions plus native browser proof pass after
+    deletion. behavior: "Rust/TypeScript browser proof remains green after Python
+    retirement".'
+  labels:
+  - covers:gdaemon-web-session-cookie:3.1:3.1.1
+  - covers:gdaemon-web-session-cookie:3.1:3.1.2
+  - covers:gdaemon-web-session-cookie:3.1:3.1.3
+  - covers:gdaemon-web-session-cookie:3.1:3.1.4
+  tdd: false
+  source_section: '3.1'
+  assigned_agent: developer
+- title: Delete unused gateway methods and obsolete floors
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Obligation 9.8.2: all fifteen named dead gateway methods
+    are absent, caller sweeps are recorded and surviving functional gateway tests
+    pass. test: `crates/gdaemon/tests/code_graph_retirement.rs::gateway_retains_only_live_entry_points`.
+
+    3.2.2: Both obsolete floors and their imports/exports/tests are deleted; MIN_GCODE_GRAPH_VERSION
+    and live version checks remain; gateway stays below 1,000 lines. test: `crates/gdaemon/tests/code_graph_retirement.rs::obsolete_gateway_floors_are_absent`.
+
+    3.2.3: Root/crates AGENTS and project operating rule no longer prescribe the maintenance
+    floor; activation records the installed-row reconciliation and cross-plan release
+    notification. file: `AGENTS.md`, `crates/AGENTS.md`, `.gobby/workflows/rules/project-operating-policy.yaml`.'
+  labels:
+  - covers:gdaemon-web-session-cookie:3.2:3.2.1
+  - covers:gdaemon-web-session-cookie:3.2:3.2.2
+  - covers:gdaemon-web-session-cookie:3.2:3.2.3
+  tdd: false
+  source_section: '3.2'
+  assigned_agent: developer
+```
