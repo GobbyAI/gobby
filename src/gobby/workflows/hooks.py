@@ -326,18 +326,6 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 reason=response.reason or "",
             )
             return response
-        if event.event_type == HookEventType.STOP:
-            response = HookResponse(
-                decision="block",
-                reason="Workflow evaluation was cancelled; blocking stop for safety.",
-            )
-            audit_source_block_sync(
-                self,
-                event,
-                rule_id="workflow-evaluation-cancelled",
-                reason=response.reason or "",
-            )
-            return response
         return HookResponse(decision="allow")
 
     def _run_observers(
