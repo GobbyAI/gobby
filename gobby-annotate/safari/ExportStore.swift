@@ -3,7 +3,7 @@ import Foundation
 
 struct ExportRequest: Decodable {
   let action: String
-  let transferId: String
+  let transferId: String?
   let name: String?
   let size: Int?
   let offset: Int?
@@ -36,7 +36,7 @@ struct ExportStore {
     return ExportStore(root: root.appendingPathComponent("Exports", isDirectory: true))
   }
   func handle(_ request: ExportRequest) throws {
-    guard UUID(uuidString: request.transferId) != nil else {
+    guard let transferId = request.transferId, UUID(uuidString: transferId) != nil else {
       throw Failure.invalid("Invalid transfer ID")
     }
     let fm = FileManager.default
@@ -46,7 +46,7 @@ struct ExportStore {
     defer { close(lock) }
     guard flock(lock, LOCK_EX) == 0 else { throw Failure.invalid("Cannot lock export storage") }
     defer { flock(lock, LOCK_UN) }
-    let directory = root.appendingPathComponent(request.transferId, isDirectory: true)
+    let directory = root.appendingPathComponent(transferId, isDirectory: true)
     let partial = directory.appendingPathComponent("data.part")
     let metadata = directory.appendingPathComponent("transfer.json")
     switch request.action {
@@ -68,8 +68,7 @@ struct ExportStore {
       }
       try fm.createDirectory(at: directory, withIntermediateDirectories: false)
       do {
-        try JSONEncoder().encode(Transfer(name: name, size: size)).write(
-          to: metadata, options: .atomic)
+        try writeReplacing(JSONEncoder().encode(Transfer(name: name, size: size)), to: metadata)
         try Data().write(to: partial, options: .withoutOverwriting)
       } catch {
         try? fm.removeItem(at: directory)
@@ -108,9 +107,12 @@ struct ExportStore {
     case "cancel":
       if fm.fileExists(atPath: directory.path) { try fm.removeItem(at: directory) }
     case "delete":
-      // Staged exports are named by export ID; an already-missing ZIP counts as deleted.
-      let staged = root.appendingPathComponent("gobby-annotate-\(request.transferId).zip")
-      if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
+      // Extension unstage removes the ZIP only. The app's deletion record stays until the extension
+      // acknowledges it, so a failed batch removal in Safari can retry on the next list.
+      try removeStaged(transferId)
+    case "acknowledge":
+      // Sent only after the Safari batch is gone, or kept as an edited draft.
+      try updateDeleted { $0.remove(transferId) }
     default: throw Failure.invalid("Unknown export action")
     }
   }
@@ -119,16 +121,84 @@ struct ExportStore {
     return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
       .filter { $0.pathExtension == "zip" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
   }
+  /// App-side delete. The deletion is recorded before the ZIP goes: if removal then fails, the
+  /// ZIP stays listed and can be deleted again, while a removal without a record would leave the
+  /// Safari batch behind.
   func delete(_ file: URL) throws {
     let exportId = String(
       file.deletingPathExtension().lastPathComponent.dropFirst("gobby-annotate-".count))
-    try handle(
-      ExportRequest(
-        action: "delete", transferId: exportId, name: nil, size: nil, offset: nil, data: nil))
+    // The ID is persisted and later sent to the extension, which validates it again on unstage.
+    guard UUID(uuidString: exportId) != nil else { throw Failure.invalid("Invalid export ID") }
+    try withLock { try updateDeleted { $0.insert(exportId) } }
+    try withLock { try removeStaged(exportId) }
+  }
+  /// Export IDs the app deleted that the extension has not acknowledged yet.
+  func deleted() throws -> [String] {
+    try withLock { try readDeleted().sorted() }
+  }
+  /// Removes one staged ZIP; an already-missing ZIP counts as deleted. Caller holds the lock.
+  private func removeStaged(_ exportId: String) throws {
+    let staged = root.appendingPathComponent("gobby-annotate-\(exportId).zip")
+    if FileManager.default.fileExists(atPath: staged.path) {
+      try FileManager.default.removeItem(at: staged)
+    }
+  }
+  /// Records live beside the ZIPs under a name that is not UUID-shaped, so `interruptedCount`
+  /// never counts them as transfers.
+  private var deletionRecord: URL { root.appendingPathComponent("deleted.json") }
+  private func readDeleted() throws -> Set<String> {
+    guard FileManager.default.fileExists(atPath: deletionRecord.path) else { return [] }
+    return Set(try JSONDecoder().decode([String].self, from: Data(contentsOf: deletionRecord)))
+  }
+  /// Caller holds the lock.
+  private func updateDeleted(_ change: (inout Set<String>) -> Void) throws {
+    var ids = try readDeleted()
+    change(&ids)
+    if ids.isEmpty {
+      if FileManager.default.fileExists(atPath: deletionRecord.path) {
+        try FileManager.default.removeItem(at: deletionRecord)
+      }
+    } else {
+      try writeReplacing(JSONEncoder().encode(ids.sorted()), to: deletionRecord)
+    }
+  }
+  /// Replaces `url` with `data` through a uniquely named temp file in the same folder, renamed over
+  /// the target. The replacement is atomic and nothing stages outside the store root; a failed
+  /// write removes its temp file.
+  private func writeReplacing(_ data: Data, to url: URL) throws {
+    let temp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
+    do {
+      try data.write(to: temp, options: .withoutOverwriting)
+      let file = try FileHandle(forUpdating: temp)
+      defer { try? file.close() }
+      try file.synchronize()
+      guard rename(temp.path, url.path) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+    } catch {
+      try? FileManager.default.removeItem(at: temp)
+      throw error
+    }
+  }
+  /// Runs `work` under the storage lock, creating the root first.
+  private func withLock<T>(_ work: () throws -> T) throws -> T {
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let lock = open(root.appendingPathComponent(".lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+    guard lock >= 0 else { throw Failure.invalid("Cannot lock export storage") }
+    defer { close(lock) }
+    guard flock(lock, LOCK_EX) == 0 else { throw Failure.invalid("Cannot lock export storage") }
+    defer { flock(lock, LOCK_UN) }
+    return try work()
   }
   /// Deletes every staged ZIP and leaves unfinished transfers alone.
   func deleteCompleted() throws {
     for file in try completed() { try delete(file) }
+  }
+  /// Counts unfinished transfers, which are the UUID-named folders `clearInterrupted` removes.
+  func interruptedCount() throws -> Int {
+    guard FileManager.default.fileExists(atPath: root.path) else { return 0 }
+    return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+      .filter { UUID(uuidString: $0.lastPathComponent) != nil }.count
   }
   func clearInterrupted() throws {
     guard FileManager.default.fileExists(atPath: root.path) else { return }

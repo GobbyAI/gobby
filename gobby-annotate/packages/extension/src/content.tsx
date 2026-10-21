@@ -46,6 +46,12 @@ export function clampPosition(
     ),
   };
 }
+/** Why Export ZIP is disabled, or "" when it is available. Shown and read by assistive tech. */
+function exportBlockedReason(batch: Batch | null, busy: boolean): string {
+  if (!batch) return "Export is unavailable until this batch loads.";
+  if (busy) return "Export is unavailable while a capture or export runs.";
+  return "";
+}
 function App({
   host,
   deactivate,
@@ -67,6 +73,7 @@ function App({
     [collapsed, setCollapsed] = useState(false);
   const [failed, setFailed] = useState<Annotation | null>(null),
     [busy, setBusy] = useState(false);
+  const [light, setLight] = useState(host.dataset.theme === "light");
   const shell = useRef<HTMLDivElement>(null),
     sequence = useRef(Promise.resolve());
   const pendingEdit = useRef<{ id: string; text: string } | null>(null);
@@ -377,6 +384,7 @@ function App({
     window.addEventListener("pointerup", done, { once: true });
     window.addEventListener("pointercancel", done, { once: true });
   }
+  const exportReason = exportBlockedReason(batch, busy);
   return (
     <div
       ref={shell}
@@ -528,6 +536,9 @@ function App({
             variant="primary"
             className="annotate-primary"
             disabled={!batch || busy}
+            aria-describedby={
+              exportReason ? "annotate-export-reason" : undefined
+            }
             onClick={() =>
               queue(async () => {
                 requireSaved();
@@ -549,76 +560,91 @@ function App({
           >
             Export ZIP
           </Button>
+          {exportReason && <p id="annotate-export-reason">{exportReason}</p>}
           <SaveStatus status={status} />
-          <Button
-            onClick={() =>
-              queue(async () => {
-                requireSaved();
-                assign(await rpc<Batch>({ type: "create" }));
-                setEditing(null);
-                setBatches(await rpc<Batch[]>({ type: "list" }));
-              })
-            }
+          <div
+            className="annotate-menu-group"
+            role="group"
+            aria-label="Batch actions"
           >
-            New batch
-          </Button>
-          <Batches
-            batches={batches.map((b) => (b.id === batch?.id ? batch : b))}
-            current={batch?.id}
-            onOpen={(batchId) =>
-              queue(async () => {
-                requireSaved();
-                const latest = await rpc<Batch[]>({ type: "list" });
-                const found = latest.find((a) => a.id === batchId);
-                if (found) assign(found);
-                setBatches(latest);
-                setEditing(null);
-              })
-            }
-            onRemove={(batchId) =>
-              queue(async () => {
-                requireSaved();
-                await showBatches(
-                  await rpc<Batch[]>({ type: "remove", batchId }),
-                );
-                setStatus("Batch deleted");
-              })
-            }
-            onClearExported={() =>
-              queue(async () => {
-                requireSaved();
-                await showBatches(
-                  await rpc<Batch[]>({ type: "clearExported" }),
-                );
-                setStatus("Exported batches deleted");
-              })
-            }
-          />
-          <Button onClick={() => dock(false)}>Dock left</Button>
-          <Button onClick={() => dock(true)}>Dock right</Button>
-          <Button
-            onClick={() => {
-              host.dataset.theme =
-                host.dataset.theme === "light" ? "dark" : "light";
-            }}
+            <Button
+              onClick={() =>
+                queue(async () => {
+                  requireSaved();
+                  assign(await rpc<Batch>({ type: "create" }));
+                  setEditing(null);
+                  setBatches(await rpc<Batch[]>({ type: "list" }));
+                })
+              }
+            >
+              New batch
+            </Button>
+            <Batches
+              batches={batches.map((b) => (b.id === batch?.id ? batch : b))}
+              current={batch?.id}
+              onOpen={(batchId) =>
+                queue(async () => {
+                  requireSaved();
+                  const latest = await rpc<Batch[]>({ type: "list" });
+                  const found = latest.find((a) => a.id === batchId);
+                  if (found) assign(found);
+                  setBatches(latest);
+                  setEditing(null);
+                })
+              }
+              onRemove={(batchId) =>
+                queue(async () => {
+                  requireSaved();
+                  await showBatches(
+                    await rpc<Batch[]>({ type: "remove", batchId }),
+                  );
+                  setStatus("Batch deleted");
+                })
+              }
+              onClearExported={() =>
+                queue(async () => {
+                  requireSaved();
+                  await showBatches(
+                    await rpc<Batch[]>({ type: "clearExported" }),
+                  );
+                  setStatus("Exported batches deleted");
+                })
+              }
+            />
+          </div>
+          <div
+            className="annotate-menu-group"
+            role="group"
+            aria-label="Panel controls"
           >
-            Switch theme
-          </Button>
-          <Button
-            onClick={() =>
-              queue(async () => {
-                deactivate();
-              })
-            }
-          >
-            Deactivate annotation
-          </Button>
+            <Button onClick={() => dock(false)}>Dock left</Button>
+            <Button onClick={() => dock(true)}>Dock right</Button>
+            <Button
+              aria-pressed={light}
+              onClick={() => {
+                host.dataset.theme = light ? "dark" : "light";
+                setLight(!light);
+              }}
+            >
+              Light theme
+            </Button>
+            <Button
+              onClick={() =>
+                queue(async () => {
+                  deactivate();
+                })
+              }
+            >
+              Deactivate annotation
+            </Button>
+          </div>
         </section>
       )}
       <Toolbar
         count={batch?.annotations.length ?? 0}
         collapsed={collapsed}
         mode={mode}
+        panel={panel}
         onMode={changeMode}
         onList={() => {
           if (!changeMode("browse")) return;
@@ -647,9 +673,8 @@ export function activate(): () => void {
     return () => existing.dispatchEvent(new Event("annotate-deactivate"));
   const host = document.createElement("div");
   host.id = HOST_ID;
-  host.dataset.theme = matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+  // The panel always opens dark; light is a peer chosen from the menu (.impeccable.md).
+  host.dataset.theme = "dark";
   host.style.cssText =
     "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
   const shadow = host.attachShadow({ mode: "open" }),

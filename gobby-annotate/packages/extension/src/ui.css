@@ -50,7 +50,7 @@
   --annotate-text-2: oklch(40% 0.005 125);
   --annotate-error: oklch(44% 0.22 350);
   --annotate-accent: oklch(43% 0.18 125);
-  --annotate-accent-hover: oklch(38% 0.18 125);
+  --annotate-accent-hover: oklch(42% 0.18 125);
   --annotate-accent-pressed: oklch(35% 0.16 125);
   --annotate-accent-ink: oklch(99% 0 0);
   --annotate-btn: oklch(88% 0.06 125);
@@ -116,6 +116,13 @@
 .annotate-panel button {
   min-height: 44px;
 }
+.annotate-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--annotate-frame);
+}
 /* Unlayered rules outrank Tailwind's layered utilities, so these restyle the
    shared Button inside Annotate without touching buttonVariants.ts. Every
    button is a tinted secondary unless marked primary or danger. */
@@ -155,11 +162,36 @@
 .annotate-shell .annotate-danger:active {
   background: var(--annotate-danger-pressed);
 }
+/* Active toggles (mode, annotations list, menu) keep their tinted fill and take
+   a text-colour edge and inset ring. Accent is reserved for focus rings and the
+   solid Export ZIP fill (.impeccable.md). Ring against the fill: 10.26:1 dark,
+   12.79:1 light; against the panel: 14.29:1 dark, 14.75:1 light. */
+.annotate-shell button[aria-pressed="true"],
+.annotate-shell button[aria-expanded="true"] {
+  color: var(--annotate-text);
+  border-color: var(--annotate-text);
+  box-shadow: inset 0 0 0 2px var(--annotate-text);
+}
 .annotate-shell button:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--annotate-panel),
     0 0 0 4px var(--annotate-accent);
+}
+.annotate-shell button[aria-pressed="true"]:focus-visible,
+.annotate-shell button[aria-expanded="true"]:focus-visible {
+  box-shadow:
+    inset 0 0 0 2px var(--annotate-accent),
+    0 0 0 2px var(--annotate-panel),
+    0 0 0 4px var(--annotate-accent);
+}
+@media (forced-colors: active) {
+  .annotate-shell button[aria-pressed="true"],
+  .annotate-shell button[aria-expanded="true"],
+  .annotate-shell button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 .annotate-shell input,
 .annotate-shell textarea {
@@ -183,18 +215,69 @@
   padding: 0;
   list-style: none;
 }
-.annotate-batch {
+.annotate-batches-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
-.annotate-batch > .annotate-list-row {
+.annotate-batches-head [aria-pressed="true"] {
+  border-color: var(--annotate-text);
+}
+.annotate-batch {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+/* Touch swipes the Delete action in from the trailing edge with native scroll-snap; pointer
+   devices hide it and use Edit mode. The padding keeps focus rings inside the scroll box. */
+.annotate-swipe {
+  display: flex;
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding: 4px;
+  margin: -4px;
+}
+.annotate-swipe::-webkit-scrollbar {
+  display: none;
+}
+.annotate-shell .annotate-swipe > .annotate-list-row {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+}
+.annotate-shell .annotate-swipe > .annotate-swipe-action {
+  flex: 0 0 6rem;
+  scroll-snap-align: end;
+}
+@media (pointer: fine) {
+  .annotate-shell .annotate-swipe-action {
+    display: none;
+  }
+}
+.annotate-shell .annotate-batch-delete {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+/* Fixed columns: the title takes the free width and the state column is always 9rem, so Delete
+   and the state line up in every batch row. */
+.annotate-shell .annotate-batch .annotate-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 9rem;
+  column-gap: 8px;
+  align-items: center;
+  min-height: 44px;
+}
+.annotate-batch-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .annotate-batch-state {
   display: inline-flex;
-  flex-shrink: 0;
   align-items: center;
   gap: 4px;
   font-size: 12px;
@@ -249,7 +332,7 @@
   background: var(--annotate-raised);
 }
 .annotate-shell .annotate-list-row[aria-current="true"] {
-  border-color: var(--annotate-accent);
+  border-color: var(--annotate-text);
 }
 [role="alert"] {
   border-color: var(--annotate-error);

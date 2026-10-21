@@ -3,7 +3,7 @@ import XCTest
 
 final class ExportStoreTests: XCTestCase {
   @objc func testOrderedTransferPreservesBytesAndSurvivesReopening() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ExportStore(root: root)
     let id = UUID().uuidString
@@ -31,7 +31,7 @@ final class ExportStoreTests: XCTestCase {
   }
 
   @objc func testInterruptedAndOutOfOrderTransfersRemainHidden() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ExportStore(root: root)
     let id = UUID().uuidString
@@ -49,12 +49,14 @@ final class ExportStoreTests: XCTestCase {
         ExportRequest(
           action: "finish", transferId: id, name: nil, size: nil, offset: nil, data: nil)))
     XCTAssertEqual(try ExportStore(root: root).completed(), [])
+    XCTAssertEqual(try store.interruptedCount(), 1)
     try store.clearInterrupted()
+    XCTAssertEqual(try store.interruptedCount(), 0)
     XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(id).path))
   }
 
   @objc func testUnsafeAndOversizedTransfersAreRejected() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ExportStore(root: root)
     XCTAssertThrowsError(
@@ -77,7 +79,7 @@ final class ExportStoreTests: XCTestCase {
   }
 
   @objc func testDeleteRemovesOnlyTheNamedExportAndKeepsUnfinishedTransfers() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ExportStore(root: root)
     let kept = UUID().uuidString
@@ -105,7 +107,7 @@ final class ExportStoreTests: XCTestCase {
   }
 
   @objc func testDeleteRejectsIdsThatAreNotExportIds() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ExportStore(root: root)
     let exportId = UUID().uuidString
@@ -117,6 +119,44 @@ final class ExportStoreTests: XCTestCase {
           data: nil)))
     XCTAssertEqual(
       try store.completed().map(\.lastPathComponent), ["gobby-annotate-\(exportId).zip"])
+  }
+
+  @objc func testAppDeletionIsRecordedUntilSafariAcknowledgesIt() throws {
+    let root = try testRoot().appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ExportStore(root: root)
+    let removed = UUID().uuidString
+    let kept = UUID().uuidString
+    try stage(store, exportId: removed)
+    try stage(store, exportId: kept)
+    try store.delete(root.appendingPathComponent("gobby-annotate-\(removed).zip"))
+    XCTAssertEqual(try store.deleted(), [removed])
+    XCTAssertEqual(
+      try store.completed().map(\.lastPathComponent), ["gobby-annotate-\(kept).zip"])
+    // Unstaging alone keeps the record, so a failed batch removal in Safari can retry.
+    try store.handle(
+      ExportRequest(
+        action: "delete", transferId: removed, name: nil, size: nil, offset: nil, data: nil))
+    XCTAssertEqual(try store.deleted(), [removed])
+    // Only the extension's explicit acknowledgment clears it.
+    try store.handle(
+      ExportRequest(
+        action: "acknowledge", transferId: removed, name: nil, size: nil, offset: nil, data: nil))
+    XCTAssertEqual(try store.deleted(), [])
+    // Deleting the remaining ZIP records it; an unfinished transfer is neither recorded nor removed.
+    let partial = UUID().uuidString
+    try store.handle(
+      ExportRequest(
+        action: "begin", transferId: partial, name: "gobby-annotate-\(UUID().uuidString).zip",
+        size: 20, offset: nil, data: nil))
+    try store.deleteCompleted()
+    XCTAssertEqual(try store.deleted(), [kept])
+    XCTAssertEqual(try store.interruptedCount(), 1)
+  }
+
+  /// Roots every test under the runner's temp directory. Unset fails the test; no fallback.
+  private func testRoot() throws -> URL {
+    URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["ANNOTATE_TEST_ROOT"]))
   }
 
   private func stage(_ store: ExportStore, exportId: String) throws {

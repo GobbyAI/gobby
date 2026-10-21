@@ -73,6 +73,21 @@ it("deletes a batch only after confirmation and cancels without deleting", () =>
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
+it("Edit swaps the swipe Delete action for per-batch delete controls and flips aria-pressed", () => {
+  const { onRemove } = setup();
+  const edit = screen.getByRole("button", { name: "Edit" });
+  expect(edit.getAttribute("aria-pressed")).toBe("false");
+  expect(document.querySelectorAll(".annotate-swipe-action")).toHaveLength(2);
+  fireEvent.click(edit);
+  expect(edit.getAttribute("aria-pressed")).toBe("true");
+  expect(document.querySelectorAll(".annotate-swipe-action")).toHaveLength(0);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Delete batch Pricing page" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete batch" }));
+  expect(onRemove).toHaveBeenCalledWith("draft");
+});
+
 it("clears only exported batches after confirmation", () => {
   const { onClearExported, onRemove } = setup();
   fireEvent.click(

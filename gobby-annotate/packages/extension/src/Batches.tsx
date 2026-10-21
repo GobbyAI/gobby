@@ -21,7 +21,10 @@ function confirmText(target: Batch | "exported", exportedCount: number) {
   ].join("");
 }
 
-/** Batch list with reopen, per-batch delete and clear-exported, each delete confirmed in place. */
+/**
+ * Batch list with reopen, swipe-to-delete on touch, an Edit toggle with per-batch delete
+ * controls for every pointer, and clear-exported. Each delete is confirmed in place.
+ */
 export function Batches({
   batches,
   current,
@@ -36,46 +39,75 @@ export function Batches({
   onClearExported: () => void;
 }) {
   const [confirm, setConfirm] = useState<Batch | "exported" | null>(null);
+  const [editing, setEditing] = useState(false);
   const exportedCount = batches.filter(isExported).length;
+  // Edit mode ends with the last batch, so a deleted-out list never stays in it.
+  const editMode = editing && batches.length > 0;
   return (
     <div
       className="annotate-group"
       role="group"
       aria-labelledby="annotate-batches"
     >
-      <strong id="annotate-batches">Batches</strong>
+      <div className="annotate-batches-head">
+        <strong id="annotate-batches">Batches</strong>
+        {batches.length > 0 && (
+          <Button aria-pressed={editMode} onClick={() => setEditing(!editMode)}>
+            Edit
+          </Button>
+        )}
+      </div>
       <ul className="annotate-batches">
         {batches.map((b) => (
           <li key={b.id} className="annotate-batch">
-            <Button
-              className="annotate-list-row"
-              aria-current={b.id === current || undefined}
-              onClick={() => onOpen(b.id)}
-            >
-              {b.title}
-            </Button>
-            <span className="annotate-batch-state">
-              {isExported(b) ? (
-                <>
-                  <Check size={14} aria-hidden="true" />
-                  Exported {day(b.exports!.at(-1)!.at)}
-                </>
-              ) : (
-                <>
-                  <Pencil size={14} aria-hidden="true" />
-                  Draft
-                </>
+            <div className="annotate-swipe">
+              <Button
+                className="annotate-list-row"
+                aria-current={b.id === current || undefined}
+                aria-label={b.title}
+                aria-describedby={`annotate-state-${b.id}`}
+                onClick={() => onOpen(b.id)}
+              >
+                <span className="annotate-batch-title">{b.title}</span>
+                <span
+                  id={`annotate-state-${b.id}`}
+                  className="annotate-batch-state"
+                >
+                  {isExported(b) ? (
+                    <>
+                      <Check size={14} aria-hidden="true" />
+                      Exported {day(b.exports!.at(-1)!.at)}
+                    </>
+                  ) : (
+                    <>
+                      <Pencil size={14} aria-hidden="true" />
+                      Draft
+                    </>
+                  )}
+                </span>
+              </Button>
+              {!editMode && (
+                <Button
+                  className="annotate-danger annotate-swipe-action"
+                  aria-label={`Delete batch ${b.title}`}
+                  onClick={() => setConfirm(b)}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                  Delete
+                </Button>
               )}
-            </span>
-            <Button
-              size="icon"
-              className="annotate-danger"
-              aria-label={`Delete batch ${b.title}`}
-              title="Delete batch"
-              onClick={() => setConfirm(b)}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-            </Button>
+            </div>
+            {editMode && (
+              <Button
+                size="icon"
+                className="annotate-danger annotate-batch-delete"
+                aria-label={`Delete batch ${b.title}`}
+                title="Delete batch"
+                onClick={() => setConfirm(b)}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+              </Button>
+            )}
           </li>
         ))}
       </ul>

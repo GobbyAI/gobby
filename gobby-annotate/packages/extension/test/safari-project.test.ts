@@ -60,6 +60,19 @@ describe("Safari Xcode project", () => {
       expect(script).toContain("isa = PBXShellScriptBuildPhase;");
       expect(script).toContain("npm run build:extension");
       expect(script).toContain("alwaysOutOfDate = 1;");
+      const outputs = script.match(/outputPaths = \(([\s\S]*?)\);/)?.[1];
+      for (const file of [
+        "content.js",
+        "background.js",
+        "manifest.json",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.txt",
+        "logo.png",
+        "logo-light.png",
+      ])
+        expect(outputs).toContain(
+          `"$(SRCROOT)/../packages/extension/dist/safari/${file}"`,
+        );
       expect(configs).toHaveLength(2);
       for (const id of configs)
         // The script writes dist/, which user-script sandboxing would deny.

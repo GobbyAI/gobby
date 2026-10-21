@@ -23,6 +23,8 @@
 		0381B6443054E7B300E7B608 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 0381B6383054E7B300E7B608 /* manifest.json */; };
 		0381B6453054E7B300E7B608 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 0381B6393054E7B300E7B608 /* content.js */; };
 		0381B6463054E7B300E7B608 /* logo-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 0381B63A3054E7B300E7B608 /* logo-light.png */; };
+		0381B7013054E7B300E7B608 /* ExportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0381B7023054E7B300E7B608 /* ExportUITests.swift */; };
+		0381B7A13054E7B300E7B608 /* ExportDeleteUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0381B7A23054E7B300E7B608 /* ExportDeleteUITests.swift */; };
 		23D8B9BF79888657C364E915 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95392E63681EAB9790C9D80F /* SafariWebExtensionHandler.swift */; };
 		349065582E7B8A9CA4176287 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70EF8F287B988A45022836E /* App.swift */; };
 		3B389BBFF61E4A6090337331 /* ExportStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF389B75581511991FEBFED /* ExportStore.swift */; };
@@ -51,6 +53,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0381B60F3054E7B300E7B608;
 			remoteInfo = "GobbyAnnotate Extension (macOS)";
+		};
+		0381B7073054E7B300E7B608 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0381B5D53054E7B300E7B608 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0381B5E73054E7B300E7B608;
+			remoteInfo = "GobbyAnnotate (iOS)";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -99,6 +108,9 @@
 		95392E63681EAB9790C9D80F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = SOURCE_ROOT; };
 		B70EF8F287B988A45022836E /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = SOURCE_ROOT; };
 		0381B6523054E7B300E7B608 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+		0381B7023054E7B300E7B608 /* ExportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportUITests.swift; sourceTree = "<group>"; };
+		0381B7A23054E7B300E7B608 /* ExportDeleteUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDeleteUITests.swift; sourceTree = "<group>"; };
+		0381B7033054E7B300E7B608 /* GobbyAnnotateUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GobbyAnnotateUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +142,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0381B7063054E7B300E7B608 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -144,6 +163,7 @@
 				55281DF827C070F9F5173B95 /* ExportView.swift */,
 				8FF389B75581511991FEBFED /* ExportStore.swift */,
 				95392E63681EAB9790C9D80F /* SafariWebExtensionHandler.swift */,
+				0381B7043054E7B300E7B608 /* GobbyAnnotateUITests */,
 				0381B5E13054E7B300E7B608 /* Assets.xcassets */,
 				0381B6523054E7B300E7B608 /* Signing.xcconfig */,
 			);
@@ -164,6 +184,7 @@
 				0381B5FA3054E7B300E7B608 /* GobbyAnnotate.app */,
 				0381B6063054E7B300E7B608 /* GobbyAnnotate Extension.appex */,
 				0381B6103054E7B300E7B608 /* GobbyAnnotate Extension.appex */,
+				0381B7033054E7B300E7B608 /* GobbyAnnotateUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -197,6 +218,15 @@
 			);
 			name = Resources;
 			sourceTree = SOURCE_ROOT;
+		};
+		0381B7043054E7B300E7B608 /* GobbyAnnotateUITests */ = {
+			isa = PBXGroup;
+			children = (
+				0381B7023054E7B300E7B608 /* ExportUITests.swift */,
+				0381B7A23054E7B300E7B608 /* ExportDeleteUITests.swift */,
+			);
+			path = GobbyAnnotateUITests;
+			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
@@ -283,6 +313,25 @@
 			productReference = 0381B6103054E7B300E7B608 /* GobbyAnnotate Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		0381B7093054E7B300E7B608 /* GobbyAnnotateUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0381B70C3054E7B300E7B608 /* Build configuration list for PBXNativeTarget "GobbyAnnotateUITests" */;
+			buildPhases = (
+				0381B7053054E7B300E7B608 /* Sources */,
+				0381B7063054E7B300E7B608 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0381B7083054E7B300E7B608 /* PBXTargetDependency */,
+			);
+			name = GobbyAnnotateUITests;
+			packageProductDependencies = (
+			);
+			productName = GobbyAnnotateUITests;
+			productReference = 0381B7033054E7B300E7B608 /* GobbyAnnotateUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -293,6 +342,10 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+						0381B7093054E7B300E7B608 = {
+							CreatedOnToolsVersion = 26.6;
+							TestTargetID = 0381B5E73054E7B300E7B608;
+						};
 					0381B5E73054E7B300E7B608 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -323,6 +376,7 @@
 			targets = (
 				0381B5E73054E7B300E7B608 /* GobbyAnnotate (iOS) */,
 				0381B5F93054E7B300E7B608 /* GobbyAnnotate (macOS) */,
+				0381B7093054E7B300E7B608 /* GobbyAnnotateUITests */,
 				0381B6053054E7B300E7B608 /* GobbyAnnotate Extension (iOS) */,
 				0381B60F3054E7B300E7B608 /* GobbyAnnotate Extension (macOS) */,
 			);
@@ -391,6 +445,13 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../packages/extension/dist/safari/content.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/background.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/manifest.json",
+				"$(SRCROOT)/../packages/extension/dist/safari/LICENSE",
+				"$(SRCROOT)/../packages/extension/dist/safari/THIRD_PARTY_NOTICES.txt",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo.png",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo-light.png",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -410,6 +471,13 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../packages/extension/dist/safari/content.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/background.js",
+				"$(SRCROOT)/../packages/extension/dist/safari/manifest.json",
+				"$(SRCROOT)/../packages/extension/dist/safari/LICENSE",
+				"$(SRCROOT)/../packages/extension/dist/safari/THIRD_PARTY_NOTICES.txt",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo.png",
+				"$(SRCROOT)/../packages/extension/dist/safari/logo-light.png",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -456,6 +524,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0381B7053054E7B300E7B608 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0381B7013054E7B300E7B608 /* ExportUITests.swift in Sources */,
+				0381B7A13054E7B300E7B608 /* ExportDeleteUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -468,6 +545,11 @@
 			isa = PBXTargetDependency;
 			target = 0381B60F3054E7B300E7B608 /* GobbyAnnotate Extension (macOS) */;
 			targetProxy = 0381B6123054E7B300E7B608 /* PBXContainerItemProxy */;
+		};
+		0381B7083054E7B300E7B608 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0381B5E73054E7B300E7B608 /* GobbyAnnotate (iOS) */;
+			targetProxy = 0381B7073054E7B300E7B608 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -914,6 +996,44 @@
 			};
 			name = Release;
 		};
+		0381B70A3054E7B300E7B608 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0381B6523054E7B300E7B608 /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.gobby.annotate.UITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "GobbyAnnotate (iOS)";
+			};
+			name = Debug;
+		};
+		0381B70B3054E7B300E7B608 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0381B6523054E7B300E7B608 /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.gobby.annotate.UITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "GobbyAnnotate (iOS)";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -958,6 +1078,15 @@
 			buildConfigurations = (
 				0381B6323054E7B300E7B608 /* Debug */,
 				0381B6333054E7B300E7B608 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0381B70C3054E7B300E7B608 /* Build configuration list for PBXNativeTarget "GobbyAnnotateUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0381B70A3054E7B300E7B608 /* Debug */,
+				0381B70B3054E7B300E7B608 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

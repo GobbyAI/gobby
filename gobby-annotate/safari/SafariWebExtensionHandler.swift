@@ -12,8 +12,13 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
       let bytes = try JSONSerialization.data(withJSONObject: message)
       guard bytes.count <= 300000 else { throw ExportStore.Failure.invalid("Message too large") }
       let request = try JSONDecoder().decode(ExportRequest.self, from: bytes)
-      try ExportStore.shared().handle(request)
-      response.userInfo = [SFExtensionMessageKey: ["ok": true]]
+      var payload: [String: Any] = ["ok": true]
+      if request.action == "deleted" {
+        payload["deleted"] = try ExportStore.shared().deleted()
+      } else {
+        try ExportStore.shared().handle(request)
+      }
+      response.userInfo = [SFExtensionMessageKey: payload]
     } catch {
       response.userInfo = [
         SFExtensionMessageKey: ["ok": false, "error": error.localizedDescription]

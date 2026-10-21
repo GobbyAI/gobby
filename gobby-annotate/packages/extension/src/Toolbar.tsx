@@ -7,6 +7,7 @@ export function Toolbar({
   count,
   collapsed,
   mode,
+  panel,
   onMode,
   onList,
   onMenu,
@@ -16,6 +17,7 @@ export function Toolbar({
   count: number;
   collapsed: boolean;
   mode: Mode;
+  panel: "none" | "list" | "menu";
   onMode: (mode: Mode) => void;
   onList: () => void;
   onMenu: () => void;
@@ -49,30 +51,35 @@ export function Toolbar({
       >
         <Move size={18} />
       </Button>
-      {mode === "browse" ? (
-        <>
-          <Button
-            size="icon"
-            aria-label="Select element"
-            title="Select element"
-            onClick={() => onMode("element")}
-          >
-            <MousePointer2 size={18} />
-          </Button>
-          <Button
-            size="icon"
-            aria-label="Select rectangle"
-            title="Select rectangle"
-            onClick={() => onMode("rectangle")}
-          >
-            <Scan size={18} />
-          </Button>
-        </>
-      ) : (
-        <Button onClick={() => onMode("browse")}>Cancel</Button>
-      )}
+      <Button
+        size="icon"
+        aria-label="Select element"
+        aria-pressed={mode === "element"}
+        title={
+          mode === "element"
+            ? "Stop selecting element (press again)"
+            : "Select element"
+        }
+        onClick={() => onMode(mode === "element" ? "browse" : "element")}
+      >
+        <MousePointer2 size={18} />
+      </Button>
+      <Button
+        size="icon"
+        aria-label="Select rectangle"
+        aria-pressed={mode === "rectangle"}
+        title={
+          mode === "rectangle"
+            ? "Stop selecting rectangle (press again)"
+            : "Select rectangle"
+        }
+        onClick={() => onMode(mode === "rectangle" ? "browse" : "rectangle")}
+      >
+        <Scan size={18} />
+      </Button>
       <Button
         aria-label={`Annotations (${count})`}
+        aria-expanded={panel === "list"}
         title="Annotations"
         onClick={onList}
       >
@@ -82,6 +89,7 @@ export function Toolbar({
       <Button
         size="icon"
         aria-label="Batch and export menu"
+        aria-expanded={panel === "menu"}
         title="Batch and export"
         onClick={onMenu}
       >

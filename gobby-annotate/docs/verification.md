@@ -36,17 +36,21 @@ the production browser-action `activeTab` permission grant.
 The 320×280 editor check simulates limited visible space. It does not substitute
 for a physical software keyboard or real touch testing.
 
-Both unsigned Safari build commands passed with no diagnostics:
+Safari builds must be signed. Never pass `CODE_SIGNING_ALLOWED=NO`: it drops the
+`group.ai.gobby.annotate` App Group. Earlier, both unsigned commands passed with
+no diagnostics, but that run does not verify the signed build. The signed
+commands below need the local team configuration described in
+`docs/safari.md`; their result is not recorded here yet.
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet \
   -project safari/GobbyAnnotate.xcodeproj -scheme 'GobbyAnnotate (macOS)' \
   -destination 'platform=macOS,arch=arm64' -configuration Debug \
-  -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath safari/build build
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet \
   -project safari/GobbyAnnotate.xcodeproj -scheme 'GobbyAnnotate (iOS)' \
   -destination 'generic/platform=iOS Simulator' -configuration Debug \
-  -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath safari/build build
 ```
 
 From the repository root, the isolated integration and template checks passed
