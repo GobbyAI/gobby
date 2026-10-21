@@ -8,12 +8,15 @@ from copy import deepcopy
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 
 _TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
     {
         SessionSource.CLAUDE,
         SessionSource.CODEX,
         SessionSource.DROID,
+        SessionSource.GROK,
+        SessionSource.AGY,
     }
 )
 _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION = 100
@@ -26,6 +29,7 @@ class WorkflowToolContextMixin:
         self._tool_context_lock = threading.Lock()
         self._tool_contexts: dict[str, list[dict[str, Any]]] = {}
         self._tool_context_by_id: dict[tuple[str, str], dict[str, Any]] = {}
+        self._direct_tool_completions: dict[str, list[str]] = {}
 
     @staticmethod
     def _tool_context_ids(data: dict[str, Any]) -> list[str]:
@@ -67,6 +71,15 @@ class WorkflowToolContextMixin:
                     continue
                 if isinstance(parsed_args, dict):
                     tool_input[arg_key] = parsed_args
+
+        if is_gobby_call_tool(tool_name):
+            # Wrapper context and the args alias do not identify separate calls.
+            tool_name = "mcp__gobby__call_tool"
+            tool_input = {
+                "server_name": tool_input.get("server_name"),
+                "tool_name": tool_input.get("tool_name"),
+                "arguments": tool_input.get("arguments", tool_input.get("args", {})),
+            }
 
         try:
             input_json = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
@@ -204,6 +217,7 @@ class WorkflowToolContextMixin:
         cache_key = self._tool_context_session_key(source, session_id)
         with self._tool_context_lock:
             snapshots = self._tool_contexts.pop(cache_key, [])
+            self._direct_tool_completions.pop(cache_key, None)
             for snapshot in snapshots:
                 for identifier in snapshot.get("_ids", []):
                     self._tool_context_by_id.pop((cache_key, identifier), None)
@@ -225,6 +239,32 @@ class WorkflowToolContextMixin:
                 snapshot.get("_fingerprint") == fingerprint
                 for snapshot in self._tool_contexts.get(cache_key, [])
             )
+
+    def mark_direct_tool_completed(
+        self, source: SessionSource, session_id: str, data: dict[str, Any]
+    ) -> None:
+        """Record one proxy completion for the corresponding provider completion."""
+        if source not in _TOOL_CONTEXT_REHYDRATION_SOURCES:
+            return
+        fingerprint = self._tool_context_fingerprint(data)
+        if not fingerprint:
+            return
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            completed = self._direct_tool_completions.setdefault(cache_key, [])
+            completed.append(fingerprint)
+            del completed[:-_MAX_PENDING_TOOL_CONTEXTS_PER_SESSION]
+
+    def _consume_direct_tool_completion(self, event: HookEvent, session_id: str) -> None:
+        fingerprint = self._tool_context_fingerprint(event.data)
+        cache_key = self._tool_context_session_key(event.source, session_id)
+        with self._tool_context_lock:
+            completed = self._direct_tool_completions.get(cache_key, [])
+            if fingerprint in completed:
+                completed.remove(fingerprint)
+                if not completed:
+                    self._direct_tool_completions.pop(cache_key, None)
+                event.metadata["_mcp_proxy_duplicate_after_tool"] = True
 
     def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain BEFORE/AFTER tool parity for rule evaluation."""
@@ -248,14 +288,21 @@ class WorkflowToolContextMixin:
             return
 
         if event.event_type == HookEventType.BEFORE_TOOL:
-            self._remember_tool_context(event.source, session_id, event.data)
+            if not event.metadata.get("_mcp_proxy_direct_before_tool") and not event.metadata.get(
+                "_mcp_proxy_duplicate_before_tool"
+            ):
+                self._remember_tool_context(event.source, session_id, event.data)
             return
 
         if event.event_type != HookEventType.AFTER_TOOL:
             return
+        if event.metadata.get("_mcp_proxy_direct_after_tool"):
+            # Keep the provider's IDs and input until its own hook arrives.
+            return
 
         snapshot = self._match_tool_context(event.source, session_id, event.data)
         if snapshot is None:
+            self._consume_direct_tool_completion(event, session_id)
             return
 
         if self._needs_tool_rehydration(event.data):
@@ -270,4 +317,5 @@ class WorkflowToolContextMixin:
             if event.source == SessionSource.CODEX:
                 event.metadata["_codex_tool_context_rehydrated"] = True
 
+        self._consume_direct_tool_completion(event, session_id)
         self._forget_tool_context(event.source, session_id, snapshot)

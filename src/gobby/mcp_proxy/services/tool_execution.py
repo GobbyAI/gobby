@@ -196,6 +196,11 @@ async def call_tool(
     offload: bool = True,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
+    completion_input = {
+        "server_name": server_name,
+        "tool_name": tool_name,
+        "arguments": _identity_arguments(arguments),
+    }
     outcome = await _call_tool_impl(
         service,
         server_name,
@@ -210,6 +215,7 @@ async def call_tool(
         project_id=project_id,
         scope=scope,
         offload=offload,
+        completion_input=completion_input,
     )
     if not enforce_workflow:
         return outcome.result
@@ -261,6 +267,7 @@ async def _call_tool_impl(
     project_id: str | None = None,
     scope: str | None = None,
     offload: bool = True,
+    completion_input: dict[str, Any] | None = None,
 ) -> _CallToolOutcome:
     """Execute one proxy route and return its structural outcome."""
     requested_project_id = project_id
@@ -330,6 +337,7 @@ async def _call_tool_impl(
                 project_id=requested_project_id,
                 scope=scope,
                 offload=offload,
+                completion_input=completion_input,
             )
         result = {
             "success": False,
@@ -424,6 +432,7 @@ async def _call_tool_impl(
             tool_name=tool_name,
             arguments=arguments,
             session_id=effective_session_id,
+            completion_input=completion_input,
         )
         arguments = cast("dict[str, Any]", enforced_arguments)
         if workflow_error is not None:
@@ -546,6 +555,7 @@ async def _call_tool_impl(
         wrapper_originated=wrapper_originated,
         intent=intent,
         offload=offload,
+        completion_input=completion_input,
     )
     return _CallToolOutcome(
         result,
@@ -571,6 +581,7 @@ async def _execute_tool_dispatch(
     intent: str | None,
     offload: bool = True,
     dispatch_id: str | None = None,
+    completion_input: dict[str, Any] | None = None,
 ) -> Any:
     completion_event = None
     if emit_after_workflow and effective_session_id:
@@ -583,6 +594,8 @@ async def _execute_tool_dispatch(
             arguments,
             None,
         )
+        if completion_event is not None and completion_input is not None:
+            completion_event.metadata["_mcp_proxy_completion_input"] = completion_input
     result = await _execute_tool(
         service=service,
         server_name=server_name,

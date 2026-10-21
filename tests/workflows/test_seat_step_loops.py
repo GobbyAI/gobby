@@ -15,7 +15,9 @@ import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
@@ -26,6 +28,7 @@ from gobby.agents.sync import get_bundled_agents_path
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -41,6 +44,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.tasks.close_receipts import record_close_receipt
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
@@ -49,15 +53,35 @@ from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine import seat_transitions
 from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from gobby.workflows.step_context import get_active_step_workflow_context
+from gobby.workflows.step_instances import (
+    AgentStepInstance,
+    AgentStepInstanceManager,
+    StaleStepInstanceWriteError,
+)
 from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
     patch_local_machine_id,
 )
 
 pytestmark = pytest.mark.unit
+
+_CANDIDATE_DEFAULTS = {
+    "candidate_received": False,
+    "verdict_ready": False,
+    "candidate_task": None,
+    "candidate_sha": None,
+    "candidate_owner": None,
+    "candidate_received_at": None,
+}
+
+_CANDIDATE_GRAMMAR = (
+    "CANDIDATE not bound: expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] "
+    "RUN= WT= COMMIT=<40-hex> [NOTE=...]"
+)
 
 # Session and project ids are native uuid columns in PostgreSQL.
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
@@ -1735,7 +1759,7 @@ async def test_candidate_read_reports_binding_or_rejection(
     if reason is None:
         assert "candidate_binding_error" not in result
     else:
-        assert result.get("candidate_binding_error") == f"CANDIDATE not bound: {reason}"
+        assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
     await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
     assert run.step == ("review" if reason is None else "await")
     assert run.vars["candidate_sha"] == (SHA if reason is None else None)
@@ -1853,3 +1877,321 @@ async def test_review_completion_accepts_bounded_metadata_and_requires_approval(
     await run.send(line)
     assert run.step == "await"
     assert run.vars["candidate_task"] is None
+
+
+async def test_landing_recovery_clears_session_candidate(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    session_vars = SessionVariableManager(temp_db)
+    session_vars.merge_variables(SESSION_ID, run.vars)
+    record_close_receipt(
+        temp_db, task=task, author_session_id=SESSION_ID, kind="landing", commit_sha=SHA
+    )
+
+    context = get_active_step_workflow_context(temp_db, SESSION_ID)
+
+    assert context is not None
+    assert run.step == "await"
+    stored = session_vars.get_variables(SESSION_ID)
+    assert {key: stored[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
+    replacement = run.task()
+    await run.intake(replacement, REPLACEMENT_SHA)
+    assert run.step == "review"
+    assert run.vars["candidate_task"] == replacement.id
+
+
+@pytest.mark.parametrize("event", ["LANDED", "ALREADY_LANDED", "CANDIDATE_WITHDRAWN"])
+async def test_completion_repairs_unbound_stale_session_candidate(
+    temp_db: HubDatabase, event: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    stale = dict(run.vars)
+    record_close_receipt(
+        temp_db, task=task, author_session_id=SESSION_ID, kind="landing", commit_sha=SHA
+    )
+    assert get_active_step_workflow_context(temp_db, SESSION_ID) is not None
+    assert run.step == "await"
+    # Reproduce a copy left behind by an older daemon, after instance recovery.
+    session_vars = SessionVariableManager(temp_db)
+    session_vars.merge_variables(SESSION_ID, stale)
+    run.session_vars.update(stale)
+    line = f"EVENT={event} TASK={task.id} SHA={SHA}"
+    if event == "CANDIDATE_WITHDRAWN":
+        await run.incoming(line, sender=COORDINATOR_ID)
+    else:
+        await run.send(line)
+    assert {key: run.session_vars[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
+    # Persist as WorkflowHookHandler does and verify an idempotent second delivery.
+    session_vars.merge_variables(SESSION_ID, run.session_vars)
+    if event == "CANDIDATE_WITHDRAWN":
+        await run.incoming(line, sender=COORDINATOR_ID)
+    else:
+        await run.send(line)
+    stored = session_vars.get_variables(SESSION_ID)
+    assert {key: stored[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
+    replacement = run.task()
+    await run.intake(replacement, REPLACEMENT_SHA)
+    assert run.step == "review"
+    assert run.vars["candidate_task"] == replacement.id
+
+
+async def test_candidate_intake_survives_audit_failure(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+
+    def unavailable(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("audit sink unavailable")
+
+    monkeypatch.setattr(WorkflowAuditManager, "log", unavailable)
+    await run.intake(task)
+    assert run.step == "review"
+    assert run.vars["candidate_task"] == task.id
+    assert run.vars["candidate_sha"] == SHA
+    assert "audit sink unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("prefix", ["", "LANE=1 "])
+@pytest.mark.parametrize(
+    "event, sha",
+    [
+        ("CANDIDATE", SHA),
+        ("EVENT=CANDIDATE_WITHDRAWN", "bad"),
+        ("EVENT=CANDIDATE_RESUMED", "a" * 10),
+        ("EVENT=CANDIDATE_PARKED", "z" * 40),
+    ],
+)
+async def test_candidate_malformed_protocol_reports_grammar(
+    temp_db: HubDatabase, prefix: str, event: str, sha: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    suffix = f"RUN=r WT=t COMMIT={sha}" if event == "CANDIDATE" else f"SHA={sha}"
+    message = InterSessionMessageManager(temp_db).create_message(
+        OWNER_ID, SESSION_ID, f"{prefix}{event} TASK={task.id} {suffix}"
+    )
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
+    add_messaging_tools(registry, InterSessionMessageManager(temp_db), run.sessions, temp_db)
+    with session_context_for_test(SESSION_ID):
+        result = await registry.call("get_inter_session_message", {"message_id": message.id})
+    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
+    await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
+    assert run.step == "await"
+    assert run.vars["candidate_task"] is None
+
+
+async def test_seat_consumed_messages_keeps_last_64(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    message_ids = []
+    for _ in range(70):
+        message_ids.append(
+            await run.incoming(f"EVENT=CANDIDATE TASK={task.id} RUN=r WT=t COMMIT={SHA}")
+        )
+    assert run.vars["_seat_consumed_messages"] == message_ids[-64:]
+    assert run.step == "review"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        SessionSource.CLAUDE,
+        SessionSource.CODEX,
+        SessionSource.DROID,
+        SessionSource.GROK,
+        SessionSource.AGY,
+    ],
+)
+@pytest.mark.parametrize("omit_input", [False, True])
+@pytest.mark.parametrize("explicit_ref", [False, True])
+async def test_spawned_proxy_and_provider_complete_step_once(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    source: SessionSource,
+    omit_input: bool,
+    explicit_ref: bool,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    # A counter detects duplicate handlers even when seat-message dedup masks them.
+    definition = AgentDefinitionManager(temp_db).get_by_name("code-reviewer")
+    assert definition is not None
+    body = instance.snapshot.model_dump()
+    body["variables"]["completion_count"] = 0
+    body["steps"][1]["on_mcp_success"].append(
+        {
+            "server": "gobby-agents",
+            "tool": "wait_for_coordination",
+            "action": "set_variable",
+            "variable": "completion_count",
+            "value": "(vars.completion_count or 0) + 1",
+        }
+    )
+    AgentDefinitionManager(temp_db).upsert_with_steps(
+        "code-reviewer", definition.definition_json, body
+    )
+    instance.variables["completion_count"] = 0
+    run.instances.save(instance)
+    SessionVariableManager(temp_db).merge_variables(SESSION_ID, run.session_vars)
+    handler = WorkflowHookHandler(
+        rule_engine=run.engine, evaluation_runtime=WorkflowEvaluationRuntime(max_workers=1)
+    )
+    hook_manager = MagicMock()
+    hook_manager._workflow_handler = handler
+    hook_manager.event_handlers = None
+    hook_manager._session_manager = run.sessions
+    internal = MagicMock()
+    internal.is_internal.return_value = True
+    internal.get_registry.return_value.call = AsyncMock(return_value={"ready": True})
+    internal.get_registry.return_value.get_schema.return_value = {
+        "name": "wait_for_coordination",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}, "timeout": {"type": "integer"}},
+            "required": ["session_id"],
+        },
+    }
+    mcp_manager = MagicMock()
+    mcp_manager.session_manager = run.sessions
+    mcp_manager.project_id = PROJECT_ID
+    proxy = ToolProxyService(
+        mcp_manager, internal_manager=internal, hook_manager_resolver=lambda: hook_manager
+    )
+    metadata = {"_platform_session_id": SESSION_ID}
+    monkeypatch.setattr(
+        proxy,
+        "_resolve_tool_event_context",
+        lambda _: (
+            hook_manager,
+            run.sessions,
+            SimpleNamespace(agent_run_id="spawned-seat"),
+            source,
+            dict(metadata),
+            None,
+            PROJECT_ID,
+        ),
+    )
+    monkeypatch.setattr(proxy, "_get_effective_session_id", lambda _: SESSION_ID)
+    temp_db.execute("UPDATE sessions SET seq_num = %s WHERE id = %s", (123, SESSION_ID))
+    session = run.sessions.get(SESSION_ID)
+    assert session is not None
+    arguments: dict[str, Any] = {"timeout": 1}
+    if explicit_ref:
+        arguments["session_id"] = f"#{session.seq_num}"
+    data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_use_id": "call-1",
+        "tool_input": {
+            "server_name": "gobby-agents",
+            "tool_name": "wait_for_coordination",
+            "args": json.dumps(arguments),
+            "session_id": SESSION_ID,
+            "intent": "test completion correlation",
+        },
+    }
+    try:
+        # The second call has identical arguments but its own completion allowance.
+        for count in (1, 2):
+            data["tool_use_id"] = f"call-{count}"
+            before = run._event(HookEventType.BEFORE_TOOL, dict(data))
+            before.source = source
+            before.metadata.update(metadata)
+            assert (await asyncio.to_thread(handler.evaluate, before)).decision == "allow"
+            with session_context_for_test(SESSION_ID):
+                result = await proxy.call_tool(
+                    "gobby-agents",
+                    "wait_for_coordination",
+                    arguments,
+                    session_id=SESSION_ID,
+                    enforce_workflow=True,
+                )
+            assert result == {"ready": True}
+            assert (
+                internal.get_registry.return_value.call.call_args.args[1]["session_id"]
+                == SESSION_ID
+            )
+            provider_data: dict[str, Any] = (
+                {"tool_use_id": f"call-{count}"} if omit_input else dict(data)
+            )
+            after = run._event(HookEventType.AFTER_TOOL, {**provider_data, "tool_output": result})
+            after.source = source
+            after.metadata.update(metadata)
+            assert (await asyncio.to_thread(handler.evaluate, after)).decision == "allow"
+            assert run.vars["completion_count"] == count
+            rows = temp_db.fetchall(
+                "SELECT id FROM workflow_audit_log WHERE session_id = %s AND event_type = %s "
+                "AND tool_name = %s AND reason LIKE %s",
+                (
+                    SESSION_ID,
+                    "tool_call",
+                    "gobby-agents:wait_for_coordination",
+                    "%completed successfully",
+                ),
+            )
+            assert len(rows) == count
+    finally:
+        handler.shutdown()
+
+
+@pytest.mark.parametrize("transition", [True, False])
+async def test_stale_step_completion_logs_warning(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    transition: bool,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    if not transition:
+        await run.intake(task)
+
+    def stale(*args: Any, **kwargs: Any) -> None:
+        raise StaleStepInstanceWriteError("concurrent seat completion")
+
+    monkeypatch.setattr(AgentStepInstanceManager, "save", stale)
+    await run.intake(task)
+    assert run.step == ("await" if transition else "review")
+    assert "Stale step completion write" in caplog.text
+
+
+@pytest.mark.parametrize("wrong", ["sender", "sha", "active-candidate"])
+async def test_stale_session_cleanup_requires_exact_authorized_unbound_candidate(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, wrong: str
+) -> None:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    old = run.task()
+    await run.intake(old)
+    stale = dict(run.vars)
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.variables.update(_CANDIDATE_DEFAULTS)
+    instance.current_step = "await"
+    run.instances.save(instance)
+    if wrong == "active-candidate":
+        replacement = run.task()
+        await run.intake(replacement, REPLACEMENT_SHA)
+    run.session_vars.update(stale)
+    SessionVariableManager(temp_db).merge_variables(SESSION_ID, stale)
+    await run.incoming(
+        f"EVENT=CANDIDATE_WITHDRAWN TASK={old.id} SHA={REPLACEMENT_SHA if wrong == 'sha' else SHA}",
+        sender=OWNER_ID if wrong == "sender" else COORDINATOR_ID,
+    )
+    assert run.session_vars["candidate_task"] == old.id
+    assert run.vars["candidate_task"] == (replacement.id if wrong == "active-candidate" else None)

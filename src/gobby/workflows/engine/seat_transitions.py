@@ -194,13 +194,24 @@ def candidate_binding_error(
 
 
 def _reviewer_message(
-    db: HubDatabase, session_id: str, variables: dict[str, Any], event: CandidateEvent
+    db: HubDatabase,
+    session_id: str,
+    variables: dict[str, Any],
+    event: CandidateEvent,
+    session_variables: dict[str, Any],
 ) -> dict[str, Any]:
     fields = event.fields
     incoming = event.message.to_session == session_id
     same_task = _same_task(db, variables.get("candidate_task"), event)
     same_unit = same_task and event.sha == variables.get("candidate_sha")
     kind = fields.get("EVENT")
+    stale_session_unit = (
+        not variables.get("candidate_received")
+        and not variables.get("candidate_task")
+        and not variables.get("candidate_sha")
+        and _same_task(db, session_variables.get("candidate_task"), event)
+        and event.sha == session_variables.get("candidate_sha")
+    )
     parked = list(variables.get("parked_candidates") or [])
     if incoming and kind == "CANDIDATE":
         if _candidate_rejection(db, variables, event) is not None:
@@ -222,7 +233,7 @@ def _reviewer_message(
     if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(
         db, event, session_id, parked_candidates=parked
     ):
-        changes = _clear_candidate() if same_unit else {}
+        changes = _clear_candidate() if same_unit or stale_session_unit else {}
         remaining = [
             record
             for record in parked
@@ -250,6 +261,13 @@ def _reviewer_message(
             "candidate_received_at": event.message.sent_at.isoformat(),
             "parked_candidates": [record for record in parked if record not in matching],
         }
+    if (
+        stale_session_unit
+        and event.message.from_session == session_id
+        and kind in {"LANDED", "ALREADY_LANDED"}
+        and _approved(db, session_id, event.task.id, event.sha)
+    ):
+        return _clear_candidate()
     if not same_unit:
         return {}
     if incoming and not is_task_reviewer(db, event):
@@ -324,7 +342,7 @@ def advance_seat(
             continue
         changes: dict[str, Any] = {}
         if role == "code-reviewer" and event is not None:
-            changes = _reviewer_message(db, session_id, state, event)
+            changes = _reviewer_message(db, session_id, state, event, variables)
         elif role in {"log-monitor", "metrics-monitor"} and message.from_session == session_id:
             changes = _monitor_message(
                 db,
@@ -355,5 +373,5 @@ def advance_seat(
                 # The flag returns the claim to implement with shell access; link_commit clears it.
                 changes = {"bounced": True, "implementation_complete": False}
         if changes:
-            return {**changes, "_seat_consumed_messages": consumed + [message.id]}
+            return {**changes, "_seat_consumed_messages": (consumed + [message.id])[-64:]}
     return {}

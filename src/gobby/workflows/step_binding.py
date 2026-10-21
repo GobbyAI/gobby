@@ -12,6 +12,7 @@ from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -44,15 +45,18 @@ def release_completed_review(db: HubDatabase, instance: AgentStepInstance) -> Ag
         return instance
 
     recovered = instance.model_copy(deep=True)
-    for key in (
-        "candidate_received",
-        "verdict_ready",
-        "candidate_task",
-        "candidate_sha",
-        "candidate_owner",
-        "candidate_received_at",
-    ):
-        recovered.variables[key] = copy.deepcopy(instance.workflow.variables.get(key))
+    defaults = {
+        key: copy.deepcopy(instance.workflow.variables.get(key))
+        for key in (
+            "candidate_received",
+            "verdict_ready",
+            "candidate_task",
+            "candidate_sha",
+            "candidate_owner",
+            "candidate_received_at",
+        )
+    }
+    recovered.variables.update(defaults)
     recovered.current_step = "await"
     recovered.step_action_count = 0
     recovered.step_entered_at = datetime.now(UTC)
@@ -60,6 +64,7 @@ def release_completed_review(db: HubDatabase, instance: AgentStepInstance) -> Ag
         AgentStepInstanceManager(db).save(recovered, if_match=(instance.id, instance.updated_at))
     except StaleStepInstanceWriteError:
         return instance
+    SessionVariableManager(db).merge_variables(instance.session_id, defaults)
     return recovered
 
 

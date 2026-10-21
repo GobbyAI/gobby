@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -313,6 +314,13 @@ class EnforcementCompletionMixin:
         variables[PENDING_STEP_TRANSITION_NOTICE] = ""
         return "\n\n".join(part for part in (pending, notice) if part)
 
+    async def _try_step_audit(self, audit: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+        """An unavailable audit sink must not prevent a completed tool's state write."""
+        try:
+            await offload(audit, *args, **kwargs)
+        except Exception as exc:
+            logger.warning("Step completion audit failed: %s", exc, exc_info=True)
+
     async def _run_step_handlers(
         self,
         handlers: list[dict[str, Any]],
@@ -366,7 +374,7 @@ class EnforcementCompletionMixin:
                     instance.variables[changed_name] = changed_value
                     variables[changed_name] = changed_value
                     vars_changed = True
-                    await offload(
+                    await self._try_step_audit(
                         self._audit_step_set_variable,
                         session_id,
                         instance.agent_name,
@@ -396,7 +404,7 @@ class EnforcementCompletionMixin:
                     instance.variables[var_name] = var_value
                     variables[var_name] = var_value
                     vars_changed = True
-                    await offload(
+                    await self._try_step_audit(
                         self._audit_step_set_variable,
                         session_id,
                         instance.agent_name,
@@ -408,6 +416,15 @@ class EnforcementCompletionMixin:
         return vars_changed
 
     async def _process_step_after_tool(
+        self, event: HookEvent, session_id: str, variables: dict[str, Any]
+    ) -> str | None:
+        if event.metadata.get("_mcp_proxy_duplicate_after_tool"):
+            return None
+        notice = await self._apply_step_after_tool(event, session_id, variables)
+        event.metadata["_step_after_tool_processed"] = True
+        return notice
+
+    async def _apply_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> str | None:
         """Process step workflow on_mcp_success handlers and transitions after tool completion.
@@ -496,7 +513,7 @@ class EnforcementCompletionMixin:
                 step = rebound_step
                 cas_token = (str(instance.id), instance.updated_at)
         if not tool_failed:
-            await offload(
+            await self._try_step_audit(
                 self._audit_step_tool_call,
                 session_id,
                 instance.agent_name,
@@ -575,7 +592,7 @@ class EnforcementCompletionMixin:
                     )
                     continue
 
-                await offload(
+                await self._try_step_audit(
                     self.workflow_audit.log_transition,
                     session_id=session_id,
                     from_step=old_step,
@@ -600,6 +617,14 @@ class EnforcementCompletionMixin:
                         if_match=cas_token,
                     )
                 except StaleStepInstanceWriteError:
+                    event.metadata["_step_completion_stale"] = True
+                    logger.warning(
+                        "Stale step completion write (workflow=%s, session=%s, from=%s, to=%s)",
+                        instance.agent_name,
+                        session_id,
+                        old_step,
+                        new_step,
+                    )
                     return None
                 cas_token = (str(instance.id), instance.updated_at)
 
@@ -635,7 +660,7 @@ class EnforcementCompletionMixin:
                         exit_ctx,
                         "block",
                     )
-                    await offload(
+                    await self._try_step_audit(
                         self.workflow_audit.log_exit_check,
                         session_id=session_id,
                         step=instance.current_step,
@@ -692,6 +717,13 @@ class EnforcementCompletionMixin:
             try:
                 await offload(instance_mgr.save, instance, if_match=cas_token)
             except StaleStepInstanceWriteError:
+                event.metadata["_step_completion_stale"] = True
+                logger.warning(
+                    "Stale step completion write (workflow=%s, session=%s, step=%s)",
+                    instance.agent_name,
+                    session_id,
+                    instance.current_step,
+                )
                 return None
 
         return None

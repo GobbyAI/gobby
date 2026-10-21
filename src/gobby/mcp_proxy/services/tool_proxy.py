@@ -217,6 +217,7 @@ class ToolProxyService:
         tool_name: str,
         arguments: dict[str, Any],
         session_id: str | None,
+        completion_input: dict[str, Any] | None = None,
     ) -> tuple[
         str,
         str,
@@ -231,6 +232,7 @@ class ToolProxyService:
             tool_name,
             arguments,
             session_id,
+            completion_input=completion_input,
         )
 
     async def _apply_after_tool_workflow(

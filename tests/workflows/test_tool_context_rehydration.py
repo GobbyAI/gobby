@@ -178,6 +178,73 @@ def test_pending_tool_context_matches_direct_proxy_event(
     )
 
 
+def test_direct_completions_are_one_shot_and_scoped(handler: WorkflowHookHandler) -> None:
+    data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-tasks",
+            "tool_name": "get_task",
+            "arguments": {"task_id": "#1"},
+        },
+    }
+    source = SessionSource.CLAUDE
+    handler.mark_direct_tool_completed(source, PLATFORM_SESSION_ID, data)
+    other_call = _event(
+        HookEventType.AFTER_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "get_task",
+                "arguments": {"task_id": "#2"},
+            },
+        },
+    )
+    handler._sync_tool_context(other_call, PLATFORM_SESSION_ID)
+    assert not other_call.metadata.get("_mcp_proxy_duplicate_after_tool")
+    other_session = _event(HookEventType.AFTER_TOOL, dict(data))
+    handler._sync_tool_context(other_session, EXTERNAL_SESSION_ID)
+    assert not other_session.metadata.get("_mcp_proxy_duplicate_after_tool")
+    other_source = _event(HookEventType.AFTER_TOOL, dict(data), source=SessionSource.CODEX)
+    handler._sync_tool_context(other_source, PLATFORM_SESSION_ID)
+    assert not other_source.metadata.get("_mcp_proxy_duplicate_after_tool")
+    matching = _event(HookEventType.AFTER_TOOL, dict(data))
+    handler._sync_tool_context(matching, PLATFORM_SESSION_ID)
+    assert matching.metadata["_mcp_proxy_duplicate_after_tool"] is True
+    next_call = _event(HookEventType.AFTER_TOOL, dict(data))
+    handler._sync_tool_context(next_call, PLATFORM_SESSION_ID)
+    assert not next_call.metadata.get("_mcp_proxy_duplicate_after_tool")
+
+
+def test_direct_completion_cache_is_bounded_and_clears_on_stop(
+    handler: WorkflowHookHandler,
+) -> None:
+    def call_data(number: int) -> dict[str, Any]:
+        return {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "get_task",
+                "arguments": {"task_id": number},
+            },
+        }
+
+    for number in range(101):
+        handler.mark_direct_tool_completed(
+            SessionSource.CLAUDE, PLATFORM_SESSION_ID, call_data(number)
+        )
+    evicted = _event(HookEventType.AFTER_TOOL, call_data(0))
+    handler._sync_tool_context(evicted, PLATFORM_SESSION_ID)
+    assert not evicted.metadata.get("_mcp_proxy_duplicate_after_tool")
+    retained = _event(HookEventType.AFTER_TOOL, call_data(1))
+    handler._sync_tool_context(retained, PLATFORM_SESSION_ID)
+    assert retained.metadata["_mcp_proxy_duplicate_after_tool"] is True
+    handler._sync_tool_context(_event(HookEventType.STOP, {}), PLATFORM_SESSION_ID)
+    cleared = _event(HookEventType.AFTER_TOOL, call_data(100))
+    handler._sync_tool_context(cleared, PLATFORM_SESSION_ID)
+    assert not cleared.metadata.get("_mcp_proxy_duplicate_after_tool")
+
+
 @pytest.mark.parametrize("event_type", [HookEventType.AFTER_AGENT, HookEventType.STOP])
 def test_turn_end_clears_stale_tool_context(
     handler: WorkflowHookHandler,

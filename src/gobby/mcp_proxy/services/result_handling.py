@@ -43,6 +43,7 @@ def build_before_tool_event(
         service._resolve_tool_event_context(effective_session_id)
     )
     metadata["_cli_internal_request"] = cli_internal_request.get()
+    metadata["_mcp_proxy_direct_before_tool"] = True
 
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -114,6 +115,7 @@ async def apply_before_tool_enforcement(
     tool_name: str,
     arguments: dict[str, Any],
     session_id: str | None,
+    completion_input: dict[str, Any] | None = None,
 ) -> tuple[
     str,
     str,
@@ -151,9 +153,12 @@ async def apply_before_tool_enforcement(
 
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
+        correlation_data = dict(event.data)
+        if completion_input is not None:
+            correlation_data["tool_input"] = completion_input
         try:
             if await asyncio.to_thread(
-                has_pending_context, event.source, effective_session_id, event.data
+                has_pending_context, event.source, effective_session_id, correlation_data
             ):
                 event.metadata["_mcp_proxy_duplicate_before_tool"] = True
         except Exception as exc:
@@ -271,3 +276,12 @@ async def apply_after_tool_workflow(
             response.decision,
             response.reason,
         )
+    if event.metadata.get("_step_after_tool_processed") and not event.metadata.get(
+        "_step_completion_stale"
+    ):
+        mark_completed = getattr(workflow_handler, "mark_direct_tool_completed", None)
+        if callable(mark_completed):
+            completion_data = dict(event.data)
+            if "_mcp_proxy_completion_input" in event.metadata:
+                completion_data["tool_input"] = event.metadata["_mcp_proxy_completion_input"]
+            mark_completed(event.source, effective_session_id, completion_data)
