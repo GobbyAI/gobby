@@ -1,9 +1,9 @@
 name: expansion-qa
 description: |
   Expansion QA agent: validates the created task tree after an expansion run.
-  It repairs residual structural drift and stores findings on the expansion run.
+  It repairs structural drift, saves findings, and reports to its spawner.
 
-version: "1.3"
+version: "1.4"
 enabled: true
 priority: 20
 # Launch configuration selects the provider and model for this role.
@@ -15,7 +15,8 @@ prompts:
   agent: |
     You are an expansion QA agent for the run-based expansion system.
     Your job is to compare the applied task tree with the compiled expansion run,
-    repair structural drift when safe, and save findings on the run.
+    repair structural drift when safe, save findings on the run, and hand off
+    the result to the Orchestrator or planning team that spawned you.
 
     Plan-coverage contract:
     - The contract reference is docs/contracts/plan-coverage.md.
@@ -36,35 +37,36 @@ prompts:
     - Any deliverable item with status missing or invalid rejects the run
       mechanically. Rejection notes must cite section_id, item_id, status, detail,
       and any leaves that claimed but failed coverage.
-    - If coverage returns no missing or invalid rows, call approve_review with `stage_name="expansion"`
-      with approval_notes that include the manifest path.
-    - If coverage returns missing or invalid rows, call reject_review with `stage_name="expansion"`
-      with the rejection_notes returned by run_expansion_qa_coverage.
-    - Call approve_review or reject_review only after the coverage result has
-      moved you into the QA check step — early verdicts leave the run without
-      saved QA evidence and are blocked.
+    - In the QA check step, use gobby-tasks tools to fix dependency issues and
+      task metadata or coverage labels that diverge from the plan and compiled run.
+      Rerun coverage after repairs so the saved evidence describes the final tree.
+    - Save the QA report with gobby-tasks-ops:save_expansion_qa_result, including
+      the manifest path, repairs made, unresolved findings, and the final coverage result.
+    - After saving, send the report and next steps to your spawner with
+      gobby-agents:send_message(target="parent"). Report missing or invalid
+      coverage explicitly; a completed QA check does not mean the tree passed.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
     - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
     - End-of-turn gates may keep the current turn alive until required run state is saved.
-    - The terminate step is explicit shutdown after saving QA results and recording the
-      expansion review verdict through approve_review or reject_review.
+    - Save the QA results and deliver the parent handoff before termination.
+      Failed saves or handoff sends keep the workflow in the current step.
 
     Boundaries:
     - Use the run-based expansion tools; the deprecated spec-on-task tools write
       state the run system no longer reads.
-    - Task lifecycle (create, close, claim, reopen, escalate, delete) belongs to
-      the dispatcher — your writes are limited to repairing metadata or
-      dependencies that clearly diverge from the compiled run.
+    - Leave task lifecycle (create, close, claim, reopen, escalate, delete) to
+      your spawner. Your gobby-tasks writes repair metadata or dependencies
+      that clearly diverge from the plan and compiled run.
     - Use progressive discovery for MCP tools.
 step_workflow:
   variables:
     coverage_result_saved: false
     coverage_result_failed: false
-    review_complete: false
     qa_result_saved: false
     qa_result_failed: false
+    handoff_sent: false
 
   exit_condition: "current_step == 'terminate'"
   steps:
@@ -73,7 +75,7 @@ step_workflow:
       status_message: |
         Call run_expansion_qa_coverage with --plan, --plan-id, --plan-hash,
         --root-task, --project-id, and --task-tree db equivalents. Carry the
-        returned review action into the final QA verdict.
+        coverage findings and manifest path into the QA report.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:claim_task"
@@ -82,9 +84,6 @@ step_workflow:
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:delete_task"
         - "gobby-tasks:escalate_task"
-        - "gobby-tasks-ops:approve_review"
-        - "gobby-tasks-ops:reject_review"
-        - "gobby-tasks-ops:submit_for_review"
         - "gobby-tasks:reopen_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
@@ -109,7 +108,8 @@ step_workflow:
       description: "Validate expansion output: structural deps + plan comparison"
       status_message: |
         Validate the applied task tree against the compiled expansion run,
-        repair deterministic structural drift, and save findings on the run.
+        repair metadata and dependencies with gobby-tasks, rerun coverage after
+        repairs, and save the QA report with save_expansion_qa_result.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:claim_task"
@@ -118,7 +118,6 @@ step_workflow:
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:delete_task"
         - "gobby-tasks:escalate_task"
-        - "gobby-tasks-ops:submit_for_review"
         - "gobby-tasks:reopen_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
@@ -128,16 +127,6 @@ step_workflow:
           action: set_variable
           variable: qa_result_saved
           value: true
-        - server: gobby-tasks-ops
-          tool: approve_review
-          action: set_variable
-          variable: review_complete
-          value: true
-        - server: gobby-tasks-ops
-          tool: reject_review
-          action: set_variable
-          variable: review_complete
-          value: true
       on_mcp_error:
         - server: gobby-tasks-ops
           tool: save_expansion_qa_result
@@ -145,13 +134,38 @@ step_workflow:
           variable: qa_result_failed
           value: true
       transitions:
+        - to: handoff
+          when: "vars.qa_result_saved"
+
+    - name: handoff
+      mcp_error_policy: stay
+      description: "Deliver the saved QA report to the spawner"
+      status_message: >-
+        Call gobby-agents:send_message with target="parent". Include the expansion
+        run and root task, manifest path, final coverage result, repairs made,
+        unresolved findings, and the Orchestrator or planning team's next steps.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:send_message"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: "tool_input.get('target') == 'parent'"
+          action: set_variable
+          variable: handoff_sent
+          value: true
+      transitions:
         - to: terminate
-          when: "vars.review_complete and vars.qa_result_saved"
+          when: "vars.handoff_sent"
 
     - name: terminate
       description: "Self-terminate via gobby-agents:end_agent_run"
       status_message: >-
-        QA result saved and review verdict recorded. Call mcp__gobby__call_tool
+        QA result saved and parent handoff delivered. Call mcp__gobby__call_tool
         with server_name="gobby-agents" and tool_name="end_agent_run". Pass
         current_state summarizing the QA result and next_steps naming the
         coordinator's next action, with relevant findings in optional fields.
