@@ -10,6 +10,7 @@ from __future__ import annotations
 import fnmatch
 import re
 
+from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks._shell_execution_words import _unwrap
 
@@ -33,8 +34,14 @@ class _AmbiguousSyntax(ValueError):
     """An unsupported expansion cannot establish that a brace word is safe."""
 
 
-def _parameter_end(raw: str, index: int) -> int:
-    """Find a simple parameter span; nested expansion remains ambiguous."""
+def _parameter_span(raw: str, index: int) -> tuple[int, bool]:
+    """Consume balanced parameter syntax without evaluating any expansion.
+
+    Nested spans share one forward cursor. Their contents become one symbolic
+    wildcard, while ordinary braces remain a reason to inspect the word.
+    """
+    contexts = [("}", "")]
+    brace_group = False
     quote = ""
     index += 2
     while index < len(raw):
@@ -42,14 +49,39 @@ def _parameter_end(raw: str, index: int) -> int:
         if char == "\\" and quote != "'":
             index += 2
             continue
-        if quote != "'" and (char in "{`" or raw.startswith("$(", index)):
-            raise _AmbiguousSyntax("Nested expansion in parameter span")
-        if char == quote:
+        if quote in {"'", "$'"}:
+            if char == "'":
+                quote = ""
+        elif not quote and opens_ansi_c_quote(raw, index):
+            quote = "$'"
+            index += 2
+            continue
+        elif raw.startswith("${", index):
+            contexts.append(("}", quote))
+            quote = ""
+            index += 2
+            continue
+        elif raw.startswith(("$(", "<(", ">("), index):
+            contexts.append((")", quote))
+            quote = ""
+            index += 2
+            continue
+        elif not quote and char == contexts[-1][0]:
+            _, quote = contexts.pop()
+            if not contexts:
+                return index + 1, brace_group
+        elif char == "`":
+            contexts.append(("`", quote))
+            quote = ""
+        elif not quote and char == "{":
+            brace_group = True
+            contexts.append(("}", quote))
+        elif not quote and char == "(" and contexts[-1][0] == ")":
+            contexts.append((")", quote))
+        elif char == quote:
             quote = ""
         elif not quote and char in "'\"":
             quote = char
-        elif not quote and char == "}":
-            return index + 1
         index += 1
     raise _AmbiguousSyntax("Unclosed parameter span")
 
@@ -71,7 +103,7 @@ def _characters(
                 index += 2
                 continue
         if quote != "'" and raw.startswith("${", index):
-            index = _parameter_end(raw, index)
+            index, _ = _parameter_span(raw, index)
             result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
             continue
         if char == quote:
@@ -231,36 +263,46 @@ def _matches(chars: list[_Character], target: str) -> bool:
 def _has_brace_group(raw: str) -> bool:
     """Distinguish active brace groups from ordinary parameter delimiters."""
     quote = ""
-    parameters = 0
     index = 0
     while index < len(raw):
         char = raw[index]
         if char == "\\" and quote != "'":
             index += 2
             continue
-        if quote != "'" and raw.startswith("${", index):
-            parameters += 1
+        if not quote and opens_ansi_c_quote(raw, index):
+            quote = "$'"
             index += 2
             continue
-        if char == quote:
+        if quote not in {"'", "$'"} and raw.startswith("${", index):
+            try:
+                index, brace_group = _parameter_span(raw, index)
+            except _AmbiguousSyntax:
+                return True
+            if brace_group:
+                return True
+            continue
+        if quote == "$'" and char == "'":
+            quote = ""
+        elif char == quote:
             quote = ""
         elif not quote and char in "'\"":
             quote = char
         elif not quote and char == "{":
             return True
         elif not quote and char == "}":
-            if not parameters:
-                return True
-            parameters -= 1
+            return True
         index += 1
-    return False
+    return bool(quote)
 
 
 def _protected_word(raw: str) -> bool:
-    if not _has_brace_group(raw):
+    brace_group = _has_brace_group(raw)
+    if not brace_group and "${" not in raw:
         return False
     chars = _characters(raw)
-    if not any(active and char in "{}" for char, active in chars):
+    # Parameter-only operands remain data. Literal pieces around a parameter
+    # anchor the finite protected-name match, even when no piece spells "gob".
+    if not brace_group and not any(char != "*" or not active for char, active in chars):
         return False
     if any(active and char in "$`()" for char, active in chars):
         raise _AmbiguousSyntax("Dynamic expansion in brace word")
@@ -310,14 +352,9 @@ def _stage_slots(words: list[str], raw: list[str]) -> bool:
         if index < checked_until:
             continue
         name = word.rsplit("/", 1)[-1]
-        try:
-            literal = "".join(
-                char for char, active in _characters(raw[index]) if not (active and char in "{}")
-            )
-        except _AmbiguousSyntax:
-            if "gob" in word or _has_brace_group(raw[index]):
-                return True
-            continue
+        literal = "".join(
+            char for char, active in _characters(raw[index]) if not (active and char in "{}")
+        )
         if literal.rsplit("/", 1)[-1] == "gobby" and _slot_hazard(raw[index]):
             return True
         if name != "gobby" and not (name == "gobby.cli" and index > 0 and words[index - 1] == "-m"):

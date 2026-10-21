@@ -8,6 +8,7 @@ from gobby.workflows.approval_brace_guard import (
     approval_brace_spelling,
     approval_command_word_expansion,
 )
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -164,3 +165,45 @@ def test_unrelated_nested_parameter_data_stays_allowed(command: str) -> None:
 )
 def test_nested_parameter_protected_words_stay_refused(command: str) -> None:
     assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "A= B=; g${A:-${B}}obby se${A:-${B}}ssions approve-dirty-pat${A:-${B}}hs s7 --checkout /repo a.txt",
+        "g${A:-${B}}obby sessions list",
+        "go${A:-${B}}bby sessions list",
+        "unknown app${A:-${B}}rove-dirty-paths",
+        "g${A}obby se${A}ssions approve-dirty-pat${A}hs",
+        "go${A}bby sessions list",
+        "unknown app${A}rove-dirty-paths",
+        "{g${A:-${B}}obby,other} sessions list",
+        "unknown {app${A:-${B}}rove-dirty-paths,other}",
+        r"$'\'/'{g,x}{o,y}bby sessions x",
+        "$'\\'\"'/{g,x}{o,y}bby\"\"",
+    ],
+)
+def test_symbolic_parameter_and_ansi_c_protected_words_are_refused(command: str) -> None:
+    # Inert evaluator input only: never run these strings through a shell.
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd ${WT:-${HOME}}",
+        "echo ${A:-${B}}",
+        "echo ${A:-$(pwd)}",
+        r"echo $'it\'s'",
+        "echo '{gobby,}'",
+        r"echo \{gobby,\}",
+        'gobby tasks "{show,list}"',
+        r"gobby \{tasks,x\} list",
+    ],
+)
+def test_symbolic_parameter_and_ansi_c_data_controls_stay_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
