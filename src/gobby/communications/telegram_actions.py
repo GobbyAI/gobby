@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.agent_labels import agent_label, agent_menu_labels
 from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.session_delivery import is_attached_operator_message
 from gobby.communications.telegram_access import allowed_senders
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
@@ -174,9 +175,34 @@ class TelegramActionController:
             message_type="telegram_message",
             metadata=metadata,
             preserve_content=True,
+            replace_composer=await is_attached_operator_message(
+                self._manager, channel, message, session_id
+            ),
         )
         if not result.success:
             raise RuntimeError(result.error or "Mailbox delivery was rejected")
+        wake = next(iter(result.wake_results), None)
+        if (
+            wake is None
+            or wake.get("delivered")
+            or wake.get("skipped") in {"session_active", "mailbox_read"}
+        ):
+            return
+        reason = wake.get("skipped") or wake.get("error_code") or "wake_unavailable"
+        advice = (
+            " Submit or clear the draft in the session pane."
+            if reason == "composer_occupied"
+            else " Resume the session in its pane to receive queued messages."
+        )
+        try:
+            session = await asyncio.to_thread(self._session_manager.get, session_id)
+            label = _session_label(session) if session is not None else session_id
+            await self._feedback(
+                channel, message, f"Message queued for session {label}: {reason}.{advice}"
+            )
+        except Exception:
+            # The inbound message is already durable; never ask the operator to resend it.
+            logger.exception("Failed to report queued Telegram message %s", message.id)
 
     async def _consume_safely(
         self,

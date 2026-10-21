@@ -135,12 +135,19 @@ class MailboxService:
         metadata: Mapping[str, Any] | None = None,
         project_id: str | None = None,
         preserve_content: bool = False,
+        replace_composer: bool = False,
     ) -> MailboxSendResult:
         """Send a mailbox message to an explicit resolved target selector."""
         if not preserve_content:
             content = content.strip()
         if not content.strip():
             raise ValueError("content is required")
+        if replace_composer and (
+            from_session_id != system_session_id() or target != "session" or not wake
+        ):
+            raise ValueError(
+                "Composer replacement is reserved for direct operator communications wakes"
+            )
 
         messages = []
         with self._db.transaction():
@@ -178,16 +185,17 @@ class MailboxService:
                 ensure_system_session(self._db)
 
             for recipient_id in recipient_ids:
-                message_metadata = metadata
+                message_metadata = dict(metadata or {})
+                # This capability is an internal ingress argument, never caller metadata.
+                message_metadata.pop("operator_comms", None)
+                if replace_composer:
+                    message_metadata["operator_comms"] = True
                 if (
                     resolution.target == "session"
                     and resolution.target_id is not None
                     and resolution.target_id != recipient_id
                 ):
-                    message_metadata = {
-                        **(metadata or {}),
-                        "redirected_from": resolution.target_id,
-                    }
+                    message_metadata["redirected_from"] = resolution.target_id
                 metadata_json = self._metadata_json(
                     metadata=message_metadata,
                     broadcast_id=broadcast_id,

@@ -20,6 +20,7 @@ from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.events.comms_wake import is_operator_comms_wake
 from gobby.events.live_wake import (
     RETRYABLE_WAKE_SKIPS,
     ActivityProbe,
@@ -750,6 +751,11 @@ class WakeDispatcher:
             )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
+        pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
+        if any(is_operator_comms_wake(message) for message in pending):
+            # Josh's operator policy: a comms wake replaces leftover composer text.
+            # False forces the existing clear-before-submit path, even on an empty ledger.
+            return None, False
         state = activity.composer.state
         if state in {"empty", "held"}:
             return None, state == "empty"

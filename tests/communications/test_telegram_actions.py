@@ -213,7 +213,87 @@ async def test_comms_session_inbound_remains_for_responder() -> None:
     mailbox.send.assert_not_awaited()
 
 
+@pytest.mark.parametrize("reason", ["composer_occupied", "composer_unconfirmed", "paused"])
+async def test_attached_dm_reports_queued_wake_reason(reason: str) -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(
+        id=SESSION_ID, seq_num=7, status="paused", source="claude"
+    )
+    mailbox.send.return_value = MailboxSendResult(
+        wake_results=[{"session_id": SESSION_ID, "delivered": False, "skipped": reason}]
+    )
+    message = _message(content="Status?", metadata={"session_route": "attached"})
+
+    assert await controller.handle(_channel().name, message) is True
+
+    manager.send_message.assert_awaited_once()
+    feedback = manager.send_message.await_args
+    assert feedback.args[0] == _channel().name
+    assert "queued" in feedback.args[1].lower()
+    assert "#7" in feedback.args[1]
+    assert reason in feedback.args[1]
+    assert feedback.kwargs["metadata"]["platform_destination"] == "chat-1"
+
+
 _EXPIRED_REPLY = "Session #7 is no longer active; this message was not delivered to it."
+
+
+async def test_declined_wake_reports_how_to_resume_delivery() -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value.source = "claude"
+    mailbox.send.return_value = MailboxSendResult(
+        wake_results=[
+            {"session_id": SESSION_ID, "delivered": False, "skipped": "awaiting_approval"}
+        ]
+    )
+    assert await controller.handle(_channel().name, _message(content="Status?")) is True
+    manager.send_message.assert_awaited_once()
+    assert "Resume the session in its pane" in manager.send_message.await_args.args[1]
+
+
+@pytest.mark.parametrize("route", ["attached", "reply", "callback"])
+async def test_attached_operator_dm_marks_shared_comms_wake_policy(route: str) -> None:
+    controller, manager, _sessions, mailbox = _controller()
+    _sessions.get.return_value.source = "claude"
+    manager.resolve_operator_conversation.return_value = {
+        "conversation_id": "dm:chat-1",
+        "session_id": SESSION_ID,
+        "identity_id": "stored-identity",
+    }
+    assert (
+        await controller.handle(
+            _channel().name, _message(content="Status?", metadata={"session_route": route})
+        )
+        is True
+    )
+    assert mailbox.send.await_args.kwargs.get("replace_composer") is True
+
+
+async def test_active_turn_comms_queue_is_silent() -> None:
+    controller, manager, _sessions, mailbox = _controller()
+    _sessions.get.return_value.source = "claude"
+    mailbox.send.return_value = MailboxSendResult(
+        wake_results=[{"session_id": SESSION_ID, "delivered": False, "skipped": "session_active"}]
+    )
+    assert await controller.handle(_channel().name, _message(content="Status?")) is True
+    manager.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("field", ["identity_id", "session_id", "conversation_id"])
+async def test_other_sender_or_attachment_cannot_request_composer_replacement(field: str) -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value.source = "claude"
+    operator = {
+        "conversation_id": "dm:chat-1",
+        "session_id": SESSION_ID,
+        "identity_id": "stored-identity",
+    }
+    operator[field] = "another-recipient"
+    manager.resolve_operator_conversation.return_value = operator
+
+    assert await controller.handle(_channel().name, _message(content="Status?")) is True
+
+    assert mailbox.send.await_args.kwargs.get("replace_composer") is False
 
 
 @pytest.mark.parametrize("route", ["reply", "attached", "callback"])
