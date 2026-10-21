@@ -181,28 +181,7 @@ class TelegramActionController:
         )
         if not result.success:
             raise RuntimeError(result.error or "Mailbox delivery was rejected")
-        wake = next(iter(result.wake_results), None)
-        if (
-            wake is None
-            or wake.get("delivered")
-            or wake.get("skipped") in {"session_active", "mailbox_read"}
-        ):
-            return
-        reason = wake.get("skipped") or wake.get("error_code") or "wake_unavailable"
-        advice = (
-            " Submit or clear the draft in the session pane."
-            if reason == "composer_occupied"
-            else " Resume the session in its pane to receive queued messages."
-        )
-        try:
-            session = await asyncio.to_thread(self._session_manager.get, session_id)
-            label = _session_label(session) if session is not None else session_id
-            await self._feedback(
-                channel, message, f"Message queued for session {label}: {reason}.{advice}"
-            )
-        except Exception:
-            # The inbound message is already durable; never ask the operator to resend it.
-            logger.exception("Failed to report queued Telegram message %s", message.id)
+        logger.debug("Telegram message %s wake outcomes: %s", message.id, result.wake_results)
 
     async def _consume_safely(
         self,

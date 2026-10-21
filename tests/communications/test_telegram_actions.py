@@ -213,8 +213,11 @@ async def test_comms_session_inbound_remains_for_responder() -> None:
     mailbox.send.assert_not_awaited()
 
 
-@pytest.mark.parametrize("reason", ["composer_occupied", "composer_unconfirmed", "paused"])
-async def test_attached_dm_reports_queued_wake_reason(reason: str) -> None:
+@pytest.mark.parametrize(
+    "reason",
+    ["debounced", "composer_occupied", "composer_unconfirmed", "paused", "awaiting_approval"],
+)
+async def test_attached_dm_queued_wake_does_not_send_operator_notice(reason: str) -> None:
     controller, manager, sessions, mailbox = _controller()
     sessions.get.return_value = SimpleNamespace(
         id=SESSION_ID, seq_num=7, status="paused", source="claude"
@@ -226,29 +229,13 @@ async def test_attached_dm_reports_queued_wake_reason(reason: str) -> None:
 
     assert await controller.handle(_channel().name, message) is True
 
-    manager.send_message.assert_awaited_once()
-    feedback = manager.send_message.await_args
-    assert feedback.args[0] == _channel().name
-    assert "queued" in feedback.args[1].lower()
-    assert "#7" in feedback.args[1]
-    assert reason in feedback.args[1]
-    assert feedback.kwargs["metadata"]["platform_destination"] == "chat-1"
+    mailbox.send.assert_awaited_once()
+    assert mailbox.send.await_args.kwargs["content"] == "Status?"
+    assert mailbox.send.await_args.kwargs["wake"] is True
+    manager.send_message.assert_not_awaited()
 
 
 _EXPIRED_REPLY = "Session #7 is no longer active; this message was not delivered to it."
-
-
-async def test_declined_wake_reports_how_to_resume_delivery() -> None:
-    controller, manager, sessions, mailbox = _controller()
-    sessions.get.return_value.source = "claude"
-    mailbox.send.return_value = MailboxSendResult(
-        wake_results=[
-            {"session_id": SESSION_ID, "delivered": False, "skipped": "awaiting_approval"}
-        ]
-    )
-    assert await controller.handle(_channel().name, _message(content="Status?")) is True
-    manager.send_message.assert_awaited_once()
-    assert "Resume the session in its pane" in manager.send_message.await_args.args[1]
 
 
 @pytest.mark.parametrize("route", ["attached", "reply", "callback"])
