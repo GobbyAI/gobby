@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import time
@@ -30,41 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Bounded window owned by the critical ownership and dispatch-mutex releases.
 CRITICAL_TERMINAL_CLEANUP_TIMEOUT_SECONDS = 15.0
-
-
-async def cleanup_merged_task_artifacts_after_agent_exit(
-    db: HubDatabase,
-    task_id: str,
-    *,
-    preserve_worktree_id: str | None = None,
-) -> list[Any]:
-    """Retry merge artifact cleanup once the owning agent is no longer active."""
-    from gobby.build.controls import cleanup_successful_merge_artifacts
-    from gobby.storage.tasks import LocalTaskManager
-
-    task_manager = LocalTaskManager(db)
-
-    async def cleanup() -> list[Any]:
-        if preserve_worktree_id:
-            return await cleanup_successful_merge_artifacts(
-                db,
-                task_id,
-                preserve_worktree_ids={preserve_worktree_id},
-            )
-        return await cleanup_successful_merge_artifacts(db, task_id)
-
-    # Artifact teardown follows critical cleanup and owns a fresh bounded window.
-    with detached_database_operation_deadline(
-        timeout_seconds=CRITICAL_TERMINAL_CLEANUP_TIMEOUT_SECONDS
-    ):
-        merge_stage = await asyncio.to_thread(task_manager.stage_states.get, task_id, "merge")
-        if merge_stage is not None and merge_stage.state == "done":
-            return await cleanup()
-
-        task = await asyncio.to_thread(task_manager.get_task, task_id)
-        if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
-            return []
-        return await cleanup()
 
 
 class TerminalResourceCleaner:
@@ -254,40 +218,6 @@ class TerminalResourceCleaner:
                 cleanup.dispatch_mutex_rows,
                 cleanup.workflow_instance_rows,
             )
-        if run.task_id and not parking:
-            try:
-                initial_variables = (run.resume_metadata_json or {}).get("initial_variables")
-                reused_worktree = (
-                    isinstance(initial_variables, dict)
-                    and initial_variables.get("reused_worktree") is True
-                )
-                cleanup_kwargs = (
-                    {"preserve_worktree_id": run.worktree_id}
-                    if reused_worktree and run.worktree_id
-                    else {}
-                )
-                artifacts = await cleanup_merged_task_artifacts_after_agent_exit(
-                    self._db,
-                    run.task_id,
-                    **cleanup_kwargs,
-                )
-                deleted_count = len([artifact for artifact in artifacts if artifact.deleted])
-                deferred_count = len([artifact for artifact in artifacts if artifact.deferred])
-                if deleted_count or deferred_count:
-                    logger.info(
-                        "Post-agent merge artifact cleanup for %s: deleted=%s deferred=%s",
-                        run.id,
-                        deleted_count,
-                        deferred_count,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Post-agent merge artifact cleanup failed for run %s task %s: %s",
-                    run.id,
-                    run.task_id,
-                    type(exc).__name__,
-                )
-        finish_phase("merge_artifacts")
 
     async def _close_tmux_session(self, run: AgentRun) -> bool:
         from gobby.agents.capture import backend_session_present

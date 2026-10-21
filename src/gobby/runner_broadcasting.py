@@ -7,10 +7,8 @@ to WebSocket clients. Extracted from runner.py to reduce file size.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -28,8 +26,6 @@ if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
-
-RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
 
 
 async def _emit_pty_terminal_output(websocket_server: object, run_id: str, data: str) -> None:
@@ -138,67 +134,6 @@ def setup_terminal_lifecycle_broadcasting(
             )
 
     terminal_manager.set_transition_observer(observe)
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineTerminalPayload:
-    execution_id: str
-    data: dict[str, Any]
-
-
-def _callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool:
-    """Return whether ``callback`` can be called with ``keyword=...``."""
-    try:
-        signature = inspect.signature(callback)
-    except (TypeError, ValueError):
-        return True
-    for parameter in signature.parameters.values():
-        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
-            return True
-        if (
-            parameter.kind
-            in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            and parameter.name == keyword
-        ):
-            return True
-    return False
-
-
-async def _dispatch_pipeline_terminal_event(
-    run_db: RunDbHook | None,
-    dispatch: Callable[..., Any],
-    payload: PipelineTerminalPayload,
-    *,
-    db: Any,
-) -> None:
-    """Run terminal pipeline hooks through run_db when available."""
-
-    def invoke_run_db(hook: Callable[..., Any]) -> Any:
-        if _callable_accepts_keyword(hook, "db"):
-            return hook(dispatch, payload, db=db)
-        return hook(dispatch, payload)
-
-    def invoke_dispatch() -> Any:
-        if _callable_accepts_keyword(dispatch, "db"):
-            return dispatch(payload, db=db)
-        return dispatch(payload)
-
-    if callable(run_db):
-        is_async = inspect.iscoroutinefunction(run_db) or inspect.iscoroutinefunction(
-            type(run_db).__call__
-        )
-        result = (
-            invoke_run_db(run_db) if is_async else await asyncio.to_thread(invoke_run_db, run_db)
-        )
-    else:
-        is_async_dispatch = inspect.iscoroutinefunction(dispatch) or inspect.iscoroutinefunction(
-            type(dispatch).__call__
-        )
-        result = (
-            invoke_dispatch() if is_async_dispatch else await asyncio.to_thread(invoke_dispatch)
-        )
-    if inspect.isawaitable(result):
-        await result
 
 
 def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
@@ -377,30 +312,6 @@ def setup_pipeline_event_broadcasting(
 
     async def broadcast_pipeline_event(event: str, execution_id: str, **kwargs: Any) -> None:
         """Broadcast pipeline events via WebSocket."""
-        if event in {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}:
-            from gobby.hooks.event_handlers import _dispatch
-
-            payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
-            db = getattr(pipeline_executor, "db", None)
-            # run_db may be an async callable object; inspect the returned value.
-            run_db: RunDbHook | None = getattr(pipeline_executor, "run_db", None)
-            try:
-                if event == "pipeline_completed":
-                    dispatch = _dispatch.on_pipeline_completed
-                elif event == "pipeline_failed":
-                    dispatch = _dispatch.on_pipeline_failed
-                else:
-                    dispatch = _dispatch.on_pipeline_cancelled
-
-                await _dispatch_pipeline_terminal_event(run_db, dispatch, payload, db=db)
-            except Exception as exc:
-                logger.warning(
-                    "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",
-                    event,
-                    execution_id,
-                    exc,
-                    exc_info=True,
-                )
         if websocket_server:
             await websocket_server.broadcast_pipeline_event(
                 event=event,

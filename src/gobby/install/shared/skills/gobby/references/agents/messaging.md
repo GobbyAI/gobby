@@ -2,7 +2,7 @@
 
 Load when sending or reading cross-session work, blockers, or repository notices.
 Use `gobby-agents:send_message`; terminal keystrokes are not a messaging transport.
-Discover the intended session/run/build identity before selecting the target.
+Discover the intended session or agent run identity before selecting the target.
 
 Target `parent` resolves the session that spawned the sender, forbids `target_id`,
 and is available only to spawned agents. Spawned agents may omit `target`
@@ -10,7 +10,7 @@ and is available only to spawned agents. Spawned agents may omit `target`
 `scope-spawned-agent-send-message` limits a spawned agent to the target modes its
 agent definition lists in `send_message_targets`; the default is `["parent"]`.
 Root sessions may use every mode.
-Targets `session`, `agent`, and `build` require `target_id`. A targetless `project`
+Targets `session` and `agent` require `target_id`. A targetless `project`
 send coordinates the current repository; targetless `global` reaches other live
 non-system sessions on the sender's machine across projects. Ordinary project
 broadcasts derive project scope from the sender; do not override it. System sends
@@ -18,7 +18,7 @@ must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
-`session`, `parent`, and `agent` targets. `project`, `global`, and `build` fanout
+`session`, `parent`, and `agent` targets. `project` and `global` fanout
 stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
 to queue any target without a live wake. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without

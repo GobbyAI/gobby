@@ -4194,7 +4194,7 @@
           "activation": "live",
           "machineExport": false,
           "default": true,
-          "description": "Enable daemon-owned automation dispatch and maintenance."
+          "description": "Enable daemon-owned stale-claim sweeps and pipeline maintenance."
         },
         "system_loops.automation.interval_seconds": {
           "type": "integer",

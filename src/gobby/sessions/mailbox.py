@@ -5,25 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import uuid
-from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
-from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import (
     LIVE_SESSION_STATUS_ORDER,
     ensure_system_session,
     system_session_id,
 )
-from gobby.storage.tasks._id import resolve_task_reference
-from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
@@ -41,9 +35,7 @@ if TYPE_CHECKING:
 
 ACTIVE_AGENT_RUN_STATUSES = ("queued", "pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
-MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent", "build")
-AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
-AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
+MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent")
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +109,6 @@ class MailboxService:
         self._message_manager = message_manager
         self._session_manager = session_manager
         self._wake_dispatcher = wake_dispatcher
-        self._agent_cross_project_auth_cache: OrderedDict[tuple[str, str], tuple[float, bool]] = (
-            OrderedDict()
-        )
 
     async def send(
         self,
@@ -330,43 +319,10 @@ class MailboxService:
                 selector_metadata={"target": "session", "session_id": recipient_id},
             )
 
-        if normalized_target == "agent":
-            return self._resolve_agent_target(
-                from_session_id=from_session_id,
-                agent_run_id=clean_target_id,
-                project_id=project_id,
-            )
-
-        root_task_id, build_selector = self._resolve_build_target(
-            target_id=clean_target_id,
+        return self._resolve_agent_target(
             from_session_id=from_session_id,
+            agent_run_id=clean_target_id,
             project_id=project_id,
-        )
-        build_project_id = str(
-            build_selector.get("project_id") or self._task_project_id(root_task_id)
-        )
-        self._validate_build_sender(
-            from_session_id=from_session_id,
-            root_task_id=root_task_id,
-            build_project_id=build_project_id,
-        )
-        return MailboxTargetResolution(
-            target=normalized_target,
-            target_id=clean_target_id,
-            recipient_session_ids=self._build_recipient_session_ids(
-                from_session_id=from_session_id,
-                root_task_id=root_task_id,
-            ),
-            selector_metadata={
-                **build_selector,
-                **self._agent_selector_metadata(
-                    target="build",
-                    project_id=build_project_id,
-                    exclude_session_id=from_session_id,
-                ),
-                "root_task_id": root_task_id,
-            },
-            fanout=True,
         )
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
@@ -433,150 +389,6 @@ class MailboxService:
             )
         return to_session_id
 
-    def _validate_build_sender(
-        self,
-        *,
-        from_session_id: str,
-        root_task_id: str,
-        build_project_id: str,
-    ) -> None:
-        if from_session_id == system_session_id():
-            return
-        sender: Session | None = self._session_manager.get(from_session_id)
-        if sender is None:
-            raise ValueError(f"Sender session not found: {from_session_id}")
-        if sender.project_id == build_project_id:
-            return
-        if self._allows_cross_project_build_coordinator(
-            from_session_id=from_session_id,
-            build_project_id=build_project_id,
-            task_id=root_task_id,
-        ):
-            return
-        raise ValueError(
-            "Cross-project build messaging not allowed. "
-            f"Sender project: {sender.project_id}, build project: {build_project_id}"
-        )
-
-    def _allows_cross_project_build_coordinator(
-        self,
-        *,
-        from_session_id: str,
-        build_project_id: str,
-        task_id: str,
-    ) -> bool:
-        sender: Session | None = self._session_manager.get(from_session_id)
-        if sender is None:
-            raise ValueError(f"Sender session not found: {from_session_id}")
-
-        run = BuildHistoryStorage(self._db).latest_coordinated_run_for_task(
-            build_project_id,
-            task_id,
-        )
-        if run is None or not run.summary:
-            return False
-        if run.summary.get("coordinator_session_id") != from_session_id:
-            return False
-        return summary_allows_cross_project_coordinator(
-            run.summary,
-            coordinator_project_id=sender.project_id,
-            build_project_id=build_project_id,
-        )
-
-    def _allows_cached_cross_project_build_coordinator(
-        self,
-        *,
-        from_session_id: str,
-        build_project_id: str,
-        task_id: str | None,
-    ) -> bool:
-        if task_id is None:
-            return False
-
-        now = time.monotonic()
-        cache_key = (from_session_id, task_id)
-        cached = self._agent_cross_project_auth_cache.get(cache_key)
-        if cached is not None:
-            expires_at, allowed = cached
-            if expires_at > now:
-                if self._session_manager.get(from_session_id) is None:
-                    self._agent_cross_project_auth_cache.pop(cache_key, None)
-                    return False
-                self._agent_cross_project_auth_cache.move_to_end(cache_key)
-                return allowed
-            self._agent_cross_project_auth_cache.pop(cache_key, None)
-
-        allowed = self._allows_cross_project_build_coordinator(
-            from_session_id=from_session_id,
-            build_project_id=build_project_id,
-            task_id=task_id,
-        )
-        self._agent_cross_project_auth_cache[cache_key] = (
-            now + AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS,
-            allowed,
-        )
-        while len(self._agent_cross_project_auth_cache) > AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE:
-            self._agent_cross_project_auth_cache.popitem(last=False)
-        return allowed
-
-    def _agent_recipient_session_ids(
-        self,
-        *,
-        from_session_id: str,
-        project_id: str,
-    ) -> list[str]:
-        active_status_placeholders = ",".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
-        rows = self._db.fetchall(
-            f"""
-            SELECT
-                ar.child_session_id,
-                ar.parent_session_id,
-                child.status AS child_status,
-                parent.status AS parent_status
-            FROM agent_runs ar
-            LEFT JOIN sessions child ON child.id = ar.child_session_id
-            LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
-            WHERE ar.status IN ({active_status_placeholders})
-              AND COALESCE(child.project_id, parent.project_id) = %s
-            ORDER BY ar.created_at ASC
-            """,
-            (*ACTIVE_AGENT_RUN_STATUSES, project_id),
-        )
-
-        return self._dedupe_agent_recipient_rows(rows, from_session_id=from_session_id)
-
-    def _build_recipient_session_ids(
-        self,
-        *,
-        from_session_id: str,
-        root_task_id: str,
-    ) -> list[str]:
-        active_status_placeholders = ",".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
-        rows = self._db.fetchall(
-            f"""
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM tasks WHERE id = %s
-                UNION ALL
-                SELECT child.id
-                  FROM tasks child
-                  JOIN subtree parent ON child.parent_task_id = parent.id
-            )
-            SELECT
-                ar.child_session_id,
-                ar.parent_session_id,
-                child.status AS child_status,
-                parent.status AS parent_status
-            FROM agent_runs ar
-            JOIN subtree ON subtree.id = ar.task_id
-            LEFT JOIN sessions child ON child.id = ar.child_session_id
-            LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
-            WHERE ar.status IN ({active_status_placeholders})
-            ORDER BY ar.created_at ASC
-            """,
-            (root_task_id, *ACTIVE_AGENT_RUN_STATUSES),
-        )
-        return self._dedupe_agent_recipient_rows(rows, from_session_id=from_session_id)
-
     def _resolve_agent_target(
         self,
         *,
@@ -615,23 +427,12 @@ class MailboxService:
         if recipient_id is None:
             raise ValueError(f"Agent target has no deliverable session: {agent_run_id}")
 
-        recipient: Session | None = self._session_manager.get(recipient_id)
         task_id = str(row["task_id"]) if row["task_id"] is not None else None
-        allow_cross_project = False
-        if from_session_id != system_session_id() and recipient is not None and task_id is not None:
-            sender: Session | None = self._session_manager.get(from_session_id)
-            if sender is not None and sender.project_id != recipient.project_id:
-                task_project_id = self._task_project_id(task_id)
-                allow_cross_project = self._allows_cached_cross_project_build_coordinator(
-                    from_session_id=from_session_id,
-                    build_project_id=task_project_id,
-                    task_id=task_id,
-                )
         recipient_id = self._validate_direct_recipient(
             from_session_id=from_session_id,
             to_session_id=recipient_id,
             project_id=project_id,
-            allow_cross_project=allow_cross_project,
+            allow_cross_project=False,
         )
         return MailboxTargetResolution(
             target="agent",
@@ -644,144 +445,6 @@ class MailboxService:
                 "task_id": task_id,
             },
         )
-
-    def _resolve_build_target(
-        self,
-        *,
-        target_id: str,
-        from_session_id: str,
-        project_id: str | None,
-    ) -> tuple[str, dict[str, Any]]:
-        sender_project_id = self._resolve_project_id(from_session_id, project_id)
-
-        run_row = self._db.fetchone(
-            "SELECT id, project_id, root_task_id, input_ref FROM build_runs WHERE id = %s",
-            (target_id,),
-        )
-        if run_row is not None:
-            if project_id and str(run_row["project_id"]) != sender_project_id:
-                raise ValueError("Build target is outside the target project")
-            root_task_id = self._resolve_build_run_root_task(
-                run_row=run_row,
-                fallback_project_id=sender_project_id,
-            )
-            return root_task_id, {
-                "target": "build",
-                "build_run_id": str(run_row["id"]),
-                "input_ref": run_row["input_ref"],
-                "project_id": str(run_row["project_id"]),
-                "selector_source": "build_run",
-            }
-
-        input_rows = self._db.fetchall(
-            """
-            SELECT id, project_id, root_task_id, input_ref
-              FROM build_runs
-             WHERE project_id = %s
-               AND input_ref = %s
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (sender_project_id, target_id),
-        )
-        if input_rows:
-            root_task_id = self._resolve_build_run_root_task(
-                run_row=input_rows[0],
-                fallback_project_id=sender_project_id,
-            )
-            return root_task_id, {
-                "target": "build",
-                "build_run_id": str(input_rows[0]["id"]),
-                "input_ref": input_rows[0]["input_ref"],
-                "project_id": str(input_rows[0]["project_id"]),
-                "selector_source": "build_input",
-            }
-
-        try:
-            root_task_id = resolve_task_reference(self._db, target_id, sender_project_id)
-        except TaskNotFoundError:
-            root_task_id = ""
-        if root_task_id:
-            task_project_id = self._task_project_id(root_task_id)
-            return root_task_id, {
-                "target": "build",
-                "project_id": task_project_id,
-                "selector_source": "root_task",
-            }
-
-        raise ValueError(f"Build target not found: {target_id}")
-
-    def _resolve_build_run_root_task(
-        self,
-        *,
-        run_row: Mapping[str, Any],
-        fallback_project_id: str,
-    ) -> str:
-        root_task_id = run_row["root_task_id"]
-        if root_task_id:
-            return str(root_task_id)
-
-        input_ref = run_row["input_ref"]
-        if input_ref:
-            try:
-                return resolve_task_reference(self._db, str(input_ref), str(run_row["project_id"]))
-            except TaskNotFoundError:
-                try:
-                    return resolve_task_reference(self._db, str(input_ref), fallback_project_id)
-                except TaskNotFoundError:
-                    pass
-        raise ValueError(f"Build run has no resolvable root task: {run_row['id']}")
-
-    def _task_project_id(self, task_id: str) -> str:
-        row = self._db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (task_id,))
-        if row is None:
-            raise ValueError(f"Task not found: {task_id}")
-        return str(row["project_id"])
-
-    @staticmethod
-    def _agent_selector_metadata(
-        *,
-        target: str,
-        project_id: str | None,
-        exclude_session_id: str,
-    ) -> dict[str, Any]:
-        return {
-            "target": target,
-            "project_id": project_id,
-            "agent_run_status": list(ACTIVE_AGENT_RUN_STATUSES),
-            "session_status": list(DELIVERABLE_SESSION_STATUSES),
-            "exclude_session_id": exclude_session_id,
-        }
-
-    def _dedupe_agent_recipient_rows(
-        self,
-        rows: list[Mapping[str, Any]],
-        *,
-        from_session_id: str,
-    ) -> list[str]:
-        recipients: list[str] = []
-        for row in rows:
-            recipient_id = self._select_agent_recipient(
-                child_id=row["child_session_id"],
-                child_status=row["child_status"],
-                parent_id=row["parent_session_id"],
-                parent_status=row["parent_status"],
-            )
-            if recipient_id is None or recipient_id == from_session_id:
-                continue
-            recipients.append(recipient_id)
-        return self._dedupe(recipients)
-
-    @staticmethod
-    def _dedupe(values: list[str]) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            if value in seen:
-                continue
-            result.append(value)
-            seen.add(value)
-        return result
 
     @staticmethod
     def _select_agent_recipient(

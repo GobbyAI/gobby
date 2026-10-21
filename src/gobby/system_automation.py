@@ -1,4 +1,4 @@
-"""Daemon-owned automation loop for dispatch and pipeline maintenance."""
+"""Daemon-owned stale-claim sweeps and pipeline maintenance."""
 
 from __future__ import annotations
 
@@ -9,44 +9,14 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-from gobby.build.claim_recovery import recover_safe_build_claims
-from gobby.build.dispatch_tick import DispatcherTickSummary
-from gobby.build.project_state import is_project_automation_enabled
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import RuntimeActiveBundle
-from gobby.dispatch.dispatcher import (
-    run_heartbeat,
-    sweep_orphan_no_run_dispatch_mutexes,
-)
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
-from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._automation import sweep_stale_claims
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DIRECT_TICK_BURST = 3
 AUTOMATION_TICK_TIMEOUT_SECONDS = 120.0
-PROJECT_DISPATCH_TIMEOUT_SECONDS = 120.0
-
-
-def _log_project_dispatch_summary(
-    *,
-    project_id: str,
-    trigger_reason: str,
-    summary: DispatcherTickSummary,
-) -> None:
-    has_operational_event = (
-        summary.executed > 0 or summary.cap_reached or summary.reason is not None
-    )
-    log_summary = logger.info if has_operational_event else logger.debug
-    log_summary(
-        "system_automation_project_dispatch",
-        extra={
-            "project_id": project_id,
-            "trigger_reason": trigger_reason,
-            **asdict(summary),
-        },
-    )
 
 
 @dataclass(frozen=True)
@@ -59,13 +29,9 @@ class AutomationLoopSettings:
 
 @dataclass(frozen=True)
 class AutomationMaintenanceSummary:
-    """Counts from non-dispatch maintenance run by the automation loop."""
+    """Counts from maintenance run by the automation loop."""
 
-    safe_claims_considered: int = 0
-    safe_claims_released: int = 0
-    safe_claims_refused: int = 0
     stale_claims_released: int = 0
-    orphan_mutexes_released: int = 0
     pipeline_stalled_handled: int = 0
     pipeline_stale_tasks_recovered: int = 0
     pipeline_running_executions: int = 0
@@ -77,38 +43,13 @@ class AutomationTickSummary:
     """Lightweight in-memory result for one automation loop tick."""
 
     reason: str
-    projects: list[str] = field(default_factory=list)
-    dispatch: dict[str, DispatcherTickSummary] = field(default_factory=dict)
     maintenance: AutomationMaintenanceSummary = field(default_factory=AutomationMaintenanceSummary)
     duration_ms: float = 0.0
     error: str | None = None
 
 
-@dataclass(frozen=True)
-class _PendingProjectDispatch:
-    """Coalesced wake that arrived while a project dispatch was running."""
-
-    reason: str
-    max_ticks: int | None
-    max_actions: int | None
-    max_active_agents: int | None
-    explicit_task_ids: tuple[str, ...] | None
-    waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = ()
-    run_without_waiter: bool = False
-
-
-def _merge_explicit_task_ids(
-    current: tuple[str, ...] | None,
-    incoming: tuple[str, ...] | None,
-) -> tuple[str, ...] | None:
-    """Merge coalesced dispatch scopes; ``None`` means the whole project."""
-    if current is None or incoming is None:
-        return None
-    return tuple(dict.fromkeys((*current, *incoming)))
-
-
 class PipelineHeartbeatService(Protocol):
-    """Pipeline heartbeat methods used by the automation loop."""
+    """Pipeline maintenance operations used by the automation loop."""
 
     async def check_stalled_executions(self) -> int: ...
 
@@ -118,7 +59,7 @@ class PipelineHeartbeatService(Protocol):
 
 
 class SystemAutomationLoop:
-    """Daemon-owned loop replacing cron-backed dispatcher automation."""
+    """Run daemon-owned claim and pipeline maintenance."""
 
     def __init__(
         self,
@@ -136,16 +77,8 @@ class SystemAutomationLoop:
         self._db_runner = run_db or getattr(services, "run_db", None)
         self._running = False
         self._loop_task: asyncio.Task[None] | None = None
-        self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._project_tasks: dict[str, asyncio.Task[DispatcherTickSummary]] = {}
-        self._project_task_waiters: dict[
-            str, tuple[asyncio.Future[DispatcherTickSummary], ...]
-        ] = {}
-        self._project_task_runs_without_waiter: set[str] = set()
-        self._pending_project_dispatches: dict[str, _PendingProjectDispatch] = {}
         self._tick_lock = asyncio.Lock()
         self._tick_count = 0
-        self._dispatch_count = 0
         self._last_settings = AutomationLoopSettings()
         self._last_tick: AutomationTickSummary | None = None
         self._last_tick_at: str | None = None
@@ -156,7 +89,6 @@ class SystemAutomationLoop:
         """Start the automation loop."""
         if self._running:
             return
-        self._event_loop = asyncio.get_running_loop()
         self._running = True
         self._last_settings = self.resolve_settings()
         self._loop_task = asyncio.create_task(
@@ -170,68 +102,21 @@ class SystemAutomationLoop:
         )
 
     async def stop(self) -> None:
-        """Stop the automation loop and any queued direct ticks."""
+        """Stop the automation loop."""
         self._running = False
-        tasks = [task for task in [self._loop_task] if task is not None]
-        for task in tasks:
+        task = self._loop_task
+        if task is not None:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        if self._project_tasks:
-            for pending in self._pending_project_dispatches.values():
-                for waiter in pending.waiters:
-                    waiter.cancel()
-            self._pending_project_dispatches.clear()
-            for project_task in list(self._project_tasks.values()):
-                project_task.cancel()
-            await asyncio.gather(*self._project_tasks.values(), return_exceptions=True)
-            self._project_tasks.clear()
-            self._project_task_waiters.clear()
-            self._project_task_runs_without_waiter.clear()
+            await asyncio.gather(task, return_exceptions=True)
         self._loop_task = None
         logger.info("System automation loop stopped")
 
     def set_services(self, services: object) -> None:
-        """Update service container reference after HTTP wiring is complete."""
         self.services = services
         self._db_runner = getattr(services, "run_db", None) or self._db_runner
 
-    def schedule_project_dispatch(
-        self,
-        *,
-        project_id: str | None,
-        reason: str,
-        max_ticks: int | None = None,
-        max_actions: int | None = None,
-        max_active_agents: int | None = None,
-        explicit_task_ids: tuple[str, ...] | None = None,
-    ) -> bool:
-        """Schedule an in-memory dispatch tick for a project."""
-        if not self._running:
-            return False
-        if not project_id:
-            return False
-        loop = self._event_loop
-        if loop is None or loop.is_closed():
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return False
-            self._event_loop = loop
-
-        loop.call_soon_threadsafe(
-            self._schedule_project_dispatch_on_loop,
-            project_id,
-            reason,
-            max_ticks,
-            max_actions,
-            max_active_agents,
-            explicit_task_ids,
-        )
-        return True
-
     async def run_once(self, *, reason: str = "interval") -> AutomationTickSummary:
-        """Run one automation tick now."""
+        """Run one bounded maintenance tick."""
         return await self._run_once_with_settings(self.resolve_settings(), reason=reason)
 
     async def _run_once_with_settings(
@@ -269,27 +154,16 @@ class SystemAutomationLoop:
     ) -> AutomationTickSummary:
         async with self._tick_lock:
             try:
-                maintenance = await self._run_pre_dispatch_maintenance()
-                project_ids = await self._dispatchable_project_ids()
-                dispatch = await self._dispatch_projects(project_ids, reason=reason)
+                stale_claims_released = await self._run_claim_maintenance()
                 pipeline = await self._run_pipeline_maintenance()
                 maintenance = AutomationMaintenanceSummary(
-                    safe_claims_considered=maintenance.safe_claims_considered,
-                    safe_claims_released=maintenance.safe_claims_released,
-                    safe_claims_refused=maintenance.safe_claims_refused,
-                    stale_claims_released=maintenance.stale_claims_released,
-                    orphan_mutexes_released=maintenance.orphan_mutexes_released,
+                    stale_claims_released=stale_claims_released,
                     pipeline_stalled_handled=pipeline.pipeline_stalled_handled,
                     pipeline_stale_tasks_recovered=pipeline.pipeline_stale_tasks_recovered,
                     pipeline_running_executions=pipeline.pipeline_running_executions,
                     pipeline_stale_task_candidates=pipeline.pipeline_stale_task_candidates,
                 )
-                summary = AutomationTickSummary(
-                    reason=reason,
-                    projects=project_ids,
-                    dispatch=dispatch,
-                    maintenance=maintenance,
-                )
+                summary = AutomationTickSummary(reason=reason, maintenance=maintenance)
                 self._record_tick(summary, started)
                 self._last_success_at = self._last_tick_at
                 self._last_error = None
@@ -301,112 +175,21 @@ class SystemAutomationLoop:
                 self._last_error = str(exc)
                 return summary
 
-    async def dispatch_project_once(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None = None,
-        max_actions: int | None = None,
-        max_active_agents: int | None = None,
-        explicit_task_ids: tuple[str, ...] | None = None,
-    ) -> DispatcherTickSummary:
-        """Run a bounded project heartbeat burst without cron bookkeeping."""
-        settings = self.resolve_settings()
-        self._last_settings = settings
-        if not settings.enabled:
-            return DispatcherTickSummary(reason="automation_disabled")
-        if not await self._project_automation_enabled(project_id):
-            return DispatcherTickSummary(reason="project_automation_paused")
-
-        timeout_seconds = PROJECT_DISPATCH_TIMEOUT_SECONDS
-        try:
-            return await asyncio.wait_for(
-                self._dispatch_project_once_enabled(
-                    project_id=project_id,
-                    reason=reason,
-                    max_ticks=max_ticks,
-                    max_actions=max_actions,
-                    max_active_agents=max_active_agents,
-                    explicit_task_ids=explicit_task_ids,
-                ),
-                timeout=timeout_seconds,
-            )
-        except TimeoutError:
-            logger.error(
-                "System automation project dispatch timed out after %ss",
-                timeout_seconds,
-                extra={"project_id": project_id, "reason": reason},
-            )
-            return DispatcherTickSummary(
-                reason=(
-                    "project_dispatch_timeout:"
-                    f"project_id={project_id}:reason={reason}:timeout={timeout_seconds:g}s"
-                ),
-            )
-
-    async def _dispatch_project_once_enabled(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None = None,
-        max_actions: int | None = None,
-        max_active_agents: int | None = None,
-        explicit_task_ids: tuple[str, ...] | None = None,
-    ) -> DispatcherTickSummary:
-        await recover_safe_build_claims(self.db, project_id)
-        summary = DispatcherTickSummary()
-        for _ in range(max_ticks or DEFAULT_DIRECT_TICK_BURST):
-            result = await run_heartbeat(
-                db=self.db,
-                project_id=project_id,
-                services=self.services,
-                max_actions=max_actions,
-                max_active_agents=max_active_agents,
-                explicit_task_ids=explicit_task_ids,
-            )
-            reason_value = result.reason or (
-                "cap_reached" if result.cap_reached else summary.reason
-            )
-            summary = DispatcherTickSummary(
-                ticks=summary.ticks + 1,
-                scanned=summary.scanned + result.scanned,
-                executed=summary.executed + result.executed,
-                skipped=summary.skipped + result.skipped,
-                cap_reached=summary.cap_reached or result.cap_reached,
-                reason=reason_value,
-            )
-            if result.executed == 0 or result.cap_reached or result.reason:
-                break
-        self._dispatch_count += summary.executed
-        _log_project_dispatch_summary(
-            project_id=project_id,
-            trigger_reason=reason,
-            summary=summary,
-        )
-        return summary
-
     def resolve_settings(self) -> AutomationLoopSettings:
-        """Resolve settings from one runtime-active bundle."""
         return self._settings_from_config(self._capture_bundle().snapshot.active)
 
     def status_snapshot(self) -> dict[str, Any]:
         """Return lightweight service status for admin status endpoints."""
-        last_tick = self._last_tick
         return {
             "enabled": self._last_settings.enabled,
             "running": self._running,
             "interval_seconds": self._last_settings.interval_seconds,
             "tick_count": self._tick_count,
-            "dispatch_count": self._dispatch_count,
             "last_tick_at": self._last_tick_at,
             "last_success_at": self._last_success_at,
             "last_error": self._last_error,
-            "last_tick": _tick_payload(last_tick) if last_tick is not None else None,
-            "pending_projects": sorted(self._project_tasks.keys()),
+            "last_tick": asdict(self._last_tick) if self._last_tick is not None else None,
             "tick_timeout_seconds": AUTOMATION_TICK_TIMEOUT_SECONDS,
-            "project_dispatch_timeout_seconds": PROJECT_DISPATCH_TIMEOUT_SECONDS,
         }
 
     async def _run_loop(self) -> None:
@@ -420,299 +203,8 @@ class SystemAutomationLoop:
             except asyncio.CancelledError:
                 break
 
-    def _schedule_project_dispatch_on_loop(
-        self,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None,
-        max_actions: int | None,
-        max_active_agents: int | None,
-        explicit_task_ids: tuple[str, ...] | None = None,
-    ) -> None:
-        if not self._running:
-            return
-        self._enqueue_project_dispatch(
-            project_id=project_id,
-            reason=reason,
-            max_ticks=max_ticks,
-            max_actions=max_actions,
-            max_active_agents=max_active_agents,
-            explicit_task_ids=explicit_task_ids,
-        )
-
-    def _enqueue_project_dispatch(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None,
-        max_actions: int | None,
-        max_active_agents: int | None,
-        explicit_task_ids: tuple[str, ...] | None = None,
-        waiter: asyncio.Future[DispatcherTickSummary] | None = None,
-    ) -> None:
-        existing = self._project_tasks.get(project_id)
-        if existing is not None and existing.done():
-            self._on_project_dispatch_done(
-                project_id,
-                existing,
-                self._project_task_waiters.get(project_id, ()),
-            )
-            existing = self._project_tasks.get(project_id)
-        if existing is not None and not existing.done():
-            pending = self._pending_project_dispatches.get(project_id)
-            waiters = pending.waiters if pending is not None else ()
-            run_without_waiter = pending.run_without_waiter if pending is not None else False
-            if pending is not None:
-                explicit_task_ids = _merge_explicit_task_ids(
-                    pending.explicit_task_ids,
-                    explicit_task_ids,
-                )
-            if waiter is not None:
-                waiters = (*waiters, waiter)
-            else:
-                run_without_waiter = True
-            self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
-                reason=reason,
-                max_ticks=max_ticks,
-                max_actions=max_actions,
-                max_active_agents=max_active_agents,
-                explicit_task_ids=explicit_task_ids,
-                waiters=waiters,
-                run_without_waiter=run_without_waiter,
-            )
-            return
-        self._start_project_dispatch_task(
-            project_id=project_id,
-            reason=reason,
-            max_ticks=max_ticks,
-            max_actions=max_actions,
-            max_active_agents=max_active_agents,
-            explicit_task_ids=explicit_task_ids,
-            waiters=(waiter,) if waiter is not None else (),
-            run_without_waiter=waiter is None,
-        )
-
-    def _start_project_dispatch_task(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None,
-        max_actions: int | None,
-        max_active_agents: int | None,
-        explicit_task_ids: tuple[str, ...] | None,
-        waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = (),
-        run_without_waiter: bool = False,
-    ) -> None:
-        task = asyncio.create_task(
-            self._run_scheduled_project_dispatch(
-                project_id=project_id,
-                reason=reason,
-                max_ticks=max_ticks,
-                max_actions=max_actions,
-                max_active_agents=max_active_agents,
-                explicit_task_ids=explicit_task_ids,
-            ),
-            name=f"system-automation-dispatch-{project_id}",
-        )
-        self._project_tasks[project_id] = task
-        self._project_task_waiters[project_id] = waiters
-        if run_without_waiter:
-            self._project_task_runs_without_waiter.add(project_id)
-        else:
-            self._project_task_runs_without_waiter.discard(project_id)
-        task.add_done_callback(
-            lambda done_task: self._on_project_dispatch_done(project_id, done_task, waiters)
-        )
-
-    def _on_project_dispatch_done(
-        self,
-        project_id: str,
-        task: asyncio.Task[DispatcherTickSummary],
-        waiters: tuple[asyncio.Future[DispatcherTickSummary], ...],
-    ) -> None:
-        if self._project_tasks.get(project_id) is not task:
-            return
-        self._project_tasks.pop(project_id, None)
-        self._project_task_waiters.pop(project_id, None)
-        self._project_task_runs_without_waiter.discard(project_id)
-        if task.cancelled():
-            for waiter in waiters:
-                waiter.cancel()
-        else:
-            error = task.exception()
-            if error is None:
-                result = task.result()
-                for waiter in waiters:
-                    if not waiter.done():
-                        waiter.set_result(result)
-            else:
-                for waiter in waiters:
-                    if not waiter.done():
-                        waiter.set_exception(error)
-        pending = self._pending_project_dispatches.pop(project_id, None)
-        if pending is None:
-            return
-        self._start_project_dispatch_task(
-            project_id=project_id,
-            reason=pending.reason,
-            max_ticks=pending.max_ticks,
-            max_actions=pending.max_actions,
-            max_active_agents=pending.max_active_agents,
-            explicit_task_ids=pending.explicit_task_ids,
-            waiters=pending.waiters,
-            run_without_waiter=pending.run_without_waiter,
-        )
-
-    async def _run_scheduled_project_dispatch(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None,
-        max_actions: int | None,
-        max_active_agents: int | None,
-        explicit_task_ids: tuple[str, ...] | None,
-    ) -> DispatcherTickSummary:
-        try:
-            return await self.dispatch_project_once(
-                project_id=project_id,
-                reason=reason,
-                max_ticks=max_ticks,
-                max_actions=max_actions,
-                max_active_agents=max_active_agents,
-                explicit_task_ids=explicit_task_ids,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Scheduled system automation dispatch failed",
-                extra={"project_id": project_id, "reason": reason},
-                exc_info=True,
-            )
-            raise
-
-    async def _dispatch_project_serialized(
-        self,
-        *,
-        project_id: str,
-        reason: str,
-        max_ticks: int | None = None,
-    ) -> DispatcherTickSummary:
-        waiter: asyncio.Future[DispatcherTickSummary] = asyncio.get_running_loop().create_future()
-        self._enqueue_project_dispatch(
-            project_id=project_id,
-            reason=reason,
-            max_ticks=max_ticks,
-            max_actions=None,
-            max_active_agents=None,
-            explicit_task_ids=None,
-            waiter=waiter,
-        )
-        try:
-            return await waiter
-        except asyncio.CancelledError:
-            self._cancel_project_dispatch_waiter(project_id, waiter)
-            raise
-
-    def _cancel_project_dispatch_waiter(
-        self,
-        project_id: str,
-        waiter: asyncio.Future[DispatcherTickSummary],
-    ) -> None:
-        pending = self._pending_project_dispatches.get(project_id)
-        if pending is not None and waiter in pending.waiters:
-            remaining = tuple(item for item in pending.waiters if item is not waiter)
-            if remaining or pending.run_without_waiter:
-                self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
-                    reason=pending.reason,
-                    max_ticks=pending.max_ticks,
-                    max_actions=pending.max_actions,
-                    max_active_agents=pending.max_active_agents,
-                    explicit_task_ids=pending.explicit_task_ids,
-                    waiters=remaining,
-                    run_without_waiter=pending.run_without_waiter,
-                )
-            else:
-                self._pending_project_dispatches.pop(project_id, None)
-            return
-
-        active_waiters = self._project_task_waiters.get(project_id, ())
-        if waiter not in active_waiters:
-            return
-        if project_id in self._project_task_runs_without_waiter:
-            return
-        if all(item.done() for item in active_waiters):
-            task = self._project_tasks.get(project_id)
-            if task is not None:
-                task.cancel()
-
-    async def _run_pre_dispatch_maintenance(self) -> AutomationMaintenanceSummary:
-        safe_claims = await recover_safe_build_claims(self.db, None)
-        stale_claims = await self._run_db_call(sweep_stale_claims, self.db)
-        mutex_storage = TaskDispatchMutexManager(self.db)
-        orphan_mutexes = await self._run_db_call(
-            sweep_orphan_no_run_dispatch_mutexes,
-            mutex_storage,
-            self.db,
-        )
-        return AutomationMaintenanceSummary(
-            safe_claims_considered=int(getattr(safe_claims, "considered", 0)),
-            safe_claims_released=int(getattr(safe_claims, "released", 0)),
-            safe_claims_refused=int(getattr(safe_claims, "refused", 0)),
-            stale_claims_released=int(stale_claims or 0),
-            orphan_mutexes_released=int(orphan_mutexes or 0),
-        )
-
-    async def _dispatchable_project_ids(self) -> list[str]:
-        candidates = await self._run_db_call(list_automation_candidates, self.db)
-        project_ids = {
-            str(project_id)
-            for project_id in (getattr(candidate, "project_id", None) for candidate in candidates)
-            if project_id
-        }
-        enabled: list[str] = []
-        for project_id in sorted(project_ids):
-            if await self._project_automation_enabled(project_id):
-                enabled.append(project_id)
-        return enabled
-
-    async def _dispatch_projects(
-        self,
-        project_ids: list[str],
-        *,
-        reason: str,
-    ) -> dict[str, DispatcherTickSummary]:
-        if not project_ids:
-            return {}
-        results = await asyncio.gather(
-            *[
-                self._dispatch_project_serialized(
-                    project_id=project_id,
-                    reason=reason,
-                    max_ticks=1,
-                )
-                for project_id in project_ids
-            ],
-            return_exceptions=True,
-        )
-        dispatch: dict[str, DispatcherTickSummary] = {}
-        for project_id, result in zip(project_ids, results, strict=True):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, BaseException):
-                if not isinstance(result, Exception):
-                    raise result
-                logger.error(
-                    "System automation dispatch failed for project %s",
-                    project_id,
-                    exc_info=(type(result), result, result.__traceback__),
-                )
-                continue
-            dispatch[project_id] = result
-        return dispatch
+    async def _run_claim_maintenance(self) -> int:
+        return int(await self._run_db_call(sweep_stale_claims, self.db) or 0)
 
     async def _run_pipeline_maintenance(self) -> AutomationMaintenanceSummary:
         heartbeat = self.pipeline_heartbeat
@@ -726,15 +218,6 @@ class SystemAutomationLoop:
             pipeline_stale_tasks_recovered=int(recovered or 0),
             pipeline_running_executions=int(running or 0),
             pipeline_stale_task_candidates=int(stale_candidates or 0),
-        )
-
-    async def _project_automation_enabled(self, project_id: str) -> bool:
-        return bool(
-            await self._run_db_call(
-                is_project_automation_enabled,
-                self.db,
-                project_id,
-            )
         )
 
     async def _run_db_call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -757,12 +240,3 @@ class SystemAutomationLoop:
         self._tick_count += 1
         self._last_tick = summary
         self._last_tick_at = datetime.now(UTC).isoformat()
-
-
-def _tick_payload(summary: AutomationTickSummary) -> dict[str, Any]:
-    payload = asdict(summary)
-    payload["dispatch"] = {
-        project_id: asdict(dispatch_summary)
-        for project_id, dispatch_summary in summary.dispatch.items()
-    }
-    return payload

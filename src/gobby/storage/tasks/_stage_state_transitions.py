@@ -12,11 +12,11 @@ from typing import Literal
 from gobby.failure_categories import classify_failure
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
-from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
-from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState, StageState5
+from gobby.storage.tasks._stage_transition_rules import illegal, terminal_after_done
+from gobby.storage.tasks._stage_types import StageState, StageState5
 from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
 from gobby.storage.tasks._transitions import withdraw_memory_reviews
 
@@ -241,7 +241,6 @@ class StageStateTransitions:
                     task_id,
                     f"{stage_name}_failed:{reason or 'needs_human'}",
                 )
-            self._wake_dispatcher(task_id, stage_name, verb)
             return updated
 
     def recover_abandoned_stage(
@@ -300,7 +299,6 @@ class StageStateTransitions:
             updated = self.rows.get(task_id, stage_name)
             if updated is None:
                 raise RuntimeError(f"Stage '{stage_name}' disappeared after recovery")
-            self._wake_dispatcher(task_id, stage_name, "recover_abandoned_stage")
             return updated
 
     @staticmethod
@@ -318,16 +316,6 @@ class StageStateTransitions:
             and reason is not None
             and reason.startswith("dispatch_spawn_failed:")
         )
-
-    def _wake_dispatcher(self, task_id: str, stage_name: str, verb: str) -> None:
-        try:
-            wake_dispatcher_for_task_change(self.db, task_id)
-        except Exception:
-            logger.warning(
-                "dispatcher_wake_after_stage_transition_failed",
-                extra={"task_id": task_id, "stage_name": stage_name, "verb": verb},
-                exc_info=True,
-            )
 
     def reset_epic_failure_targets(
         self,
@@ -828,30 +816,3 @@ class StageStateTransitions:
         except Exception:
             logger.exception("failed to escalate task %s after stage failure", task_id)
             raise
-
-
-def illegal(row: StageState, verb: str) -> IllegalStageTransitionError:
-    return IllegalStageTransitionError(
-        row.stage_name,
-        row.state,
-        verb,
-        row.review_policy,
-    )
-
-
-def terminal_after_done(
-    conn: Transaction,
-    task_id: str,
-    stage_name: str,
-) -> bool:
-    row = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-          FROM task_stage_states
-         WHERE task_id = %s
-           AND state != 'done'
-           AND stage_name != %s
-        """,
-        (task_id, stage_name),
-    ).fetchone()
-    return bool(row is not None and int(row["count"]) == 0)

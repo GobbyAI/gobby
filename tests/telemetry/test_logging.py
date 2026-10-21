@@ -141,8 +141,6 @@ def test_json_otel_formatter_serializes_non_json_extra_values() -> None:
         ("gobby.servers.routes.mcp", "mcp"),
         ("gobby.servers.routes.mcp.tools", "mcp"),
         ("gobby.scheduler.executor", "automation"),
-        ("gobby.dispatch.worker", "automation"),
-        ("gobby.build.runner", "automation"),
         ("gobby.system_automation", "automation"),
         ("gobby.workflows.pipeline_heartbeat", "automation"),
         ("gobby.workflows.pipeline_executor", "automation"),
@@ -166,8 +164,6 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "gobby.mcp_proxy.manager": "mcp-proxy-record",
         "gobby.servers.routes.mcp.tools": "mcp-route-record",
         "gobby.scheduler.executor": "scheduler-record",
-        "gobby.dispatch.worker": "dispatch-record",
-        "gobby.build.runner": "build-record",
         "gobby.system_automation": "system-automation-record",
         "gobby.workflows.pipeline_heartbeat": "pipeline-heartbeat-record",
         "gobby.workflows.pipeline_executor": "pipeline-executor-record",
@@ -198,8 +194,6 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
     assert "mcp-route-record" in contents["mcp"]
     for message in (
         "scheduler-record",
-        "dispatch-record",
-        "build-record",
         "system-automation-record",
         "pipeline-heartbeat-record",
         "pipeline-executor-record",

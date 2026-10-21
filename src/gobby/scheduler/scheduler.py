@@ -13,7 +13,8 @@ from typing import Any, Literal, cast
 from gobby.config.cron import CronConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.scheduler.executor import CronExecutor
-from gobby.storage.cron import CronJobStorage, is_removed_automation_job
+from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_job_policy import is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.cron_schedule import compute_next_run
 from gobby.storage.hub.protocol import CronRunAdmission

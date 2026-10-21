@@ -13,7 +13,6 @@ import pytest
 
 from gobby.agents import terminal_cleanup
 from gobby.agents.sandbox_reaper import SandboxReapResult
-from gobby.agents.terminal_cleanup import cleanup_merged_task_artifacts_after_agent_exit
 from gobby.storage.hub import operation_deadline
 from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.hub.protocol import HubDatabase
@@ -111,95 +110,6 @@ def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
 
 
-async def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None:
-    db = MagicMock()
-    task_manager = MagicMock()
-    task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
-    task_manager.get_task.return_value = SimpleNamespace(closed_at=None, closed_reason=None)
-
-    with (
-        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
-        patch("gobby.build.controls.cleanup_successful_merge_artifacts") as cleanup,
-    ):
-        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
-
-    assert result == []
-    assert len(result) == 0
-    cleanup.assert_not_called()
-
-
-async def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> None:
-    db = MagicMock()
-    artifacts = [SimpleNamespace(deleted=True, deferred=False)]
-    task_manager = MagicMock()
-    task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
-    task_manager.get_task.return_value = SimpleNamespace(
-        closed_at="2026-05-20T00:00:00+00:00",
-        closed_reason="already_implemented",
-    )
-
-    with (
-        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
-        patch(
-            "gobby.build.controls.cleanup_successful_merge_artifacts",
-            return_value=artifacts,
-        ) as cleanup,
-    ):
-        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
-
-    assert result == artifacts
-    assert result[0].deleted is True
-    cleanup.assert_called_once_with(db, "task-1")
-
-
-async def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
-    db = MagicMock()
-    artifacts = [SimpleNamespace(deleted=False, deferred=True)]
-    task_manager = MagicMock()
-    task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
-    task_manager.get_task.return_value = SimpleNamespace(
-        closed_at="2026-05-20T00:00:00+00:00",
-        closed_reason="already_implemented",
-    )
-
-    with (
-        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
-        patch(
-            "gobby.build.controls.cleanup_successful_merge_artifacts",
-            return_value=artifacts,
-        ) as cleanup,
-    ):
-        result = await cleanup_merged_task_artifacts_after_agent_exit(
-            db,
-            "task-1",
-            preserve_worktree_id="wt-1",
-        )
-
-    assert result == artifacts
-    assert result[0].deferred is True
-    cleanup.assert_called_once_with(db, "task-1", preserve_worktree_ids={"wt-1"})
-
-
-async def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
-    db = MagicMock()
-    artifacts = [SimpleNamespace(deleted=True, deferred=False)]
-    task_manager = MagicMock()
-    task_manager.stage_states.get.return_value = SimpleNamespace(state="done")
-
-    with (
-        patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
-        patch(
-            "gobby.build.controls.cleanup_successful_merge_artifacts",
-            return_value=artifacts,
-        ) as cleanup,
-    ):
-        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
-
-    assert result == artifacts
-    assert result[0].deferred is False
-    cleanup.assert_called_once_with(db, "task-1")
-
-
 async def test_terminal_worktree_release_runs_off_event_loop() -> None:
     loop_thread = threading.get_ident()
     release_threads: list[int] = []
@@ -212,89 +122,6 @@ async def test_terminal_worktree_release_runs_off_event_loop() -> None:
     ).post_terminal_cleanup(_run(task_id=None))
     assert len(release_threads) == 1
     assert release_threads[0] != loop_thread
-
-
-@pytest.mark.asyncio
-async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = RecordingDb()
-    calls: list[tuple[object, str]] = []
-
-    def retry_cleanup(cleanup_db: object, task_id: str) -> list[SimpleNamespace]:
-        calls.append((cleanup_db, task_id))
-        return [SimpleNamespace(deleted=True, deferred=False)]
-
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        retry_cleanup,
-    )
-    monkeypatch.setattr(
-        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
-        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
-    )
-
-    await _handler(db).post_terminal_cleanup(_run(), allow_parent_session_fallback=False)
-
-    assert calls == [(db, "task-1")]
-    assert db.executed == []
-
-
-async def test_post_terminal_cleanup_preserves_reused_worktree_after_no_commit_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = RecordingDb()
-    calls: list[tuple[object, str, str | None]] = []
-
-    def retry_cleanup(
-        cleanup_db: object,
-        task_id: str,
-        *,
-        preserve_worktree_id: str | None = None,
-    ) -> list[SimpleNamespace]:
-        calls.append((cleanup_db, task_id, preserve_worktree_id))
-        return [SimpleNamespace(deleted=False, deferred=True)]
-
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        retry_cleanup,
-    )
-    monkeypatch.setattr(
-        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
-        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
-    )
-
-    await _handler(db).post_terminal_cleanup(
-        _run(reused_worktree=True),
-        allow_parent_session_fallback=False,
-    )
-
-    assert calls == [(db, "task-1", "wt-1")]
-
-
-async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = RecordingDb()
-    cleanup = MagicMock(return_value=[])
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        cleanup,
-    )
-    monkeypatch.setattr(
-        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
-        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
-    )
-
-    await _handler(db).post_terminal_cleanup(
-        _run(task_id=None), allow_parent_session_fallback=False
-    )
-
-    cleanup.assert_not_called()
-    assert db.executed == []
 
 
 async def test_post_terminal_cleanup_preserves_registry_without_notification(
@@ -366,7 +193,6 @@ async def test_daemon_stop_parking_with_task_retains_isolation_and_artifacts(
     db = RecordingDb()
     released_sessions: list[str] = []
     released_clones: list[str] = []
-    artifact_tasks: list[str] = []
 
     class SessionCoordinator:
         def release_session_worktrees(self, session_id: str) -> None:
@@ -376,20 +202,6 @@ async def test_daemon_stop_parking_with_task_retains_isolation_and_artifacts(
         def release(self, clone_id: str) -> None:
             released_clones.append(clone_id)
 
-    def cleanup_artifacts(
-        _db: object,
-        task_id: str,
-        *,
-        preserve_worktree_id: str | None = None,
-    ) -> list[object]:
-        artifact_tasks.append(task_id)
-        return []
-
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        cleanup_artifacts,
-    )
     _stub_runtime_cleanup(monkeypatch)
     handler = _handler(
         db,
@@ -404,7 +216,6 @@ async def test_daemon_stop_parking_with_task_retains_isolation_and_artifacts(
 
     assert released_sessions == []
     assert released_clones == []
-    assert artifact_tasks == []
     assert db.executed == []
 
 
@@ -434,22 +245,7 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
     db = RecordingDb()
     registry = _FailingNotifyRegistry()
     session_coordinator = MagicMock()
-    artifact_calls: list[tuple[object, str]] = []
 
-    def retry_cleanup(
-        cleanup_db: object,
-        task_id: str,
-        *,
-        preserve_worktree_id: str | None = None,
-    ) -> list[SimpleNamespace]:
-        artifact_calls.append((cleanup_db, task_id))
-        return []
-
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        retry_cleanup,
-    )
     _stub_runtime_cleanup(monkeypatch)
     handler = _handler(db, completion_registry=registry, session_coordinator=session_coordinator)
 
@@ -462,29 +258,7 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
 
     assert registry.cleaned == []
     session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
-    assert artifact_calls == [(db, "task-1")]
     assert db.executed == []
-
-
-@pytest.mark.integration
-async def test_artifact_cleanup_ignores_expired_caller_deadline(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    task = LocalTaskManager(temp_db).create_task(
-        sample_project["id"], "Unmerged task", validation_criteria="Keep unmerged artifacts."
-    )
-    now = time.monotonic()
-    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
-
-    with database_operation_deadline(timeout_seconds=0.04) as caller_deadline:
-        now += 0.06
-        artifacts = await cleanup_merged_task_artifacts_after_agent_exit(temp_db, task.id)
-        assert artifacts == []
-        assert operation_deadline.current_database_operation_deadline() is caller_deadline
-        with pytest.raises(operation_deadline.DatabaseOperationDeadlineExceeded):
-            caller_deadline.remaining_seconds()
 
 
 @pytest.mark.integration

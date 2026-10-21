@@ -12,7 +12,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-import gobby.sessions.mailbox as mailbox_module
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.sessions.clear_continuation import (
     resolve_clear_successor,
@@ -22,13 +21,11 @@ from gobby.sessions.clear_continuation import (
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, system_session_id
-from gobby.storage.tasks import LocalTaskManager
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -1317,267 +1314,21 @@ class TestMailboxBroadcast:
             "task_id": None,
         }
 
-    def test_agent_cross_project_auth_cache_uses_ttl_and_skips_missing_task(
-        self,
-        isolated_checkout_factory: IsolatedCheckoutFactory,
-        temp_db: HubDatabase,
-        session_manager: SessionManager,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        mailbox = _mailbox(temp_db, session_manager)
-        project = isolated_checkout_factory(temp_db, "sender-project").project
-        sender = _register_session(session_manager, project.id, "sender")
-        now = 100.0
-        calls: list[tuple[str, str, str]] = []
-        allowed_values = iter([True, False])
-
-        def monotonic() -> float:
-            return now
-
-        def allows_cross_project_build_coordinator(
-            *,
-            from_session_id: str,
-            build_project_id: str,
-            task_id: str,
-        ) -> bool:
-            calls.append((from_session_id, build_project_id, task_id))
-            return next(allowed_values)
-
-        monkeypatch.setattr("gobby.sessions.mailbox.time.monotonic", monotonic)
-        monkeypatch.setattr(
-            mailbox,
-            "_allows_cross_project_build_coordinator",
-            allows_cross_project_build_coordinator,
-        )
-
-        assert (
-            mailbox._allows_cached_cross_project_build_coordinator(
-                from_session_id=sender.id,
-                build_project_id="project",
-                task_id=None,
-            )
-            is False
-        )
-        assert calls == []
-
-        assert mailbox._allows_cached_cross_project_build_coordinator(
-            from_session_id=sender.id,
-            build_project_id="project",
-            task_id="task",
-        )
-        assert mailbox._allows_cached_cross_project_build_coordinator(
-            from_session_id=sender.id,
-            build_project_id="project",
-            task_id="task",
-        )
-        assert calls == [(sender.id, "project", "task")]
-
-        now = 131.0
-        assert (
-            mailbox._allows_cached_cross_project_build_coordinator(
-                from_session_id=sender.id,
-                build_project_id="project",
-                task_id="task",
-            )
-            is False
-        )
-        assert calls == [(sender.id, "project", "task"), (sender.id, "project", "task")]
-
-    def test_agent_cross_project_auth_cache_invalidates_missing_sender(
-        self,
-        isolated_checkout_factory: IsolatedCheckoutFactory,
-        temp_db: HubDatabase,
-        session_manager: SessionManager,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        mailbox = _mailbox(temp_db, session_manager)
-        project = isolated_checkout_factory(temp_db, "sender-project").project
-        sender = _register_session(session_manager, project.id, "sender")
-        calls = 0
-
-        def allows_cross_project_build_coordinator(
-            *,
-            from_session_id: str,
-            build_project_id: str,
-            task_id: str,
-        ) -> bool:
-            nonlocal calls
-            calls += 1
-            return True
-
-        monkeypatch.setattr(
-            mailbox,
-            "_allows_cross_project_build_coordinator",
-            allows_cross_project_build_coordinator,
-        )
-
-        assert mailbox._allows_cached_cross_project_build_coordinator(
-            from_session_id=sender.id,
-            build_project_id="project",
-            task_id="task",
-        )
-
-        original_get = session_manager.get
-
-        def get_session(session_id: str) -> Session | None:
-            if session_id == sender.id:
-                return None
-            return original_get(session_id)
-
-        monkeypatch.setattr(session_manager, "get", get_session)
-
-        assert (
-            mailbox._allows_cached_cross_project_build_coordinator(
-                from_session_id=sender.id,
-                build_project_id="project",
-                task_id="task",
-            )
-            is False
-        )
-        assert calls == 1
-        assert mailbox._agent_cross_project_auth_cache == {}
-
-    def test_agent_cross_project_auth_cache_is_bounded(
-        self,
-        isolated_checkout_factory: IsolatedCheckoutFactory,
-        temp_db: HubDatabase,
-        session_manager: SessionManager,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        mailbox = _mailbox(temp_db, session_manager)
-        project = isolated_checkout_factory(temp_db, "sender-project").project
-        sender = _register_session(session_manager, project.id, "sender")
-
-        def allows_cross_project_build_coordinator(
-            *,
-            from_session_id: str,
-            build_project_id: str,
-            task_id: str,
-        ) -> bool:
-            return True
-
-        monkeypatch.setattr(mailbox_module, "AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE", 2)
-        monkeypatch.setattr(
-            mailbox,
-            "_allows_cross_project_build_coordinator",
-            allows_cross_project_build_coordinator,
-        )
-
-        for task_id in ("task-1", "task-2", "task-3"):
-            assert mailbox._allows_cached_cross_project_build_coordinator(
-                from_session_id=sender.id,
-                build_project_id="project",
-                task_id=task_id,
-            )
-
-        assert list(mailbox._agent_cross_project_auth_cache) == [
-            (sender.id, "task-2"),
-            (sender.id, "task-3"),
-        ]
-
     @pytest.mark.asyncio
-    async def test_build_target_only_includes_active_agents_in_task_subtree(
-        self,
-        temp_db: HubDatabase,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        tasks = LocalTaskManager(temp_db)
-        agent_runs = LocalAgentRunManager(temp_db)
-        history = BuildHistoryStorage(temp_db)
-        root = tasks.create_task(
-            sample_project["id"],
-            "Build root",
-            validation_criteria="Build root completes.",
-        )
-        child_task = tasks.create_task(
-            sample_project["id"],
-            "Build child",
-            parent_task_id=root.id,
-            validation_criteria="Build child completes.",
-        )
-        outside_task = tasks.create_task(
-            sample_project["id"],
-            "Outside",
-            validation_criteria="Outside work completes.",
-        )
-        build_run = history.record_run(
-            project_id=sample_project["id"],
-            action="build",
-            status="started",
-            root_task_id=root.id,
-            input_ref=f"#{root.seq_num}",
-        )
-
-        sender = _register_session(session_manager, sample_project["id"], "sender")
-        parent = _register_session(session_manager, sample_project["id"], "parent")
-        subtree_child = _register_session(
-            session_manager,
-            sample_project["id"],
-            "subtree-child",
-            agent_depth=1,
-        )
-        outside_child = _register_session(
-            session_manager,
-            sample_project["id"],
-            "outside-child",
-            agent_depth=1,
-        )
-        completed_child = _register_session(
-            session_manager,
-            sample_project["id"],
-            "completed-child",
-            agent_depth=1,
-        )
-        agent_runs.create(
-            parent_session_id=parent.id,
-            child_session_id=subtree_child.id,
-            provider="codex",
-            prompt="subtree",
-            task_id=child_task.id,
-        )
-        agent_runs.create(
-            parent_session_id=parent.id,
-            child_session_id=outside_child.id,
-            provider="codex",
-            prompt="outside",
-            task_id=outside_task.id,
-        )
-        completed = agent_runs.create(
-            parent_session_id=parent.id,
-            child_session_id=completed_child.id,
-            provider="codex",
-            prompt="completed",
-            task_id=child_task.id,
-        )
-        agent_runs.complete(completed.id, "done")
-
-        result = await _mailbox(temp_db, session_manager).send(
-            from_session_id=sender.id,
-            target="build",
-            target_id=build_run.id,
-            content="Build update",
-        )
-
-        assert result.recipient_session_ids == [subtree_child.id]
-        assert result.broadcast_id
-        assert result.selector_metadata
-        assert result.selector_metadata["root_task_id"] == root.id
-        assert result.selector_metadata["build_run_id"] == build_run.id
-
-    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["workspace", "build"])
     async def test_rejects_unknown_target(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
+        target: str,
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
 
         with pytest.raises(ValueError, match="Unknown message target"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
-                target="workspace",
+                target=target,
                 content="Invalid",
             )
 

@@ -16,8 +16,12 @@ from pathlib import Path, PurePath, PureWindowsPath
 from time import perf_counter
 from typing import Any
 
+from gobby.code_index.gcode_versions import (
+    GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
+    MIN_GCODE_GRAPH_VERSION,
+    MIN_GCODE_PRUNE_BUDGET_VERSION,
+)
 from gobby.install.bin_freshness_models import is_at_least_version
-from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_output import (
     forward_subprocess_stderr,
@@ -26,9 +30,6 @@ from gobby.runtime_output import (
 from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
-MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
-MIN_GCODE_PRUNE_BUDGET_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
-GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 # gcode reports an unregistered or moved checkout as a one-line typed JSON

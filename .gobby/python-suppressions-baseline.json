@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 187,
+  "site_count": 177,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -131,16 +131,6 @@
         "union-attr"
       ],
       "statement": "assert get_switch_status ( store ) . phase == PHASE_ABORTED"
-    },
-    {
-      "fingerprint": "86f79c1403b43cb52b7aa5946219580ab11f39d4a241b387a897a35585001f0c",
-      "path": "tests/build/test_dispatcher_stage_wake.py",
-      "symbol": "test_final_worker_submit_for_review_dispatches_reviewer_without_manual_tick",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
     },
     {
       "fingerprint": "a1a47dc634e16c2b8b6a7b2941c70fac861835fa44bebec1affb800595075f6f",
@@ -1051,96 +1041,6 @@
         "F401"
       ],
       "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
-    },
-    {
-      "fingerprint": "d363383a35921fb076f5ad0b709bff3e6ae084aa431ac35f723aa21313caf47a",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_automation_tick_timeout_records_failure_and_releases_lock",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . _run_pre_dispatch_maintenance = hang_pre_dispatch"
-    },
-    {
-      "fingerprint": "e46182262bbec9c3347ac1c4f70857924c9a1e4dacca087d3fae9c7a9c0a74a4",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_cancelled_interval_dispatch_cancels_owned_project_task",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "1aa839d09642178807f284a519f7724d6511b3d6eba45cf28420ffc8eccf3970",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_direct_project_dispatch_wake_queues_followup_when_dispatch_active",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "072ce08d33058e4addff22cdfa4fca7bfe49ab686ac71832c8551714ceff7718",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_dispatch_projects_isolates_project_failure",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "1f9c82a9dcec57ef2b6f3ced863730710443f4ec93b94493581c6c88174d6f54",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_dispatch_projects_propagates_project_cancellation",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "ab0662b98fd2ecf8d334bb9ba2e0b26370b37af8d791392ae7dffd7dc443b2c1",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_interval_dispatches_for_different_projects_run_concurrently",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "374c2ed6b3bf12fcdb3e50f2a8d72fb4227e29418c95e0047fd05114e7f7ebfe",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_overlapping_interval_dispatches_serialize_and_run_followup",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "bbd554cb9ea9cc15935b8d08cee21b65a13719af3b2aa99ccbc0736327724ac3",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_queued_project_dispatch_callback_does_no_work_after_stop",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
-    },
-    {
-      "fingerprint": "4abf2ac81c2b3bc9e551dc659bd9624f1ff7a9b683d0579cca83b2461b4fb6e9",
-      "path": "tests/scheduler/test_system_automation_loop.py",
-      "symbol": "test_queued_targeted_dispatches_merge_task_scope",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "loop . dispatch_project_once = dispatch_project_once"
     },
     {
       "fingerprint": "4f06014ee0531a9f19bc36c58b1d16fb95c5baa36fd2344dd4585a991bf405b3",

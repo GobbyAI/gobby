@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from gobby.build.lifecycle import derive_build_state
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
@@ -192,23 +191,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
         return grouped
 
-    def _apply_build_state(task_dicts: list[dict[str, Any]]) -> None:
-        """Attach a definitive build_state to each serialized task.
-
-        Derived from allow_automation + the durable ``gobby build`` lifecycle
-        event — never from planning scaffolding (stages/agent/checkout_mode) or
-        dispatch_failure_count, which misclassify a cleanly stopped build.
-        """
-        if not task_dicts:
-            return
-        ids = [item["id"] for item in task_dicts]
-        built = server.task_manager.lifecycle_events.tasks_with_build_event(ids)
-        for item in task_dicts:
-            item["build_state"] = derive_build_state(
-                allow_automation=bool(item.get("allow_automation")),
-                has_build_event=item["id"] in built,
-            )
-
     def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
@@ -369,7 +351,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 )
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
-            await server.run_db(_apply_build_state, task_dicts)
             await server.run_db(_apply_owner_ref, task_dicts)
 
             state_counts = await server.run_db(
@@ -424,12 +405,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             task = await server.run_db(_resolve_task, task_id)
             data = task.to_dict()
-            data["build_state"] = derive_build_state(
-                allow_automation=bool(task.allow_automation),
-                has_build_event=await server.run_db(
-                    server.task_manager.lifecycle_events.has_build_event, task.id
-                ),
-            )
             await server.run_db(_apply_owner_ref, [data])
             return data
         except (ValueError, TaskNotFoundError) as e:

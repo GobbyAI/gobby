@@ -1317,14 +1317,10 @@ class TestTerminalizeCancelledRun:
             task_manager=mock_task_mgr,
         )
 
-        with patch(
-            "gobby.agents.terminal_cleanup.cleanup_merged_task_artifacts_after_agent_exit",
-            return_value=[],
-        ):
-            transitioned = await monitor.terminalize_cancelled_run(
-                "run-cancel",
-                terminal_reason="user_cancelled",
-            )
+        transitioned = await monitor.terminalize_cancelled_run(
+            "run-cancel",
+            terminal_reason="user_cancelled",
+        )
 
         assert transitioned is True
         mock_task_mgr.release_task_claim.assert_called_once_with("task-1")

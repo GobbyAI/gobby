@@ -14,7 +14,6 @@ import re
 from datetime import datetime
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
@@ -193,15 +192,6 @@ def close_task(
         validation_status=validation_status,
         validation_feedback=validation_feedback,
     )
-    for wake_id in (task_id, *collected):
-        try:
-            wake_dispatcher_for_task_change(db, wake_id)
-        except Exception:
-            logger.warning(
-                "dispatcher_wake_after_task_close_failed",
-                extra={"task_id": wake_id},
-                exc_info=True,
-            )
 
 
 def reopen_task(

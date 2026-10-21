@@ -22,7 +22,7 @@ from gobby.workflows.definitions import WorkflowStep
 # The spawnable_agents value that lets a spawned agent spawn any agent.
 SPAWN_ANY_AGENT = "*"
 
-SendMessageTarget = Literal["global", "project", "parent", "session", "agent", "build"]
+SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
 
 
 def _parent_only() -> list[SendMessageTarget]:

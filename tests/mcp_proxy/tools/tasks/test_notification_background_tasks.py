@@ -1,7 +1,6 @@
 """Lifecycle coverage for task notifications and synchronous signoff relays."""
 
 import asyncio
-import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,9 +11,6 @@ from gobby.mcp_proxy.tools.tasks._notifications import (
     _notification_tasks,
     _notify,
     notify_parent_on_task_state_change,
-)
-from gobby.mcp_proxy.tools.tasks._stage_review import (
-    _schedule_signoff_relay,
 )
 
 
@@ -95,70 +91,3 @@ async def test_parent_notification_broadcast_includes_escalation_event_id() -> N
             "event_id": "event-1",
         }
     ]
-
-
-def test_signoff_relay_runs_synchronously() -> None:
-    task = SimpleNamespace(project_id="project-1")
-    ctx = MagicMock()
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-
-    def relay_sync(*args: object, **kwargs: object) -> None:
-        calls.append((args, kwargs))
-
-    with patch(
-        "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator_sync",
-        side_effect=relay_sync,
-    ):
-        _schedule_signoff_relay(
-            ctx,
-            task=task,
-            task_id="task-1",
-            stage_name="review",
-            action="approve_review",
-            from_session_id="session-1",
-            signoff_message="approved",
-        )
-
-    assert calls == [
-        (
-            (ctx,),
-            {
-                "task": task,
-                "task_id": "task-1",
-                "stage_name": "review",
-                "action": "approve_review",
-                "from_session_id": "session-1",
-                "signoff_message": "approved",
-            },
-        )
-    ]
-
-
-def test_signoff_relay_surfaces_non_database_errors(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    task = SimpleNamespace(project_id="project-1")
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator_sync",
-            side_effect=RuntimeError("delivery transport unavailable"),
-        ),
-        caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._stage_review"),
-    ):
-        _schedule_signoff_relay(
-            MagicMock(),
-            task=task,
-            task_id="task-1",
-            stage_name="review",
-            action="approve_review",
-            from_session_id="session-1",
-            signoff_message="approved",
-        )
-
-    assert len(caplog.records) == 1
-    record = caplog.records[0]
-    assert record.getMessage() == "Failed to relay review signoff to build coordinator"
-    assert record.task_id == "task-1"
-    assert record.stage_name == "review"
-    assert record.action == "approve_review"
-    assert record.exc_info is not None

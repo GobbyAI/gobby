@@ -7,7 +7,6 @@ import logging
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
-from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
@@ -585,14 +584,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
         if idempotent_completed_merge:
             return _idempotent_operation_response(resolved_id, stage)
-        try:
-            await cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
-        except Exception:
-            logger.warning(
-                "successful_recorded_merge_cleanup_failed",
-                extra={"task_id": resolved_id, "merge_sha": merge_sha},
-                exc_info=True,
-            )
         response = _operation_response(resolved_id, stage)
         if reconciled_ready_merge:
             response["reconciled"] = True

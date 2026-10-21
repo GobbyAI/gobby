@@ -11,8 +11,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from gobby.scheduler.scheduler import CronRunRejected
-from gobby.storage.cron import SystemRowProtected, is_removed_automation_job
+from gobby.storage.cron import SystemRowProtected
 from gobby.storage.cron_display import effective_cron_display_name
+from gobby.storage.cron_job_policy import is_removed_automation_job
 from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:

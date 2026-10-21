@@ -93,8 +93,6 @@ def caller(
     for name in (
         "_auto_link_session_commits",
         "_release_current_agent_dispatch_mutex",
-        "_schedule_signoff_relay",
-        "schedule_dispatcher_tick",
     ):
         monkeypatch.setattr(_stage_review, name, MagicMock())
     monkeypatch.setattr(_stage_review, "_dispatch_run_kwargs", MagicMock(return_value={}))

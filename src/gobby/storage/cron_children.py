@@ -21,7 +21,7 @@ INTERRUPTED_RUN_ERROR = "Cron run was interrupted by a daemon restart"
 # dream) resumes tonight instead of at its next scheduled slot.
 INTERRUPTED_RUN_RETRY_DELAY_SECONDS = 60
 
-ChildActionType = Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"]
+ChildActionType = Literal["agent_spawn", "pipeline", "shell", "handler"]
 
 
 def hydrate_run_children(db: HubDatabase, runs: Sequence[CronRun]) -> list[CronRun]:

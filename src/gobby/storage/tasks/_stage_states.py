@@ -13,11 +13,8 @@ from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_state_manifest_ops import StageStateManifestOps
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory, snapshot_state
 from gobby.storage.tasks._stage_state_rows import StageStateRows
-from gobby.storage.tasks._stage_state_transitions import (
-    StageStateTransitions,
-    illegal,
-    terminal_after_done,
-)
+from gobby.storage.tasks._stage_state_transitions import StageStateTransitions
+from gobby.storage.tasks._stage_transition_rules import illegal, terminal_after_done
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,

@@ -113,7 +113,7 @@ def add_messaging_tools(
     @registry.tool(
         name="send_message",
         description=(
-            "Send a durable message to global, project, parent, session, agent, or build. "
+            "Send a durable message to global, project, parent, session, or agent. "
             "global reaches every live non-system session owned by this machine; "
             "project reaches that population in the sender's project. Both exclude "
             "the sender and forbid target_id. Session targets accept a full UUID, "
@@ -122,8 +122,7 @@ def add_messaging_tools(
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
             "to agent_runs.result when sending to parent. Pass target_id for "
-            "target='session' (session ref, forms above), target='agent' (agent run id), "
-            "and target='build' (build run id, build input ref, or root task ref). "
+            "target='session' (session ref, forms above) or target='agent' (agent run id). "
             "A non-system project send derives its project from from_session and rejects "
             "project_id; a system-originated project send requires project_id. "
             "from_session defaults to the calling session's id from SessionContext "
@@ -134,8 +133,8 @@ def add_messaging_tools(
             "limits a spawned agent to the target modes its agent definition lists in "
             "send_message_targets (default: parent only). "
             "Message content never causes wake behavior. Omitting wake requests immediate "
-            "processing for direct session, parent, or agent targets; global, project, and "
-            "build fanout remains queued without live wakes. wake=true requests immediate "
+            "processing for direct session, parent, or agent targets; global and project "
+            "fanout remains queued without live wakes. wake=true requests immediate "
             "processing even for fanout; wake=false queues without a live wake. A wake may "
             "steer active work; interrupted, awaiting-input, "
             "awaiting-approval, and awaiting-handoff sessions retain queued content "
@@ -148,7 +147,7 @@ def add_messaging_tools(
         ),
     )
     async def send_message(
-        target: Literal["global", "project", "parent", "session", "agent", "build"] | None = None,
+        target: Literal["global", "project", "parent", "session", "agent"] | None = None,
         content: str = "",
         target_id: str | None = None,
         from_session: str | None = None,
@@ -209,7 +208,7 @@ def add_messaging_tools(
                     "error": f"target_id is not allowed when target='{normalized_target}'.",
                     "error_code": "target_id_forbidden",
                 }
-            if normalized_target in {"session", "agent", "build"}:
+            if normalized_target in {"session", "agent"}:
                 if target_id is None or not target_id.strip():
                     return {
                         "success": False,
@@ -218,7 +217,7 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
-            if project_id is None and normalized_target in {"agent", "build"}:
+            if project_id is None and normalized_target == "agent":
                 project_id = get_context_project_id(session_manager)
 
             from_sess = session_manager.get(from_id)

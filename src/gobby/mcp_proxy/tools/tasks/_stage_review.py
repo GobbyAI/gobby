@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import RepoPathValidationError, resolve_task_repo_path
 from gobby.mcp_proxy.tools.tasks._context import (
@@ -19,7 +17,6 @@ from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
     _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
 )
-from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
     clear_prior_claim_session_variables,
@@ -41,7 +38,7 @@ from gobby.workflows.task_claim_state import task_edited_file_set
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from gobby.storage.tasks import Task
+    pass
 
 
 def _dispatch_run_kwargs(
@@ -111,109 +108,6 @@ def _auto_link_session_commits(
             )
     except Exception:
         pass  # nosec B110 # best-effort, SESSION_END is the backstop
-
-
-def _relay_signoff_to_build_coordinator_sync(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    task_id: str,
-    stage_name: str,
-    action: str,
-    from_session_id: str,
-    signoff_message: str,
-) -> None:
-    """Persist a direct P2P signoff for the coordinator of the newest build run."""
-    from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.inter_session_messages import InterSessionMessageManager
-
-    run = BuildHistoryStorage(ctx.task_manager.db).latest_coordinated_run_for_task(
-        str(task.project_id),
-        task_id,
-    )
-    if run is None or not run.summary:
-        return
-    coordinator_session_id = run.summary.get("coordinator_session_id")
-    if not isinstance(coordinator_session_id, str) or not coordinator_session_id:
-        return
-
-    coordinator = ctx.session_manager.get(coordinator_session_id)
-    if coordinator is None:
-        return
-    build_project_id = str(task.project_id)
-    coordinator_project_id = getattr(coordinator, "project_id", None)
-    coordinator_project_id_str = str(coordinator_project_id) if coordinator_project_id else None
-    if (
-        coordinator_project_id_str != build_project_id
-        and not summary_allows_cross_project_coordinator(
-            run.summary,
-            coordinator_project_id=coordinator_project_id_str,
-            build_project_id=build_project_id,
-        )
-    ):
-        logger.warning(
-            "Skipping cross-project build coordinator signoff relay",
-            extra={
-                "task_id": task_id,
-                "build_run_id": run.id,
-                "coordinator_session_id": coordinator_session_id,
-                "coordinator_project_id": coordinator_project_id,
-                "build_project_id": build_project_id,
-            },
-        )
-        return
-
-    metadata = {
-        "task_id": task_id,
-        "task_ref": f"#{task.seq_num}" if getattr(task, "seq_num", None) else None,
-        "stage_name": stage_name,
-        "action": action,
-        "signoff_message": signoff_message,
-        "build_run_id": run.id,
-        "root_task_id": run.root_task_id,
-        "from_session_id": from_session_id,
-    }
-    InterSessionMessageManager(ctx.task_manager.db).create_message(
-        from_session=from_session_id,
-        to_session=coordinator_session_id,
-        content=signoff_message,
-        priority="high",
-        message_type="message",
-        metadata_json=json.dumps(metadata, default=str, sort_keys=True),
-    )
-
-
-def _schedule_signoff_relay(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    task_id: str,
-    stage_name: str,
-    action: str,
-    from_session_id: str,
-    signoff_message: str,
-) -> None:
-    try:
-        _relay_signoff_to_build_coordinator_sync(
-            ctx,
-            task=task,
-            task_id=task_id,
-            stage_name=stage_name,
-            action=action,
-            from_session_id=from_session_id,
-            signoff_message=signoff_message,
-        )
-    except Exception:
-        logger.warning(
-            "Failed to relay review signoff to build coordinator",
-            extra={
-                "task_id": task_id,
-                "stage_name": stage_name,
-                "action": action,
-                "project_id": task.project_id,
-            },
-            exc_info=True,
-        )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -338,11 +232,6 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             raise
         except Exception:
             pass  # nosec B110 # best-effort linking
-        schedule_dispatcher_tick(
-            ctx,
-            project_id=task.project_id,
-            reason="submit_for_review",
-        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -506,20 +395,6 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
-        _schedule_signoff_relay(
-            ctx,
-            task=task,
-            task_id=resolved_id,
-            stage_name=stage_name,
-            action="approve_review",
-            from_session_id=resolved_session_id,
-            signoff_message=verdict,
-        )
-        schedule_dispatcher_tick(
-            ctx,
-            project_id=task.project_id,
-            reason="approve_review",
-        )
         response = _operation_response(ctx, resolved_id, stage_name)
         if evidence_service is not None and evidence_id is not None:
             try:
@@ -663,20 +538,6 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
-        _schedule_signoff_relay(
-            ctx,
-            task=task,
-            task_id=resolved_id,
-            stage_name=stage_name,
-            action="reject_review",
-            from_session_id=resolved_session_id,
-            signoff_message=verdict,
-        )
-        schedule_dispatcher_tick(
-            ctx,
-            project_id=task.project_id,
-            reason="reject_review",
-        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -770,11 +631,6 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             raise
         except Exception:
             pass  # nosec B110 # best-effort linking
-        schedule_dispatcher_tick(
-            ctx,
-            project_id=task.project_id,
-            reason="record_plan_enhancement",
-        )
         return _operation_response(ctx, resolved_id, "planning")
 
     registry.register(

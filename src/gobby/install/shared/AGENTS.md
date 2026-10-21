@@ -24,8 +24,8 @@ Everything in this directory is a **template**, not active enforcement.
 ## Session Messaging Contract
 
 Cross-session message content has no wake semantics. Omitting `wake` requests
-immediate processing for direct `session`, `parent`, and `agent` targets; `project`,
-`global`, and `build` fanout stays queued without live wakes. `wake=true` requests
+immediate processing for direct `session`, `parent`, and `agent` targets; `project`
+and `global` fanout stays queued without live wakes. `wake=true` requests
 immediate processing for any target and may steer an active turn. `wake=false`
 queues without a live wake. Sessions that are interrupted,
 awaiting input, awaiting approval, or awaiting handoff retain the durable mailbox row
@@ -33,7 +33,7 @@ without daemon input until provider evidence makes wake safe.
 
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. Direct
-`session`, `agent`, and `build` sends require `target_id`. AGY sessions interrupted
+`session` and `agent` sends require `target_id`. AGY sessions interrupted
 through direct tmux input remain unconfirmed and therefore active; positive
 hook or Gobby-mediated key/output evidence is required for protected interruption state.
 

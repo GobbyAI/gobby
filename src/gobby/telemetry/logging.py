@@ -52,8 +52,6 @@ _MCP_NAMESPACES = ("gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp")
 _LLM_NAMESPACES = ("gobby.ai.text_generation",)
 _AUTOMATION_NAMESPACES = (
     "gobby.scheduler",
-    "gobby.dispatch",
-    "gobby.build",
     "gobby.system_automation",
     "gobby.workflows.pipeline",
     "gobby.workflows.pipeline_executor",

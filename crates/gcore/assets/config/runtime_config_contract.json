@@ -4255,7 +4255,7 @@
     {
       "activation": "live",
       "default": true,
-      "description": "Enable daemon-owned automation dispatch and maintenance.",
+      "description": "Enable daemon-owned stale-claim sweeps and pipeline maintenance.",
       "key": "system_loops.automation.enabled",
       "machineExport": false,
       "namespace": "system_loops",

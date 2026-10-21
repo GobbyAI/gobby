@@ -10,7 +10,7 @@ class AutomationLoopConfig(BaseModel):
 
     enabled: bool = Field(
         default=True,
-        description="Enable daemon-owned automation dispatch and maintenance.",
+        description="Enable daemon-owned stale-claim sweeps and pipeline maintenance.",
     )
     interval_seconds: int = Field(
         default=60,
@@ -30,5 +30,5 @@ class SystemLoopsConfig(BaseModel):
 
     automation: AutomationLoopConfig = Field(
         default_factory=AutomationLoopConfig,
-        description="Task dispatch and pipeline maintenance automation loop.",
+        description="Stale-claim sweep and pipeline maintenance automation loop.",
     )

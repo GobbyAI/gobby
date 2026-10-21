@@ -15,6 +15,12 @@ from typing import Any, Literal
 from croniter import croniter
 
 from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
+from gobby.storage.cron_job_policy import (
+    REMOVED_AUTOMATION_JOB_NAMES,
+    RETIRED_AUTOMATION_JOB_NAME_PREFIXES,
+    cron_job_priority,
+    is_removed_automation_job,
+)
 from gobby.storage.cron_models import CronJob
 from gobby.storage.cron_runs import CronRunStorageMixin, is_cron_row_id
 from gobby.storage.cron_schedule import compute_next_run
@@ -22,21 +28,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime, resolve_local_timezone, utc_now
 
 logger = logging.getLogger(__name__)
-
-REMOVED_AUTOMATION_JOB_NAMES = frozenset(
-    {"gobby:dispatcher", "gobby:pipeline-heartbeat", "synthesis-reports"}
-)
-CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
-# Per-project automation whose handlers were retired; rows are kept dormant
-# until their inventoried retirement; they must never list, dispatch, or re-enable.
-RETIRED_AUTOMATION_JOB_NAME_PREFIXES = (CODEWIKI_NIGHTLY_JOB_PREFIX,)
-CRON_JOB_NAME_PRIORITIES = {
-    "gobby:pipeline-heartbeat": 0,
-    "gobby:dispatcher": 1,
-    "gobby:code-index-prune": 3,
-}
-DEFAULT_CRON_JOB_PRIORITY = 2
-
 
 SYSTEM_ROW_UPDATE_ALLOWED_FIELDS = frozenset(
     {
@@ -85,16 +76,6 @@ def _normalize_interval_seconds(schedule_type: str, interval_seconds: int | None
     return max(interval_seconds, MIN_CRON_INTERVAL_SECONDS)
 
 
-def _cron_job_priority(job: CronJob) -> int:
-    return CRON_JOB_NAME_PRIORITIES.get(job.name, DEFAULT_CRON_JOB_PRIORITY)
-
-
-def is_removed_automation_job(job: CronJob) -> bool:
-    return job.name in REMOVED_AUTOMATION_JOB_NAMES or job.name.startswith(
-        RETIRED_AUTOMATION_JOB_NAME_PREFIXES
-    )
-
-
 def _escape_like_prefix(prefix: str) -> str:
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
@@ -110,7 +91,7 @@ class CronJobStorage(CronRunStorageMixin):
         project_id: str,
         name: str,
         schedule_type: Literal["cron", "interval", "once"],
-        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler"],
         action_config: dict[str, Any],
         display_name: str | None = None,
         description: str | None = None,
@@ -575,7 +556,7 @@ class CronJobStorage(CronRunStorageMixin):
         self,
         job_id: str,
         *,
-        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler"],
         action_config: dict[str, Any],
         description: str | None | _Unset = UNSET,
         schedule_type: Literal["cron", "interval", "once"] | _Unset = UNSET,
@@ -827,7 +808,7 @@ class CronJobStorage(CronRunStorageMixin):
         return sorted(
             jobs,
             key=lambda job: (
-                _cron_job_priority(job),
+                cron_job_priority(job),
                 job.next_run_at or "",
                 job.created_at,
                 job.id,

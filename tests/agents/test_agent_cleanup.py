@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.agents import terminal_cleanup, terminal_delivery
+from gobby.agents import terminal_delivery
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReason
 from gobby.storage.terminals import Terminal
@@ -117,23 +117,14 @@ async def test_daemon_stop_terminalization_with_task_keeps_claim(
     manager.get.return_value = active
     manager.cancel.return_value = parked
     task_recovery = _RecordingTaskRecovery()
-    tick_calls: list[tuple[str, str]] = []
-
-    def record_tick(_db: object, *, task_id: str, reason: str) -> None:
-        tick_calls.append((task_id, reason))
 
     _stub_runtime_cleanup(monkeypatch)
-    monkeypatch.setattr(
-        "gobby.build.dispatch_tick.schedule_dispatcher_tick_for_task",
-        record_tick,
-    )
     handler = _handler(db, agent_run_manager=manager, task_recovery=task_recovery)
 
     assert await handler.terminalize_cancelled_run("run-1", terminal_reason="daemon_stop")
 
     manager.cancel.assert_called_once_with("run-1", terminal_reason="daemon_stop")
     assert task_recovery.recovered == []
-    assert tick_calls == [("task-1", "agent_parked")]
 
 
 async def test_user_cancelled_terminalization_with_task_runs_full_cleanup(
@@ -152,31 +143,8 @@ async def test_user_cancelled_terminalization_with_task_runs_full_cleanup(
     registry = AcknowledgingCompletionRegistry({"child-1": True})
     session_coordinator = MagicMock()
     clone_storage = MagicMock()
-    artifact_calls: list[tuple[object, str]] = []
-    tick_calls: list[tuple[str, str]] = []
 
-    def retry_cleanup(
-        cleanup_db: object,
-        task_id: str,
-        *,
-        preserve_worktree_id: str | None = None,
-    ) -> list[SimpleNamespace]:
-        artifact_calls.append((cleanup_db, task_id))
-        return []
-
-    def record_tick(_db: object, *, task_id: str, reason: str) -> None:
-        tick_calls.append((task_id, reason))
-
-    monkeypatch.setattr(
-        terminal_cleanup,
-        "cleanup_merged_task_artifacts_after_agent_exit",
-        retry_cleanup,
-    )
     _stub_runtime_cleanup(monkeypatch)
-    monkeypatch.setattr(
-        "gobby.build.dispatch_tick.schedule_dispatcher_tick_for_task",
-        record_tick,
-    )
     handler = _handler(
         db,
         agent_run_manager=manager,
@@ -191,7 +159,6 @@ async def test_user_cancelled_terminalization_with_task_runs_full_cleanup(
     assert task_recovery.recovered == [(cancelled, "cancelled")]
     session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
     clone_storage.release.assert_called_once_with("clone-1")
-    assert artifact_calls == [(db, "task-1")]
     assert registry.notifications == [
         (
             "run-1",
@@ -200,7 +167,6 @@ async def test_user_cancelled_terminalization_with_task_runs_full_cleanup(
         )
     ]
     assert registry.cleaned == ["run-1"]
-    assert tick_calls == [("task-1", "agent_cancelled")]
     assert db.executed == [
         (
             "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",

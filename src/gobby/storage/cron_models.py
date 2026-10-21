@@ -39,7 +39,7 @@ class CronJob:
     project_id: str
     name: str
     schedule_type: Literal["cron", "interval", "once"]
-    action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"]
+    action_type: Literal["agent_spawn", "pipeline", "shell", "handler"]
     action_config: dict[str, Any]
     created_at: datetime
     updated_at: datetime

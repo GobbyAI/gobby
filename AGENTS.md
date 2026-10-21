@@ -88,7 +88,7 @@ how the system behaves so you can work with it instead of being surprised by it.
     the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
     repeated status calls, and repeated `capture_output` for bounded diagnostics.
     Message text never wakes a session. Omitting `wake` requests immediate processing
-    for direct `session`, `parent`, and `agent` targets; `project`, `global`, and `build`
+    for direct `session`, `parent`, and `agent` targets; `project` and `global`
     fanout stays queued without live wakes. Set `wake=true` for immediate processing
     of a fanout, or `wake=false` to queue any target without a live wake. A wake may
     steer active work; interrupted, input/approval-waiting, and handoff-waiting
