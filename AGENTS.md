@@ -112,6 +112,14 @@ how the system behaves so you can work with it instead of being surprised by it.
     behavior and before recording a finding. Record durable knowledge with a
     rationale written as the `when:` clause a future session would match; most
     turns need no write.
+15. Seat checkout location. Only developer seats, and the seats associated with
+    their task (its reviewers and test writers), run in that task's worktree; a
+    child may run in its parent's worktree. Every other seat, including admin roles,
+    researchers, planners and coordinators, launches in the main `0.5.0` checkout
+    and gets no worktree of its own. Operator ruling, 2026-10-20: "I don't want
+    agents to spawn in worktrees outside of 0.5.0 unless they're their parent's
+    worktree unless they're developer agents or associated. Admin roles,
+    researchers, planners, these don't need separate worktrees."
 
 ## Session Handoff
 
