@@ -199,7 +199,7 @@ async def call_tool(
     completion_input = {
         "server_name": server_name,
         "tool_name": tool_name,
-        "arguments": _identity_arguments(arguments),
+        "arguments": await asyncio.to_thread(_identity_arguments, arguments),
     }
     outcome = await _call_tool_impl(
         service,

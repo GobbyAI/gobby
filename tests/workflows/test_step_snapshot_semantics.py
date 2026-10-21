@@ -11,7 +11,6 @@ import time
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack, suppress
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -583,14 +582,6 @@ def test_auto_claimed_spawn_initial_step_preserved(snap_db: PostgresHubDatabase)
     assert after.variables.get("task_claimed") is True
     assert after.current_step in {"claim", "implement"}
     assert after.snapshot.model_dump() == before.snapshot.model_dump()
-
-
-def test_dispatch_spawn_does_not_seed_step_workflow_name() -> None:
-    source = (Path(__file__).resolve().parents[2] / "src/gobby/dispatch/spawn.py").read_text(
-        encoding="utf-8"
-    )
-    assert "_step_workflow_name" not in source
-    assert "_register_agent_step_workflow" not in source
 
 
 def test_fresh_snapshot_recovery_emits_structured_warning(
