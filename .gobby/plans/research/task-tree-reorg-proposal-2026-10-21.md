@@ -17,10 +17,10 @@ Proposal:
   - #18498, Post-0.5.0.
   - #22978, Triage. It is Josh's, and so is #22225 inside it.
   - #17438, Fleet management.
-- 150 tasks move: 10 whole subtrees and 140 single leaves.
-  - 149 are direct children of lane epics. Six of them are *verify* rows that move provisionally (see Reparent operations).
+- 152 tasks move: 10 whole subtrees and 142 single leaves.
+  - 151 are direct children of lane epics. Eight of them are *verify* rows that move provisionally (see Reparent operations).
   - One is the root-level orphan #24763.
-- 18 direct children close as moot instead of moving, and the two research spikes close. Six more *verify* rows move with their domain and close only if their check confirms they are moot.
+- 16 direct children close as moot instead of moving, and the two research spikes close. The *verify* rows above move with their domain and close only if their check confirms they are moot.
 - The ten domain epics need to be created by the Orchestrator.
 - Timing matters: `project_policy.lanes` and the `lane-N` labels still route seats today. The move should land with runbook v4 §6.1, which retires the old runbooks, or after it.
 
@@ -133,6 +133,7 @@ G10 Plans and memory tooling
 | #23470, #23731, #24128, #24515, #24774 | #23378 | G10 | Plan validator, coverage manifest, review-lesson memories |
 | #22606 | #22949 | G10 | Memory community detection (blocked by #21563) |
 | #24403, #24497 | #22691, #24093 | G1 | *Verify* rows: land-gate classifier and gate 10 recognition. They move provisionally (Principle 3) and close in G1 if their check confirms moot |
+| #24509, #24646 | #22691 | G1 | *Verify* rows: close_task preview timing and receipt supersede path. They move provisionally (Principle 3) and close in G1 if their check confirms moot |
 | #24135, #24398 | #22691 | G3 | *Verify* rows: developer step workflow and code-reviewer park check. They move provisionally (Principle 3) and close in G3 if their check confirms moot |
 | #24723, #24727 | #24093 | G4 | *Verify* rows: close-reviewer SRT denials and sandbox writes. They move provisionally (Principle 3) and close in G4 if their check confirms moot |
 | #24782, #24783 | #23378 | (close) | These research spikes; the Orchestrator closes them |
@@ -143,7 +144,7 @@ The seven lane epics #22691, #22801, #22949, #23378, #24093, #24094 and #24317 r
 
 These close per `.gobby/plans/research/moot-tasks-after-astra-2026-10-21.md` and take no reparent operation. Rows marked *verify* are the exception: they have reparent rows above, move with their domain until checked, and close there only if the check confirms them moot. They are listed here for traceability, and the lane epics' retirement does not wait on them.
 
-- **From #22691:** #24494, #24509, #24646, #24656, #24748, #23868, #24031, #24085, #24135 (*verify*), #24295, #24398 (*verify*), #24403 (*verify*), #22660. If kept after open question 4 in #24782, #22660 goes to G3.
+- **From #22691:** #24494, #24509 (*verify*), #24646 (*verify*), #24656, #24748, #23868, #24031, #24085, #24135 (*verify*), #24295, #24398 (*verify*), #24403 (*verify*), #22660. If kept after open question 4 in #24782, #22660 goes to G3.
 - **From #22949:** #23817. If kept after open question 1 in #24782, it goes to G1.
 - **From #23378:**
   - Subtrees: #23542 with #23707, #23544 and #23550; #23640 with #23642, #23644 and #23645.
