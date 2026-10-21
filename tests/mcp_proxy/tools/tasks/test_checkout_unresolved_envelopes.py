@@ -9,7 +9,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
-from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -133,18 +132,5 @@ async def test_validate_plan_file_returns_checkout_unresolved(
     )
 
     result = await registry.call("validate_plan_file", {"plan_file": "docs/plans/plan.md"})
-
-    _assert_checkout_unresolved(result)
-
-
-@pytest.mark.asyncio
-async def test_submit_for_review_returns_checkout_unresolved(no_checkout: _NoCheckout) -> None:
-    registry = create_task_ops_registry(no_checkout.task_manager)
-
-    with session_context_for_test(no_checkout.session_id):
-        result = await registry.call(
-            "submit_for_review",
-            {"task_id": no_checkout.task.id, "stage_name": "development"},
-        )
 
     _assert_checkout_unresolved(result)

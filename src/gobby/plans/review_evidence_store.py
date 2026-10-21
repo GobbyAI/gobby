@@ -123,27 +123,6 @@ class PlanReviewEvidenceStore:
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]
 
-    def list_for_task_stage(
-        self,
-        *,
-        task_id: str,
-        stage: str,
-    ) -> list[PlanReviewEvidence]:
-        """Return finalized evidence rows that form one stage-native lineage."""
-        rows = self.db.execute(
-            """
-            SELECT *
-            FROM plan_review_evidence
-            WHERE task_id = %s
-              AND stage = %s
-              AND finalized_at IS NOT NULL
-              AND expired_at IS NULL
-            ORDER BY round_number, created_at, evidence_id
-            """,
-            (task_id, stage),
-        ).fetchall()
-        return [PlanReviewEvidence.from_row(row) for row in rows]
-
     def list_recent(
         self,
         *,

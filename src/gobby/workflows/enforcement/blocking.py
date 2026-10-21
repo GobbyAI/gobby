@@ -43,6 +43,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
             "auto_link_commits",
             "backup_tasks",
             "claim_task",
+            "release_task_claim",
             "close_task",
             "create_task",
             "delegate_task",
@@ -66,11 +67,8 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
     ),
     "gobby-tasks-ops": frozenset(
         {
-            "approve_review",
-            "reject_review",
             "set_landing_freeze",
             "land_commit",
-            "submit_for_review",
         }
     ),
 }

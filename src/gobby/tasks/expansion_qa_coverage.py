@@ -45,7 +45,6 @@ def run_expansion_qa_coverage(
     regenerate: bool = False,
     evaluator: CoverageEvaluator | None = None,
     manifest_writer: ManifestWriter | None = None,
-    is_spawned_agent: bool = True,
 ) -> dict[str, Any]:
     """Run A4 coverage for an expansion run and persist QA artifacts.
 
@@ -91,8 +90,6 @@ def run_expansion_qa_coverage(
             expected_plan_hash=expected_hash,
             input_plan_hash=plan_hash,
             actual_plan_hash=actual_plan_hash,
-            root_task_ref=root_task_ref,
-            plan_path=resolved_plan_path,
         )
 
     artifact_manager.set_artifacts_atomic(
@@ -122,20 +119,11 @@ def run_expansion_qa_coverage(
     )
     display_manifest = _display_path(written_manifest, repo_root)
     failures = _coverage_failures(report)
-    review_action = (
-        _review_action(root_task_ref, display_manifest, failures)
-        if is_spawned_agent
-        else {
-            "applicable": False,
-            "reason": "Review actions require a spawned expansion-stage reviewer.",
-        }
-    )
     qa_result = {
         "passed": not failures,
         "manifest_path": display_manifest,
         "coverage": report_dict,
         "failures": failures,
-        "review_action": review_action,
         "scope": {
             "plan_path": str(resolved_plan_path),
             "plan_id": plan_id,
@@ -158,7 +146,6 @@ def run_expansion_qa_coverage(
         "run_id": run.id,
         "passed": not failures,
         "manifest_path": display_manifest,
-        "review_action": review_action,
         "qa_result": qa_result,
         "run_status": saved.status if saved else run.status,
     }
@@ -269,8 +256,6 @@ def _fail_plan_hash_drift(
     expected_plan_hash: str,
     input_plan_hash: str,
     actual_plan_hash: str,
-    root_task_ref: str,
-    plan_path: Path,
 ) -> dict[str, Any]:
     reason = "plan_hash_drift"
     detail = (
@@ -284,15 +269,6 @@ def _fail_plan_hash_drift(
         "expected_plan_hash": expected_plan_hash,
         "input_plan_hash": input_plan_hash,
         "actual_plan_hash": actual_plan_hash,
-        "review_action": {
-            "server": "gobby-tasks-ops",
-            "tool": "reject_review",
-            "arguments": {
-                "task_id": root_task_ref,
-                "stage_name": "expansion",
-                "rejection_notes": f"plan_hash_drift for {plan_path}: {detail}",
-            },
-        },
     }
     run_manager = LocalExpansionRunManager(task_manager.db)
     run_manager.save_qa_result(run_id, qa_result)
@@ -480,44 +456,6 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 def _leaf_ref(leaf: Any) -> str:
     value = _field(leaf, "leaf_task_ref", "")
     return str(value) if value else ""
-
-
-def _review_action(
-    root_task_ref: str,
-    manifest_path: str,
-    failures: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if not failures:
-        return {
-            "server": "gobby-tasks-ops",
-            "tool": "approve_review",
-            "arguments": {
-                "task_id": root_task_ref,
-                "stage_name": "expansion",
-                "approval_notes": f"Plan coverage passed. Manifest: {manifest_path}",
-            },
-        }
-
-    notes = ["Plan coverage rejected mechanically.", f"Manifest: {manifest_path}"]
-    for failure in failures:
-        leaves = ", ".join(failure["leaves"]) if failure["leaves"] else "none"
-        notes.append(
-            "- "
-            f"section_id={failure['section_id']} "
-            f"item_id={failure['item_id']} "
-            f"status={failure['status']} "
-            f"detail={failure['detail']} "
-            f"leaves={leaves}"
-        )
-    return {
-        "server": "gobby-tasks-ops",
-        "tool": "reject_review",
-        "arguments": {
-            "task_id": root_task_ref,
-            "stage_name": "expansion",
-            "rejection_notes": "\n".join(notes),
-        },
-    }
 
 
 def _display_path(path: Path, repo_root: Path) -> str:

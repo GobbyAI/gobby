@@ -18,7 +18,6 @@ from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
-from gobby.mcp_proxy.tools.tasks._stage_read import create_stage_read_registry
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.validation import TaskValidator
 
@@ -71,7 +70,7 @@ def create_task_registry(
     # Merge CRUD tools
     registry.merge_from(create_crud_registry(ctx))
 
-    # Merge lifecycle tools (review stage transitions live in gobby-tasks-ops).
+    # Merge lifecycle tools.
     registry.merge_from(create_lifecycle_registry(ctx))
 
     # Merge session tools
@@ -93,9 +92,6 @@ def create_task_registry(
 
     # Merge core affected files tools (update_observed_files only; rest in gobby-tasks-ops)
     registry.merge_from(create_core_affected_files_registry(ctx))
-
-    # Merge read-only stage manifest tools (mutating stage tools live in gobby-tasks-ops)
-    registry.merge_from(create_stage_read_registry(ctx))
 
     # Merge explicit JSONL backup and restore tools.
     registry.merge_from(create_backup_registry(ctx))

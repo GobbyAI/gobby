@@ -49,7 +49,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_sessions_router,
         create_skills_router,
         create_source_control_router,
-        create_stages_router,
         create_tasks_router,
         create_terminals_router,
         create_traces_router,
@@ -78,7 +77,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_memory_dream_router(server))
     app.include_router(create_feedback_router(server))
     app.include_router(create_tasks_router(server))
-    app.include_router(create_stages_router(server))
     app.include_router(create_code_index_router(server))
     app.include_router(create_cron_router(server))
     app.include_router(create_mcp_router())

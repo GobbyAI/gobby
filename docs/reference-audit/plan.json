@@ -657,38 +657,6 @@
       "audience": "agent"
     },
     {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_plan_enhancement",
-      "reference": "src/gobby/install/shared/skills/gobby/references/plan/enhancement.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
-        "symbol": "record_plan_enhancement"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-inspection",
-        "focused-runtime"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "backfill_plan_review_lessons",
-      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_plan_review_backfill.py",
-        "symbol": "backfill_plan_review_lessons"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-inspection",
-        "focused-runtime"
-      ],
-      "audience": "agent"
-    },
-    {
       "surface": "cli",
       "command": "gobby plan coverage",
       "reference": "src/gobby/install/shared/skills/gobby/references/plan/coverage.md",
@@ -873,8 +841,6 @@
   ],
   "delegated_operations": {
     "tasks": [
-      "gobby-tasks-ops:approve_review",
-      "gobby-tasks-ops:reject_review",
       "gobby-tasks-ops:set_artifact",
       "gobby-tasks-ops:set_artifacts_atomic"
     ],

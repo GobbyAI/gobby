@@ -34,7 +34,7 @@ rules:
           refactor tasks are prohibited. Resolve: {{ outstanding_monolith_paths() | join(', ') }}.
 
   require-monolith-resolution-before-task-transition:
-    description: "Block task completion and review transitions while owned source is over budget"
+    description: "Block task completion while owned source is over budget"
     event: before_tool
     enabled: true
     priority: 25
@@ -44,9 +44,6 @@ rules:
         mcp_tools:
           - "gobby-tasks:close_task"
           - "gobby-tasks:de_escalate_task"
-          - "gobby-tasks-ops:submit_for_review"
-          - "gobby-tasks-ops:approve_review"
-          - "gobby-tasks-ops:reject_review"
         reason: |
           Use `decompose-monolith` with its required `code-index` dependency.
           Finish the structural work in the current claimed task and session; deferred

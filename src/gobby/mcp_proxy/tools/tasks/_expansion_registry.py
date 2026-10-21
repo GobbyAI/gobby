@@ -219,23 +219,6 @@ def _resolve_current_session(ctx: RegistryContext) -> tuple[str, str] | dict[str
     return session_ref, resolved_session_id
 
 
-def _current_session_is_spawned(ctx: RegistryContext) -> bool:
-    """Return whether the current tool caller is a spawned agent."""
-    session_result = _resolve_current_session(ctx)
-    if isinstance(session_result, dict):
-        # Internal/direct registry callers have no session context. Preserve the
-        # established review-action payload when caller kind cannot be resolved.
-        return True
-    _session_ref, resolved_session_id = session_result
-    variables = ctx.session_var_manager.get_variables(resolved_session_id)
-    session = ctx.session_manager.get(resolved_session_id)
-    return bool(
-        variables.get("is_spawned_agent")
-        or getattr(session, "agent_run_id", None)
-        or getattr(session, "agent_depth", 0)
-    )
-
-
 def _bound_plan_for_run(ctx: RegistryContext, run: ExpansionRun) -> PlanRecord:
     """Resolve the unique active registered plan bound to an expansion run."""
     root_task_id, plan_path = _bind_registered_plan(
@@ -304,7 +287,6 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
         provider: str | None = None,
         model: str | None = None,
         project: str | None = None,
-        stage_pipeline_mode: bool | None = None,
     ) -> dict[str, Any]:
         session_result = _resolve_current_session(ctx)
         if isinstance(session_result, dict):
@@ -346,7 +328,6 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
             reset_output=reset_output,
             provider=provider,
             model=model,
-            stage_pipeline_mode=stage_pipeline_mode,
         )
         if result.run_id is not None:
             _subscribe_completion(
@@ -407,14 +388,6 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
                 "project": {
                     "type": ["string", "null"],
                     "description": "Optional project ref for task resolution",
-                    "default": None,
-                },
-                "stage_pipeline_mode": {
-                    "type": ["boolean", "null"],
-                    "description": (
-                        "Internal: suppress parent expansion-stage transitions because "
-                        "the owning stage pipeline terminal handler will advance the stage"
-                    ),
                     "default": None,
                 },
             },
@@ -756,7 +729,6 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             project_id=project_id,
             task_tree=task_tree,
             regenerate=regenerate,
-            is_spawned_agent=_current_session_is_spawned(ctx),
         )
 
     registry.register(

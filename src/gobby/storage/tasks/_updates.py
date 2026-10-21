@@ -353,15 +353,11 @@ def update_task_metadata(
         blocked_display = ", ".join([*legacy_state_fields, *blocked_fields])
         if legacy_state_fields and not blocked_fields:
             field_class = "legacy state fields"
-            transition_hint = (
-                "Use start_stage, submit_for_review, approve_review, reject_review, "
-                "fail_stage, close_task, reopen_task, or escalate_task instead."
-            )
+            transition_hint = "Use close_task, reopen_task, or escalate_task instead."
         else:
             field_class = "stage or ownership fields"
             transition_hint = (
-                "Use claim_task, release_task_claim, start_stage, submit_for_review, "
-                "approve_review, reject_review, fail_stage, escalate_task, "
+                "Use claim_task, release_task_claim, escalate_task, "
                 "de_escalate_task, close_task, or reopen_task instead."
             )
         raise ValueError(

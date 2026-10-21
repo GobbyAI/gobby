@@ -13,13 +13,11 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import build_task_tree, create_crud_registry
-from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
-from tests.storage.tasks._stage_test_helpers import stage_row
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -236,63 +234,6 @@ async def test_update_task_schema_rejects_unsupported_fields(
         await registry.call(
             "update_task",
             {"task_id": "#1", field_name: value},
-        )
-
-
-@pytest.mark.asyncio
-async def test_initialize_task_manifest_persists_explicit_cap(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(
-        project_id=sample_project["id"],
-        title="Capped planning task",
-        category="planning",
-        task_type="task",
-        validation_criteria="Test task completion is observable.",
-    )
-    ctx = RegistryContext(task_manager=manager)
-    registry = create_stage_ops_registry(ctx)
-    schema = registry.get_schema("initialize_task_manifest")
-
-    assert schema is not None
-    assert "stage_caps" in schema["inputSchema"]["properties"]
-
-    result = await registry.call(
-        "initialize_task_manifest",
-        {
-            "task_id": task.id,
-            "stage_names": ["planning"],
-            "stage_caps": [{"stage_name": "planning", "max_review_rounds": 100}],
-        },
-    )
-
-    assert result["ok"] is True
-    assert result["stages"][0]["display_label"] == "Planning"
-    planning = stage_row(temp_db, result["task_id"], "planning")
-    assert planning["max_review_rounds"] == 100
-
-
-@pytest.mark.asyncio
-async def test_initialize_task_manifest_rejects_unknown_stage(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(
-        project_id=sample_project["id"],
-        title="Bad stage task",
-        category="planning",
-        task_type="task",
-        validation_criteria="Test task completion is observable.",
-    )
-    registry = create_stage_ops_registry(RegistryContext(task_manager=manager))
-
-    with pytest.raises(ValueError, match="Unknown stage 'missing'"):
-        await registry.call(
-            "initialize_task_manifest",
-            {"task_id": task.id, "stage_names": ["planning", "missing"]},
         )
 
 

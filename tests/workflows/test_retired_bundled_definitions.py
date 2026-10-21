@@ -72,6 +72,7 @@ RETIRED_AGENTS = (
 )
 RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
+    "block-needs-review-interactive",
     "reviewer-terminal-verdict-track-successful-validation",
     "reviewer-terminal-verdict-clear-on-verdict",
     "reviewer-terminal-verdict-block-turn-end",

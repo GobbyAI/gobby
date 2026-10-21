@@ -399,9 +399,6 @@ def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
     assert set(transition_effect.mcp_tools or []) == {
         "gobby-tasks:close_task",
         "gobby-tasks:de_escalate_task",
-        "gobby-tasks-ops:submit_for_review",
-        "gobby-tasks-ops:approve_review",
-        "gobby-tasks-ops:reject_review",
     }
     assert bodies[RULE_NAMES[3]].event == "turn_end"
 

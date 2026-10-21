@@ -22,7 +22,6 @@ REDIRECT_RULES = frozenset(
         "block-git-worktree-mutations-interactive",
         "block-gobby-tasks-cli",
         "block-native-task-tracker-unclaimed",
-        "block-needs-review-interactive",
         "block-reopen-task",
         "block-update-task",
         "enforce-tdd-block",

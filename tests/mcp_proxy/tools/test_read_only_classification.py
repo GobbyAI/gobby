@@ -36,9 +36,6 @@ TASK_READ_ONLY_TOOLS = {
     "list_ready_tasks",
     "list_blocked_tasks",
     "suggest_next_task",
-    "get_task_stages",
-    "list_stages_registry",
-    "get_task_type_defaults",
     "get_task_diff",
 }
 

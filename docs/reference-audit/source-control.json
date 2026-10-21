@@ -1180,21 +1180,6 @@
     },
     {
       "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_merge_result",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "record_merge_result"
-      },
-      "verification": [
-        "source-audit",
-        "focused-workspaces"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
       "server": "gobby-merge",
       "tool": "probe_branch_protection",
       "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
@@ -1205,21 +1190,6 @@
       "verification": [
         "registration-inventory",
         "source-audit"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_pr_verdict",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "record_pr_verdict"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
       ],
       "audience": "agent"
     }

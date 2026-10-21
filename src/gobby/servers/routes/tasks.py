@@ -1,7 +1,7 @@
 """
 Task routes for Gobby HTTP server.
 
-Provides CRUD, list, stage-transition, and dependency endpoints for the task system.
+Provides CRUD, list, and dependency endpoints for the task system.
 """
 
 import logging
@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
 from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
 from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
-from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.tasks._models import (
@@ -252,14 +251,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 seen.add(stage_name)
         return stage_names
 
-    register_task_stage_routes(
-        router,
-        server,
-        resolve_task=_resolve_task,
-        resolve_session_ref=_resolve_session_ref,
-        broadcast_task=_broadcast_task,
-        stage_view=_stage_view,
-    )
     register_task_lifecycle_routes(
         router,
         server,

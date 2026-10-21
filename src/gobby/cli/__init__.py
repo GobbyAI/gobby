@@ -37,7 +37,6 @@ _COMMAND_SOURCES: dict[str, tuple[str, str]] = {
     "observations": ("observations", "observations"),
     "sessions": ("sessions", "sessions"),
     "skills": ("skills", "skills"),
-    "stages": ("stages", "stages"),
     "agents": ("agents", "agents"),
     "worktrees": ("worktrees", "worktrees"),
     "workspaces": ("workspaces", "workspaces"),

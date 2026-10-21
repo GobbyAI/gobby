@@ -20,7 +20,7 @@ accept/decline vote and concrete rationale for every suggestion.
 
 Interactive coordinator presents every suggestion and records individual accept/decline decisions before edits. Fold accepted changes into the canonical artifact, append enhancement provenance under V1 as bold round entries, preserve history, and revalidate. Record `kind: enhancement`, `enhancer_run`,
 round/cap, `suggestions_presented`, each vote and its rationale in that provenance. Stop at convergence, all-declined, or cap; this never implies approval of another phase.
-Autonomous enhancer uses gobby-tasks-ops:record_plan_enhancement with round_number, converged, and suggestions serialized as strings (the registered tool accepts a string array, not structured suggestion objects), then delivers its result and ends its agent run with the required structured handoff. Current end_agent_run requires current_state and next_steps; no-argument examples in old source skills are obsolete. Its budget is independent of adversarial review; installed stage policy determines subsequent dispatch.
+Autonomous enhancer delivers its result and ends its agent run with the required structured handoff. Current end_agent_run requires current_state and next_steps; no-argument examples in old source skills are obsolete. Its budget is independent of adversarial review.
 Failures use agent lifecycle diagnostics and complete report retrieval. Do not record a failed/truncated run as converged or launch a replacement merely because no terminal text appeared.
 
 See [Optional enhancement](../../../../../../../../docs/guides/plans-and-plan-mode.md#optional-enhancement).

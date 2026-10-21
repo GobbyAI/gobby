@@ -75,7 +75,7 @@ def test_start_expansion_schema_accepts_reset_output(temp_db: HubDatabase) -> No
         "description": "When true, notify the calling session lineage when the run finishes",
         "default": True,
     }
-    assert schema["properties"]["stage_pipeline_mode"]["type"] == ["boolean", "null"]
+    assert "stage_pipeline_mode" not in schema["properties"]
 
 
 def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db: HubDatabase) -> None:

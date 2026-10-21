@@ -4,7 +4,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +18,6 @@ from gobby.mcp_proxy.tools.tasks import (
     _lifecycle_close_finalization,
     _lifecycle_status,
     _session,
-    _stage_review,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
@@ -79,33 +77,15 @@ def caller(
     for name in (
         "reopen_task",
         "de_escalate_task",
-        "submit_for_review",
-        "approve_review",
-        "reject_review",
-        "record_plan_enhancement",
     ):
         monkeypatch.setattr(manager, name, MagicMock(return_value=task))
     monkeypatch.setattr(_lifecycle_status, "require_claim_authority", lambda *_args: None)
     monkeypatch.setattr(_lifecycle_status, "projected_task_state", lambda *_args: "escalated")
-    for module in (_lifecycle_status, _stage_review):
-        monkeypatch.setattr(module, "clear_prior_claim_session_variables", MagicMock())
-        monkeypatch.setattr(module, "notify_parent_on_task_state_change", MagicMock())
-    for name in (
-        "_auto_link_session_commits",
-        "_release_current_agent_dispatch_mutex",
-    ):
-        monkeypatch.setattr(_stage_review, name, MagicMock())
-    monkeypatch.setattr(_stage_review, "_dispatch_run_kwargs", MagicMock(return_value={}))
-    monkeypatch.setattr(_stage_review, "_operation_response", MagicMock(return_value={}))
-    monkeypatch.setattr(
-        _stage_review,
-        "evaluate_task_scope",
-        MagicMock(return_value=SimpleNamespace(accepted=True, scope_justification=None)),
-    )
+    monkeypatch.setattr(_lifecycle_status, "clear_prior_claim_session_variables", MagicMock())
+    monkeypatch.setattr(_lifecycle_status, "notify_parent_on_task_state_change", MagicMock())
     registry = InternalToolRegistry(name="lifecycle-links")
     _lifecycle_status.register_reopen_task(registry, ctx)
     _lifecycle_status.register_de_escalate_task(registry, ctx)
-    _stage_review.register_review_stage_tools(registry, ctx)
     with session_context_for_test(caller_session.id):
         yield LinkCaller(ctx, registry, task, caller_session.id, owner_session.id)
 
@@ -113,25 +93,6 @@ def caller(
 CASES = [
     pytest.param("reopen_task", {}, "reopened", id="reopen"),
     pytest.param("de_escalate_task", {"reason": "Resolved"}, "de_escalated", id="de-escalate"),
-    pytest.param(
-        "submit_for_review", {"stage_name": "implementation"}, "needs_review", id="submit"
-    ),
-    pytest.param(
-        "approve_review", {"stage_name": "implementation"}, "review_approved", id="approve"
-    ),
-    pytest.param("reject_review", {"stage_name": "implementation"}, "review_rejected", id="reject"),
-    pytest.param(
-        "record_plan_enhancement",
-        {"round_number": 1, "converged": False, "suggestions": ["Clarify acceptance"]},
-        "plan_enhanced",
-        id="enhance-with-suggestions",
-    ),
-    pytest.param(
-        "record_plan_enhancement",
-        {"round_number": 1, "converged": True},
-        "plan_enhanced",
-        id="enhance-converged",
-    ),
 ]
 
 

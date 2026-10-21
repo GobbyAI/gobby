@@ -179,6 +179,7 @@ def _gmcp_fetch_harness(
     bin_dir = home / "bin"
     monkeypatch.setenv("GOBBY_HOME", str(home))
     monkeypatch.setattr(version_pins, "UNPUBLISHED_MANAGED_BINS", frozenset({"gterm", "gclient"}))
+    monkeypatch.setitem(version_pins.MANAGED_BIN_VERSION_PINS, "gmcp", GMCP_PIN)
     if present:
         bin_dir.mkdir(parents=True)
         (bin_dir / "gmcp").write_bytes(b"existing")

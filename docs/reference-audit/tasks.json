@@ -560,262 +560,6 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "get_task_stages",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
-        "symbol": "get_task_stages"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "list_stages_registry",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
-        "symbol": "list_stages_registry"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "get_task_type_defaults",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
-        "symbol": "get_task_type_defaults"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "initialize_task_manifest",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "initialize_task_manifest"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "start_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "start_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "complete_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "complete_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "fail_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "fail_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "submit_for_review",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
-        "symbol": "submit_for_review"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "approve_review",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
-        "symbol": "approve_review"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "reject_review",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
-        "symbol": "reject_review"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "add_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "add_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "remove_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "remove_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "update_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
-        "symbol": "update_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "restore_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
-        "symbol": "restore_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "delete_stage",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
-        "symbol": "delete_stage"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "set_task_type_defaults",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
-        "symbol": "set_task_type_defaults"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
       "tool": "update_observed_files",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
       "implementation": {
@@ -1183,19 +927,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby tasks advance",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/stages.py",
-        "symbol": "advance_cmd"
-      },
-      "verification": [
-        "public-cli-inventory"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby tasks backup",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
       "implementation": {
@@ -1482,19 +1213,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby tasks review",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/review.py",
-        "symbol": "review_cmd"
-      },
-      "verification": [
-        "public-cli-inventory"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby tasks search",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
       "implementation": {
@@ -1513,19 +1231,6 @@
       "implementation": {
         "path": "src/gobby/cli/tasks/crud.py",
         "symbol": "show_task"
-      },
-      "verification": [
-        "public-cli-inventory"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby tasks stages",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/stages.py",
-        "symbol": "stages_cmd"
       },
       "verification": [
         "public-cli-inventory"
@@ -1570,90 +1275,6 @@
         "public-cli-inventory"
       ],
       "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "list_stages"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages list"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "show_stage"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages show"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "update_stage"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages update"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "restore_stage"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages restore"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "delete_stage"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages delete"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
-      "implementation": {
-        "path": "src/gobby/cli/stages.py",
-        "symbol": "defaults"
-      },
-      "verification": [
-        "cli-declarations",
-        "retained-stage-cli"
-      ],
-      "audience": "operator/client",
-      "command": "gobby stages defaults"
     }
   ],
   "delegated_operations": {
@@ -1669,14 +1290,10 @@
       "gobby-tasks-ops:run_expansion_qa_coverage",
       "gobby-tasks-ops:check_expansion_qa_result",
       "gobby-tasks-ops:validate_plan_file",
-      "gobby-tasks-ops:wire_affected_files_from_run",
-      "gobby-tasks-ops:record_plan_enhancement",
-      "gobby-tasks-ops:backfill_plan_review_lessons"
+      "gobby-tasks-ops:wire_affected_files_from_run"
     ],
     "source-control": [
-      "gobby-tasks-ops:record_pr_verdict",
       "gobby-tasks-ops:record_pr_opened",
-      "gobby-tasks-ops:record_merge_result",
       "gobby-tasks-ops:close_linked_github_issue",
       "gobby-tasks-ops:get_delivery_state",
       "gobby-tasks-ops:record_pr_state",

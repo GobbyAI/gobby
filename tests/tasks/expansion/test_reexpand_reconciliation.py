@@ -359,7 +359,6 @@ Add the new section.
         plan_hash=plan_hash,
         root_task_ref=str(parent.seq_num),
         project_id=sample_project["id"],
-        is_spawned_agent=False,
     )
 
     assert result["ok"] is True

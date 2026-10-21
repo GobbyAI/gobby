@@ -67,6 +67,7 @@ INTERACTIVE_TASK_MUTATIONS = (
     "link_commit",
     "link_task_to_session",
     "record_close_receipt",
+    "release_task_claim",
     "remove_dependency",
     "remove_label",
     "reopen_task",
@@ -78,11 +79,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "update_observed_files",
     "update_task",
 )
-TASK_REVIEW_OPERATIONS = (
-    "approve_review",
-    "reject_review",
-    "submit_for_review",
-)
 LANDING_OPERATIONS = ("set_landing_freeze", "land_commit")
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
@@ -91,55 +87,38 @@ READ_ONLY_TASK_TOOLS = (
     "get_task",
     "get_task_diff",
     "get_task_sessions",
-    "get_task_stages",
-    "get_task_type_defaults",
     "list_blocked_tasks",
     "list_ready_tasks",
-    "list_stages_registry",
     "list_tasks",
     "search_tasks",
     "suggest_next_task",
 )
 NON_INTERACTIVE_TASK_OPS = (
-    "add_stage",
     "append_description_section",
-    "backfill_plan_review_lessons",
     "cancel_expansion_run",
     "check_expansion_qa_result",
     "clear_isolation_pair",
-    "complete_stage",
-    "delete_stage",
-    "fail_stage",
     "find_file_overlaps",
     "get_affected_files",
     "get_artifacts",
     "get_expansion_run",
     "get_latest_expansion_run",
-    "initialize_task_manifest",
-    "record_merge_result",
-    "record_plan_enhancement",
-    "record_pr_verdict",
     "reindex_tasks",
-    "remove_stage",
     "reset_expansion_output",
-    "restore_stage",
     "resume_expansion_run",
     "run_expansion_qa_coverage",
     "save_expansion_qa_result",
     "set_affected_files",
     "set_artifact",
     "set_artifacts_atomic",
-    "set_task_type_defaults",
     "start_expansion_run",
-    "start_stage",
-    "update_stage",
     "validate_expansion_run",
     "validate_plan_file",
     "wire_affected_files_from_run",
 )
 TASK_MUTATION_CASES = tuple(
     [("gobby-tasks", name) for name in INTERACTIVE_TASK_MUTATIONS]
-    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS + LANDING_OPERATIONS]
+    + [("gobby-tasks-ops", name) for name in LANDING_OPERATIONS]
 )
 
 
@@ -311,7 +290,6 @@ TASK_ENFORCEMENT_RULES = {
     "require-commit-before-status",
     "task-commit-project-path-allowlist-before-git",
     "block-ask-during-stop-compliance",
-    "block-needs-review-interactive",
     "track-task-claim",
     "reset-subagent-flag",
 }
@@ -734,7 +712,6 @@ class TestBlockSpawnedAgentCreateTask:
             pytest.param("update_task", "allow", id="update-available"),
             pytest.param("close_task", "allow", id="close-available"),
             pytest.param("validate_task", "allow", id="validation-available"),
-            pytest.param("submit_for_review", "allow", id="review-available"),
         ],
     )
     async def test_spawned_worker_keeps_assigned_lifecycle_operations_available(
@@ -743,9 +720,8 @@ class TestBlockSpawnedAgentCreateTask:
         tool_name: str,
         expected_decision: str,
     ) -> None:
-        server_name = "gobby-tasks-ops" if tool_name == "submit_for_review" else "gobby-tasks"
         response = await self._engine(db).evaluate(
-            _mcp_before_tool_event(server_name, tool_name),
+            _mcp_before_tool_event("gobby-tasks", tool_name),
             session_id=SESSION_ID,
             variables={"is_spawned_agent": True},
         )
@@ -1653,8 +1629,8 @@ class TestRequireTasksSkillForMutations:
         assert registered["gobby-tasks"] == set(INTERACTIVE_TASK_MUTATIONS) | set(
             READ_ONLY_TASK_TOOLS
         )
-        assert registered["gobby-tasks-ops"] == (
-            set(TASK_REVIEW_OPERATIONS) | set(LANDING_OPERATIONS) | set(NON_INTERACTIVE_TASK_OPS)
+        assert registered["gobby-tasks-ops"] == set(LANDING_OPERATIONS) | set(
+            NON_INTERACTIVE_TASK_OPS
         )
 
     @staticmethod
@@ -2372,96 +2348,6 @@ class TestRequireCommitBeforeStatus:
 
         reason = body.effects[0].reason or ""
         assert "no commit linked" in reason.lower()
-
-
-class TestBlockNeedsReviewInteractive:
-    """Verify interactive review tools stay blocked for interactive sessions."""
-
-    @staticmethod
-    def _review_event(
-        tool_name: str,
-        *,
-        task_id: str = "anchor-1",
-        stage_name: str = "planning",
-    ) -> HookEvent:
-        arguments = {"task_id": task_id, "stage_name": stage_name}
-        return HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=SESSION_ID,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "mcp_server": "gobby-tasks-ops",
-                "mcp_tool": tool_name,
-                "tool_input": {
-                    "server_name": "gobby-tasks-ops",
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                },
-            },
-        )
-
-    @pytest.mark.asyncio
-    async def test_submit_for_review_blocks_interactive_session(self, db) -> None:
-        _sync_bundled(db)
-        engine = RuleEngine(db)
-        variables = {
-            "loaded_skill_references": [
-                "gobby:references/tasks/overview.md",
-                "gobby:references/tasks/closing.md",
-            ]
-        }
-
-        response = await engine.evaluate(
-            self._review_event("submit_for_review"),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert response.decision == "block"
-        assert "block-needs-review-interactive" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_submit_for_review_allows_spawned_agent(self, db) -> None:
-        _sync_bundled(db)
-        engine = RuleEngine(db)
-        variables = {
-            "is_spawned_agent": True,
-            "loaded_skill_references": [
-                "gobby:references/tasks/overview.md",
-                "gobby:references/tasks/closing.md",
-            ],
-        }
-
-        response = await engine.evaluate(
-            self._review_event("submit_for_review"),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert response.decision == "allow"
-        assert "block-needs-review-interactive" not in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_approve_review_blocks_interactive_session(self, db) -> None:
-        _sync_bundled(db)
-        engine = RuleEngine(db)
-        variables = {
-            "loaded_skill_references": [
-                "gobby:references/tasks/overview.md",
-                "gobby:references/tasks/closing.md",
-            ]
-        }
-
-        response = await engine.evaluate(
-            self._review_event("approve_review"),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert response.decision == "block"
-        assert "block-needs-review-interactive" in (response.reason or "")
 
 
 class TestBlockAskDuringStopCompliance:

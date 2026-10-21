@@ -554,9 +554,6 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     in {
                         "gobby-tasks:close_task",
                         "gobby-tasks:de_escalate_task",
-                        "gobby-tasks-ops:submit_for_review",
-                        "gobby-tasks-ops:approve_review",
-                        "gobby-tasks-ops:reject_review",
                     }
                 ):
                     try:

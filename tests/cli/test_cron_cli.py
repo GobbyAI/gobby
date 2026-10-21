@@ -118,13 +118,6 @@ def test_removed_build_commands_are_unavailable(runner: CliRunner, command: list
     assert f"No such command '{command[-1]}'" in result.output
 
 
-@pytest.mark.parametrize("command", ["list", "show", "update", "restore", "delete", "defaults"])
-def test_retained_stage_commands_have_help(runner: CliRunner, command: str) -> None:
-    result = runner.invoke(cli, ["stages", command, "--help"])
-    assert result.exit_code == 0
-    assert f"stages {command}" in result.output
-
-
 class TestCronList:
     """Tests for 'gobby cron list'."""
 

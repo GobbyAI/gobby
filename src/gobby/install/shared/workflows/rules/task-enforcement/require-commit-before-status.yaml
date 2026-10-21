@@ -16,9 +16,6 @@ rules:
         mcp_tools:
           - "gobby-tasks:close_task"
           - "gobby-tasks:de_escalate_task"
-          - "gobby-tasks-ops:submit_for_review"
-          - "gobby-tasks-ops:approve_review"
-          - "gobby-tasks-ops:reject_review"
         reason: |
           Retry the status change after committing — Gobby auto-detects commits
           from Bash `git commit` and `link_commit()`. If detection misses the commit,

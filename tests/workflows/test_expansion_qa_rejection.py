@@ -33,17 +33,18 @@ async def test_missing_row_triggers_rejection(
 
     result = await case["registry"].call("run_expansion_qa_coverage", call_args(case))
 
-    action = result["review_action"]
-    notes = action["arguments"]["rejection_notes"]
     assert result["passed"] is False
-    assert action["server"] == "gobby-tasks-ops"
-    assert action["tool"] == "reject_review"
-    assert action["arguments"]["stage_name"] == "expansion"
-    assert "section_id=A1" in notes
-    assert "item_id=A1.1" in notes
-    assert "status=invalid" in notes
-    assert "detail=artifact src/example.py was not referenced" in notes
-    assert "leaves=#13244" in notes
+    assert result["qa_result"]["failures"] == [
+        {
+            "section_id": "A1",
+            "item_id": "A1.1",
+            "status": "invalid",
+            "detail": "artifact src/example.py was not referenced",
+            "leaves": ["#13244"],
+        }
+    ]
+    assert "review_action" not in result
+    assert "review_action" not in result["qa_result"]
 
 
 @pytest.mark.asyncio
@@ -59,9 +60,7 @@ async def test_zero_missing_invalid_triggers_approval(
 
     result = await case["registry"].call("run_expansion_qa_coverage", call_args(case))
 
-    action = result["review_action"]
     assert result["passed"] is True
-    assert action["server"] == "gobby-tasks-ops"
-    assert action["tool"] == "approve_review"
-    assert action["arguments"]["stage_name"] == "expansion"
-    assert result["manifest_path"] in action["arguments"]["approval_notes"]
+    assert result["qa_result"]["failures"] == []
+    assert "review_action" not in result
+    assert "review_action" not in result["qa_result"]

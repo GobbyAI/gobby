@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, SessionSource
@@ -29,12 +28,10 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -57,19 +54,23 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _load_interactive_review_block_rule(db: HubDatabase) -> None:
-    yaml_path = (
-        get_bundled_rules_path() / "task-enforcement" / "block-needs-review-interactive.yaml"
-    )
-    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    rule_data = data["rules"]["block-needs-review-interactive"]
-    body, metadata = split_rule_definition_data(rule_data)
+def _load_interactive_only_block_rule(db: HubDatabase) -> None:
+    body = {
+        "event": "before_tool",
+        "when": "not variables.get('is_spawned_agent')",
+        "effects": [
+            {
+                "type": "block",
+                "mcp_tools": ["gobby-tasks:close_task"],
+                "reason": "Interactive close is blocked by this test rule.",
+            }
+        ],
+    }
     RuleDefinitionManager(db).create(
-        name="block-needs-review-interactive",
+        name="interactive-only-close-block",
         definition_json=json.dumps(body),
-        description=metadata.get("description"),
-        priority=metadata.get("priority", 32),
-        enabled=metadata.get("enabled", True),
+        priority=32,
+        enabled=True,
     )
 
 
@@ -181,13 +182,13 @@ def _seed_agent_variables(db: HubDatabase, session_id: str, *, spawned: bool) ->
 
 
 @pytest.mark.asyncio
-async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
+async def test_direct_mcp_tool_reconciles_spawned_session_before_rules(
     temp_db: HubDatabase,
     tmp_path: Path,
     workflow_runtime: WorkflowEvaluationRuntime,
 ) -> None:
     """Direct MCP calls repair stale spawned status before review-gate rules run."""
-    _load_interactive_review_block_rule(temp_db)
+    _load_interactive_only_block_rule(temp_db)
     session_manager = SessionManager(temp_db)
     child_session_id = _session(temp_db, session_manager, tmp_path, agent_depth=1)
     _seed_agent_variables(temp_db, child_session_id, spawned=False)
@@ -199,9 +200,9 @@ async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
 
     _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
-        "gobby-tasks-ops",
-        "approve_review",
-        arguments={"task_id": "#1", "stage_name": "development"},
+        "gobby-tasks",
+        "close_task",
+        arguments={"task_id": "#1"},
         session_id=child_session_id,
     )
 
@@ -211,13 +212,13 @@ async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
 
 
 @pytest.mark.asyncio
-async def test_direct_mcp_review_tool_still_blocks_interactive_session(
+async def test_direct_mcp_tool_still_blocks_interactive_session(
     temp_db: HubDatabase,
     tmp_path: Path,
     workflow_runtime: WorkflowEvaluationRuntime,
 ) -> None:
     """The interactive protection still applies to non-spawned sessions."""
-    _load_interactive_review_block_rule(temp_db)
+    _load_interactive_only_block_rule(temp_db)
     session_manager = SessionManager(temp_db)
     session_id = _session(temp_db, session_manager, tmp_path, agent_depth=0)
     _seed_agent_variables(temp_db, session_id, spawned=False)
@@ -229,11 +230,11 @@ async def test_direct_mcp_review_tool_still_blocks_interactive_session(
 
     _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
-        "gobby-tasks-ops",
-        "approve_review",
-        arguments={"task_id": "#1", "stage_name": "development"},
+        "gobby-tasks",
+        "close_task",
+        arguments={"task_id": "#1"},
         session_id=session_id,
     )
 
     assert error is not None
-    assert "block-needs-review-interactive" in error["error"]
+    assert "interactive-only-close-block" in error["error"]

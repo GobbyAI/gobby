@@ -316,26 +316,6 @@ class TestRegistryIntegration:
 
         assert "reopen_task" in tool_names
 
-    def test_stage_mutation_tools_have_precise_output_schema(self, task_ops_registry: Any) -> None:
-        for name in ("update_stage", "restore_stage", "delete_stage"):
-            schema_info = task_ops_registry.get_schema(name)
-            assert schema_info is not None
-            schema = schema_info["outputSchema"]
-            assert schema["required"] == ["ok"]
-            assert set(schema["properties"]) == {"ok", "stage", "error", "message"}
-
-    def test_set_task_type_defaults_rejects_invalid_payload(self, task_ops_registry: Any) -> None:
-        tool = task_ops_registry.get_tool("set_task_type_defaults")
-        assert tool is not None
-
-        result = tool(task_type="task", stages=[{"position": 1}])
-
-        assert result == {
-            "ok": False,
-            "error": "invalid_default_stage",
-            "message": "stages[0].stage_name must be a non-empty string",
-        }
-
     def test_merged_registries_available(self, task_registry: Any) -> None:
         """Test tools from merged registries are available."""
         merged_tools = [

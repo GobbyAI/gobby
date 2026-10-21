@@ -80,8 +80,6 @@ def test_closed_payload_values_and_complete_presentation(body: str) -> None:
 
 def test_completion_uses_supported_tools_and_typed_handoff(body: str) -> None:
     for term in (
-        "record_plan_enhancement",
-        "suggestions serialized as strings",
         "end_agent_run requires current_state and next_steps",
         "independent of adversarial review",
         "Do not record a failed/truncated run as converged",

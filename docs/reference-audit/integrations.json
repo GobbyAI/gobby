@@ -362,8 +362,7 @@
     {
       "capability": "source-control",
       "operations": [
-        "open_delivery_pr",
-        "record_merge_result"
+        "open_delivery_pr"
       ],
       "reason": "PR and merge lifecycle stay in source-control; linked issue closure is covered here too."
     },

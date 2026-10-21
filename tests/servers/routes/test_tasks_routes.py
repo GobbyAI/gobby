@@ -975,67 +975,6 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] is None
         assert data["state"]["is_claimed"] is False
 
-    def test_submit_for_review(
-        self,
-        client: TestClient,
-        task_manager: LocalTaskManager,
-        sample_task: dict,
-        session_id: str,
-    ) -> None:
-        task_manager.claim_task(sample_task["id"], session_id=session_id)
-        _start_current_stage(task_manager, sample_task["id"], session_id)
-        response = client.patch(
-            f"/api/tasks/{sample_task['id']}/stages/development",
-            json={"action": "submit_for_review", "notes": "Ready for QA"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["stage"]["stage_name"] == "development"
-        assert data["stage"]["state"] == "needs_review"
-
-    def test_approve_review(
-        self,
-        client: TestClient,
-        task_manager: LocalTaskManager,
-        sample_task: dict,
-        session_id: str,
-    ) -> None:
-        task_manager.claim_task(sample_task["id"], session_id=session_id)
-        _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.submit_for_review(sample_task["id"], review_notes="Ready")
-        response = client.patch(
-            f"/api/tasks/{sample_task['id']}/stages/development",
-            json={"action": "approve_review", "notes": "Looks good"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["stage"]["stage_name"] == "development"
-        assert data["stage"]["state"] == "review_approved"
-
-    def test_reject_review(
-        self,
-        client: TestClient,
-        task_manager: LocalTaskManager,
-        sample_task: dict,
-        session_id: str,
-    ) -> None:
-        task_manager.claim_task(sample_task["id"], session_id=session_id)
-        _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.submit_for_review(sample_task["id"], review_notes="Ready")
-        response = client.patch(
-            f"/api/tasks/{sample_task['id']}/stages/development",
-            json={
-                "action": "reject_review",
-                "reason": "Need another pass",
-                "notes": "Need another pass",
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["stage"]["stage_name"] == "development"
-        assert data["stage"]["state"] == "ready"
-        assert data["stage"]["review_round_count"] == 1
-
     def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/escalate",
