@@ -324,6 +324,12 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # tdd_gate_open asks from rule conditions on the rule-engine executor
     # (tests/workflows/engine/test_condition_git_off_loop.py).
     ("src/gobby/workflows/tdd_paths.py", "_git_out"),
+    # Server-derived tdd_gate_open reaches this claim-baseline check only from
+    # rule-engine workers; test_tdd_gate_asks_git_only_from_the_rule_engine_executor
+    # in tests/workflows/engine/test_condition_git_off_loop.py proves the Git call
+    # stays off the daemon loop. Other helper consumers lack task/session managers,
+    # and close evaluation does not call authorize_session_write.
+    ("src/gobby/tasks/tdd_write_authorization.py", "_unchanged_at_claim"),
     # Reached only from the `gobby status` Click command
     # (test_bin_freshness_git_is_reached_only_from_cli_status below).
     ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
