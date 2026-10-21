@@ -144,9 +144,12 @@ class WorkflowRuleEvaluator:
 
             workflow_context = [*workflow_response.context_contributors(), *extra_context]
             return workflow_context or None, None
-        except WorkflowEvaluationTimeout:
-            raise
         except Exception as exc:
+            if isinstance(exc, WorkflowEvaluationTimeout) and event.event_type not in {
+                HookEventType.STOP,
+                HookEventType.STOP_FAILURE,
+            }:
+                raise
             self.logger.exception("Workflow evaluation failed: %s", exc)
             if event.event_type == HookEventType.BEFORE_TOOL:
                 response = HookResponse(
@@ -158,17 +161,7 @@ class WorkflowRuleEvaluator:
                 )
                 self._audit_source_block(event, response, rule_id="hook-before-tool-safety")
                 return None, response
-            if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
-                response = HookResponse(
-                    decision="block",
-                    reason="Workflow evaluation failed; blocking stop for safety.",
-                )
-                self._audit_source_block(
-                    event,
-                    response,
-                    rule_id="hook-stop-safety",
-                )
-                return None, response
+            # Evaluation failures must not manufacture another turn when stopping.
             return None, None
 
     def _defer_help_housekeeping(self, event: HookEvent) -> bool:

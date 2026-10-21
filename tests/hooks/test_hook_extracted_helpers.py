@@ -18,6 +18,7 @@ from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_ref_resolution import resolve_session_refs_in_tool_input
 from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -241,9 +242,43 @@ class TestWorkflowRuleEvaluator:
         assert audit.call_args.kwargs["rule_id"] == "hook-before-tool-safety"
 
     @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
-    def test_stop_evaluation_exception_keeps_safety_block(self, event_type: HookEventType) -> None:
+    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError, WorkflowEvaluationTimeout])
+    def test_stop_evaluation_exception_fails_open(
+        self, event_type: HookEventType, error_type: type[Exception]
+    ) -> None:
         workflow_handler = MagicMock()
-        workflow_handler.handle.side_effect = RuntimeError("matcher crashed")
+        error = (
+            WorkflowEvaluationTimeout(
+                event_type=event_type, session_id="external-1", timeout_seconds=1.0
+            )
+            if error_type is WorkflowEvaluationTimeout
+            else error_type("matcher crashed")
+        )
+        workflow_handler.handle.side_effect = error
+        dispatch = MagicMock()
+        logger = MagicMock()
+        evaluator = WorkflowRuleEvaluator(
+            workflow_handler=workflow_handler,
+            dispatch_mcp_calls=dispatch,
+            format_discovery_result=MagicMock(),
+            database=MagicMock(),
+            logger=logger,
+        )
+
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = evaluator.evaluate(_event(event_type))
+
+        assert context is None
+        assert blocking is None
+        logger.exception.assert_called_once_with("Workflow evaluation failed: %s", error)
+        dispatch.assert_not_called()
+        audit.assert_not_called()
+
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
+    def test_stop_workflow_block_still_enforced(self, event_type: HookEventType) -> None:
+        workflow_handler = MagicMock()
+        response = HookResponse(decision="block", reason="Claimed task still needs a legal exit")
+        workflow_handler.handle.return_value = response
         evaluator = WorkflowRuleEvaluator(
             workflow_handler=workflow_handler,
             dispatch_mcp_calls=MagicMock(),
@@ -252,14 +287,31 @@ class TestWorkflowRuleEvaluator:
             logger=MagicMock(),
         )
 
-        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
-            context, blocking = evaluator.evaluate(_event(event_type))
+        context, blocking = evaluator.evaluate(_event(event_type))
 
         assert context is None
-        assert blocking == HookResponse(
-            decision="block", reason="Workflow evaluation failed; blocking stop for safety."
+        assert blocking is response
+        assert blocking.decision == "block"
+        assert blocking.reason == "Claimed task still needs a legal exit"
+
+    def test_before_tool_evaluation_timeout_propagates(self) -> None:
+        error = WorkflowEvaluationTimeout(
+            event_type=HookEventType.BEFORE_TOOL, session_id="external-1", timeout_seconds=1.0
         )
-        assert audit.call_args.kwargs["rule_id"] == "hook-stop-safety"
+        workflow_handler = MagicMock()
+        workflow_handler.handle.side_effect = error
+        evaluator = WorkflowRuleEvaluator(
+            workflow_handler=workflow_handler,
+            dispatch_mcp_calls=MagicMock(),
+            format_discovery_result=MagicMock(),
+            database=MagicMock(),
+            logger=MagicMock(),
+        )
+
+        with pytest.raises(WorkflowEvaluationTimeout) as raised:
+            evaluator.evaluate(_event())
+
+        assert raised.value is error
 
     @pytest.mark.parametrize(
         "event_type",
