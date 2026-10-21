@@ -207,3 +207,57 @@ def test_symbolic_parameter_and_ansi_c_data_controls_stay_allowed(command: str) 
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "g$()obby se$()ssions approve-dirty-pat$()hs s7 --checkout /repo a.txt",
+        "g``obby se``ssions approve-dirty-pat``hs s7 --checkout /repo a.txt",
+        'A=; g$A"obby" se$A"ssions" approve-dirty-pat$A"hs" s7 --checkout /repo a.txt',
+        "g$()obby sessions list",
+        "go$()bby sessions list",
+        "unknown app$()rove-dirty-paths",
+        "unknown app$(true)rove-dirty-paths",
+        "g``obby sessions list",
+        "go``bby sessions list",
+        "unknown app``rove-dirty-paths",
+        'g$A"obby" sessions list',
+        'go$A"bby" sessions list',
+        'unknown app$A"rove-dirty-paths"',
+        "echo $(g$()obby sessions list)",
+        "echo `g$()obby sessions list`",
+    ],
+)
+def test_symbolic_substitution_and_variable_protected_words_are_refused(command: str) -> None:
+    # Inert evaluator input only; substitutions and the approval CLI never run.
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(pwd)",
+        "cd $HOME",
+        'cat "${dir}/${file}"',
+        "ls ${dir}/*",
+        'ls "${HOME}/.gobby/bin/gobby"',
+        "cat 'g$()obby'",
+        r"cat g\$\(\)obby",
+        'cat "$(pwd)/${file}"',
+        'cat "`pwd`/${file}"',
+    ],
+)
+def test_symbolic_substitution_and_variable_data_controls_stay_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize("command", ["echo $(echo {a,b})", "echo `echo {a,b}`"])
+def test_symbolic_substitution_body_braces_stay_in_their_execution_context(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")

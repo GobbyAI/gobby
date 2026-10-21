@@ -11,6 +11,7 @@ import fnmatch
 import re
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
+from gobby.hooks._normalization_compound import command_substitution_bodies
 from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks._shell_execution_words import _unwrap
 
@@ -34,16 +35,18 @@ class _AmbiguousSyntax(ValueError):
     """An unsupported expansion cannot establish that a brace word is safe."""
 
 
-def _parameter_span(raw: str, index: int) -> tuple[int, bool]:
-    """Consume balanced parameter syntax without evaluating any expansion.
+def _expansion_span(raw: str, index: int) -> tuple[int, bool]:
+    """Consume a balanced expansion without evaluating its contents.
 
     Nested spans share one forward cursor. Their contents become one symbolic
     wildcard, while ordinary braces remain a reason to inspect the word.
     """
-    contexts = [("}", "")]
+    backtick = raw[index] == "`"
+    contexts = [("`" if backtick else "}" if raw[index + 1] == "{" else ")", "")]
+    shell_contexts = int(contexts[0][0] != "}")
     brace_group = False
     quote = ""
-    index += 2
+    index += 1 if backtick else 2
     while index < len(raw):
         char = raw[index]
         if char == "\\" and quote != "'":
@@ -63,27 +66,32 @@ def _parameter_span(raw: str, index: int) -> tuple[int, bool]:
             continue
         elif raw.startswith(("$(", "<(", ">("), index):
             contexts.append((")", quote))
+            shell_contexts += 1
             quote = ""
             index += 2
             continue
         elif not quote and char == contexts[-1][0]:
-            _, quote = contexts.pop()
+            closer, quote = contexts.pop()
+            if closer != "}":
+                shell_contexts -= 1
             if not contexts:
                 return index + 1, brace_group
         elif char == "`":
             contexts.append(("`", quote))
+            shell_contexts += 1
             quote = ""
         elif not quote and char == "{":
-            brace_group = True
+            brace_group = brace_group or not shell_contexts
             contexts.append(("}", quote))
         elif not quote and char == "(" and contexts[-1][0] == ")":
             contexts.append((")", quote))
+            shell_contexts += 1
         elif char == quote:
             quote = ""
         elif not quote and char in "'\"":
             quote = char
         index += 1
-    raise _AmbiguousSyntax("Unclosed parameter span")
+    raise _AmbiguousSyntax("Unclosed expansion span")
 
 
 def _characters(
@@ -102,8 +110,21 @@ def _characters(
                     result.append((following, False))
                 index += 2
                 continue
-        if quote != "'" and raw.startswith("${", index):
-            index, _ = _parameter_span(raw, index)
+        if quote != "'" and (raw.startswith(("${", "$("), index) or char == "`"):
+            index, _ = _expansion_span(raw, index)
+            result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
+            continue
+        if (
+            quote != "'"
+            and char == "$"
+            and index + 1 < len(raw)
+            and raw[index + 1] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+        ):
+            index += 2
+            while index < len(raw) and raw[index] in (
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
+            ):
+                index += 1
             result.append(("*" if parameter_wildcard else "$", not quote or quoted_expansions))
             continue
         if char == quote:
@@ -260,9 +281,10 @@ def _matches(chars: list[_Character], target: str) -> bool:
     return len(target) in sequence(0, len(chars), {0}, 0)
 
 
-def _has_brace_group(raw: str) -> bool:
-    """Distinguish active brace groups from ordinary parameter delimiters."""
+def _word_syntax(raw: str) -> tuple[bool, bool]:
+    """Find active braces and expansions, preserving quoted literal data."""
     quote = ""
+    expansion = False
     index = 0
     while index < len(raw):
         char = raw[index]
@@ -273,14 +295,18 @@ def _has_brace_group(raw: str) -> bool:
             quote = "$'"
             index += 2
             continue
-        if quote not in {"'", "$'"} and raw.startswith("${", index):
+        if quote not in {"'", "$'"} and (raw.startswith(("${", "$("), index) or char == "`"):
             try:
-                index, brace_group = _parameter_span(raw, index)
+                index, brace_group = _expansion_span(raw, index)
             except _AmbiguousSyntax:
-                return True
+                return True, True
             if brace_group:
-                return True
+                return True, True
+            expansion = True
             continue
+        if quote not in {"'", "$'"} and char == "$" and index + 1 < len(raw):
+            if raw[index + 1] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+                expansion = True
         if quote == "$'" and char == "'":
             quote = ""
         elif char == quote:
@@ -288,22 +314,30 @@ def _has_brace_group(raw: str) -> bool:
         elif not quote and char in "'\"":
             quote = char
         elif not quote and char == "{":
-            return True
+            return True, True
         elif not quote and char == "}":
-            return True
+            return True, True
         index += 1
-    return bool(quote)
+    return bool(quote), expansion or bool(quote)
 
 
 def _protected_word(raw: str) -> bool:
-    brace_group = _has_brace_group(raw)
-    if not brace_group and "${" not in raw:
+    brace_group, expansion = _word_syntax(raw)
+    if not brace_group and not expansion:
         return False
     chars = _characters(raw)
-    # Parameter-only operands remain data. Literal pieces around a parameter
-    # anchor the finite protected-name match, even when no piece spells "gob".
-    if not brace_group and not any(char != "*" or not active for char, active in chars):
-        return False
+    if not brace_group:
+        # Directory expansions cannot turn a literal/data basename into a
+        # protected command. Match only anchored, dynamic basename segments.
+        beginning = 0
+        for index, (char, _) in enumerate(chars):
+            if char == "/":
+                beginning = index + 1
+        basename = chars[beginning:]
+        if not any(char == "*" and active for char, active in basename):
+            return False
+        if not any(char != "*" or not active for char, active in basename):
+            return False
     if any(active and char in "$`()" for char, active in chars):
         raise _AmbiguousSyntax("Dynamic expansion in brace word")
     return any(_matches(chars, target) for target in _TARGETS)
@@ -399,9 +433,17 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
             if depth > _MAX_DEPTH:
                 raise _AmbiguousSyntax("Shell nesting limit")
             for subject in executable_command_subjects(text):
+                # Correlated subjects retain substitution bodies with spaces.
+                # Inspect their owner as one word; executable bodies already
+                # have independent subjects from executable_command_subjects.
+                scan = scan_shell_command(subject)
+                if "$(" in subject or "`" in subject:
+                    masked, _ = command_substitution_bodies(subject, scan.spans, depth=depth)
+                    if masked != subject:
+                        subject = masked
+                        scan = scan_shell_command(subject)
                 if command_slots and _command_slots(subject):
                     return True
-                scan = scan_shell_command(subject)
                 if any(_protected_word(subject[start:end]) for start, end in scan.spans):
                     return True
                 scripts = _wrapper_scripts(_decoded_stages(subject))
