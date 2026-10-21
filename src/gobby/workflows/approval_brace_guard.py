@@ -392,7 +392,7 @@ def _slot_hazard(raw: str, *, quoted_expansions: bool = True) -> bool:
     )
 
 
-def _command_slots(subject: str) -> bool:
+def _command_slots(subject: str, *, strict: bool = False) -> bool:
     """Inspect two CLI positional slots, skipping literal flags and --config.
 
     Work on token spans rather than a regex grammar. Scanning all argv positions
@@ -404,22 +404,56 @@ def _command_slots(subject: str) -> bool:
     raw: list[str] = []
     for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
         if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
-            if _stage_slots(words, raw):
+            if _stage_slots(words, raw, strict=strict):
                 return True
             words, raw = [], []
         else:
             words.append(token.value)
             raw.append(subject[start:end])
-    return _stage_slots(words, raw)
+    return _stage_slots(words, raw, strict=strict)
 
 
-def _stage_slots(words: list[str], raw: list[str]) -> bool:
+def _git_alias_stage(words: list[str]) -> bool:
+    """Identify in-text Git alias configuration in one bounded token pass."""
+    unwrapped = _unwrap(words)
+    if not unwrapped or unwrapped[0].rsplit("/", 1)[-1] != "git":
+        return False
+    prefix = True
+    for index, word in enumerate(words):
+        if prefix and _ASSIGNMENT.match(word):
+            name = word.partition("=")[0]
+            if name in {"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}:
+                return True
+            for stem in ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"):
+                suffix = name.removeprefix(stem)
+                if (
+                    name.startswith(stem)
+                    and suffix
+                    and all(char in "0123456789" for char in suffix)
+                ):
+                    return True
+        else:
+            prefix = False
+        lowered = word.lower()
+        following = words[index + 1].lower() if index + 1 < len(words) else ""
+        if (
+            ((word == "-c" or lowered == "--config-env") and following.startswith("alias."))
+            or (word.startswith("-c") and word[2:].lower().startswith("alias."))
+            or lowered.startswith("--config-env=alias.")
+        ):
+            return True
+    return False
+
+
+def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> bool:
+    if _git_alias_stage(words) and any(_slot_hazard(word) for word in raw):
+        return True
     unwrapped = _unwrap(words)
     if unwrapped:
         name = unwrapped[0].rsplit("/", 1)[-1]
         argvs = _uv_run_argvs(name, unwrapped[1:])
         heads = [argv[0].rsplit("/", 1)[-1] for argv in argvs or [unwrapped] if argv]
-        if heads and all(head in _DATA_COMMANDS for head in heads):
+        if not strict and heads and all(head in _DATA_COMMANDS - {"git"} for head in heads):
             return False
     checked_until = 0
     for index, word in enumerate(words):
@@ -527,6 +561,8 @@ def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
     if any(token.value.startswith(("BASH_ENV=", "ENV=")) for token in scan.tokens):
         return True
     for words in stages:
+        if _git_alias_stage(words):
+            return True
         # _unwrap projects eval into sh -c. Preserve that literal head here;
         # the NUL marker cannot be an executable shell command name.
         unwrapped = _unwrap(["\0eval" if word == "eval" else word for word in words])
@@ -582,7 +618,7 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
     try:
         subjects, strict = _approval_subjects(command)
         for subject, scan in subjects:
-            if command_slots and _command_slots(subject):
+            if command_slots and _command_slots(subject, strict=strict):
                 return True
             config_operands = set() if strict else _config_operands(subject, scan)
             data_operands = {} if strict else _data_operands(subject, scan)

@@ -438,3 +438,65 @@ def test_shell_setup_disables_data_narrowing_for_the_whole_text(command: str) ->
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo() if true; then "$@"; fi; D=approve-dirty-paths; '
+        "echo gobby se$()ssions $D s7 --checkout /repo a.txt",
+        "D=approve-dirty-paths; git -c alias.x='!gobby' x se$()ssions $D s7 --checkout /repo a.txt",
+        "git log --grep gobby $X",
+    ],
+)
+def test_shadowed_data_and_git_heads_keep_expansion_slot_checks(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["echo gobby sessions list", "git grep gobby", 'git commit -m "gobby sessions list"'],
+)
+def test_literal_data_and_git_words_stay_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -calias.x='!gobby' x se$()ssions $D",
+        "git -c Alias.X='!gobby' x se$()ssions $D",
+        "G='!gobby' git --config-env=alias.x=G x se$()ssions $D",
+        "G='!gobby' git --config-env alias.x=G x se$()ssions $D",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!gobby' "
+        "git x se$()ssions $D",
+        "GIT_CONFIG_PARAMETERS=ignored git x se$()ssions $D",
+        "GIT_CONFIG_KEY_42=alias.x git x se$()ssions $D",
+        "GIT_CONFIG_VALUE_42='!gobby' git x se$()ssions $D",
+        "git -c alias.x='!gobby' x se{s,}sions list",
+        'git -c alias.st=status st "$X"',
+        "echo /Users${P} sessions list; git -c alias.st=status st",
+    ],
+)
+def test_in_text_git_aliases_refuse_expansions_and_disable_data_narrowing(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c alias.st=status st",
+        "git -c alias.x='!gobby' x sessions list",
+        'git -c user.name=x commit -m "$MSG"',
+    ],
+)
+def test_literal_git_alias_and_non_alias_config_controls_stay_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
