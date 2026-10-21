@@ -1081,13 +1081,13 @@ class TestEvaluateWorkflowRules:
         assert blocking is None
 
     @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
-    def test_stop_workflow_evaluation_exception_fails_closed(
+    def test_stop_workflow_evaluation_exception_fails_open(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
         event_type: HookEventType,
     ) -> None:
-        """Workflow evaluation exceptions block STOP-class events."""
+        """Workflow evaluation errors must not force another STOP-class turn."""
         manager = manager_with_mocks
         manager._workflow_handler.handle.side_effect = RuntimeError("Workflow engine error")
 
@@ -1096,11 +1096,8 @@ class TestEvaluateWorkflowRules:
             context, blocking = manager._evaluate_workflow_rules(event)
 
         assert context is None
-        assert blocking == HookResponse(
-            decision="block",
-            reason="Workflow evaluation failed; blocking stop for safety.",
-        )
-        audit.assert_called_once()
+        assert blocking is None
+        audit.assert_not_called()
 
 
 class TestShutdown:
