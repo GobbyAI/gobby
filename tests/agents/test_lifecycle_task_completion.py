@@ -382,10 +382,17 @@ async def test_open_task_preserves_autonomous_stuck_cleanup(
 
     assert completed == 0
     assert stuck == 1
-    cleanup_agent.assert_awaited_once_with(
-        run,
-        terminal_payload="autonomous stuck: No progress events for 634 seconds",
-    )
+    cleanup_agent.assert_awaited_once()
+    cleanup_call = cleanup_agent.await_args
+    assert cleanup_call is not None
+    (cleaned_run,) = cleanup_call.args
+    assert cleaned_run.id == run.id
+    assert cleaned_run.task_id == run.task_id
+    assert cleaned_run.terminal_id == run.terminal_id
+    assert cleaned_run.status == "running"
+    assert cleanup_call.kwargs == {
+        "terminal_payload": "autonomous stuck: No progress events for 634 seconds",
+    }
 
 
 @pytest.mark.asyncio

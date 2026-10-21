@@ -1,7 +1,7 @@
 # Review outcomes
 
 Load before recording an epic verdict or interpreting a feedback submission.
-Discover current task/stage state first; load [evidence](evidence.md).
+Read the epic's task state first; load [evidence](evidence.md).
 
 ## Epic verdict
 
@@ -24,27 +24,19 @@ extra or divergent behavior. Explain outcomes to the user as approve / reject /
 escalate. Do not use `needs_discussion` for unattended work; judge available evidence
 as approve or request changes.
 
-For an open epic whose `epic_qa` stage is in progress, the reviewer maps:
+Open and closed epics follow one path. The reviewer delivers the block in its
+`end_agent_run` handoff and maps the verdict:
 
-- Approve → `gobby-tasks-ops:complete_stage` with `stage_name="epic_qa"` and
-  `validation_override_reason="epic_qa approved by epic-reviewer"`, backed by the
-  actual verdict evidence. This is the epic review policy's completion path.
-- Request changes → `gobby-tasks-ops:fail_stage` with the verdict in `reason` and
-  `cited_subtasks` naming every blocking descendant. Include at least one cited
-  descendant; do not use unrelated tasks or an invented dispatch failure reason.
+- Approve → the block is the whole verdict.
+- Request changes → create a remediation task under the epic for every blocking
+  finding, citing the blocking descendant. On a closed epic whose delivered work
+  must be reworked, `gobby-tasks:reopen_task` replaces the remediation tasks.
 - Needs discussion → `gobby-tasks:escalate_task` with a `needs_human:` reason naming
   the concrete decision.
 
-Do not substitute `approve_review`/`reject_review` for an in-progress epic QA
-verdict: those operate on `needs_review` stages. Generic submission/approval flows
-remain in [task reviews](../tasks/reviews.md). On an illegal transition, reread
-state and ownership; do not bypass policy. Completion/failure can release the
-prior claim and dispatch mutex. Follow returned stage state and retry/escalation
-caps rather than assuming every failure immediately reruns review.
-
-Closed-epic review records findings without stage transitions. A delegated
-reviewer owns its verdict and terminates through its agent workflow; the launcher
-does not repeat it. Review never closes the epic itself.
+A delegated reviewer owns its verdict and terminates through its agent workflow;
+the launcher does not repeat it. Review never closes the epic itself, and the
+`/gobby review` caller acts on the verdict.
 
 ## Feedback acceptance versus task outcomes
 

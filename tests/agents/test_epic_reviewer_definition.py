@@ -22,13 +22,9 @@ def _agent() -> dict[str, Any]:
 def test_three_outcomes() -> None:
     agent = _agent()
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
-    success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
-
-    assert {
-        "complete_stage",
-        "fail_stage",
-        "escalate_task",
-    } <= success_tools
+    assert not review_step.get("on_mcp_success")
+    for term in ("## Epic Findings", "remediation tasks", "`needs_human:`"):
+        assert term in agent["prompts"]["agent"]
 
 
 def test_review_step_stays_active_after_mcp_error() -> None:
@@ -39,29 +35,25 @@ def test_review_step_stays_active_after_mcp_error() -> None:
     assert review_step["mcp_error_policy"] == "stay"
 
 
-def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
+def test_review_step_ends_the_run_without_stage_tools() -> None:
     agent = _agent()
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     blocked = set(review_step["blocked_mcp_tools"])
     instructions = agent["prompts"]["agent"]
-    status = review_step["status_message"]
-
-    assert "complete_stage" in instructions
-    assert 'stage_name="epic_qa"' in instructions
-    assert "validation_override_reason" in instructions
-    assert "After successful final validation in REVIEW" in instructions
-    assert "pending terminal-verdict obligation" in instructions
-    assert "After successful final validation" in status
-    assert 'complete_stage(stage_name="epic_qa"' in status
-    assert "gobby-tasks-ops:approve_review" in blocked
-    assert "gobby-tasks-ops:reject_review" in blocked
+    workflow = agent["step_workflow"]
+    assert [step["name"] for step in workflow["steps"]] == ["claim", "load_skill", "review"]
+    assert "exit_condition" not in workflow
+    assert blocked == {
+        "gobby-tasks:close_task",
+        "gobby-tasks:de_escalate_task",
+        "gobby-agents:spawn_agent",
+        "gobby-agents:kill_agent",
+    }
+    status = "\n".join(step["status_message"] for step in workflow["steps"])
+    for retired in ("complete_stage", "fail_stage", "epic_qa", "terminal-verdict"):
+        assert retired not in instructions + status
     assert "gobby-agents:end_agent_run" not in blocked
-    assert (
-        "gobby-agents:end_agent_run"
-        in next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")[
-            "allowed_mcp_tools"
-        ]
-    )
+    assert "end_agent_run" in review_step["status_message"]
 
 
 def test_reads_subtree() -> None:
@@ -136,17 +128,8 @@ def test_loads_required_skills_before_review() -> None:
         assert directive in load_step["status_message"]
     assert load_step["transitions"] == [
         {
-            "to": "closed_review",
-            "when": (
-                "vars.closed_epic and all(skill_loaded(skill) for skill in vars.required_skills)"
-            ),
-        },
-        {
             "to": "review",
-            "when": (
-                "not vars.closed_epic and all(skill_loaded(skill) "
-                "for skill in vars.required_skills)"
-            ),
+            "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
         },
     ]
 
@@ -156,11 +139,12 @@ def test_loads_required_skills_before_review() -> None:
     assert success["variable"] == "required_skills_loaded"
 
 
-def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
+def test_closed_epic_reviews_on_the_review_step_with_reopen_permission() -> None:
     agent = _agent()
     steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     claim = steps["claim"]
-    closed_review = steps["closed_review"]
+    review = steps["review"]
+    assert "closed_review" not in steps
 
     closed_detection = next(
         hook
@@ -173,8 +157,8 @@ def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
     assert claim["transitions"] == [
         {"to": "load_skill", "when": "vars.task_claimed or vars.closed_epic"}
     ]
-    assert "gobby-tasks:reopen_task" not in closed_review["blocked_mcp_tools"]
-    assert "gobby-tasks:close_task" in closed_review["blocked_mcp_tools"]
+    assert "gobby-tasks:reopen_task" not in review["blocked_mcp_tools"]
+    assert "gobby-tasks:close_task" in review["blocked_mcp_tools"]
     assert "Call reopen_task only" in agent["prompts"]["agent"]
 
 

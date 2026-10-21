@@ -68,10 +68,8 @@ def test_handoff_transitions_to_end_agent_run_termination() -> None:
         f"{item['server']}:{item['tool']}" for item in implement.get("on_mcp_success", [])
     }
 
-    assert {
-        "gobby-tasks:close_task",
-        "gobby-tasks-ops:submit_for_review",
-    } <= success_tools
+    assert "gobby-tasks:close_task" in success_tools
+    assert "gobby-tasks-ops:submit_for_review" not in success_tools
     close_hook = next(
         item
         for item in implement["on_mcp_success"]

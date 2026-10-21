@@ -31,17 +31,13 @@ prompts:
     tech-writer documentation workflow before editing docs.
 
     Handoff:
-    Inspect the assigned task's stage manifest. If the current development row has
-    no review gate, commit the documentation changes, call close_task with
+    Commit the documentation changes, call close_task with
     preview=true, the commit_sha, and changes_summary, then repair every
     deterministic blocker. When preview passes, repeat the same close with
     preview=false. If it returns close_review_required, call wait_for_agent once
     with reviewer_run_id and yield; after delivery, call get_task. Repair reviewer
     feedback and restart the preview when the task is still open, or finish when
     it is closed.
-    If review is enabled, commit the changes and
-    call submit_for_review with `stage_name="development"` so rule_qa can dispatch
-    a reviewer.
 
     Boundaries:
     - Task transitions flow one way from a leaf: reopen_task and
@@ -147,12 +143,10 @@ step_workflow:
       mcp_error_policy: stay
       description: "Implement, validate, and hand off or close"
       status_message: |
-        Implement the docs leaf. Commit changes, then inspect the assigned task
-        manifest. If development review is disabled, call close_task with
+        Implement the docs leaf. Commit changes, then call close_task with
         preview=true, commit_sha, and changes_summary, repair deterministic blockers,
         then repeat with preview=false. Wait once on reviewer_run_id when review is
-        required, then read the task after delivery; otherwise
-        submit_for_review(stage_name="development") for QA.
+        required, then read the task after delivery.
         Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;
         the parent respawns you with the answer, reusing the worktree. For a question
@@ -181,11 +175,6 @@ step_workflow:
           when: >-
             tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
             and ((tool_output.get('result') or {}).get('state') or {}).get('is_closed') is True
-          action: set_variable
-          variable: implementation_complete
-          value: true
-        - server: gobby-tasks-ops
-          tool: submit_for_review
           action: set_variable
           variable: implementation_complete
           value: true

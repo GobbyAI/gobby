@@ -99,9 +99,21 @@ async def test_bundled_agent_mcp_references_match_registered_tool_inventory(
     native_tools = await _native_tool_inventory()
     missing: list[str] = []
     malformed_allowed_tools: list[str] = []
+    retired_stage_references: list[str] = []
 
     for path in _agent_yaml_files():
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        text = path.read_text(encoding="utf-8")
+        for tool_name in (
+            "complete_stage",
+            "fail_stage",
+            "submit_for_review",
+            "approve_review",
+            "reject_review",
+            "record_plan_enhancement",
+        ):
+            if tool_name in text:
+                retired_stage_references.append(f"{path.name}:{tool_name}")
+        data = yaml.safe_load(text) or {}
         nested = data.get("step_workflow") or {}
         for step in nested.get("steps") or []:
             step_name = step.get("name", "<unnamed>")
@@ -126,6 +138,7 @@ async def test_bundled_agent_mcp_references_match_registered_tool_inventory(
 
     assert missing == []
     assert malformed_allowed_tools == []
+    assert retired_stage_references == []
 
 
 async def _native_tool_inventory() -> set[str]:

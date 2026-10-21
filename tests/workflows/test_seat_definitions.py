@@ -93,8 +93,8 @@ SYNC_METADATA_KEYS = {"tags", "priority", "type"}
 UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
 
 SEND_MESSAGE_TARGETS = {
-    "assistant": ["parent", "session", "agent", "project", "global", "build"],
-    "orchestrator": ["parent", "session", "agent", "project", "global", "build"],
+    "assistant": ["parent", "session", "agent", "project", "global"],
+    "orchestrator": ["parent", "session", "agent", "project", "global"],
     "lane-manager": ["parent", "session", "project"],
     "developer": ["parent", "session"],
     "code-reviewer": ["parent", "session"],

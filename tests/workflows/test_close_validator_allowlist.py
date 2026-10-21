@@ -14,6 +14,9 @@ AGENT_PATH = (
     Path(__file__).resolve().parents[2]
     / "src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml"
 )
+PROCEDURE_PATH = (
+    AGENT_PATH.parents[2] / "skills/gobby/references/agents/procedures/task-close-reviewer.md"
+)
 
 READ_ONLY_TOOLS = {
     "gobby-tasks:get_task_diff",
@@ -40,11 +43,6 @@ LIFECYCLE_MUTATION_TOOLS = {
     "gobby-tasks:escalate_task",
     "gobby-tasks:link_commit",
     "gobby-tasks:unlink_commit",
-    "gobby-tasks-ops:submit_for_review",
-    "gobby-tasks-ops:approve_review",
-    "gobby-tasks-ops:reject_review",
-    "gobby-tasks-ops:complete_stage",
-    "gobby-tasks-ops:fail_stage",
     "gobby-agents:spawn_agent",
     "gobby-agents:stop_agent",
     "gobby-agents:kill_agent",
@@ -66,12 +64,15 @@ def test_reviewer_startup_defers_native_preflight_until_required_loads_complete(
     """The launch and loaded skill must agree on the MCP-only startup phase."""
     definition = _agent_definition()
     prompt = str(definition["prompts"]["agent"])
-    startup, separator, review = prompt.partition("After startup:")
-    assert separator, "Reviewer launch needs an explicit startup boundary before review commands"
+    procedure = PROCEDURE_PATH.read_text()
+    startup, separator, review = procedure.partition("First apply the stated closure_reason.")
+    assert separator, "Reviewer procedures need a startup boundary before review commands"
     assert "load_skills" in startup
     assert "Step transition: load_skills -> review" in startup
     requirements = definition["step_workflow"]["variables"]["required_skills"]
-    positions = [startup.index(requirement) for requirement in requirements]
+    assert requirements[0] == definition["workflows"]["variables"]["_seat_procedure"]
+    assert requirements[0] in prompt
+    positions = [startup.index(requirement) for requirement in requirements[1:]]
     assert positions == sorted(positions)
     assert "one outer tool result" in startup
     assert "Do not batch" in startup
@@ -111,6 +112,7 @@ def test_reviewer_requires_every_independent_review_skill() -> None:
     workflow = definition["step_workflow"]
 
     assert workflow["variables"]["required_skills"] == [
+        "gobby:references/agents/procedures/task-close-reviewer.md",
         "gobby:references/code-index/overview.md",
         "gobby:references/tasks/overview.md",
         "proportionality",
@@ -126,7 +128,7 @@ def test_reviewer_requires_every_independent_review_skill() -> None:
 
 
 def test_reviewer_ocr_scope_covers_the_authoritative_net_patch_manifest() -> None:
-    prompt = _agent_definition()["prompts"]["agent"]
+    prompt = PROCEDURE_PATH.read_text()
 
     assert "get_task_diff(task_id=<launch task_id>, include_uncommitted=false)" in prompt
     assert "Follow every" in prompt

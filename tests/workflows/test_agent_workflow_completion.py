@@ -473,48 +473,6 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_epic_review_complete_stage_success_transitions_to_terminate(
-        self, db: HubDatabase
-    ) -> None:
-        instance_manager = _register_agent_workflow(
-            db,
-            workflow_name="epic-reviewer",
-            review_tool="complete_stage",
-        )
-        runner = MagicMock()
-        runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(
-            id="ff807256-1906-55de-b7b3-94163bb18352"
-        )
-        runner.complete_run.return_value = True
-        runner.run_storage.db = db
-        runner.get_run.return_value = MagicMock(status="success", error=None)
-        completion_registry = MagicMock()
-        completion_registry.get_result.return_value = None
-        completion_registry.notify = AsyncMock()
-        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
-        variables: dict[str, object] = {}
-
-        response = await engine.evaluate(
-            _after_tool_event(
-                mcp_tool="complete_stage",
-                tool_arguments={
-                    "stage_name": "epic_qa",
-                    "validation_override_reason": "epic_qa approved by epic-reviewer",
-                },
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is None
-        assert variables["review_complete"] is True
-        assert variables["step_workflow_complete"] is True
-        assert response.context is not None
-        completion_registry.notify.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_exit_condition_noops_for_non_agent_session(self, db: HubDatabase) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()

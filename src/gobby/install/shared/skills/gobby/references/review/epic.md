@@ -39,14 +39,12 @@ alone rather than spawning additional reviewers.
 
 ## State and recovery
 
-An open epic review must respect its owner and actual stage; applying a persona
-does not initialize an `epic_qa` manifest or start a stage. Discover current stages
-before attempting a verdict. If another session owns the work, coordinate through
+An open epic review must respect its owner. If another session owns the work, coordinate through
 `gobby-agents:send_message` instead of taking its claim.
 
-For an already-closed epic, skip claiming and stage transitions. Deliver the
-structured findings; blocking findings require actionable remediation work or an
-explicit reopening through the task workflow. Never call `close_task` from epic
+Open and closed epics share one review path. Skip claiming a closed epic. Deliver
+the structured findings; blocking findings require remediation tasks under the
+epic or an explicit reopening of a closed epic. Never call `close_task` from epic
 review. Closure and delivery belong to the owning lifecycle flow.
 
 If the pipeline is absent/disabled or spawn fails, inspect its returned error and

@@ -127,6 +127,7 @@ async def _complete_self_terminated_run(
                 notify_result=notify_result,
                 terminal_reason=terminal_reason,
                 message=completion_message,
+                release_assigned_claim=True,
             )
         )
 

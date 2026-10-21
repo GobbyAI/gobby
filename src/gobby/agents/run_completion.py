@@ -24,6 +24,7 @@ from gobby.agents.terminal_delivery import (
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._transitions import release_task_claim_if_owned
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.workflows.state_manager import SessionVariableManager
@@ -453,6 +454,7 @@ async def complete_and_notify_agent_run(
     completion_result: str | None = None,
     terminal_reason: AgentRunTerminalReason | None = None,
     message: str = "",
+    release_assigned_claim: bool = False,
 ) -> bool:
     """Mark an agent run complete, then wake any waiters registered on it."""
 
@@ -494,6 +496,22 @@ async def complete_and_notify_agent_run(
                 result.pop("error", None)
         elif result.get("error") is None:
             result.pop("error", None)
+        if (
+            release_assigned_claim
+            and current.status == "success"
+            and current.terminal_reason is None
+            and result.get("status") == "success"
+            and current.task_id
+            and current.child_session_id
+        ):
+            # Settle ownership before waking the caller. The atomic owner check
+            # preserves claims transferred to another session during completion.
+            await run_terminal_delivery_offload(
+                release_task_claim_if_owned,
+                runner.run_storage.db,
+                current.task_id,
+                expected_owner=current.child_session_id,
+            )
         await deliver_and_cleanup_terminal_run(
             db=runner.run_storage.db,
             completion_registry=completion_registry,

@@ -23,6 +23,92 @@ from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exit_kind", ["success", "foreign_owner", "blocker", "early_exit", "error"]
+)
+async def test_epic_reviewer_end_agent_run_releases_only_its_successful_assigned_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    exit_kind: str,
+) -> None:
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="epic-review-parent",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id="epic-review-child",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = LocalTaskManager(temp_db)
+    epic = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Review an ordinary open epic",
+        task_type="epic",
+    )
+    owner = parent.id if exit_kind == "foreign_owner" else child.id
+    tasks.claim_task(epic.id, owner)
+    other = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Unrelated held task",
+        validation_criteria="Completion of another run preserves this task's owner.",
+    )
+    tasks.claim_task(other.id, child.id, select_claim=False)
+    runner = AgentRunner(temp_db, sessions)
+    run = runner.run_storage.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        agent_name="epic-reviewer",
+        provider="codex",
+        prompt="Review the epic",
+        task_id=epic.id,
+    )
+    assert runner.run_storage.start(run.id) is not None
+    variables = SessionVariableManager(temp_db)
+    if exit_kind == "blocker":
+        variables.set_variable(child.id, "blocker_handed_off", True)
+    elif exit_kind == "early_exit":
+        variables.set_variable(child.id, "_agent_early_exit_step", "review")
+    elif exit_kind == "error":
+        assert runner.run_storage.fail(run.id, "Review failed") is not None
+
+    registry = create_agents_registry(runner, session_manager=sessions, db=temp_db)
+    with (
+        session_context_for_test(child.id),
+        patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents_termination.reap_terminal_sandbox_run",
+            new_callable=AsyncMock,
+        ),
+        patch("gobby.mcp_proxy.tools.agents_termination.record_sandbox_retention"),
+    ):
+        result = await registry._tools["end_agent_run"].func(
+            current_state="## Epic Findings\nVerdict: approve",
+            next_steps=["The caller consumes the review verdict."],
+        )
+
+    assert result.get("status") == ("error" if exit_kind == "error" else "success"), result
+    ended_session = sessions.get(child.id)
+    assert ended_session is not None
+    assert ended_session.status == "expired"
+    reviewed = tasks.get_task(epic.id)
+    assert reviewed.closed_at is None
+    assert reviewed.labels == []
+    assert reviewed.claimed_by_session_id == (None if exit_kind == "success" else owner)
+    assert tasks.get_task(other.id).claimed_by_session_id == child.id
 
 
 def _create_sandbox_roots(gobby_home: Path, run_id: str) -> tuple[Path, Path]:

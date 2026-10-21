@@ -258,18 +258,14 @@ def test_epic_review_skill_allows_docs_epic_plan_substitute() -> None:
     assert "Discovery Brief" in skill_text
     assert "descendant task set" in skill_text
     assert "Escalate only when neither reliable scope nor implementation evidence" in skill_text
-    assert "gobby-tasks-ops:complete_stage" in skill_text
-    assert 'stage_name="epic_qa"' in skill_text
-    assert "gobby-tasks-ops:fail_stage" in skill_text
-    assert 'approve_review(stage_name="epic_qa")' not in skill_text
-    assert 'reject_review(stage_name="epic_qa")' not in skill_text
+    assert "epic_qa" not in skill_text
+    assert "complete_stage" not in skill_text
 
 
 def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
     agent = _agent("epic-reviewer")
     load_skill = _step(agent, "load_skill")
     review = _step(agent, "review")
-    terminate = _step(agent, "terminate")
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
     assert {
@@ -291,12 +287,8 @@ def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
     assert {
         "gobby-tasks:close_task",
         "gobby-tasks:de_escalate_task",
-        "gobby-tasks-ops:submit_for_review",
-        "gobby-tasks-ops:approve_review",
-        "gobby-tasks-ops:reject_review",
-        "gobby-tasks:reopen_task",
     }.issubset(_blocked_mcp_tools(review))
-    assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
+    assert "gobby-agents:end_agent_run" not in _blocked_mcp_tools(review)
 
 
 def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:
@@ -459,7 +451,8 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
         set(agent["step_workflow"]["variables"]["required_skills"])
     )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
-    assert "submit_for_review" in implement["status_message"]
+    assert "close_task" in implement["status_message"]
+    assert "submit_for_review" not in implement["status_message"]
 
 
 def test_reference_contract_4_2_1() -> None:

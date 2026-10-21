@@ -2,8 +2,7 @@ name: review
 type: pipeline
 description: |
   Interactive /gobby review workflow. Dispatches epic-reviewer for an
-  epic so the epic review loop can approve, reject, or escalate independent
-  of gobby build.
+  epic so the epic review loop can approve, reject, or escalate.
 
 version: "1.0"
 enabled: true
@@ -47,7 +46,6 @@ steps:
           Review epic task ${{ inputs.task_id }} as the epic-reviewer
           agent. Check scope, reality, testing, and YAGNI against the approved
           plan and implementation evidence, then approve, reject, or escalate.
-          If the epic is already closed, follow the closed-epic branch of your
-          instructions: do not claim it and make no stage transitions — deliver
-          the Epic Findings verdict and file remediation tasks (or reopen the
-          epic) for blocking findings.
+          Deliver the Epic Findings verdict in your end_agent_run handoff.
+          File remediation tasks under the epic for blocking findings, or
+          reopen a closed epic whose delivered work must be reworked.

@@ -145,8 +145,6 @@ step_workflow:
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:close_task"
-        - "gobby-tasks-ops:approve_review"
-        - "gobby-tasks-ops:reject_review"
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"
         - "gobby-agents:spawn_agent"

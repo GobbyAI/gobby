@@ -22,11 +22,10 @@ def test_epic_review_references_pin_routing_and_verdict_mapping() -> None:
     ):
         assert term in epic
     for term in (
-        'Approve → `gobby-tasks-ops:complete_stage` with `stage_name="epic_qa"`',
-        "Request changes → `gobby-tasks-ops:fail_stage` with the verdict in `reason` and "
-        "`cited_subtasks`",
+        "Approve → the block is the whole verdict",
+        "Request changes → create a remediation task under the epic",
         "Needs discussion → `gobby-tasks:escalate_task` with a `needs_human:` reason",
-        "Do not substitute `approve_review`/`reject_review` for an in-progress epic QA verdict",
     ):
         assert term in outcomes
     assert "record_review_lesson" not in outcomes
+    assert "complete_stage" not in outcomes
