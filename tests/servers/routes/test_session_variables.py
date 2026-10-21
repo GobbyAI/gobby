@@ -298,7 +298,7 @@ def test_agent_token_hash_ref_resolves_only_to_claimed_session(
     ("role", "identity", "foreign", "allowed"),
     [
         ("default", "header", False, True),
-        ("assistant", "header", True, False),
+        ("assistant", "header", True, True),
         ("developer", "header", False, False),
         ("default", "missing", False, False),
         ("default", "claims", False, True),

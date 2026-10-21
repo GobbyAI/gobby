@@ -48,12 +48,22 @@ def sessions(temp_db: HubDatabase) -> Iterator[SessionManager]:
         reset_session_context(token)
 
 
-def _instance(db: HubDatabase, role: str, step: str) -> None:
-    workflow = AgentStepWorkflowBody.model_validate({"steps": [{"name": step}]})
+def _instance(db: HubDatabase, role: str, step: str, session_id: str = CALLER) -> None:
+    workflow = AgentStepWorkflowBody.model_validate(
+        {
+            "steps": [
+                {
+                    "name": step,
+                    "idle": step == "idle",
+                    "allowed_tools": [] if step == "idle" else "all",
+                }
+            ]
+        }
+    )
     AgentStepInstanceManager(db).save(
         AgentStepInstance(
             id=str(uuid4()),
-            session_id=CALLER,
+            session_id=session_id,
             agent_name=role,
             snapshot=workflow,
             current_step=step,
@@ -113,14 +123,109 @@ def test_allowed_roles_keep_own_session_writes(
         assert instance is not None and instance.variables["sample"] == "value"
 
 
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "default", "developer"])
-def test_no_role_can_write_foreign_session(sessions: SessionManager, role: str) -> None:
+@pytest.mark.parametrize(
+    ("role", "allowed"),
+    [
+        ("assistant", True),
+        ("orchestrator", True),
+        ("default", True),
+        ("developer", False),
+        ("code-reviewer", False),
+    ],
+)
+@pytest.mark.parametrize("scope", ["session", "step"])
+@pytest.mark.parametrize("entrypoint", ["mcp", "hook"])
+async def test_foreign_non_idle_write_preserves_role_authority(
+    sessions: SessionManager,
+    role: str,
+    allowed: bool,
+    scope: Literal["session", "step"],
+    entrypoint: str,
+) -> None:
     manager = SessionVariableManager(sessions.db)
     manager.set_variable(CALLER, "_agent_type", role)
-    result = set_variable(sessions, sessions.db, "sample", True, OTHER)
-    assert result["success"] is False
-    assert "[native-variable-authority]" in result["error"]
-    assert "sample" not in manager.get_variables(OTHER)
+    _instance(sessions.db, role, "serve")
+    _instance(sessions.db, "default", "serve", OTHER)
+    manager.set_variable(OTHER, "sample", "before")
+    instances = AgentStepInstanceManager(sessions.db)
+    instances.merge_variables(OTHER, {"sample": "before"})
+    blocked_reason = None
+    if entrypoint == "hook":
+        response = await RuleEngine(sessions.db, session_manager=sessions).evaluate(
+            HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=CALLER,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                metadata={},
+                data={
+                    "tool_name": SET_VARIABLE_TOOL,
+                    "tool_input": {
+                        "name": "sample",
+                        "value": "after",
+                        "session_id": OTHER,
+                        "scope": scope,
+                    },
+                },
+            ),
+            session_id=CALLER,
+            variables=manager.get_variables(CALLER),
+        )
+        if response.decision == "block":
+            blocked_reason = response.reason
+    result = (
+        {"success": False, "error": blocked_reason}
+        if blocked_reason is not None
+        else set_variable(sessions, sessions.db, "sample", "after", OTHER, scope=scope)
+    )
+    assert result["success"] is allowed
+    if not allowed:
+        assert "[native-variable-authority]" in str(result["error"])
+    target = instances.get_for_session(OTHER)
+    assert target is not None
+    assert manager.get_variables(OTHER)["sample"] == (
+        "after" if allowed and scope == "session" else "before"
+    )
+    assert target.variables["sample"] == ("after" if allowed and scope == "step" else "before")
+    assert "sample" not in manager.get_variables(CALLER)
+
+
+@pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
+@pytest.mark.parametrize("target", [CALLER, OTHER])
+async def test_privileged_idle_declaration_keeps_own_session_gate(
+    sessions: SessionManager, role: str, target: str
+) -> None:
+    manager = SessionVariableManager(sessions.db)
+    manager.set_variable(CALLER, "_agent_type", role)
+    _instance(sessions.db, role, "idle")
+    response = await RuleEngine(sessions.db, session_manager=sessions).evaluate(
+        HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=CALLER,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            metadata={},
+            data={
+                "tool_name": SET_VARIABLE_TOOL,
+                "tool_input": {
+                    "name": "seat_idle",
+                    "value": True,
+                    "session_id": target,
+                    "scope": "session",
+                },
+            },
+        ),
+        session_id=CALLER,
+        variables=manager.get_variables(CALLER),
+    )
+    assert (response.decision == "block") is (target == OTHER)
+    if target == CALLER:
+        result = set_variable(sessions, sessions.db, "seat_idle", True, target)
+        assert result["success"] is True
+        assert manager.get_variables(CALLER)["seat_idle"] is True
+    else:
+        assert "[step-enforcement:" in (response.reason or "")
+    assert "seat_idle" not in manager.get_variables(OTHER)
 
 
 def test_absent_role_is_default_only_without_a_bound_seat(sessions: SessionManager) -> None:
@@ -143,9 +248,11 @@ def test_malformed_present_role_never_becomes_default(
 
 
 @pytest.mark.parametrize("tool_input", [None, [], {}, {"session_id": OTHER}])
-def test_missing_or_foreign_target_is_refused(sessions: SessionManager, tool_input: object) -> None:
+def test_seat_missing_or_foreign_target_is_refused(
+    sessions: SessionManager, tool_input: object
+) -> None:
     error = native_variable_write_error(
-        SET_VARIABLE_TOOL, tool_input, CALLER, {"_agent_type": "default"}, sessions
+        SET_VARIABLE_TOOL, tool_input, CALLER, {"_agent_type": "developer"}, sessions
     )
     assert error is not None and "[native-variable-authority]" in error
 

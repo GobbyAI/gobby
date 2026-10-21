@@ -31,7 +31,7 @@ def native_variable_write_error(
     variables: dict[str, Any],
     sessions: SessionManager | None,
 ) -> str | None:
-    """Refuse native writes outside the authenticated caller's own allowed role."""
+    """Refuse native writes outside the authenticated caller's allowed role."""
     if canonical_gobby_tool_name(tool_name) != SET_VARIABLE_TOOL:
         return None
     prefix = "Rule enforced by Gobby: [native-variable-authority]\n"
@@ -55,15 +55,8 @@ def native_variable_write_error(
         active_run = LocalAgentRunManager(sessions.db).get_by_session(caller_id)
         if active_run is not None or (instance is not None and instance.enabled):
             return prefix + "The calling seat has no protected active agent definition."
-    target = tool_input.get("session_id") if isinstance(tool_input, dict) else None
-    if not isinstance(target, str) or not target:
-        return prefix + "Native set_variable writes only the calling session."
-    try:
-        resolved = sessions.resolve_session_reference(target, caller.project_id)
-    except ValueError:
-        return prefix + "Native set_variable writes only the calling session."
-    if resolved != caller_id:
-        return prefix + "Native set_variable cannot write another session."
+    # Privileged roles keep their existing cross-session authority. The idle
+    # step's own-session restriction is enforced separately by is_idle_declaration.
     return None
 
 
