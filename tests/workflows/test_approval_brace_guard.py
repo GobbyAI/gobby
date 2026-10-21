@@ -136,9 +136,7 @@ def test_brace_ccl_and_parameter_data_controls_stay_allowed(command: str) -> Non
     assert not approval_brace_spelling(command)
 
 
-@pytest.mark.parametrize(
-    "command", ["echo ${NAME}{,}", "echo ${N}obb{y,}", "echo ${x:-${y}}", "echo ${x:-$(id)}"]
-)
+@pytest.mark.parametrize("command", ["echo ${NAME}{,}", "echo ${N}obb{y,}"])
 def test_parameter_spans_preserve_target_matching_and_ambiguity_refusals(command: str) -> None:
     assert approval_brace_spelling(command)
 
@@ -153,3 +151,16 @@ def test_parameter_spans_preserve_target_matching_and_ambiguity_refusals(command
 )
 def test_deep_literal_wrapper_data_stays_allowed(command: str) -> None:
     assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize("command", ["cd ${WT:-${HOME}}", "echo ${A:-$(pwd)}", "echo ${A:-${B}}"])
+def test_unrelated_nested_parameter_data_stays_allowed(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["gob${x:-${y}}by", "${A:-{gobby,x}}", "{gob,}by sessions approve-dirty-paths"],
+)
+def test_nested_parameter_protected_words_stay_refused(command: str) -> None:
+    assert approval_command_word_expansion(command)

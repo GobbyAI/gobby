@@ -8,7 +8,8 @@ from typing import SupportsIndex, TypeVar, overload
 
 import pytest
 
-from gobby.hooks import _shell_execution_words
+from gobby.hooks import _shell_execution_words, provider_launch_guard
+from gobby.hooks._ansi_c import ShellDialect
 from gobby.hooks._normalization_shell import (
     HeredocBody,
     ShellScan,
@@ -188,3 +189,102 @@ def test_pending_heredoc_queue_shifts_grow_linearly(size: int) -> None:
     assert len(bodies) == size
     assert all(body.terminated and body.text == "" for body in bodies)
     assert shifts.count <= 4 * size
+
+
+@pytest.mark.parametrize("size", [1000, 2000])
+def test_echo_option_tail_copies_grow_linearly(size: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    copies = _Copies()
+
+    def counted_unwrap(words: list[str]) -> list[str]:
+        return _CountedWords(_unwrap(words), copies)
+
+    monkeypatch.setattr(command_matching, "_unwrap", counted_unwrap)
+    assert set(command_matching._shell_input_scripts("echo " + "-n " * size + "x | sh")) == {"x"}
+    assert copies.count <= 8 * (size + 1)
+
+
+@pytest.mark.parametrize("size", [100, 200])
+@pytest.mark.parametrize("entry", ["matcher", "provider"])
+@pytest.mark.parametrize("producer", ["cat", "echo x"])
+@pytest.mark.parametrize("last", ["cat", "sh"])
+def test_downstream_pipeline_stage_visits_grow_linearly(
+    size: int, entry: str, producer: str, last: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    visits = _Copies()
+    consumes = provider_launch_guard._segment_consumes
+
+    def counted_consumes(
+        segment: list[ShellToken],
+        expansions: list[str],
+        depth: int,
+        dialect: ShellDialect,
+        *,
+        python: bool,
+        functions: dict[str, str] | None = None,
+    ) -> bool:
+        visits.count += 1
+        return consumes(segment, expansions, depth, dialect, python=python, functions=functions)
+
+    monkeypatch.setattr(provider_launch_guard, "_segment_consumes", counted_consumes)
+    command = (producer + " | ") * size + last
+    if entry == "provider":
+        assert not provider_launch_guard.blocks_direct_provider_launch("Bash", {"command": command})
+    else:
+        scripts = command_matching._shell_input_scripts(command)
+        assert bool(scripts) is (producer == "echo x" and last == "sh")
+    assert visits.count <= 40 * (size + 1)
+
+
+@pytest.mark.parametrize("size", [100, 200])
+def test_provider_heredoc_segment_visits_grow_linearly(
+    size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    visits = _Copies()
+    command = "cat <<'E'\nx\nE\n" * size
+
+    def counted_scan(text: str, *, dialect: ShellDialect = "bash") -> ShellScan:
+        scan = scan_shell_command(text, dialect=dialect)
+        if len(scan.heredocs) == size:
+            return ShellScan(scan.tokens, scan.spans, _Visited(scan.heredocs, visits))
+        return scan
+
+    monkeypatch.setattr(provider_launch_guard, "scan_shell_command", counted_scan)
+    assert not provider_launch_guard.blocks_direct_provider_launch("Bash", {"command": command})
+    assert visits.count <= 16 * size
+
+
+@pytest.mark.parametrize("size", [100, 200])
+def test_pipeline_function_definition_visits_grow_linearly(
+    size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    visits = _Copies()
+    consumes = provider_launch_guard._segment_consumes
+
+    def counted_consumes(
+        segment: list[ShellToken],
+        expansions: list[str],
+        depth: int,
+        dialect: ShellDialect,
+        *,
+        python: bool,
+        functions: dict[str, str] | None = None,
+    ) -> bool:
+        visits.count += 1
+        return consumes(segment, expansions, depth, dialect, python=python, functions=functions)
+
+    monkeypatch.setattr(provider_launch_guard, "_segment_consumes", counted_consumes)
+    command = "f() { cat; } | " * size + "f"
+    assert not provider_launch_guard.blocks_direct_provider_launch("Bash", {"command": command})
+    assert visits.count <= 40 * (size + 1)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "f(){ bash; }; echo 'claude -p hi' | f | f(){ cat; }",
+        "echo 'claude -p hi' | sh | sh(){ cat; }",
+        "sh(){ cat; } | echo 'claude -p hi' | sh",
+    ],
+)
+def test_pipeline_definitions_cannot_hide_shell_consumers(command: str) -> None:
+    assert provider_launch_guard.blocks_direct_provider_launch("Bash", {"command": command})

@@ -62,6 +62,7 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
     _SHELLS,
     _piped_to_shell,
+    _pipeline_definition_pipes,
     _python_name,
     _python_program,
     _shell_stdin,
@@ -424,6 +425,9 @@ def _shell_input_scripts(command: str) -> list[str]:
             scan = scan_shell_command(command, dialect=dialect)
         except ValueError:
             continue
+        pipe_consumers: dict[int, bool] = dict.fromkeys(
+            _pipeline_definition_pipes(scan.tokens), True
+        )
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and (
@@ -436,17 +440,17 @@ def _shell_input_scripts(command: str) -> list[str]:
             start = end + 1
             if not words:
                 continue
-            if _piped_to_shell(scan.tokens, end) and shell_command_name(words[0]) in {
+            if shell_command_name(words[0]) in {
                 "echo",
                 "printf",
-            }:
-                args = words[1:]
+            } and _piped_to_shell(scan.tokens, end, cache=pipe_consumers):
                 if shell_command_name(words[0]) == "echo":
-                    while args and re.fullmatch(r"-[neE]+", args[0]):
-                        args = args[1:]
-                    scripts.append(" ".join(args))
+                    cursor = 1
+                    while cursor < len(words) and re.fullmatch(r"-[neE]+", words[cursor]):
+                        cursor += 1
+                    scripts.append(" ".join(words[cursor:]))
                 else:
-                    scripts.extend(args)
+                    scripts.extend(words[1:])
             if _shell_stdin(words):
                 scripts.extend(
                     tokens[index + 1].value

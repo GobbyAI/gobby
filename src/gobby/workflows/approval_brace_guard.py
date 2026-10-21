@@ -228,7 +228,37 @@ def _matches(chars: list[_Character], target: str) -> bool:
     return len(target) in sequence(0, len(chars), {0}, 0)
 
 
+def _has_brace_group(raw: str) -> bool:
+    """Distinguish active brace groups from ordinary parameter delimiters."""
+    quote = ""
+    parameters = 0
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if quote != "'" and raw.startswith("${", index):
+            parameters += 1
+            index += 2
+            continue
+        if char == quote:
+            quote = ""
+        elif not quote and char in "'\"":
+            quote = char
+        elif not quote and char == "{":
+            return True
+        elif not quote and char == "}":
+            if not parameters:
+                return True
+            parameters -= 1
+        index += 1
+    return False
+
+
 def _protected_word(raw: str) -> bool:
+    if not _has_brace_group(raw):
+        return False
     chars = _characters(raw)
     if not any(active and char in "{}" for char, active in chars):
         return False
@@ -280,9 +310,14 @@ def _stage_slots(words: list[str], raw: list[str]) -> bool:
         if index < checked_until:
             continue
         name = word.rsplit("/", 1)[-1]
-        literal = "".join(
-            char for char, active in _characters(raw[index]) if not (active and char in "{}")
-        )
+        try:
+            literal = "".join(
+                char for char, active in _characters(raw[index]) if not (active and char in "{}")
+            )
+        except _AmbiguousSyntax:
+            if "gob" in word or _has_brace_group(raw[index]):
+                return True
+            continue
         if literal.rsplit("/", 1)[-1] == "gobby" and _slot_hazard(raw[index]):
             return True
         if name != "gobby" and not (name == "gobby.cli" and index > 0 and words[index - 1] == "-m"):
