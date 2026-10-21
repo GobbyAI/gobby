@@ -645,7 +645,7 @@ class TestLimitSpawnNetworkOverride:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_override_authority_leaves_seat_no_spawn_in_force(
+    async def test_override_authority_spawns_past_seat_no_spawn_for_the_orchestrator(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -653,21 +653,23 @@ class TestLimitSpawnNetworkOverride:
     ) -> None:
         _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE, SEAT_NO_SPAWN)
         caller_id = callers["orchestrator"].id
+        engine = RuleEngine(temp_db, session_manager=session_manager)
+        event = _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted")
 
-        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
-            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted"),
-            session_id=caller_id,
-            variables={"_agent_type": "orchestrator"},
+        exempt = await engine.evaluate(
+            event, session_id=caller_id, variables={"_agent_type": "orchestrator"}
+        )
+        seat = await engine.evaluate(
+            event, session_id=caller_id, variables={"_agent_type": "developer"}
         )
 
-        assert response.decision == "block"
-        assert response.reason is not None
-        assert SEAT_NO_SPAWN in response.reason
-        assert LIMIT_SPAWN_NETWORK_OVERRIDE not in response.reason
+        assert exempt.decision == "allow"
+        assert seat.decision == "block"
+        assert SEAT_NO_SPAWN in (seat.reason or "")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ["assistant", "orchestrator", "lane-manager"])
+@pytest.mark.parametrize("agent_type", ["lane-manager"])
 async def test_spawn_rules_let_a_root_recovery_seat_resume_a_session(
     temp_db: HubDatabase,
     session_manager: SessionManager,

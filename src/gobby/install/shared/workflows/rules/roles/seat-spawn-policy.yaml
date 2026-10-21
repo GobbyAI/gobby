@@ -5,20 +5,21 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats, the Plan Writer included, do not spawn agents; the Assistant, Orchestrator and Lane Managers may resume one"
+    description: "Seats, the Plan Writer included, do not spawn agents; Lane Managers may resume one. The Assistant and Orchestrator are outside this rule"
     event: before_tool
     enabled: true
     priority: 10
-    # Only a resume re-mints an expired seat capability, and these three seats
-    # already recover stalled sessions, so they may resume an existing session.
+    # The Assistant and Orchestrator launch seats for the operator, so this rule
+    # never covers them (Josh, 2026-10-21). Only a resume re-mints an expired seat
+    # capability, and Lane Managers recover stalled sessions, so they may resume one.
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and not (
-        variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager']
+        variables.get('_agent_type') == 'lane-manager'
         and tool_input.get('server_name') == 'gobby-agents'
         and tool_input.get('tool_name') == 'spawn_agent'
         and ((tool_input.get('arguments') or tool_input) or {}).get('resume_session_id')
@@ -27,8 +28,8 @@ rules:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
         reason: >-
-          Seats do not spawn agents. The automated task-close reviewer is the only
-          spawn path, and the Assistant, Orchestrator and Lane Managers may only
+          Seats do not spawn agents. The Assistant, the Orchestrator and the
+          automated task-close reviewer spawn seats, and Lane Managers may only
           resume an existing session with spawn_agent resume_session_id; send other
           work to the Orchestrator.
 

@@ -156,10 +156,11 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     second = await _turn_context(engine, variables)
 
     assert GUIDANCE_HEADING in first
-    assert "only when the operator asks" in first
-    assert "Only the operator authorizes a push, one exact SHA at a time." in first
-    assert 'Say "Systems nominal" when healthy' in first
-    assert "may recover a stalled session with `gobby-sessions:send_keys`" in first
+    assert "Assistant only on operator request" in first
+    assert "Push: operator approves exact SHA" in first
+    assert 'healthy="Systems nominal"' in first
+    assert "stalled-session resume only" in first
+    assert "No spawns except Assistant, Orchestrator and automated close review." in first
     assert GUIDANCE_HEADING not in second
 
 
@@ -204,7 +205,7 @@ PIPELINE_LAUNCHES = (
 
 @pytest.mark.asyncio
 async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
-    for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER, PLAN_ENHANCER):
+    for seat in (DEVELOPER, PLAN_WRITER, PLAN_ENHANCER):
         for tool in ("spawn_agent", "dispatch_batch"):
             blocked = await _decide(
                 engine, _proxy_call("gobby-agents", tool, {"agent": "developer"}), seat
@@ -249,13 +250,26 @@ async def test_orchestrator_and_assistant_launch_pipelines(
         assert allowed.decision == "allow", launch
 
 
-RECOVERY_SEATS = ("assistant", "orchestrator", "lane-manager")
 WORKER_SEATS = ("developer", "code-reviewer", "plan-writer")
 RESUME = {"agent": "developer", "resume_session_id": "gobby#15771"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", RECOVERY_SEATS)
+@pytest.mark.parametrize("seat", (ORCHESTRATOR, ASSISTANT))
+async def test_orchestrator_and_assistant_spawn_fresh_sessions(
+    engine: RuleEngine, seat: dict[str, Any]
+) -> None:
+    for tool, arguments in (
+        ("spawn_agent", {"agent": "developer"}),
+        ("spawn_agent", RESUME),
+        ("dispatch_batch", RESUME),
+    ):
+        allowed = await _decide(engine, _proxy_call("gobby-agents", tool, arguments), seat)
+        assert allowed.decision == "allow", (tool, arguments)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ("lane-manager",))
 async def test_recovery_seats_resume_an_existing_session(
     engine: RuleEngine, agent_type: str
 ) -> None:
@@ -345,7 +359,10 @@ def test_every_seat_scoped_rule_covers_every_seat_definition() -> None:
         "seat-no-ask-user-question",
     } <= set(scoped)
     for name, when in scoped.items():
-        exemptions = {"assistant"} if name == "seat-no-ask-user-question" else set()
+        exemptions = {
+            "seat-no-ask-user-question": {"assistant"},
+            "seat-no-spawn": {"assistant", "orchestrator"},
+        }.get(name, set())
         assert [
             seat for seat in seats if seat not in exemptions and f"'{seat}'" not in when
         ] == [], name
