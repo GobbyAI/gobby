@@ -334,3 +334,71 @@ def test_config_data_exemption_requires_the_literal_gobby_command(
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])") is refused
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo "Hello $USER"',
+        'export PATH="$HOME/bin:$PATH"',
+        'curl -H "Authorization: Bearer $T"',
+        "X=/tmp/$Y",
+        'gobby --config="$X" tasks list',
+        "declare X=/tmp/$Y",
+        "local X=/tmp/$Y",
+        "readonly X=/tmp/$Y",
+        "typeset X=/tmp/$Y",
+        'cd "prefix$X"',
+    ],
+)
+def test_trailing_expansion_in_approved_data_contexts_stays_allowed(command: str) -> None:
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert not evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/Users${P} sessions list",
+        "env /Users${P} sessions list",
+        "x; /Users${P} sessions list",
+        "P=/x/gobby /Users${P} sessions list",
+        "unknowntool /Users${P} sessions list",
+        'git commit -m "Bump to $V"',
+        'gobby --other="$X" tasks list',
+        "P=/josh/.local/bin/gobby; D=approve-dirty-paths; /Users${P} se$()ssions $D s7 --checkout /repo a.txt",
+    ],
+)
+def test_trailing_expansion_in_executable_contexts_stays_refused(command: str) -> None:
+    # Git operands keep the full transition: git aliases may execute operands.
+    # Refusing the ordinary git commit message here is an accepted limitation.
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_expansion_marker_in_brace_character_class_is_refused_without_error() -> None:
+    assert approval_command_word_expansion("{${A}-z}obby sessions list")
+
+
+def test_assignment_shaped_launcher_operand_keeps_full_basename_matching() -> None:
+    # Inert data only; no symlink, expansion, or executable is created or run.
+    command = "caffeinate X=${P} se$()ssions $D s7 --checkout /repo a.txt"
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_path_named_like_a_declaration_builtin_is_an_unknown_head() -> None:
+    command = "/tmp/export X=${P} se$()ssions $D"
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_path_named_like_a_data_command_is_an_unknown_head() -> None:
+    command = "/tmp/echo /Users${P} sessions list"
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")

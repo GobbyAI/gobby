@@ -35,6 +35,8 @@ _MAX_DEPTH = 32
 _DATA_COMMANDS = frozenset(
     {"echo", "printf", "rg", "grep", "gcode", "cat", "ls", "wc", "git", "cp"}
 )
+_DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
+_ASSIGNMENT_HEADS = frozenset({"export", "declare", "local", "readonly", "typeset"})
 type _Character = tuple[str, bool]
 # Literal input contributes one character at a time, so this marker cannot
 # collide with a glob star or any other character from the command text.
@@ -209,6 +211,8 @@ def _in_range(value: str, interval: tuple[int, int, int]) -> bool:
 
 def _in_brace_ccl(value: str, body: list[_Character]) -> bool:
     """zsh BRACE_CCL selects characters, including inclusive x-y spans."""
+    if any(char == _EXPANSION and active for char, active in body):
+        return True
     index = 0
     while index < len(body):
         first = body[index][0]
@@ -224,7 +228,7 @@ def _in_brace_ccl(value: str, body: list[_Character]) -> bool:
     return False
 
 
-def _matches(chars: list[_Character], target: str) -> bool:
+def _matches(chars: list[_Character], target: str, *, data_operand: bool = False) -> bool:
     groups = _groups(chars)
 
     def sequence(start: int, end: int, offsets: set[int], depth: int) -> set[int]:
@@ -270,7 +274,12 @@ def _matches(chars: list[_Character], target: str) -> bool:
             elif active and char == _EXPANSION:
                 # An expansion may supply a slash and any basename prefix,
                 # including after literal directory text emptied the states.
-                offsets = set(range(len(target) + 1))
+                offsets = (
+                    {end for offset in offsets for end in range(offset, len(target) + 1)}
+                    | set(range(len(target)))
+                    if data_operand
+                    else set(range(len(target) + 1))
+                )
             elif active and char == "*":
                 offsets = {end for offset in offsets for end in range(offset, len(target) + 1)}
             elif active and char == "?":
@@ -352,7 +361,7 @@ def _word_syntax(raw: str) -> tuple[bool, bool]:
     return bool(quote), expansion or bool(quote)
 
 
-def _protected_word(raw: str) -> bool:
+def _protected_word(raw: str, *, data_operand: bool = False) -> bool:
     brace_group, expansion = _word_syntax(raw)
     if not brace_group and not expansion:
         return False
@@ -371,7 +380,7 @@ def _protected_word(raw: str) -> bool:
             return False
     if any(active and char in "$`()" for char, active in chars):
         raise _AmbiguousSyntax("Dynamic expansion in brace word")
-    return any(_matches(chars, target) for target in _TARGETS)
+    return any(_matches(chars, target, data_operand=data_operand) for target in _TARGETS)
 
 
 def _slot_hazard(raw: str, *, quoted_expansions: bool = True) -> bool:
@@ -478,6 +487,38 @@ def _config_operands(subject: str, scan: ShellScan) -> set[tuple[int, int]]:
     return operands
 
 
+def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
+    """Map approved data words to their value offsets; all other words stay strict."""
+    operands: dict[tuple[int, int], int] = {}
+    head: str | None = None
+    redirection_value = False
+    for token, span in zip(scan.tokens, scan.spans, strict=True):
+        raw = subject[span[0] : span[1]]
+        if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
+            head, redirection_value = None, False
+            continue
+        if redirection_value:
+            redirection_value = False
+            continue
+        if is_fd_duplication_token(token):
+            continue
+        if is_shell_input_redirection_token(token) or is_shell_output_redirection_token(token):
+            redirection_value = True
+            continue
+        assignment = _ASSIGNMENT.match(raw)
+        if assignment and (head is None or head in _ASSIGNMENT_HEADS):
+            operands[span] = assignment.end()
+            continue
+        if head is None:
+            literal = not any(_word_syntax(raw)) and not any(
+                active and char in "*?[" for char, active in _characters(raw)
+            )
+            head = token.value if literal else ""
+        elif head in _DATA_BASENAME_HEADS:
+            operands[span] = 0
+    return operands
+
+
 def _approval_spelling(command: object, *, command_slots: bool) -> bool:
     """Refuse an unquoted brace word capable of producing a protected basename.
 
@@ -511,8 +552,12 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
                 if command_slots and _command_slots(subject):
                     return True
                 config_operands = _config_operands(subject, scan)
+                data_operands = _data_operands(subject, scan)
                 if any(
-                    _protected_word(subject[start:end])
+                    _protected_word(
+                        subject[start + data_operands.get((start, end), 0) : end],
+                        data_operand=(start, end) in data_operands,
+                    )
                     for start, end in scan.spans
                     if (start, end) not in config_operands
                 ):
