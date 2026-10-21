@@ -667,9 +667,9 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("verdict_tool", ["approve_review", "reject_review"])
-    async def test_expansion_qa_verdict_terminalizes_generated_step_workflow(
-        self, db: HubDatabase, verdict_tool: str
+    @pytest.mark.parametrize("coverage_passed", [True, False])
+    async def test_expansion_qa_saved_report_and_parent_handoff_terminalize_workflow(
+        self, db: HubDatabase, coverage_passed: bool
     ) -> None:
         instance_manager = _register_expansion_qa_workflow(db)
         runner = MagicMock()
@@ -701,10 +701,33 @@ class TestAgentWorkflowCompletion:
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
         variables: dict[str, object] = {}
 
+        await engine.evaluate(
+            _after_tool_event(mcp_tool="save_expansion_qa_result"),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "coverage_check"
+        assert instance.variables["qa_result_saved"] is False
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="run_expansion_qa_coverage",
+                tool_output={"success": False, "error": "Coverage tool failed"},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "coverage_check"
+        assert instance.variables["coverage_result_saved"] is False
+
         coverage_response = await engine.evaluate(
             _after_tool_event(
                 mcp_tool="run_expansion_qa_coverage",
-                tool_output={"success": True, "result": {"review_action": verdict_tool}},
+                tool_output={"success": True, "result": {"passed": coverage_passed}},
             ),
             session_id=AGENT_SESSION_ID,
             variables=variables,
@@ -717,6 +740,19 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["qa_result_saved"] is False
         assert "coverage_check -> qa_check" in (coverage_response.context or "")
 
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="save_expansion_qa_result",
+                tool_output={"success": False, "error": "QA result save failed"},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "qa_check"
+        assert instance.variables["qa_result_saved"] is False
+
         save_response = await engine.evaluate(
             _after_tool_event(
                 mcp_tool="save_expansion_qa_result",
@@ -728,16 +764,43 @@ class TestAgentWorkflowCompletion:
 
         instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
-        assert instance.current_step == "qa_check"
+        assert instance.current_step == "handoff"
         assert instance.variables["qa_result_saved"] is True
-        assert instance.variables["review_complete"] is False
+        assert instance.variables["handoff_sent"] is False
         assert "step_workflow_complete" not in variables
-        assert save_response.context is None
+        assert "qa_check -> handoff" in (save_response.context or "")
+        runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
 
-        verdict_response = await engine.evaluate(
+        await engine.evaluate(
             _after_tool_event(
-                mcp_tool=verdict_tool,
-                tool_arguments={"stage_name": "expansion"},
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={"target": "session", "target_id": "#2", "content": "FYI"},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={"target": "parent", "content": "QA report"},
+                tool_output={"success": False, "error": "Handoff delivery failed"},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "handoff"
+        assert instance.variables["handoff_sent"] is False
+        runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
+
+        handoff_response = await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={"target": "parent", "content": "Saved QA report and next steps"},
                 tool_output={"success": True},
             ),
             session_id=AGENT_SESSION_ID,
@@ -745,9 +808,9 @@ class TestAgentWorkflowCompletion:
         )
 
         assert instance_manager.get_for_session(AGENT_SESSION_ID) is None
-        assert variables["review_complete"] is True
+        assert variables["handoff_sent"] is True
         assert variables["step_workflow_complete"] is True
-        assert "qa_check -> terminate" in (verdict_response.context or "")
+        assert "handoff -> terminate" in (handoff_response.context or "")
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.complete_workflow_run.assert_awaited_once_with(
             "ff807256-1906-55de-b7b3-94163bb18352",
