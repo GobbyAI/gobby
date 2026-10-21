@@ -836,12 +836,18 @@ no live session owns. The edit gate's refusal prints the command. The CLI sends
 one request to the daemon, carrying only the bootstrap operator API key from
 `~/.gobby/bootstrap.yaml`; run `gobby auth login` first if that key is missing.
 The daemon records the approval only when gdaemon verified that key at its front
-door. Managed agent bearers, cookies, and unauthenticated requests get 403 and
-change nothing. Each path stays approved only while its content matches what it
-was at approval. Agents cannot run it: `block-dirty-path-approval-cli` refuses a
-shell command that names the subcommand, and `block-gobby-cli-expansion` refuses
-a command that names it inside a substitution or backtick, or that builds a
-`gobby sessions` subcommand from a variable or a substitution.
+door. Managed agent bearers and unauthenticated requests get 401; an admitted
+browser cookie without the verified operator key gets 403. These refusals change
+nothing. Each path stays approved only while its content matches its approval
+fingerprint or follows the approved seat's own write. A foreign change voids it.
+Agent shell rules refuse literal approval invocations, substitutions naming the
+subcommand, and dynamic CLI command words. A bounded token scan also refuses
+unquoted braces in gobby command, group, and subcommand words, including protected
+brace spellings behind arbitrary launchers. Quoted and escaped braces remain
+literal; ordinary brace arguments such as `gobby tasks show {a,b}` stay allowed.
+These shell rules are defense in depth. The operator route checks the verified
+operator identity; the CLI reads the local operator key, so shell wrappers do not
+turn it into a managed-bearer request.
 A managed execution's database role cannot read or write session state.
 
 `summarize` creates archival output; it never stages a recoverable handoff.

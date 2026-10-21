@@ -563,6 +563,7 @@ def build_condition_helpers(
     from gobby.hooks.code_navigation_recovery import navigation_requires_index
     from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 
+    from .approval_brace_guard import approval_command_word_expansion
     from .condition_helpers import (
         _event_and_tool_paths,
         _is_tdd_code_path,
@@ -645,6 +646,7 @@ def build_condition_helpers(
     funcs.update(
         {
             "normalize_path": lambda p: p.replace("\\", "/"),
+            "approval_command_word_expansion": approval_command_word_expansion,
             "first_tdd_code_path": _first_tdd_code_path,
             "first_tdd_test_path": _first_tdd_test_path,
             "tdd_gate_open": lambda variables: _tdd_authorization().allowed,

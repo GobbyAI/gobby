@@ -31,6 +31,7 @@ from gobby.workflows.dirty_edit_grants import (
     record_dirty_path_approval,
 )
 from gobby.workflows.engine.command_matching import command_patterns_match
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -170,13 +171,19 @@ def _write_operator_key(home: Path, key: str) -> None:
 
 def _rule_blocks(command: str) -> bool:
     rules = yaml.safe_load(RULE_FILE.read_text(encoding="utf-8"))["rules"]
-    return any(
-        command_patterns_match(
-            command, pattern=effect["command_pattern"], mask_quoted=effect["mask_quoted"]
-        )
-        for rule in rules.values()
-        for effect in rule["effects"]
-    )
+    context = {"tool_input": {"command": command}}
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    for rule in rules.values():
+        if rule.get("when") and not evaluator.evaluate(rule["when"]):
+            continue
+        for effect in rule["effects"]:
+            if not effect.get("command_pattern") or command_patterns_match(
+                command,
+                pattern=effect["command_pattern"],
+                mask_quoted=effect["mask_quoted"],
+            ):
+                return True
+    return False
 
 
 def test_approve_dirty_paths_cli_refuses_without_an_operator_key(
@@ -271,12 +278,16 @@ def test_approve_dirty_paths_cli_reports_the_daemon_refusal(
     assert "approval refused (400): not an absolute path" in result.output
 
 
-@pytest.mark.parametrize("spelling", OBFUSCATED_SPELLINGS, ids=["variable-built", "printf-piped"])
-def test_obfuscated_approval_spellings_pass_the_rule_and_stop_at_the_cli(
-    spelling: str, tmp_path: Path, bootstrap_home: Path
+@pytest.mark.parametrize(
+    ("spelling", "blocked"),
+    [(OBFUSCATED_SPELLINGS[0], True), (OBFUSCATED_SPELLINGS[1], False)],
+    ids=["variable-built", "printf-piped"],
+)
+def test_obfuscated_approval_spellings_stop_at_the_rule_or_cli(
+    spelling: str, blocked: bool, tmp_path: Path, bootstrap_home: Path
 ) -> None:
     command = spelling.format(python=sys.executable, root=tmp_path)
-    assert not _rule_blocks(command)
+    assert _rule_blocks(command) is blocked
 
     result = subprocess.run(
         ["sh", "-c", command],

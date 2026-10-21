@@ -33,7 +33,7 @@ def option_word_count(
 
 
 def _env_split_string(
-    option: str, rest: list[str], value_options: Collection[str]
+    option: str, words: list[str], value_options: Collection[str], *, start: int = 0
 ) -> list[str] | None:
     """The words env's -S option reads as a command string, or None without -S.
 
@@ -44,12 +44,14 @@ def _env_split_string(
     if option.startswith("--"):
         flag, separator, attached = option.partition("=")
         if len(flag) > 2 and "--split-string".startswith(flag):
+            rest = words[start:]
             return [attached, *rest] if separator else rest
         return None
     for index in range(1, len(option)):
         letter = "-" + option[index]
         if letter == "-S":
             attached = option[index + 1 :]
+            rest = words[start:]
             return [attached, *rest] if attached else rest
         if letter in value_options:
             return None
@@ -139,23 +141,47 @@ _SUDO_FLAG_OPTIONS = frozenset(
 
 def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
-    while words:
-        name = words[0].rsplit("/", 1)[-1]
+    i = 0
+    # Decoded env -S words run before the untouched argv. A reversed stack
+    # avoids rebuilding that argv tail for every separate split-string option.
+    pending: list[str] = []
+
+    def remaining() -> int:
+        return len(pending) + len(words) - i
+
+    def peek(offset: int = 0) -> str:
+        return pending[-1 - offset] if offset < len(pending) else words[i + offset - len(pending)]
+
+    def advance(count: int = 1) -> None:
+        nonlocal i
+        count = min(count, remaining())
+        decoded = min(count, len(pending))
+        if decoded:
+            del pending[-decoded:]
+        i += count - decoded
+
+    def tail() -> list[str]:
+        if not pending:
+            return words[i:]
+        return [*reversed(pending), *words[i:]]
+
+    while remaining():
+        name = peek().rsplit("/", 1)[-1]
         if stop_at_xargs and name == "xargs":
             break
         if (
             name in {"for", "select"}
-            and len(words) >= 3
-            and words[1].isidentifier()
-            and (words[2] == "do" or (name == "for" and words[2] == "__gobby_loop_list__"))
+            and remaining() >= 3
+            and peek(1).isidentifier()
+            and (peek(2) == "do" or (name == "for" and peek(2) == "__gobby_loop_list__"))
         ) or (
             name == "foreach"
-            and len(words) >= 3
-            and words[1].isidentifier()
-            and words[2] == "__gobby_loop_list__"
+            and remaining() >= 3
+            and peek(1).isidentifier()
+            and peek(2) == "__gobby_loop_list__"
         ):
-            words = words[3:]
-        elif _ASSIGNMENT.match(words[0]) or name in {
+            advance(3)
+        elif _ASSIGNMENT.match(peek()) or name in {
             "!",
             "{",
             "then",
@@ -169,7 +195,7 @@ def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
             "noglob",
             "nocorrect",
         }:
-            words = words[1:]
+            advance()
         elif name in {
             "command",
             "builtin",
@@ -184,7 +210,7 @@ def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
             "stdbuf",
             "xargs",
         }:
-            words = words[1:]
+            advance()
             takes_value = {
                 # BSD env adds -P; GNU env adds -a/--argv0. -S is handled below.
                 "env": {
@@ -251,23 +277,28 @@ def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
                     "--delimiter",
                 },
             }.get(name, set())
-            while words and words[0].startswith("-"):
-                option = words[0]
+            while remaining() and peek().startswith("-"):
+                option = peek()
                 if option == "--":
-                    words = words[1:]
+                    advance()
                     break
                 if name == "command" and any(flag in option for flag in "vV"):
                     return []
+                following = [peek(1)] if name == "env" and remaining() > 1 else []
                 script = (
-                    _env_split_string(option, words[1:], takes_value) if name == "env" else None
+                    _env_split_string(option, following, takes_value) if name == "env" else None
                 )
                 if script is not None:
                     if not script:
                         return []
+                    # Attached -S strings add a word; separate strings consume
+                    # the next argv word. Decode only that source, keeping the
+                    # rest of both sources in place.
+                    advance(1 if len(script) > len(following) else 2)
                     try:
-                        words = [*_split_env_argv(script[0]), *script[1:]]
+                        pending.extend(reversed(_split_env_argv(script[0])))
                     except ValueError:
-                        return ["sh", "-c", " ".join(script)]
+                        return ["sh", "-c", " ".join([script[0], *tail()])]
                     # Split words may themselves contain env options (shebang form).
                     continue
                 count = option_word_count(
@@ -276,11 +307,12 @@ def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
                     infer_long_options=True,
                     flag_options=_SUDO_FLAG_OPTIONS if name == "sudo" else (),
                 )
-                words = words[count:]
-            if name == "timeout" and words:
-                words = words[1:]
+                advance(count)
+            if name == "timeout" and remaining():
+                advance()
         elif name == "eval":
-            return ["sh", "-c", " ".join(words[1:])]
+            advance()
+            return ["sh", "-c", " ".join(tail())]
         else:
             break
-    return words
+    return tail()

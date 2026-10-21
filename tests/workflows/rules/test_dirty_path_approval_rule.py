@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -15,10 +18,12 @@ pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-dirty-path-approval-cli"
 EXPANSION_RULE = "block-gobby-cli-expansion"
+BOUNDED_RULE = "block-gobby-command-word-expansion"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
 INVOCATIONS = (
+    'gobby sessions {approve-dirty-path"s",s7} a.txt',
     "gobby sessions approve-dirty-paths s7 --checkout /repo a.txt",
     "cd /repo && uv run gobby sessions approve-dirty-paths s7 a.txt",
     "env gobby sessions approve-dirty-paths s7 --checkout /repo a.txt",
@@ -44,12 +49,10 @@ INVOCATIONS = (
     'gobby sessions list --project "$(gobby sessions approve-dirty-paths s7 a.txt)"',
     "gobby sessions list --project $P; a=approve-dirty-; b=paths; $g sessions $a$b s7 a.txt",
 )
-# Braces and globs that would name the approval, other gobby subcommands and quoted
-# arguments. The rule leaves them to the operator route's credential check and
-# never refuses them for their shape.
+# Ordinary arguments, other gobby subcommands and literal globs stay allowed.
+# Protected brace spellings are covered separately below.
 ALLOWED = (
     'gobby sessions show "$SID"',
-    'gobby sessions {approve-dirty-path"s",s7} a.txt',
     "gobby sessions approve-dirty-p?ths s7 a.txt",
     "gobby sessions approve-dirty-p[a]ths s7 a.txt",
     "gobby tasks show $TASK",
@@ -81,7 +84,8 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     temp_db.execute(
-        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s)", (RULE_NAME, EXPANSION_RULE)
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
     )
     engine = RuleEngine(temp_db)
 
@@ -115,3 +119,163 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
         "gobby sessions list --project $PROJECT": "allow",
         "uv run gobby sessions list --project $PROJECT": "allow",
     }
+
+
+BRACE_REFUSED = (
+    'gobby sessions {approve-dirty-path"s",s7} a.txt',
+    "gobby {tasks,sessions} list",
+    "gobby tasks {show,list}",
+    "gobby --config /tmp/x tasks {list,}",
+    "gobby --config=/tmp/{x,y} tasks list",
+    "gobby --config {x,sessions} approve-dirty-paths s7",
+    "gobby 'tasks'{,} list",
+    "gobby tasks} list",
+    "gobby tasks show{ x",
+    "gobby{ tasks list",
+    "{gobby tasks list",
+    "gobby {tasks list",
+    "gobby sessions --verbose {approve-dirty-paths,} s7",
+    "gobby sessions $SUB s7",
+    'gobby "sessions" "$SUB" s7',
+    "sudo -u root gobby sessions approve-dirty-paths s7",
+    "doas -u root gobby sessions approve-dirty-paths s7",
+    "caffeinate g{o}bby sessions a{p}prove-dirty-paths s7",
+    "/usr/bin/arch -arch arm64 {gobby,} sessions list",
+    "unknown g{o..o}bby sessions list",
+    "unknown {f..h}{n..p}{a..c}{a..c}{x..z} sessions list",
+    "unknown gobby sessions approve-{dirty-paths,}",
+    "sh -c 'gobby tasks {list,}'",
+    "eval 'gobby tasks {list,}'",
+    "find . -exec gobby tasks {list,} \\;",
+    "echo $(gobby tasks {list,})",
+)
+
+
+async def test_unquoted_brace_in_gobby_command_words_is_refused(
+    temp_db: HubDatabase,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    engine = RuleEngine(temp_db)
+    decisions = {}
+    for command in BRACE_REFUSED:
+        response = await engine.evaluate(_bash_event(command), session_id=SESSION_ID, variables={})
+        decisions[command] = response.decision
+    assert decisions == dict.fromkeys(BRACE_REFUSED, "block")
+
+
+BRACE_ALLOWED = (
+    "gobby tasks show {a,b}",
+    "gobby sessions list --project {a,b}",
+    'gobby tasks "{show,list}"',
+    r"gobby \{tasks,x\} list",
+    'gobby --config "{a,b}" tasks list',
+    'gobby --config "$X" tasks list',
+    'gobby --config="$X" tasks list',
+    'rg -n example src/gobby/sessions "$P"',
+    "gcode grep -w sessions src/gobby/{cli,servers} -m 50",
+    "rg sessions -g *.{py,md}",
+    "rg -n gobby src/gobby/{sessions,tasks}",
+    'gobby tasks show "$ID"',
+    "uv run --project /tmp pytest tests/{a,b}.py",
+    "echo {a,b}",
+    "ls ${HOME}",
+    'echo "gobby {tasks,x} list"',
+    "git commit -m 'gobby {tasks,} list'",
+)
+
+
+async def test_literal_command_slots_and_brace_arguments_stay_allowed(
+    temp_db: HubDatabase,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    engine = RuleEngine(temp_db)
+    decisions = {}
+    for command in BRACE_ALLOWED:
+        response = await engine.evaluate(_bash_event(command), session_id=SESSION_ID, variables={})
+        decisions[command] = response.decision
+    assert decisions == dict.fromkeys(BRACE_ALLOWED, "allow")
+
+
+def test_long_python_and_brace_commands_finish_outside_the_daemon() -> None:
+    # A process timeout can stop a regex holding the GIL; pytest's thread-based
+    # timeout cannot. Exercise every bundled selector and condition together.
+    program = """
+import yaml
+from gobby.workflows.engine.command_matching import command_patterns_match
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.sync_rules import get_bundled_rules_path
+
+path = get_bundled_rules_path() / 'task-enforcement/block-dirty-path-approval-cli.yaml'
+rules = yaml.safe_load(path.read_text())['rules']
+helpers = build_condition_helpers()
+commands = [
+    "uv run python -c '" + "value = str(123); " * 1500 + "'",
+    "uv run python -c '" + "x" * 30000 + "'",
+    "uv run python -c '" + "{a,b}" * 6000 + "'",
+    "echo " + "{" * 15000,
+    "echo " + "{a,b}" * 15000,
+]
+for command in commands:
+    for rule in rules.values():
+        context = {'tool_input': {'command': command}}
+        evaluator = SafeExpressionEvaluator(context, allowed_funcs=helpers)
+        condition = not rule.get('when') or evaluator.evaluate(rule['when'])
+        for effect in rule['effects']:
+            matches = command_patterns_match(
+                command, pattern=effect.get('command_pattern'),
+                mask_quoted=effect.get('mask_quoted', False),
+            )
+            assert not (condition and matches), command[:80]
+command = commands[0] + '; gobby tasks {list,}'
+blocked = False
+for rule in rules.values():
+    context = {'tool_input': {'command': command}}
+    evaluator = SafeExpressionEvaluator(context, allowed_funcs=helpers)
+    condition = not rule.get('when') or evaluator.evaluate(rule['when'])
+    for effect in rule['effects']:
+        blocked |= bool(condition and command_patterns_match(
+            command, pattern=effect.get('command_pattern'),
+            mask_quoted=effect.get('mask_quoted', False),
+        ))
+assert blocked, 'protected command after long Python data was missed'
+print('bounded selectors pass')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "bounded selectors pass"
+
+
+def test_long_python_data_with_many_quotes_and_braces_stays_literal() -> None:
+    # Additional proof requested after the initial correction: no behavior
+    # change, and the retained RED of the protected-suffix test stays original.
+    program = """
+from gobby.workflows.approval_brace_guard import approval_command_word_expansion
+command = "uv run python -c '" + 'value = {"key": "value"}; ' * 2000 + "'"
+assert not approval_command_word_expansion(command)
+print('quoted Python data stays literal')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "quoted Python data stays literal"

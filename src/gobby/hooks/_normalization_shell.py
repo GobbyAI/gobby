@@ -663,8 +663,9 @@ def _skip_heredoc_bodies(
     """
     body_lines: list[str] = []
     body_start = index
-    while pending_heredocs and index < len(command):
-        pending = pending_heredocs[0]
+    head = 0
+    while head < len(pending_heredocs) and index < len(command):
+        pending = pending_heredocs[head]
         line_end = command.find("\n", index)
         if line_end == -1:
             line_end = len(command)
@@ -674,7 +675,7 @@ def _skip_heredoc_bodies(
         line = command[index:line_end]
         stripped = line.lstrip("\t") if pending.strip_tabs else line
         if stripped == pending.delimiter:
-            pending_heredocs.pop(0)
+            head += 1
             heredocs.append(
                 HeredocBody(
                     "\n".join(body_lines),
@@ -690,6 +691,7 @@ def _skip_heredoc_bodies(
         else:
             body_lines.append(stripped)
         index = next_index
+    del pending_heredocs[:head]
     if pending_heredocs:
         pending = pending_heredocs[0]
         pending_heredocs.clear()

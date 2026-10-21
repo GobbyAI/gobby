@@ -250,6 +250,43 @@ def _shell_stdin(words: list[str]) -> bool:
     return True
 
 
+def _pipeline_definition_pipes(tokens: list[ShellToken]) -> set[int]:
+    """Fail closed on consumption across function definitions in a pipeline.
+
+    Definitions can change the meaning of downstream names. Mark those
+    pipelines once rather than repeatedly classifying under changing maps.
+    """
+    result: set[int] = set()
+    pipes: list[int] = []
+    defines = False
+    start = 0
+    for end in range(len(tokens) + 1):
+        if end < len(tokens) and not _separator(tokens[end]):
+            continue
+        words = _unwrap(_executable_words(tokens[start:end]))
+        defines |= bool(
+            words
+            and (
+                "(){" in words[0]
+                or (
+                    words[0].endswith("()")
+                    and any(re.fullmatch(r"__gobby_group_[0-9]+__", word) for word in words[1:])
+                )
+            )
+        )
+        if end < len(tokens) and tokens[end].value == "|":
+            pipes.append(end)
+        elif end < len(tokens) and tokens[end].value == "\n" and start == end and pipes:
+            pass  # A newline immediately after a pipe continues that pipeline.
+        else:
+            if defines:
+                result.update(pipes)
+            pipes = []
+            defines = False
+        start = end + 1
+    return result
+
+
 def _piped_to_shell(
     tokens: list[ShellToken],
     end: int,
@@ -259,19 +296,30 @@ def _piped_to_shell(
     *,
     python: bool = False,
     functions: Mapping[str, str] | None = None,
+    cache: dict[int, bool] | None = None,
 ) -> bool:
+    if cache is None:
+        cache = {}
+    if end in cache:
+        return cache[end]
+    stages: list[tuple[int, list[ShellToken]]] = []
+    query = end
     while end < len(tokens) and tokens[end].value == "|":
+        pipe = end
         start = end + 1
         while start < len(tokens) and not tokens[start].quoted and tokens[start].value == "\n":
             start += 1
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1
-        if _segment_consumes(
-            tokens[start:end], expansions or [], depth, dialect, python=python, functions=functions
-        ):
-            return True
-    return False
+        stages.append((pipe, tokens[start:end]))
+    downstream = False
+    for pipe, stage in reversed(stages):
+        downstream = downstream or _segment_consumes(
+            stage, expansions or [], depth, dialect, python=python, functions=functions
+        )
+        cache[pipe] = downstream
+    return cache.get(query, False)
 
 
 def _python_program(words: list[str]) -> tuple[str | None, bool, list[str]]:
@@ -659,7 +707,10 @@ def _evaluate_blocked(
         persistent_shell = False
         persistent_python = False
         functions: dict[str, str] = {}
+        shell_pipes: dict[int, bool] = dict.fromkeys(_pipeline_definition_pipes(scan.tokens), True)
+        python_pipes = shell_pipes.copy()
         start = 0
+        heredoc_index = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
                 continue
@@ -673,7 +724,14 @@ def _evaluate_blocked(
                 incoming = scan.tokens[previous + 1 : start - 1]
             raw_words = _executable_words(segment)
             words = _unwrap(raw_words)
-            bodies = [body for body in scan.heredocs if start <= body.opener < end]
+            while (
+                heredoc_index < len(scan.heredocs) and scan.heredocs[heredoc_index].opener < start
+            ):
+                heredoc_index += 1
+            lo = heredoc_index
+            while heredoc_index < len(scan.heredocs) and scan.heredocs[heredoc_index].opener < end:
+                heredoc_index += 1
+            bodies = scan.heredocs[lo:heredoc_index]
             start = end + 1
             if not words:
                 if "exec" in raw_words[:2]:
@@ -691,7 +749,13 @@ def _evaluate_blocked(
                 output_consumer == "shell"
                 or persistent_shell
                 or _piped_to_shell(
-                    scan.tokens, end, expansions, depth, dialect, functions=functions
+                    scan.tokens,
+                    end,
+                    expansions,
+                    depth,
+                    dialect,
+                    functions=functions,
+                    cache=shell_pipes,
                 )
                 or _process_output_to_shell(
                     segment, expansions, depth, dialect, functions=functions
@@ -701,7 +765,14 @@ def _evaluate_blocked(
                 output_consumer == "python"
                 or persistent_python
                 or _piped_to_shell(
-                    scan.tokens, end, expansions, depth, dialect, python=True, functions=functions
+                    scan.tokens,
+                    end,
+                    expansions,
+                    depth,
+                    dialect,
+                    python=True,
+                    functions=functions,
+                    cache=python_pipes,
                 )
                 or _process_output_to_shell(
                     segment, expansions, depth, dialect, python=True, functions=functions
