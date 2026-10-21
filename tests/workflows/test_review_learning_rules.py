@@ -24,9 +24,7 @@ pytestmark = pytest.mark.unit
 EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 CLASS_INJECTION_RULE_FILES = (
-    "inject-plan-enhancer-lessons.yaml",
     "inject-plan-reviewer-lessons.yaml",
-    "inject-planner-lessons.yaml",
     "inject-qa-reviewer-lessons.yaml",
 )
 
@@ -55,14 +53,14 @@ def test_class_injection_rule_source_uses_canonical_schema(
         "when",
         "effect",
     } <= rule.keys()
-    assert rule["when"] == "True"
+    assert rule["when"] == "not variables.get('handoff_pull_pending')"
     assert "effects" not in rule
     assert rule["effect"]["type"] == "mcp_call"
     _sync_bundled(temp_db)
     row = RuleDefinitionManager(temp_db).get_by_name(rule_name)
     assert row is not None
     body = RuleDefinitionBody.model_validate(row.definition_json)
-    assert body.when == "True"
+    assert body.when == rule["when"]
     assert len(body.resolved_effects) == 1
     assert body.resolved_effects[0].type == "mcp_call"
 
@@ -361,15 +359,9 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
     manager = RuleDefinitionManager(temp_db)
     expected_rules = {
         "inject-plan-reviewer-lessons": (
-            ["plan-adversary", "plan-adversary-taskless-old"],
+            ["plan-adversary"],
             "plan",
             ["reviewer-miss"],
-        ),
-        "inject-planner-lessons": (["planner"], "plan", ["fixer-induced-defect"]),
-        "inject-plan-enhancer-lessons": (
-            ["plan-enhancer-old", "plan-enhancer-taskless-old"],
-            "plan",
-            ["fixer-induced-defect"],
         ),
         "inject-qa-reviewer-lessons": (["qa-reviewer"], "code", ["qa-miss"]),
     }

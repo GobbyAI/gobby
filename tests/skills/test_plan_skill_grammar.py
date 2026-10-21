@@ -4,9 +4,6 @@ import re
 from pathlib import Path
 
 import pytest
-import yaml
-
-from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
@@ -19,8 +16,6 @@ CANONICAL_PLAN_HEADING_REGEX = (
 
 PLAN_DRAFT = Path("docs/contracts/plan-coverage.md")
 PLAN_REVIEW = Path("src/gobby/install/shared/skills/gobby/references/plan/review.md")
-PLANNER = Path("src/gobby/install/shared/workflows/agents/planner.yaml")
-ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml")
 
 
 def _skill_bundle(path: Path) -> str:
@@ -48,12 +43,6 @@ def _parser_heading_pattern() -> str:
             pytest.skip("A2 parser module is not present in this worktree yet")
         raise
     return PLAN_HEADING_REGEX.pattern
-
-
-def _agent_prompt(path: Path) -> str:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    agent = AgentDefinitionBody.model_validate(data)
-    return agent.prompt_for("agent") or ""
 
 
 def test_canonical_regex_pinned() -> None:
@@ -90,8 +79,6 @@ def test_table_row_decomposition_rule_documented() -> None:
     surfaces = {
         "plan-draft": _skill_bundle(PLAN_DRAFT),
         "plan-review": _skill_bundle(PLAN_REVIEW) + _skill_bundle(PLAN_DRAFT),
-        "planner": _agent_prompt(PLANNER),
-        "plan-adversary-old": _agent_prompt(ADVERSARY),
     }
     for name, body in surfaces.items():
         lowered = body.lower()

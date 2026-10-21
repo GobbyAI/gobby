@@ -132,7 +132,7 @@ class TestSyncBundledAgents:
         assert body.name == "test-agent"
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("name", ["plan-adversary", "plan-adversary-taskless-old"])
+    @pytest.mark.parametrize("name", ["plan-adversary"])
     def test_adversary_templates_sync_grok_xhigh(
         self, tmp_path: Path, definition_db: PostgresHubDatabase, name: str
     ) -> None:
@@ -988,14 +988,23 @@ class TestSyncBundledAgents:
         assert mgr.get_by_name("plan-review-researcher-taskless") is None
 
     @pytest.mark.integration
-    def test_renamed_planning_definitions_retire_old_rows(
+    def test_removed_planning_definitions_retire_installed_rows(
         self, definition_db: PostgresHubDatabase
     ) -> None:
-        """Renaming the planning definitions to -old retires every old-name row."""
+        """Sync retires removed planning rows and preserves the current Enhancer seat."""
         mgr = _mgr(definition_db)
-        old_names = ("plan-enhancer", "plan-enhancer-taskless", "plan-adversary-taskless")
-        for name in old_names:
-            mgr.create(
+        retired_names = (
+            "planner",
+            "plan-adversary-old",
+            "plan-adversary-taskless-old",
+            "plan-enhancer-old",
+            "plan-enhancer-taskless-old",
+            "plan-enhancer-taskless",
+            "plan-adversary-taskless",
+        )
+        installed_ids: dict[str, str] = {}
+        for name in (*retired_names, "plan-enhancer"):
+            installed = mgr.create(
                 name=name,
                 definition_json=json.dumps(
                     {"name": name, "provider": "inherit", "mode": "interactive"}
@@ -1004,20 +1013,17 @@ class TestSyncBundledAgents:
                 enabled=True,
                 tags=["gobby"],
             )
+            installed_ids[name] = installed.id
 
         result = sync_bundled_agents(definition_db)
 
         assert result["success"] is True
         assert result["errors"] == []
-        retired_names = ("plan-enhancer-taskless", "plan-adversary-taskless")
-        for name in old_names:
-            renamed = mgr.get_by_name(f"{name}-old")
-            assert renamed is not None
-            assert renamed.source == "installed"
-            assert renamed.enabled is True
-            assert _parse_body(renamed).name == f"{name}-old"
         for name in retired_names:
             assert mgr.get_by_name(name) is None
+            retired = mgr.get(installed_ids[name], include_deleted=True)
+            assert retired is not None
+            assert retired.deleted_at is not None
         enabled_names = {row.name for row in mgr.list_all() if row.enabled}
         assert enabled_names.isdisjoint(retired_names)
         # The plan-enhancer name now belongs to the bundled planning seat.
@@ -1118,7 +1124,6 @@ class TestSyncBundledAgents:
                 "researcher",
                 "architect",
                 "product-manager",
-                "planner",
                 "plan-adversary",
             )
         )

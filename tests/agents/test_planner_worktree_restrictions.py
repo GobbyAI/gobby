@@ -24,11 +24,6 @@ PLANNERS = (
     "plan-writer",
     "plan-enhancer",
     "plan-adversary",
-    "plan-enhancer-old",
-    "plan-enhancer-taskless-old",
-    "plan-adversary-old",
-    "plan-adversary-taskless-old",
-    "planner",
 )
 
 

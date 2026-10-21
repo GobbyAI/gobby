@@ -114,7 +114,6 @@ def test_adversary_blocks_all_evidence_round_tools() -> None:
     tools = {
         "prepare_plan_review_round",
         "get_plan_review_snapshot",
-        "bind_evidence_run",
         "derive_plan_review_manifest",
         "validate_plan_review_coverage",
         "append_plan_changelog_round",

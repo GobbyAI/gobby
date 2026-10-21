@@ -1061,18 +1061,14 @@ async def test_allowed_roles_preserve_own_session_idle_hardening(
 
 
 def test_zsh_quoting_guidance_contract() -> None:
-    """The Bash reference and adversary instructions require safe zsh CSS quoting."""
+    """The Bash reference requires safe zsh CSS quoting."""
     repo_root = Path(__file__).parents[2]
     bash_guidance = (
         repo_root / "src/gobby/install/shared/skills/bash/references/quoting-and-data.md"
     ).read_text()
-    adversary_guidance = (
-        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
-    ).read_text()
 
     for required in ("zsh", "single-quote", "@theme", "@custom-variant", "parenthesized", "#"):
         assert required in bash_guidance.casefold()
-        assert required in adversary_guidance.casefold()
 
 
 @pytest.mark.unit
@@ -3727,50 +3723,6 @@ async def test_bundled_developer_claim_gates_its_mcp_tools(
         data={
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {"server_name": server, "tool_name": tool},
-        }
-    )
-    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
-    assert response.decision == decision
-
-
-_PLAN_ENHANCER_TASKLESS = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless-old.yaml"
-)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("mcp_tool", "decision"),
-    [
-        ("search_memories", "allow"),
-        ("get_memory", "allow"),
-        ("create_memory", "block"),
-        ("update_memory", "block"),
-        ("delete_memory", "block"),
-    ],
-)
-async def test_bundled_plan_enhancer_enhance_step_reads_memory_but_never_writes(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-    mcp_tool: str,
-    decision: str,
-) -> None:
-    """Rule 14 memory reads pass the bundled enhance step's allowlist; writes stay refused."""
-    bundled = yaml.safe_load(_PLAN_ENHANCER_TASKLESS.read_text())
-    workflow_data = {
-        **{key: value for key, value in bundled.items() if key != "step_workflow"},
-        **bundled["step_workflow"],
-    }
-    _setup_step_workflow(
-        db, manager, instance_mgr, current_step="enhance", workflow_data=workflow_data
-    )
-    event = _make_event(
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {"server_name": "gobby-memory", "tool_name": mcp_tool},
         }
     )
     response = await engine.evaluate(event, session_id=SESSION_ID, variables={})

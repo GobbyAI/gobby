@@ -160,13 +160,8 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "doc-reviewer",
         "epic-reviewer",
         "plan-adversary",
-        "plan-adversary-old",
-        "plan-adversary-taskless-old",
         "plan-enhancer",
-        "plan-enhancer-old",
-        "plan-enhancer-taskless-old",
         "plan-writer",
-        "planner",
         "product-manager",
         "developer",
         "researcher",
@@ -513,20 +508,6 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
     )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
     assert "submit_for_review" in implement["status_message"]
-
-
-def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:
-    procedure = "references/agents/procedures/planner.md"
-    assert _agent("planner")["workflows"]["variables"]["_seat_procedure"] == f"gobby:{procedure}"
-    instructions = " ".join(
-        (PROJECT_ROOT / "src/gobby/install/shared/skills/gobby" / procedure).read_text().split()
-    )
-
-    assert "submit_for_review" in instructions
-    assert "remove_label" in instructions
-    assert "`planning-current-verdict:rejected` label atomically with the resubmission" in (
-        instructions
-    )
 
 
 def test_reference_contract_4_2_1() -> None:

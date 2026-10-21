@@ -95,28 +95,6 @@ def test_optional_phases_and_implementation_require_distinct_authority() -> None
     )
 
 
-@pytest.mark.parametrize(
-    "topic, agent",
-    [
-        ("review", "plan-adversary-taskless-old"),
-        ("enhancement", "plan-enhancer-taskless-old"),
-    ],
-)
-def test_taskless_launch_checkpoints_before_waiting(topic: str, agent: str) -> None:
-    body = _body(f"plan/{topic}.md")
-    assert agent in body
-    assert "without task_id" in body
-    assert "checkout_mode none" in body
-    assert "Immediately save a structured" in body
-    assert "clear_session=false" in body
-    assert "event-driven" in body
-    if topic == "review":
-        assert body.index("prepare_plan_review_round") < body.index(
-            "Bind once with bind_evidence_run"
-        )
-        assert "expire failed launches/binds" in body
-
-
 def test_waiting_uses_completion_events_and_complete_capture() -> None:
     waits = _body("sessions/waits.md")
     lifecycle = _body("agents/lifecycle.md")

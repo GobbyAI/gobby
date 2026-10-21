@@ -219,14 +219,23 @@ def test_review_learning_is_hidden_from_skill_discovery() -> None:
 def test_plan_skill_documents_parallel_review_contract() -> None:
     body = _skill_body(PLAN_REVIEW_SKILL) + _skill_body(PLAN_SKILL)
     for phrase in (
-        "plan-adversary-taskless-old",
         "prepare_plan_review_round",
-        "bind_evidence_run",
+        "bind_static_review_seats",
         "coverage_attestation",
         "completed_plan_review_rounds",
         "Failed/incomplete evidence never counts as a completed review round",
     ):
         assert phrase in body
+
+    review_body = _skill_body(PLAN_REVIEW_SKILL)
+    for retired in (
+        "plan-adversary-taskless-old",
+        "bind_evidence_run",
+        "approve_review",
+        "reject_review",
+        "end_agent_run",
+    ):
+        assert retired not in review_body
 
 
 def test_review_producers_do_not_reference_review_learning() -> None:
@@ -241,7 +250,6 @@ def test_review_producers_do_not_reference_review_learning() -> None:
         "trajectory-monitor": WORKFLOWS / "trajectory-monitor.yaml",
         "feedback-reviewer": WORKFLOWS / "feedback-reviewer.yaml",
         "task-close-reviewer": WORKFLOWS / "task-close-reviewer.yaml",
-        "planner": WORKFLOWS / "planner.yaml",
     }
     for name, path in producers.items():
         text = path.read_text()
@@ -258,11 +266,9 @@ def test_review_producers_do_not_reference_review_learning() -> None:
 @pytest.mark.asyncio
 async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     plan_review = _skill_body(PLAN_REVIEW_SKILL)
-    planner = (WORKFLOWS / "planner.yaml").read_text(encoding="utf-8")
 
     assert "recall plan reviewer-miss lessons" not in plan_review
     assert "apply each recalled check" not in plan_review
-    assert "fixer-induced-defect" not in planner
 
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",
@@ -369,7 +375,6 @@ def test_interactive_approval_sequence(
     plan_contract = _skill_body(PLAN_SKILL)
     draft_contract = _skill_body(PLAN_DRAFT_SKILL)
     adversary_contract = _skill_body(PLAN_REVIEW_SKILL)
-    taskless_agent = (WORKFLOWS / "plan-adversary-taskless-old.yaml").read_text(encoding="utf-8")
     protocol = plan_contract.split("## Reviewed approval", 1)[1].split("## Approval without", 1)[0]
     normalized_protocol = " ".join(protocol.split())
 
@@ -386,8 +391,6 @@ def test_interactive_approval_sequence(
     assert "never overwrite it with a stale mirror" in draft_contract.lower()
     assert "never hand-edit fences" in protocol
     assert "Never edit the plan" in adversary_contract
-    assert "manifest_entries" in taskless_agent
-    assert "full typed entries" in taskless_agent
 
     service, project_id, session_id, plan_path = _review_setup(
         temp_db,
