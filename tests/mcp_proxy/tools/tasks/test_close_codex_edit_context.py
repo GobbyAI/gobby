@@ -169,7 +169,8 @@ async def test_relative_patch_red_green_survives_compact_and_snapshot(
         # after the owner's compaction. No new cwd appears in that suffix.
         with transcript.open("a") as stream:
             stream.write(json.dumps(_record(50, "event_msg", {"type": "context_compacted"})) + "\n")
-            for record in _patch_records(60, test_path):
+            # Preserve the named test's RED; a later test edit would invalidate it.
+            for record in _patch_records(60, source_path):
                 stream.write(json.dumps(record) + "\n")
             for record in _run_records(70, 0):
                 stream.write(json.dumps(record) + "\n")
@@ -186,7 +187,7 @@ async def test_relative_patch_red_green_survives_compact_and_snapshot(
         assert not evidence.edits
         assert not resumed.edits
         return
-    assert [edit.path for edit in resumed.edits] == [test_path, source_path, test_path]
+    assert [edit.path for edit in resumed.edits] == [test_path, source_path, source_path]
     result = evaluate_tdd_evidence(
         (
             AcceptanceTest(

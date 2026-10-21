@@ -4009,7 +4009,7 @@ def test_tdd_production_task_cannot_use_test_side_edit_alone(
     )
 
     assert result.passed is False
-    assert any("no production edit" in finding for finding in result.findings)
+    assert result.findings == ("Unchanged-test evidence has no attributable production edit.",)
 
 
 @pytest.mark.parametrize(
@@ -4033,7 +4033,7 @@ def test_tdd_test_files_and_data_cannot_be_opted_in_as_fixture_modules(path: str
     )
 
     assert result.passed is False
-    assert any("no production edit" in finding for finding in result.findings)
+    assert result.findings == ("Unchanged-test evidence has no attributable production edit.",)
 
 
 def test_tdd_evidence_requires_assertion_red_before_source_edit() -> None:
@@ -4243,7 +4243,7 @@ def test_tdd_evidence_accepts_filtered_green_path_credit(selection: str) -> None
     assert result.green_runs == (green.command,)
 
 
-def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
+def test_tdd_evidence_requires_each_behavior_red_with_multiple_green_artifacts() -> None:
     started = datetime(2026, 8, 30, tzinfo=UTC)
     driving = AcceptanceTest(
         reference="tests/test_feature.py::test_driving_behavior",
@@ -4261,7 +4261,7 @@ def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
         edits=(
             _edit("tests/test_feature.py", started, 1),
             _edit("tests/test_support.py", started + timedelta(seconds=30), 2),
-            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+            _edit("src/feature.py", started + timedelta(minutes=2), 5),
         ),
         validation_runs=(
             _run(
@@ -4269,29 +4269,47 @@ def test_tdd_evidence_accepts_one_cycle_with_multiple_green_artifacts() -> None:
                 started + timedelta(minutes=1),
                 "failure",
                 "FAILED tests/test_feature.py::test_driving_behavior\nE assert 0 == 1",
-                2,
+                3,
             ),
             _run(
                 driving,
                 started + timedelta(minutes=3),
                 "success",
                 "tests/test_feature.py::test_driving_behavior PASSED",
-                4,
+                6,
             ),
             _run(
                 supporting,
                 started + timedelta(minutes=4),
                 "success",
                 "tests/test_support.py::test_supporting_behavior PASSED",
-                5,
+                7,
             ),
         ),
     )
 
+    one_red = evaluate_tdd_evidence((driving, supporting), evidence)
+    assert one_red.passed is False
+    assert any(supporting.reference in finding for finding in one_red.findings)
+
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            evidence.validation_runs[0],
+            _run(
+                supporting,
+                started + timedelta(minutes=1, seconds=15),
+                "failure",
+                f"FAILED {supporting.reference}\nE assert 2 != 2",
+                4,
+            ),
+            *evidence.validation_runs[1:],
+        ),
+    )
     result = evaluate_tdd_evidence((driving, supporting), evidence)
 
     assert result.passed is True
-    assert result.red_runs == (f"pytest {driving.reference}",)
+    assert result.red_runs == (f"pytest {driving.reference}", f"pytest {supporting.reference}")
     assert result.green_runs == (
         f"pytest {driving.reference}",
         f"pytest {supporting.reference}",

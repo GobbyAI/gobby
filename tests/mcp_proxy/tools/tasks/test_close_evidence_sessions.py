@@ -1067,8 +1067,11 @@ async def test_transferred_task_credits_released_test_history_without_foreign_ta
         20,
         "red",
         command,
-        f"FAIL [0.01s] gobby-client::host_upgrade_recovery {names[0]}\n"
-        f"thread '{names[0]}' panicked at {test_path}:3: assertion failed: recovered()",
+        "\n".join(
+            f"FAIL [0.01s] gobby-client::host_upgrade_recovery {name}\n"
+            f"thread '{name}' panicked at {test_path}:3: assertion failed: recovered()"
+            for name in names
+        ),
         100,
     )
     audit_command = (
@@ -1164,19 +1167,33 @@ async def test_transferred_task_credits_released_test_history_without_foreign_ta
     )
     assert validation.passed, validation.message
     assert validation.details["latest_test_types_audit"]["command"] == audit_command
-    assert result.passed is not other_task_overlaps, result.findings
+    # Authenticated runs remain task-owned even when overlapping test edits are
+    # excluded. Every named behavior now has its own RED in that run.
+    assert result.passed, result.findings
     assert all(
         edit.session_id == IMPLEMENTER and edit.path != foreign_path for edit in evidence.edits
     )
     assert {edit.path for edit in evidence.edits} == (
         {production_path} if other_task_overlaps else {test_path, production_path}
     )
-    if not other_task_overlaps:
-        assert result.red_runs == (command,)
-        assert result.green_runs == (command,) * len(names)
-    else:
-        assert result.findings == tuple(
-            f"{test.reference}: transcript has no edit of the named test" for test in tests
+    assert result.red_runs == (command,)
+    assert result.green_runs == (command,) * len(names)
+    partial_red = replace(
+        red_run,
+        output=f"FAIL [0.01s] gobby-client::host_upgrade_recovery {names[0]}\n"
+        f"thread '{names[0]}' panicked at {test_path}:3: assertion failed: recovered()",
+    )
+    incomplete = evaluate_tdd_evidence(
+        tests,
+        replace(evidence, validation_runs=(partial_red, *evidence.validation_runs[1:])),
+    )
+    assert not incomplete.passed
+    assert all(
+        any(test.reference in finding for finding in incomplete.findings) for test in tests[1:]
+    )
+    if other_task_overlaps:
+        assert incomplete.findings == tuple(
+            f"{test.reference}: transcript has no edit of the named test" for test in tests[1:]
         )
     assert not evidence.degraded_capabilities
 
