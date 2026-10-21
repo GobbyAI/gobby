@@ -894,14 +894,15 @@ class TestGuardPlanMemoryWrites:
         assert body.when is not None
         assert "variables.get('plan_mode')" in body.when
         assert "pending_memory_recall_request_id" not in body.when
-        for agent_type in (
+        assert "'plan-adversary'" in body.when
+        for retired in (
             "planner",
-            "plan-adversary",
+            "plan-adversary-old",
             "plan-adversary-taskless-old",
             "plan-enhancer-old",
             "plan-enhancer-taskless-old",
         ):
-            assert f"'{agent_type}'" in body.when
+            assert f"'{retired}'" not in body.when
 
 
 # ---------------------------------------------------------------------------
@@ -949,8 +950,7 @@ class TestGuardPlanMemoryWritesEngine:
         "planning_context",
         [
             {"plan_mode": True},
-            {"_agent_type": "planner"},
-            {"_agent_type": "plan-enhancer-taskless-old"},
+            {"_agent_type": "plan-adversary"},
         ],
     )
     async def test_plan_memory_write_blocks_once_then_allows_retry(

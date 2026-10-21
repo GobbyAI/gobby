@@ -152,35 +152,6 @@ def register_review_evidence_tools(
         read_only=True,
     )
 
-    def bind_evidence_run(evidence_id: str, run_id: str) -> dict[str, object]:
-        try:
-            evidence = service.bind_evidence_run(evidence_id, run_id)
-        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
-            return _error_payload(exc, "bind_evidence_run_failed")
-        return {
-            "ok": True,
-            "evidence_id": evidence.evidence_id,
-            "run_id": evidence.dispatch_run_id,
-            "lease_expires_at": None,
-        }
-
-    registry.register(
-        name="bind_evidence_run",
-        description=(
-            "Attach a spawned agent run to prepared evidence exactly once; "
-            "replaying the same run_id is idempotent."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "evidence_id": {"type": "string"},
-                "run_id": {"type": "string"},
-            },
-            "required": ["evidence_id", "run_id"],
-        },
-        func=bind_evidence_run,
-    )
-
     def bind_static_review_seats(
         evidence_id: str,
         writer_session_id: str,

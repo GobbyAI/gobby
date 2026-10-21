@@ -8,7 +8,6 @@ rules:
     priority: 10
     when: >
       event.data.get('source') in ['clear', 'compact', 'startup']
-      and variables.get('_agent_type') != 'planner'
     effects:
       - type: set_variable
         variable: plan_mode

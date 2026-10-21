@@ -18,7 +18,6 @@ blocked_tools:
 blocked_mcp_tools:
   - "gobby-plans:prepare_plan_review_round"
   - "gobby-plans:get_plan_review_snapshot"
-  - "gobby-plans:bind_evidence_run"
   - "gobby-plans:derive_plan_review_manifest"
   - "gobby-plans:validate_plan_review_coverage"
   - "gobby-plans:append_plan_changelog_round"

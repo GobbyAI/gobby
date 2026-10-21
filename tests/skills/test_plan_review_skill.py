@@ -1,4 +1,4 @@
-"""Adversarial reference obligations and stage/taskless consumer contracts."""
+"""Adversarial reference obligations and static-seat consumer contracts."""
 
 from pathlib import Path
 
@@ -8,7 +8,6 @@ from gobby.skills.capability_catalog import load_capability_catalog
 
 pytestmark = pytest.mark.unit
 REFERENCES = Path("src/gobby/install/shared/skills/gobby/references/plan")
-AGENTS = Path("src/gobby/install/shared/workflows/agents")
 
 
 def _body(topic: str) -> str:
@@ -79,10 +78,7 @@ def test_plan_review_resolves_symbol_targets_before_blast_radius() -> None:
     assert "[coverage](coverage.md)" in body
 
 
-@pytest.mark.parametrize("name", ["plan-adversary-old", "plan-adversary-taskless-old"])
-def test_review_prompts_have_direct_repository_and_task_access(name: str) -> None:
-    body = (AGENTS / f"{name}.yaml").read_text()
-    assert "gobby-tasks:get_task" in body
+def test_review_prompts_have_direct_repository_and_task_access() -> None:
     assert "Read repository code and Gobby task evidence directly" in _body("review")
     assert "Never edit the plan" in _body("review")
 

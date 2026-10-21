@@ -11,7 +11,7 @@ Never edit M1, locked decisions or V1 checkpoints. Revalidate selected modes aft
 
 ## Evidence recovery
 Discover evidence through the review tools and operator `gobby plans review-evidence`. Retain exact IDs and durable payloads.
-- Spawn/bind failure: expire_plan_review_evidence with accurate spawn_failed evidence. Active bound work is not stale merely because it is slow.
+- Abandoned static round: expire_plan_review_evidence through a live bound seat, as [review](review.md) describes. Active bound work is not stale merely because it is slow.
 - missing_round_result: append the canonical round_result, not a summary.
 - missing_v1_checkpoint: append via append_plan_changelog_round, then finalize.
 - invalid_repair: the atomic apply leaves bytes unchanged. Route a design decision to the planner; apply authorized prose fixes and exclude already handled finding IDs on the next typed repair call. Idempotent repairs report already_present.

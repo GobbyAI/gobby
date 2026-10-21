@@ -1,20 +1,17 @@
-"""Plan-adversary Plan-Coverage Contract rejection content tests."""
+"""Plan validator boundaries and surviving review rejection obligations."""
 
 from pathlib import Path
 
 import pytest
-import yaml
 
 from gobby.plans.review_evidence_io import parse_plan_bytes
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.semantic_lint import lint_plan_document
-from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PLAN_REVIEW = PROJECT_ROOT / "src/gobby/install/shared/skills/gobby/references/plan/review.md"
-ADVERSARY = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml"
 
 MALFORMED_CASES = [
     (
@@ -72,12 +69,6 @@ def _plan_review_body() -> str:
             *(reference.read_text() for reference in sorted(references.glob("*.md"))),
         ]
     )
-
-
-def _adversary_prompt() -> str:
-    data = yaml.safe_load(ADVERSARY.read_text(encoding="utf-8"))
-    agent = AgentDefinitionBody.model_validate(data)
-    return agent.prompt_for("agent") or ""
 
 
 @pytest.mark.parametrize(("cause", "malformed_plan", "required_terms"), MALFORMED_CASES)
@@ -144,14 +135,6 @@ def test_accepts_standalone_category_test_deliverables() -> None:
     assert "`category: test` is valid for standalone test infrastructure" in contract
     assert "parity" in contract
     assert "own acceptance criteria" in contract
-
-
-def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() -> None:
-    prompt = " ".join(_adversary_prompt().split())
-    assert "Mechanical parser rejection happens upstream." in prompt
-    assert "uv run gobby plans validate <plan-file>" in prompt
-    assert "spawn gate runs the same internal validator" in prompt
-    assert "typed grammar has already passed the draft-mode contract gate" in prompt
 
 
 def test_review_methodology_delegates_mechanical_blast_radius_verification() -> None:

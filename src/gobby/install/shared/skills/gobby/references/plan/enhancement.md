@@ -3,7 +3,6 @@ Load for a selected enhancement pass or processing its suggestions.
 
 ## Discover and launch
 Load standalone restraint before forming suggestions and proportionality alongside it. Base-validate the canonical plan. Interactive enhancement is optional, advisory, explicitly authorized, and capped at one round unless changed. The planning runbook launches the Enhancer as a live plan-enhancer seat alongside the Writer and the Adversary; it sends its result to the Writer, and no seat spawns an enhancer. Inspect installed agent definitions for provider/model/defaults; template presence proves no active setting.
-Outside the runbook, the coordinator spawns plan-enhancer-taskless-old without task_id, with checkout_mode none, artifact path, round/cap and parent session. Immediately save a structured handoff with clear_session=false. Use an event-driven agent wait when no independent work remains.
 
 ## Review the whole plan through two lenses
 Better strengthens existing scope: reuse, testability, clarity, genuine sequencing opportunities and contract conformance. Bigger adds scope only when traceable to parent intent and a concrete consumer. Preserve any mandated mechanism exactly. Contract silence is Better/clarity; a wrong claim is a correctness issue to point out, not redesign through an enhancement.

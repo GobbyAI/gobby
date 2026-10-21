@@ -50,6 +50,11 @@ RETIRED_PIPELINES = (
 RETIRED_AGENTS = (
     "merge-orchestrator",
     "merge-worker",
+    "planner",
+    "plan-adversary-old",
+    "plan-adversary-taskless-old",
+    "plan-enhancer-old",
+    "plan-enhancer-taskless-old",
     "backend-developer",
     "frontend-developer",
     "fullstack-developer",
@@ -60,6 +65,8 @@ RETIRED_AGENTS = (
 )
 RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
+    "inject-planner-lessons",
+    "inject-plan-enhancer-lessons",
     "memory-recall-on-prompt",
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
@@ -118,6 +125,12 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
     assert not deprecated_path.exists(), f"retired agent tombstone remains: {deprecated_path}"
 
 
+@pytest.mark.parametrize("name", RETIRED_AGENTS)
+def test_retired_agent_procedure_is_absent(name: str) -> None:
+    path = SKILLS_DIR / "gobby" / "references" / "agents" / "procedures" / f"{name}.md"
+    assert not path.exists(), f"retired agent procedure remains: {path}"
+
+
 @pytest.mark.parametrize("name", RETIRED_SKILLS)
 def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
     assert not (SKILLS_DIR / name).exists(), f"retired skill remains bundled: {name}"
@@ -164,21 +177,6 @@ def test_interactive_destructive_git_guard_is_restored() -> None:
     ):
         assert re.search(pattern, command), command
     assert re.search(pattern, "git reset HEAD~1") is None
-
-
-def test_planner_enables_surviving_plan_mode_write_guard() -> None:
-    planner = yaml.safe_load((AGENTS_DIR / "planner.yaml").read_text(encoding="utf-8"))
-    reset = yaml.safe_load(
-        (RULES_DIR / "plan-mode/reset-plan-mode-on-session-start.yaml").read_text(encoding="utf-8")
-    )["rules"]["reset-plan-mode-on-session-start"]
-    guard = yaml.safe_load(
-        (RULES_DIR / "plan-mode/block-edits-plan-mode.yaml").read_text(encoding="utf-8")
-    )["rules"]["block-edits-plan-mode"]
-
-    assert planner["workflows"]["variables"]["plan_mode"] is True
-    assert "variables.get('_agent_type') != 'planner'" in reset["when"]
-    assert "variables.get('plan_mode')" in guard["when"]
-    assert guard["effects"][0]["tools"] == ["Edit", "Write", "NotebookEdit"]
 
 
 def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:

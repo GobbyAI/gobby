@@ -110,9 +110,7 @@ async def test_pull_gate_blocks_ordinary_tools(engine: RuleEngine, tool: str) ->
     "rule_name",
     [
         "surface-memories-on-turn-start",
-        "inject-planner-lessons",
         "inject-plan-reviewer-lessons",
-        "inject-plan-enhancer-lessons",
         "inject-qa-reviewer-lessons",
     ],
 )

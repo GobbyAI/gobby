@@ -425,7 +425,7 @@ async def test_plan_tool_schemas_and_happy_path(
         "delete_plan",
         "prepare_plan_review_round",
         "get_plan_review_snapshot",
-        "bind_evidence_run",
+        "bind_static_review_seats",
         "expire_plan_review_evidence",
         "verify_plan_unchanged",
         "derive_plan_handoff_manifest",
@@ -437,6 +437,7 @@ async def test_plan_tool_schemas_and_happy_path(
         "apply_plan_review_repairs",
         "checkpoint_plan_review_lesson_mint",
     } <= names
+    assert "bind_evidence_run" not in names
     assert registry.get_schema("create_plan") is not None
     snapshot_schema = registry.get_schema("get_plan_review_snapshot")
     assert snapshot_schema is not None

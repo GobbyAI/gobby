@@ -10,13 +10,7 @@ rules:
       not variables.get('plan_memory_write_nudge_fired')
       and (
         variables.get('plan_mode')
-        or variables.get('_agent_type') in [
-          'planner',
-          'plan-adversary',
-          'plan-adversary-taskless-old',
-          'plan-enhancer-old',
-          'plan-enhancer-taskless-old'
-        ]
+        or variables.get('_agent_type') in ['plan-adversary']
       )
     effects:
       - type: block

@@ -31,9 +31,6 @@ PROCEDURE_ROLES = [
     "code-reviewer",
     "lane-manager",
     "orchestrator",
-    "plan-adversary-old",
-    "plan-adversary-taskless-old",
-    "planner",
     "reporter",
     "task-close-reviewer",
 ]
@@ -168,6 +165,13 @@ def test_project_policy_lane_inventory_and_role_guidance_stay_queryable() -> Non
     assert policy["integration_branch"] == "0.5.0"
     assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "codex"
     assert policy["role_launch_defaults"]["architect"]["provider"] == "codex"
+    assert {
+        "planner",
+        "plan-adversary-old",
+        "plan-adversary-taskless-old",
+        "plan-enhancer-old",
+        "plan-enhancer-taskless-old",
+    }.isdisjoint(policy["role_launch_defaults"])
     assert "ROADMAP progress and the Story B critical path" in policy["role_guidance"]["reporter"]
     assert "all plan-expanded epic subtrees" in policy["role_guidance"]["consolidator"]
     assert policy["handoff_reason_template"].startswith("Handed off: reviewer LAND at <sha>")

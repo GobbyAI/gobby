@@ -259,22 +259,6 @@
     {
       "surface": "mcp",
       "server": "gobby-plans",
-      "tool": "bind_evidence_run",
-      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
-        "symbol": "bind_evidence_run"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-inspection",
-        "focused-runtime"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-plans",
       "tool": "bind_static_review_seats",
       "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
       "implementation": {

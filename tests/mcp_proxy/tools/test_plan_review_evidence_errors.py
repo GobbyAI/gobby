@@ -146,20 +146,11 @@ async def test_bound_round_prepare_returns_structured_error() -> None:
     result = await tool(plan_path=".gobby/plans/example.md", round_number=1)
 
     assert result == error.to_dict()
-    metadata = registry.get_tool_metadata("bind_evidence_run")
-    assert metadata is not None
-    assert "replaying the same run_id is idempotent" in metadata.description
 
 
 @pytest.mark.parametrize(
     ("tool_name", "service_method", "arguments", "fallback"),
     [
-        (
-            "bind_evidence_run",
-            "bind_evidence_run",
-            {"evidence_id": "evidence-1", "run_id": "run-1"},
-            "bind_evidence_run_failed",
-        ),
         (
             "expire_plan_review_evidence",
             "expire_plan_review_evidence",

@@ -196,20 +196,3 @@ def test_discovery_agents_include_task_skill_gates(slug: str) -> None:
     # agents omit it). An absent key excludes nothing, which is what this
     # asserts.
     assert "tag:task-skill-gates" not in selectors.get("exclude", [])
-
-
-def test_plan_adversary_documents_task_skill_gate_exclusion() -> None:
-    raw_text = _agent_path("plan-adversary-old").read_text(encoding="utf-8")
-    selectors = _raw_agent("plan-adversary-old")["workflows"]["rule_selectors"]
-
-    assert "tag:task-skill-gates" in selectors["exclude"]
-    assert "Review/orchestration agents deliberately exclude task-skill gates" in raw_text
-
-
-def test_planner_treats_discovery_markers_as_authoritative_context() -> None:
-    planner = _raw_agent("planner")
-    instructions = planner["prompts"]["agent"]
-
-    assert "gobby:discovery-stage:*:start" in instructions
-    assert "authoritative upstream context" in instructions
-    assert "planning handoff notes" in instructions
