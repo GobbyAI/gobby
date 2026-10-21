@@ -116,7 +116,7 @@ def _yaml_rule_count(group: str) -> int:
 
 @pytest.mark.parametrize(
     ("group", "expected_count"),
-    (("task-enforcement", 23), ("worker-safety", 59)),
+    (("task-enforcement", 24), ("worker-safety", 59)),
 )
 def test_rule_reference_counts_match_yaml(group: str, expected_count: int) -> None:
     prefix = f"| `{group}` |"
