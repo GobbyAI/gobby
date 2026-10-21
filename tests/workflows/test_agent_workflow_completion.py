@@ -146,43 +146,6 @@ def _register_agent_workflow(
     return instance_manager
 
 
-def _register_qa_reviewer_workflow(
-    db: HubDatabase,
-    *,
-    session_id: str = AGENT_SESSION_ID,
-) -> AgentStepInstanceManager:
-    _create_session(db, session_id)
-    instance_manager = AgentStepInstanceManager(db)
-    agent_path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/qa-reviewer.yaml"
-    )
-    agent = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
-    workflow_name = "qa-reviewer-steps"
-    variables = dict(agent["step_workflow"]["variables"])
-    variables.update(
-        {
-            "task_claimed": True,
-            "required_skills_loaded": True,
-            "review_complete": False,
-        }
-    )
-    instance_manager.save(
-        build_step_instance(
-            make_agent_definition(
-                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-                name=workflow_name,
-                step_workflow=AgentStepWorkflowBody.model_validate(agent["step_workflow"]),
-            ),
-            session_id=session_id,
-            step_workflow_id=None,
-            variables=variables,
-            current_step="review",
-        )
-    )
-    return instance_manager
-
-
 def _register_bundled_agent_workflow(
     db: HubDatabase,
     *,
@@ -806,43 +769,6 @@ class TestAgentWorkflowCompletion:
             ),
         )
         completion_registry.notify.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_qa_reviewer_stale_get_task_result_transitions_to_terminate(
-        self, db: HubDatabase
-    ) -> None:
-        instance_manager = _register_qa_reviewer_workflow(db)
-        engine = RuleEngine(db)
-        variables: dict[str, object] = {}
-
-        response = await engine.evaluate(
-            _after_tool_event(
-                mcp_server="gobby-tasks",
-                mcp_tool="get_task",
-                tool_output={
-                    "success": True,
-                    "result": {
-                        "state": {
-                            "is_closed": False,
-                            "current_stage": {
-                                "name": "merge",
-                                "state": "in_progress",
-                            },
-                        }
-                    },
-                },
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["review_complete"] is True
-        assert variables["step_workflow_complete"] is True
-        assert response.context is not None
-        assert "review -> terminate" in response.context
 
     @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(

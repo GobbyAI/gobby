@@ -179,10 +179,6 @@
     "status": "proxied",
     "note": "Python src/gobby/mcp_proxy/tools/plans/__init__.py::archive_plan; blocked on Rust project-scoped archival, file movement and manifest removal and MCP registration. Owner: #21568 Remaining route families."
   },
-  "MCP gobby-plans:bind_evidence_run": {
-    "status": "proxied",
-    "note": "Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::bind_evidence_run; blocked on Rust review-evidence/run ownership binding and MCP registration. Owner: #21568 Remaining route families."
-  },
   "MCP gobby-plans:bind_static_review_seats": {
     "status": "proxied",
     "note": "Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::bind_static_review_seats; blocked on Rust static-review seat binding and MCP registration. Owner: #21568 Remaining route families."

@@ -28,27 +28,13 @@ __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
 
 logger = logging.getLogger(__name__)
 
-_DISCOVERY_PLACEHOLDER_AGENTS = frozenset(
-    {
-        "analyst",
-        "researcher",
-        "architect",
-        "product-manager",
-    }
-)
+_DISCOVERY_PLACEHOLDER_AGENTS = frozenset({"researcher"})
 
 # One-time repair: the sweep removed these rows in one batch on 2026-09-06
 # before it recorded its origin, so they carry no marker and no sync can tell
 # them apart from a deliberate deletion. The cutoff bounds the repair to that
 # batch; every sweep deletion since marks itself.
-_PRE_MARKER_SWEPT_AGENTS = frozenset(
-    {
-        "analyst",
-        "researcher",
-        "architect",
-        "product-manager",
-    }
-)
+_PRE_MARKER_SWEPT_AGENTS = frozenset({"researcher"})
 _PRE_MARKER_SWEEP_CUTOFF = datetime(2026, 9, 7, tzinfo=UTC)
 
 

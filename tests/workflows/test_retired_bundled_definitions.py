@@ -48,6 +48,13 @@ RETIRED_PIPELINES = (
     "wiki-research",
 )
 RETIRED_AGENTS = (
+    "analyst",
+    "architect",
+    "product-manager",
+    "qa-reviewer",
+    "doc-reviewer",
+    "trajectory-monitor",
+    "qa-dev",
     "merge-orchestrator",
     "merge-worker",
     "planner",
@@ -65,6 +72,7 @@ RETIRED_AGENTS = (
 )
 RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
+    "inject-qa-reviewer-lessons",
     "inject-planner-lessons",
     "inject-plan-enhancer-lessons",
     "memory-recall-on-prompt",
@@ -129,6 +137,14 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
 def test_retired_agent_procedure_is_absent(name: str) -> None:
     path = SKILLS_DIR / "gobby" / "references" / "agents" / "procedures" / f"{name}.md"
     assert not path.exists(), f"retired agent procedure remains: {path}"
+
+
+def test_expansion_qa_remains_bundled() -> None:
+    """The post-expansion checker survives discovery-stage retirement."""
+    body = yaml.safe_load((AGENTS_DIR / "expansion-qa.yaml").read_text(encoding="utf-8"))
+    assert body["name"] == "expansion-qa"
+    assert body.get("enabled", True) is True
+    assert "expansion-qa" not in RETIRED_AGENTS
 
 
 @pytest.mark.parametrize("name", RETIRED_SKILLS)

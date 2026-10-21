@@ -34,10 +34,9 @@ class EpicFindingEntry(TypedDict):
 async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None:
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
     epic_reviewer = (WORKFLOWS / "epic-reviewer.yaml").read_text(encoding="utf-8")
-    qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
 
     # Agents no longer see the lesson contract; the recording service below stays.
-    for text in (skill, epic_reviewer, qa_reviewer):
+    for text in (skill, epic_reviewer):
         assert "list_check_keys" not in text
         assert "qa-miss" not in text
         assert "record_review_lesson" not in text

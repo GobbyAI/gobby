@@ -26,13 +26,7 @@ RULE = "block-update-task"
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TASK_UUID = "44444444-4444-4444-8444-444444444444"
 TASK_REF = "#7"
-MARKER_BLOCK = (
-    "<!-- gobby:discovery-stage:ideation:start -->\n"
-    "## Discovery Brief\n"
-    "<!-- gobby:discovery-stage:ideation:end -->"
-)
-
-TASK_EDITORS = ("orchestrator", "assistant", "analyst", "architect", "product-manager")
+TASK_EDITORS = ("orchestrator", "assistant")
 BLOCKED_DEFINITIONS = ("default", "developer", "code-reviewer", "researcher", "lane-manager")
 
 
@@ -132,21 +126,6 @@ async def test_coordinators_edit_another_sessions_claimed_task(
 ) -> None:
     decision, _ = await _decision(
         db, agent_name, _tasks_call("update_task", {"task_id": "#8", "priority": 1}), activated_by
-    )
-
-    assert decision == "allow"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("agent_name", ("analyst", "architect", "product-manager"))
-async def test_discovery_definitions_write_their_marker_block(
-    db: HubDatabase, agent_name: str, activated_by: str
-) -> None:
-    decision, _ = await _decision(
-        db,
-        agent_name,
-        _tasks_call("update_task", {"task_id": TASK_REF, "description": MARKER_BLOCK}),
-        activated_by,
     )
 
     assert decision == "allow"

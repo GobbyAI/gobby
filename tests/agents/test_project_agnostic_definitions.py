@@ -164,8 +164,15 @@ def test_project_policy_lane_inventory_and_role_guidance_stay_queryable() -> Non
     assert len(policy["lanes"]) == 9
     assert policy["integration_branch"] == "0.5.0"
     assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "codex"
-    assert policy["role_launch_defaults"]["architect"]["provider"] == "codex"
+    assert policy["role_launch_defaults"]["expansion-qa"]["model"] == "gpt-6-luna"
     assert {
+        "analyst",
+        "architect",
+        "product-manager",
+        "qa-reviewer",
+        "doc-reviewer",
+        "trajectory-monitor",
+        "deprecated/qa-dev",
         "planner",
         "plan-adversary-old",
         "plan-adversary-taskless-old",
