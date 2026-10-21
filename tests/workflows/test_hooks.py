@@ -527,7 +527,7 @@ class TestThreadingScenarios:
 
 
 class TestCancelledErrorHandling:
-    """Cancellation blocks tool/stop decisions and preserves shutdown propagation."""
+    """Cancellation blocks tools, permits stopping, and preserves shutdown propagation."""
 
     @staticmethod
     def _raise_cancelled(
@@ -579,10 +579,12 @@ class TestCancelledErrorHandling:
         assert "11111111-1111-4111-8111-111111111111" in message
         assert "source=codex" in message
 
-    def test_cancelled_error_blocks_stop_evaluate(self) -> None:
-        """CancelledError on STOP event should block (fail-closed)."""
-        event = self._make_event(HookEventType.STOP)
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
+    def test_cancelled_error_allows_stop_evaluate(self, event_type: HookEventType) -> None:
+        """Cancelled evaluation cannot manufacture another stop turn."""
+        event = self._make_event(event_type)
         runtime = MagicMock()
+        runtime.is_closing = False
         runtime.run.side_effect = self._raise_cancelled
         with (
             patch("asyncio.get_running_loop", side_effect=RuntimeError),
@@ -590,8 +592,8 @@ class TestCancelledErrorHandling:
         ):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.evaluate(event)
-            assert result.decision == "block"
-            audit.assert_called_once()
+            assert result.decision == "allow"
+            audit.assert_not_called()
 
     @pytest.mark.parametrize(
         "event_type",
@@ -612,15 +614,16 @@ class TestCancelledErrorHandling:
             result = handler.evaluate(event)
             assert result.decision == "allow"
 
-    def test_cancelled_error_blocks_stop_handle(self) -> None:
-        """CancelledError on STOP event should block in handle()."""
-        event = self._make_event(HookEventType.STOP)
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
+    def test_cancelled_error_allows_stop_handle(self, event_type: HookEventType) -> None:
+        """The public handle entry point also permits stopping after cancellation."""
+        event = self._make_event(event_type)
         runtime = MagicMock()
         runtime.run.side_effect = self._raise_cancelled
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.handle(event)
-            assert result.decision == "block"
+            assert result.decision == "allow"
 
     def test_cancelled_error_allows_non_stop_handle(self) -> None:
         """CancelledError on non-STOP event should allow in handle()."""
@@ -684,7 +687,7 @@ class TestCancelledErrorHandling:
         )
         assert [record.levelno for record in records] == [logging.WARNING]
 
-    def test_controlled_shutdown_stop_cancellation_still_warns_and_blocks(
+    def test_controlled_shutdown_stop_cancellation_warns_and_allows(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -703,9 +706,9 @@ class TestCancelledErrorHandling:
             for record in caplog.records
             if "Workflow evaluation cancelled" in record.getMessage()
         ]
-        assert result.decision == "block"
+        assert result.decision == "allow"
         assert [record.levelno for record in records] == [logging.WARNING]
-        audit.assert_called_once()
+        audit.assert_not_called()
 
     def test_before_tool_cancelled_mid_flight_blocks_and_audits(self) -> None:
         runtime = WorkflowEvaluationRuntime(max_workers=1)
