@@ -47,10 +47,8 @@ from gobby.hooks._normalization_compound import (
 )
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
-    HeredocBody,
     ShellToken,
     _skip_heredocs,
-    _strip_shell_wrappers,
     _substitution_end,
     backtick_body,
     is_fd_duplication_token,
@@ -70,11 +68,13 @@ from gobby.hooks.provider_launch_guard import (
 )
 from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
 
-# Commands whose standard input is never interpreted as code. Every other
-# consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
-# unknown tools — fails closed and keeps its heredoc body in the subject.
-HEREDOC_DATA_CONSUMERS = frozenset({"cat", "tee", "git", "gh"})
-_OUTPUT_PROCESS_SUBSTITUTION_RE = re.compile(r">(?:\\\n)*\(")
+from .command_matching_heredoc import (
+    HeredocExecution,
+    classify_heredoc_execution,
+    heredoc_free_text,
+)
+
+_SUBSTITUTION_OPENING = re.compile(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(")
 # A newline right after one of these continues the same command list.
 _CONTINUATION_OPERATORS = frozenset({"|", "&&", "||"})
 # Lookbehind class used by bundled command-position patterns, minus newline
@@ -360,14 +360,13 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             next_expression = 0
             for index, word in enumerate(unwrapped):
                 if index >= next_expression and word in {"-exec", "-execdir", "-ok", "-okdir"}:
-                    find_argv = unwrapped[index + 1 :]
                     end = next(
-                        (i for i, value in enumerate(find_argv) if value in {";", "+"}),
-                        len(find_argv),
+                        (i for i in range(index + 1, len(unwrapped)) if unwrapped[i] in {";", "+"}),
+                        len(unwrapped),
                     )
-                    if find_argv[:end]:
-                        scripts.append(shlex.join(find_argv[:end]))
-                    next_expression = index + end + 2
+                    if index + 1 < end:
+                        scripts.append(shlex.join(unwrapped[index + 1 : end]))
+                    next_expression = end + 1
             continue
         if _python_name(name):
             module_args = _python_program(unwrapped)[2]
@@ -618,16 +617,16 @@ def _subjects(
     split_substitution = False
     for start, end in scan.spans:
         cursor = start
-        while match := re.search(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[cursor:end]):
-            opening = cursor + match.start()
+        while match := _SUBSTITUTION_OPENING.search(command, cursor, end):
+            opening = match.start()
             tick = command[opening] == "`"
             try:
-                close = _substitution_end(command, cursor + match.end(), tick, depth + 1)
+                close = _substitution_end(command, match.end(), tick, depth + 1)
                 split_substitution |= close >= end
                 # A delimited outer body contains its nested substitutions too.
                 cursor = close + 1
             except ValueError:
-                cursor += match.end()
+                cursor = match.end()
     if split_substitution and not _runs_substitution_output(scan.tokens):
         resolved = _resolve_substitutions(command, depth, correlations)
         if resolved[0] != command:
@@ -646,6 +645,7 @@ def _subjects(
     case_depth = 0
     pending = False
     previous_end = 0
+    heredoc_index = 0
     spans_by_token = dict(zip((id(token) for token in scan.tokens), scan.spans, strict=True))
     for segment in segments:
         tokens = scan.tokens[segment.first : segment.last + 1]
@@ -685,23 +685,17 @@ def _subjects(
         segment_spans = scan.spans[segment.first : segment.last + 1]
         cursor = min(start for start, _ in segment_spans)
         end = max(end for _, end in segment_spans)
-        parts: list[str] = []
-        for heredoc in scan.heredocs:
-            if cursor <= heredoc.start < end:
-                parts.append(command[cursor : heredoc.start])
-                cursor = min(heredoc.end, end)
-        parts.append(command[cursor:end])
-        raw.append("".join(parts))
+        while heredoc_index < len(scan.heredocs) and scan.heredocs[heredoc_index].start < cursor:
+            heredoc_index += 1
+        lo = heredoc_index
+        while heredoc_index < len(scan.heredocs) and scan.heredocs[heredoc_index].start < end:
+            heredoc_index += 1
+        bodies = scan.heredocs[lo:heredoc_index]
+        raw.append(heredoc_free_text(command, cursor, end, bodies))
         arm_text = None
         if kept and kept[0] is not tokens[0]:
             cursor = spans_by_token[id(kept[0])][0]
-            parts = []
-            for heredoc in scan.heredocs:
-                if cursor <= heredoc.start < end:
-                    parts.append(command[cursor : heredoc.start])
-                    cursor = min(heredoc.end, end)
-            parts.append(command[cursor:end])
-            arm_text = "".join(parts)
+            arm_text = heredoc_free_text(command, cursor, end, bodies)
         arms.append(arm_text)
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
@@ -729,30 +723,29 @@ def _subjects(
                 subjects.append(candidate)
             else:
                 subjects.extend(_resolve_substitutions(candidate, depth, correlations))
+    owner = 0
+    classifications: dict[int, HeredocExecution] = {}
     for heredoc in scan.heredocs:
-        owner = next(
-            index
-            for index, segment in enumerate(segments)
-            if segment.first <= heredoc.opener <= segment.last
-        )
+        while owner < len(segments) and segments[owner].last < heredoc.opener:
+            owner += 1
+        if owner == len(segments) or segments[owner].first > heredoc.opener:
+            raise StopIteration
         segment = segments[owner]
-        tokens = scan.tokens[segment.first : segment.last + 1]
-        if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
+        classification = classifications.get(owner)
+        if classification is None:
+            tokens = scan.tokens[segment.first : segment.last + 1]
+            classification = classify_heredoc_execution(
+                tokens, raw[owner], [_stage_words(stage) for stage in _pipeline_stages(tokens)]
+            )
+            classifications[owner] = classification
+        if classification.may_execute(heredoc, heredoc.opener - segment.first):
             # Each executed body has its own quote context. Joining it to the
             # owner or a sibling lets an interpreter quote hide later commands.
             subjects.extend(
                 _subjects(
                     heredoc.text,
                     depth,
-                    heredoc_source=(
-                        "shell"
-                        if any(
-                            (words := _unwrap(_stage_words(stage)))
-                            and (_shell_stdin(words) or shell_command_name(words[0]) == "ssh")
-                            for stage in _pipeline_stages(tokens)
-                        )
-                        else "language"
-                    ),
+                    heredoc_source=classification.source,
                     correlated_subjects=correlations,
                 )
             )
@@ -903,26 +896,6 @@ def _split_segments(tokens: list[ShellToken]) -> list[_Segment]:
 
 def _is_continuation_operator(token: ShellToken) -> bool:
     return not token.quoted and token.value in _CONTINUATION_OPERATORS
-
-
-def _heredoc_may_execute(
-    tokens: list[ShellToken], raw: str, heredoc: HeredocBody, opener: int
-) -> bool:
-    if not heredoc.terminated:
-        return True
-    if _OUTPUT_PROCESS_SUBSTITUTION_RE.search(raw):
-        return True
-    stages = _pipeline_stages(tokens)
-    owner = sum(not token.quoted and token.value == "|" for token in tokens[:opener])
-    consumer = _strip_shell_wrappers(_stage_words(stages[owner]))
-    if consumer and shell_command_name(consumer[0]) not in HEREDOC_DATA_CONSUMERS:
-        return True
-    # A data consumer's output is still data downstream, unless a shell runs it.
-    for stage in stages[owner + 1 :]:
-        words = _unwrap(_stage_words(stage))
-        if words and shell_command_name(words[0]) in _SHELLS:
-            return True
-    return False
 
 
 def _substitution_spans(body: str) -> list[str]:
