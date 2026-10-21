@@ -296,17 +296,6 @@ def advance_seat(
     step = instance.current_step
     state = {**variables, **instance.variables}
     tasks = LocalTaskManager(db)
-    if (
-        role == "merge-worker"
-        and step == "cleanup"
-        and not state.get("worktree_id")
-        and mcp_tool == ("gobby-agents", "send_message")
-    ):
-        messages = completion_messages(db, session_id, mcp_tool[1], tool_input, tool_output)
-        if any(
-            message.content.startswith("EVENT=CLONE_CLEANUP_DELEGATED ") for message in messages
-        ):
-            return {"worktree_cleanup_done": True}
     if role == "developer" and step == "route_skills" and mcp_tool == ("gobby-tasks", "get_task"):
         task = _requested_task(tasks, state.get("assigned_task_id"), tool_input.get("task_id"))
         if task is None or task.claimed_by_session_id != session_id:

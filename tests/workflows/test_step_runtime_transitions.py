@@ -581,7 +581,7 @@ def test_step_handler_expression_failure_logs_and_fails_closed(
 async def test_step_workflow_complete_user_write_is_blocked(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")
     engine = RuleEngine(db)
-    variables: dict[str, Any] = {}
+    variables: dict[str, Any] = {"_agent_type": "default"}
 
     response = await engine.evaluate(
         _before_set_variable("step_workflow_complete", True),
@@ -626,6 +626,7 @@ async def test_step_workflow_complete_call_tool_write_is_blocked(db: HubDatabase
 async def test_runtime_managed_write_is_blocked_without_step_workflow(
     db: HubDatabase, name: str
 ) -> None:
+    _create_session(db)
     response = await RuleEngine(db).evaluate(
         _before_set_variable(name, True),
         session_id=SESSION_ID,
@@ -656,7 +657,7 @@ async def test_runtime_managed_call_tool_write_is_blocked_without_step_workflow(
 async def test_non_reserved_set_variable_remains_allowed(db: HubDatabase) -> None:
     _setup_workflow(db, current_step="implement")
     engine = RuleEngine(db)
-    variables: dict[str, Any] = {}
+    variables: dict[str, Any] = {"_agent_type": "default"}
 
     response = await engine.evaluate(
         _before_set_variable("lint_passed", True),
@@ -675,7 +676,7 @@ async def test_missing_session_scoped_transition_variable_waits_without_error(
     workflow = _set_variable_workflow()
     instance_manager = _setup_workflow(db, current_step="plan", workflow=workflow)
     engine = RuleEngine(db)
-    variables: dict[str, Any] = {}
+    variables: dict[str, Any] = {"_agent_type": "default"}
     caplog.set_level(logging.ERROR, logger="gobby.workflows.engine.templating")
 
     response = await engine.evaluate(
