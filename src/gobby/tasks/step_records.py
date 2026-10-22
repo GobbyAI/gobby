@@ -7,8 +7,6 @@ approval authority.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,7 +16,6 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_policy
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -31,7 +28,11 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._transitions import release_task_claim
 from gobby.storage.tasks._updates import update_task
-from gobby.tasks.lifecycle_access import CrossProjectTaskForbidden, resolve_lifecycle_task
+from gobby.tasks.lifecycle_access import (
+    CrossProjectTaskForbidden,
+    resolve_lifecycle_task,
+    session_agent_definition,
+)
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -177,6 +178,16 @@ def approved_task_step(
     return record if any(record.commit_sha.startswith(sha) for sha in evidence) else None
 
 
+def independent_review_approval(
+    task: Task, records: list[TaskStepRecord], commit_sha: str, lander_session_id: str
+) -> TaskStepRecord | None:
+    """The current review approval of exactly ``commit_sha``, written by another session."""
+    current = approved_task_step(task, records, "review")
+    if current is None or current.commit_sha != commit_sha.strip().lower():
+        return None
+    return None if current.session_id == lander_session_id else current
+
+
 def landing_review_approval(
     task: Task, records: list[TaskStepRecord], commit_sha: str, reviewer_session_id: str
 ) -> TaskStepRecord | None:
@@ -267,26 +278,12 @@ def _writer(
             )
         except (CrossProjectTaskForbidden, TaskNotFoundError) as exc:
             raise StepRecordError("step writer has no authority over the task's project") from exc
-    agent_name = (
-        SessionVariableManager(db)
-        .get_variable_subset(session_id, ("_agent_type",))
-        .get("_agent_type")
-    )
-    definition = (
-        AgentDefinitionManager(db).get_by_name(agent_name, session.project_id)
-        if isinstance(agent_name, str) and agent_name
-        else None
-    )
-    if definition is None or not definition.enabled:
+    definition = session_agent_definition(db, session)
+    if definition is None:
         raise StepRecordError("step writer requires an enabled installed agent definition")
-    body = AgentDefinitionBody.model_validate(
-        {**definition.definition_json, "name": definition.name}
-    )
+    body, digest = definition
     if step not in body.task_step_writes:
         raise StepRecordError(f"agent definition {body.name} cannot write the {step} step")
-    digest = hashlib.sha256(
-        json.dumps(definition.definition_json, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
     return body, digest
 
 

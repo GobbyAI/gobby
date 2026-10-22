@@ -1,8 +1,9 @@
-"""Land an independently reviewed task candidate into its main checkout."""
+"""The task's Dev Manager lands an independently reviewed candidate into its main checkout."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -11,15 +12,17 @@ from typing import TypedDict
 
 import psycopg
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_tasks import claimant_sessions
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
+from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.tasks.close_receipts import (
     LANDING,
-    LANDING_APPROVAL,
     CloseReceipt,
     list_close_receipts,
     record_close_receipt,
@@ -31,9 +34,11 @@ from gobby.tasks.landing_policy import (
     read_freeze,
     requires_project_sync,
 )
+from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
 from gobby.tasks.step_records import (
     STEP_RECORD_AUTHOR_TYPE,
-    landing_review_approval,
+    TaskStepRecord,
+    independent_review_approval,
     list_task_step_records,
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
@@ -50,17 +55,9 @@ _LANDING_ACTION = re.compile(
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
-_RETEST_PROCEDURE = (
-    "Send EVENT=LANDED immediately with RETEST=UNAVAILABLE to the closing seat and your Lane "
-    "Manager, carrying this landing's receipt and landed_tip and the focused verification "
-    "commands from the task's validation evidence. The closing seat owns the retest: after "
-    "LANDED, it uses the developer handoff, de-escalate and reclaim sequence for shell access. "
-    "Under a fresh Release Manager GO, it tests in its own worktree at a clean HEAD with "
-    "candidate <= HEAD <= integration tip, including the landed merge SHA. Its later "
-    "EVENT=PROOF_RESULT must name that landed merge SHA, the same test set, commands, results "
-    "and tested HEAD. Pending or failing proof withholds close release; failing proof reopens "
-    "the task through the Orchestrator. Activation gates still apply."
-)
+# Conflicts go to Triage; every other blocker is the caller's to fix.
+_CONFLICTS = frozenset({"base_update_required", "candidate_overlap", "merge_conflict"})
+_ORCHESTRATOR = frozenset({"orchestrator"})
 
 
 class Overlap(TypedDict):
@@ -76,7 +73,7 @@ class LandingResult(TypedDict, total=False):
     error: str
     message: str
     blockers: list[str]
-    missing_approvals: list[str]
+    escalated: bool
     missing_schema_carriers: list[str]
     overlaps: list[Overlap]
     shared_paths: list[str]
@@ -88,12 +85,13 @@ class LandingResult(TypedDict, total=False):
     activation_class: str
     project_sync_required: bool
     retest_required: bool
-    retest_procedure: str
     provenance: str
     merge_commit: str
     receipt_id: str
     receipt_pending: bool
     notification_pending: list[str]
+    worktree_id: str
+    worktree_merged: bool
 
 
 class LandingGitError(RuntimeError):
@@ -234,7 +232,6 @@ async def _recover_landing(
         "observed_tip": tip,
         "mode": "already_landed",
         "activation_class": "unknown",
-        "retest_required": True,
         "provenance": "unknown",
         "landed_by_session_id": "unknown",
     }
@@ -269,7 +266,6 @@ async def _recover_landing(
                 "landed_tip": entry.new,
                 "mode": action["mode"],
                 "activation_class": activation_class,
-                "retest_required": action["mode"] == "merge",
                 "provenance": "reflog",
                 "landed_by_session_id": (action["lander"] if action["candidate"] == sha else None)
                 or "unknown",
@@ -302,15 +298,14 @@ def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult
         "observed_tip": str(facts["observed_tip"]),
         "mode": str(facts["mode"]),
         "activation_class": str(facts["activation_class"]),
-        "retest_required": bool(facts["retest_required"]),
+        # A disjoint merge keeps the reviewed tip as an ancestor, so no landing needs a retest.
+        "retest_required": False,
         "provenance": str(facts["provenance"]),
     }
     if "merge_commit" in facts:
         result["merge_commit"] = str(facts["merge_commit"])
     if "project_sync_required" in facts:
         result["project_sync_required"] = bool(facts["project_sync_required"])
-    if result["retest_required"]:
-        result["retest_procedure"] = _RETEST_PROCEDURE
     return result
 
 
@@ -384,13 +379,88 @@ def _refused(refusal: LandingResult, error: str, message: str | None = None) -> 
     return result
 
 
+def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
+    """The task's bound Dev Manager lands it; the root Orchestrator is the last resort."""
+    caller = SessionManager(db).get(caller_session_id)
+    if caller is None:
+        return False
+    run = LocalAgentRunManager(db).get_by_session(caller.id)
+    definition = session_agent_definition(db, caller)
+    if run is not None and run.task_id == task.id and definition is not None:
+        if "closing" in definition[0].task_step_writes:
+            return True
+    return is_operator_coordinator(LocalTaskManager(db), caller, roles=_ORCHESTRATOR)
+
+
+def _review_blockers(task: Task, records: list[TaskStepRecord], sha: str, caller: str) -> list[str]:
+    blockers: list[str] = []
+    if any(
+        record.step == "review"
+        and record.epoch == task.review_epoch
+        and record.session_id == caller
+        for record in records
+    ):
+        blockers.append("caller_is_reviewer")
+    if independent_review_approval(task, records, sha, caller) is None:
+        blockers.append("review_approval_missing")
+    return blockers
+
+
+def _escalate(db: HubDatabase, task: Task, refusal: LandingResult) -> LandingResult:
+    """Send a conflicting landing to Triage; nothing resolves a conflict by overwriting."""
+    reason = {
+        "kind": "landing_conflict",
+        "commit_sha": refusal["commit_sha"],
+        "blockers": refusal["blockers"],
+        "shared_paths": refusal.get("shared_paths", []),
+        "overlaps": refusal.get("overlaps", []),
+    }
+    try:
+        LocalTaskManager(db).escalate_task(task.id, json.dumps(reason))
+    except TaskAlreadyEscalatedError:
+        pass
+    except ValueError:
+        # A closed task has no Triage path left; the refusal stands alone.
+        return refusal
+    return {**refusal, "escalated": True}
+
+
+async def _mark_task_worktree(
+    db: HubDatabase, task: Task, main: Path, result: LandingResult
+) -> LandingResult:
+    """Mark the task's tree merged once its HEAD holds the candidate and the tip holds HEAD."""
+    worktrees = LocalWorktreeManager(db)
+    row = worktrees.get_by_task(task.id)
+    if row is None:
+        return result
+    merged = row.status == WorktreeStatus.MERGED.value
+    path = Path(row.worktree_path)
+    if not merged and row.status in {WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value}:
+        try:
+            head = await _resolve(path, "HEAD") if path.is_dir() else None
+            if (
+                head is not None
+                and await _ancestor(main, result["commit_sha"], head)
+                and await _ancestor(main, head, result["landed_tip"])
+            ):
+                # Read the branch from Git: the registry label can be stale.
+                branch = await _branch(path)
+                if branch is not None and branch != row.branch_name:
+                    worktrees.update(row.id, branch_name=branch)
+                merged = worktrees.mark_merged(row.id, cleanup_days=0) is not None
+        except LandingGitError:
+            pass  # A tree Git cannot read stays unmarked for the sweeper to judge.
+    return {**result, "worktree_id": row.id, "worktree_merged": merged}
+
+
 async def land_candidate(
     db: HubDatabase, *, task: Task, caller_session_id: str, commit_sha: str
 ) -> LandingResult:
-    """Land a linked candidate approved by this caller, serialized with project freezes.
+    """Land a linked candidate another session approved, as the task's Dev Manager.
 
     A tip that moved by paths disjoint from the candidate's lands a generated merge;
-    a tip that moves during the call is re-read and every policy check repeats.
+    shared paths, in-flight overlaps and merge conflicts escalate the task to Triage.
+    A tip that moves during the call is re-read and every policy check repeats.
     """
     if not caller_session_id:
         return {"landed": False, "error": "session_required"}
@@ -422,12 +492,13 @@ async def land_candidate(
                 with db.transaction() as conn:
                     claimants = claimant_sessions(conn, task.id)
                 blockers: list[str] = []
+                if not _manages_task(db, current_task, caller_session_id):
+                    blockers.append("caller_not_task_manager")
                 if current_task.claimed_by_session_id == caller_session_id:
                     blockers.append("caller_is_claimant")
                 elif caller_session_id in claimants:
                     blockers.append("caller_was_claimant")
-                if landing_review_approval(current_task, records, sha, caller_session_id) is None:
-                    blockers.append("review_approval_missing")
+                blockers += _review_blockers(current_task, records, sha, caller_session_id)
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):
@@ -439,13 +510,18 @@ async def land_candidate(
                             "commit_sha": sha,
                         }
                     # Landing receipts belong to the task/SHA, regardless of the replay caller.
-                    for receipt in receipts:
-                        if receipt.kind == LANDING and receipt.commit_sha == sha:
-                            return _receipt_result(receipt)
+                    replayed = next(
+                        (r for r in receipts if r.kind == LANDING and r.commit_sha == sha), None
+                    )
+                    if replayed is not None:
+                        return await _mark_task_worktree(
+                            db, current_task, main, _receipt_result(replayed)
+                        )
                     facts = await _recover_landing(main, common, branch, tip, sha)
-                    return await _record_and_notify(
+                    recovered = await _record_and_notify(
                         db, current_task, caller_session_id, sha, facts, already_landed=True
                     )
+                    return await _mark_task_worktree(db, current_task, main, recovered)
                 merged = await _merge_tree(main, tip, sha)
                 tree = merged.stdout.split("\n", 1)[0]
                 paths = await _candidate_paths(main, tip, sha, tree)
@@ -454,31 +530,19 @@ async def land_candidate(
                 if missing_carriers:
                     blockers.append("schema_carriers_missing")
                 activation_class = classify_paths(paths)
-                freeze = await asyncio.to_thread(read_freeze, common)
-                overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
-                required: set[str] = set()
-                if freeze.on:
-                    required.add("freeze")
-                if activation_class in {"restart", "cutover"}:
-                    required.add("restart")
-                if overlaps:
-                    required.add("overlap")
-                granted: set[str] = set()
-                for receipt in receipts:
-                    if receipt.kind == LANDING_APPROVAL and receipt.commit_sha == sha:
-                        reasons = str(receipt.facts["reason"]).split(",")
-                        granted.update(part.strip() for part in reasons)
-                missing = sorted(required - granted)
-                if missing:
-                    blockers.append("landing_approval_missing")
+                # A freeze refuses outright; restart-class landings need no extra approval.
+                if (await asyncio.to_thread(read_freeze, common)).on:
+                    blockers.append("landing_frozen")
                 if shared:
                     blockers.append("base_update_required")
+                overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
+                if overlaps:
+                    blockers.append("candidate_overlap")
                 refusal = {
                     "landed": False,
                     "commit_sha": sha,
                     "activation_class": activation_class,
                     "project_sync_required": requires_project_sync(paths),
-                    "missing_approvals": missing,
                     "overlaps": overlaps,
                     "shared_paths": shared,
                     "missing_schema_carriers": missing_carriers,
@@ -486,6 +550,8 @@ async def land_candidate(
                 }
                 if blockers:
                     refusal["error"] = blockers[0]
+                    if _CONFLICTS.issuperset(blockers):
+                        return _escalate(db, current_task, refusal)
                     return refusal
                 if await _branch(main) != branch:
                     return _refused(refusal, "main_checkout_branch_changed")
@@ -495,7 +561,8 @@ async def land_candidate(
                 target, mode = sha, "ff"
                 if not await _ancestor(main, tip, sha):
                     if isinstance(merged, GitFailed):
-                        return _refused(refusal, "merge_conflict", merged.stdout)
+                        conflict = _refused(refusal, "merge_conflict", merged.stdout)
+                        return _escalate(db, current_task, conflict)
                     subject = f"chore: land reviewed {sha[:10]} for #{current_task.seq_num}"
                     target = await _git(
                         main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject
@@ -524,13 +591,15 @@ async def land_candidate(
                         "mode": mode,
                         "activation_class": activation_class,
                         "project_sync_required": requires_project_sync(paths),
-                        "retest_required": mode == "merge",
                         "provenance": "recorded",
                         "landed_by_session_id": caller_session_id,
                     }
                     if mode == "merge":
                         facts["merge_commit"] = target
-                    return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
+                    landed = await _record_and_notify(
+                        db, current_task, caller_session_id, sha, facts
+                    )
+                    return await _mark_task_worktree(db, current_task, main, landed)
                 if observed_tip != tip:
                     continue
                 # Nothing below resets the shared checkout to compensate.

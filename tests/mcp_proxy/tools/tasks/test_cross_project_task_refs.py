@@ -32,6 +32,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.landing_case import grant_orchestrator
 from tests.fixtures.review_approvals import grant_review_writes
 
 pytestmark = pytest.mark.unit
@@ -171,12 +172,14 @@ async def test_land_commit_resolves_child_task_in_other_project(
     approval = await approve(world, world.caller_id, world.ref(form))
     assert "error" not in approval, approval
     assert approval["record"]["task_id"] == world.task.id
+    grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
-    with session_context_for_test(world.caller_id):
+    with session_context_for_test(world.stranger_id):
         result = await registry.call(
             "land_commit", {"task_id": world.ref(form), "commit_sha": world.sha}
         )
-    assert result["landed"] is True
+    assert result["landed"] is True, result
+    assert result["landed_by_session_id"] == world.stranger_id
     assert result["landed_tip"] == world.sha
     assert world.git("rev-parse", "HEAD") == world.sha
     assert (world.repo / "docs" / "note.md").read_text() == "Reviewed documentation.\n"
@@ -315,12 +318,13 @@ async def test_installed_operator_role_can_approve_other_project(
 
 @pytest.mark.asyncio
 async def test_cross_project_land_still_needs_review_approval(world: CrossProjectWorld) -> None:
+    grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
-    with session_context_for_test(world.caller_id):
+    with session_context_for_test(world.stranger_id):
         result = await registry.call(
             "land_commit", {"task_id": world.ref("qualified"), "commit_sha": world.sha}
         )
-    assert result["error"] == "review_approval_missing"
+    assert result["blockers"] == ["review_approval_missing"]
     assert world.git("rev-parse", "HEAD") == world.base
 
 

@@ -2,31 +2,40 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.step_records import StepSubmission, TaskStepRecord, record_task_step
+from gobby.tasks.step_records import StepSubmission, TaskStep, TaskStepRecord, record_task_step
 from gobby.workflows.state_manager import SessionVariableManager
 
 REVIEW_WRITER = "fixture-review-writer"
 
 
-def grant_review_writes(db: HubDatabase, session_id: str, project_id: str) -> None:
-    """Give a registered session an installed definition that writes the review step."""
+def grant_step_writes(
+    db: HubDatabase, session_id: str, project_id: str, name: str, steps: Sequence[TaskStep]
+) -> None:
+    """Run a registered session as an installed definition that writes ``steps``."""
     definitions = AgentDefinitionManager(db)
-    if definitions.get_by_name(REVIEW_WRITER, project_id) is None:
+    if definitions.get_by_name(name, project_id) is None:
         definitions.create(
-            REVIEW_WRITER,
+            name,
             {
-                "name": REVIEW_WRITER,
+                "name": name,
                 "version": "1.0",
-                "prompts": {"agent": "Record the assigned review."},
+                "prompts": {"agent": "Record the assigned task steps."},
                 "workflows": {"rule_selectors": {"include": []}},
-                "task_step_writes": ["review"],
+                "task_step_writes": list(steps),
             },
             project_id=project_id,
         )
-    SessionVariableManager(db).set_variable(session_id, "_agent_type", REVIEW_WRITER)
+    SessionVariableManager(db).set_variable(session_id, "_agent_type", name)
+
+
+def grant_review_writes(db: HubDatabase, session_id: str, project_id: str) -> None:
+    """Give a registered session an installed definition that writes the review step."""
+    grant_step_writes(db, session_id, project_id, REVIEW_WRITER, ("review",))
 
 
 def approve_review(

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import subprocess
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -23,147 +20,25 @@ from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks import land_commit
-from gobby.tasks.close_receipts import (
-    LANDING,
-    LANDING_APPROVAL,
-    list_close_receipts,
-    record_close_receipt,
-)
+from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.commits import extract_task_ids_from_message
-from gobby.tasks.land_commit import LandingResult, land_candidate
 from gobby.tasks.landing_policy import write_freeze
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from tests.fixtures.review_approvals import approve_review, grant_review_writes
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import add_claimed_task
+from tests.fixtures.landing_case import LandingCase, make_landing_case
 
 pytestmark = pytest.mark.unit
 
 
-@dataclass
-class LandingCase:
-    db: HubDatabase
-    repo: Path
-    project_id: str
-    creator: str
-    claimant: str
-    reviewer: str
-    delegator: str
-    base: str
-
-    def git(self, *args: str, env: dict[str, str] | None = None) -> str:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=self.repo,
-            check=True,
-            capture_output=True,
-            text=True,
-            env={
-                **os.environ,
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_NOSYSTEM": "1",
-                **(env or {}),
-            },
-        )
-        return result.stdout.strip()
-
-    def candidate(self, branch: str, files: dict[str, str], base: str | None = None) -> str:
-        self.git("switch", "-c", branch, base or self.base)
-        for name, content in files.items():
-            path = self.repo / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        self.git("add", "--all")
-        self.git("commit", "-m", "test candidate")
-        sha = self.git("rev-parse", "HEAD")
-        self.git("switch", "trunk")
-        return sha
-
-    def task(self, title: str = "Reviewed candidate") -> Task:
-        task = LocalTaskManager(self.db).create_task(
-            self.project_id,
-            title,
-            created_in_session_id=self.creator,
-            claimed_by_session_id=self.claimant,
-            validation_criteria="Land the reviewed SHA.",
-        )
-        self.db.execute(
-            "UPDATE tasks SET delegated_by_session_id = %s WHERE id = %s", (self.delegator, task.id)
-        )
-        return LocalTaskManager(self.db).get_task(task.id)
-
-    def link(self, task: Task, sha: str) -> None:
-        self.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
-
-    def approve(self, task: Task, sha: str, author: str | None = None) -> None:
-        reviewer = author or self.reviewer
-        grant_review_writes(self.db, reviewer, self.project_id)
-        approve_review(self.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
-
-    def reviewed(self, sha: str, title: str = "Reviewed candidate") -> Task:
-        task = self.task(title)
-        self.link(task, sha)
-        self.approve(task, sha)
-        return task
-
-    def direct(self, files: dict[str, str]) -> str:
-        """Commit only ``files`` onto trunk, as a direct commit beside staged work does."""
-        for name, content in files.items():
-            path = self.repo / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        self.git("add", "--", *files)
-        self.git("commit", "-m", "direct commit", "--", *files)
-        return self.git("rev-parse", "HEAD")
-
-    async def land(self, task: Task, sha: str, caller: str | None = None) -> LandingResult:
-        session = caller or self.reviewer
-        with session_context_for_test(session):
-            return await land_candidate(
-                self.db, task=task, caller_session_id=session, commit_sha=sha
-            )
-
-
 @pytest.fixture
 def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> LandingCase:
-    repo = tmp_path / "main"
-    repo.mkdir()
-    identities: list[str] = []
-    for index, role in enumerate(("creator", "claimant", "reviewer", "delegator")):
-        session_id = str(uuid4())
-        temp_db.execute(
-            """
-            INSERT INTO sessions (id, external_id, machine_id, source, project_id, title,
-                                  status, agent_depth, seq_num)
-            VALUES (%s, %s, %s, 'test', %s, %s, 'active', 0, %s)
-            """,
-            (
-                session_id,
-                f"ext-{session_id}",
-                require_machine_id(),
-                sample_project["id"],
-                role,
-                600 + index,
-            ),
-        )
-        identities.append(session_id)
-    creator, claimant, reviewer, delegator = identities
-    fixture = LandingCase(
-        temp_db, repo, sample_project["id"], creator, claimant, reviewer, delegator, ""
-    )
-    fixture.git("init", "--initial-branch=trunk")
-    fixture.git("config", "user.name", "Landing test")
-    fixture.git("config", "user.email", "landing@example.invalid")
-    fixture.git("config", "core.hooksPath", str(tmp_path / "empty-hooks"))
-    (repo / "README.md").write_text("base\n")
-    fixture.git("add", "README.md")
-    fixture.git("commit", "-m", "initial")
-    fixture.base = fixture.git("rev-parse", "HEAD")
-    LocalProjectCheckoutManager(temp_db).rebind(require_machine_id(), fixture.project_id, str(repo))
-    return fixture
+    return make_landing_case(temp_db, sample_project, tmp_path)
 
 
 Proceed = Callable[[], Awaitable[GitResult]]
@@ -193,24 +68,6 @@ def _intercept_fast_forward(
 
     with patch.object(daemon_git, "run", side_effect=run):
         yield
-
-
-async def test_refuses_without_callers_land_receipt(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha, author=case.creator)
-    missing = await case.land(task, sha)
-    assert missing["error"] == "review_approval_missing"
-    assert case.git("rev-parse", "trunk") == case.base
-    case.approve(task, sha)
-    case.db.execute(
-        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s", (case.reviewer, task.id)
-    )
-    claimant = await case.land(task, sha)
-    assert claimant["error"] == "caller_is_claimant"
-    assert case.git("rev-parse", "trunk") == case.base
-    assert all(receipt.kind != LANDING for receipt in list_close_receipts(case.db, task.id))
 
 
 async def test_stored_legacy_review_receipt_grants_no_landing(case: LandingCase) -> None:
@@ -273,8 +130,8 @@ async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, relea
     else:
         manager.claim_task(task.id, case.delegator, force=True)
     case.approve(task, sha)
-    refused = await case.land(task, sha, caller=case.claimant)
-    assert refused["error"] == "caller_was_claimant"
+    refused = await case.land(task, sha, caller=case.manager_for(task, session=case.claimant))
+    assert refused["blockers"] == ["caller_was_claimant"]
     assert case.git("rev-parse", "trunk") == case.base
     landed = await case.land(task, sha)
     assert landed["landed"] is True
@@ -302,21 +159,15 @@ async def test_catalog_neutral_migration_landing_requires_identity_pin(
     files.update(dict.fromkeys(carriers, "updated carrier"))
     sha = case.candidate("schema-lane", files)
     task = case.reviewed(sha)
-    record_close_receipt(
-        case.db,
-        task=task,
-        author_session_id=case.creator,
-        kind=LANDING_APPROVAL,
-        commit_sha=sha,
-        facts={"reason": "restart"},
-    )
+    # A cutover-class landing needs no restart approval; only the carriers gate it.
     result = await case.land(task, sha)
     if "src/gobby/storage/schema_expected_identity.json" in carriers:
-        assert result["landed"] is True
+        assert result["landed"] is True, result
+        assert result["activation_class"] == "cutover"
         assert case.git("rev-parse", "trunk") == sha
     else:
         assert result["landed"] is False
-        assert result["error"] == "schema_carriers_missing"
+        assert result["blockers"] == ["schema_carriers_missing"]
         assert result["missing_schema_carriers"] == sorted(
             {
                 "src/gobby/storage/schema_expected_identity.json",
@@ -342,27 +193,27 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert result["retest_required"] is False
     assert case.git("rev-parse", "trunk") == sha
     assert (case.repo / "docs/change.md").read_text() == "land me"
+    lander = case.manager_for(task)
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
-    assert receipt.author_session_id == case.reviewer
+    assert receipt.author_session_id == lander
     assert receipt.commit_sha == sha
     assert receipt.facts["provenance"] == "recorded"
     manager = InterSessionMessageManager(case.db)
     for recipient in (case.claimant, case.creator, case.delegator):
         [message] = manager.get_messages(recipient)
-        assert message.from_session == case.reviewer
+        assert message.from_session == lander
         assert f'Landed #{task.seq_num} "{task.title}" {sha[:10]} on trunk' in message.content
-    assert manager.get_messages(case.reviewer) == []
+    assert manager.get_messages(lander) == []
 
 
-@pytest.mark.parametrize("different_reviewer", [False, True])
-async def test_landing_replays_original_receipt_across_reviewers(
-    case: LandingCase, different_reviewer: bool
+@pytest.mark.parametrize("other_lander", [False, True])
+async def test_landing_replays_original_receipt_across_landers(
+    case: LandingCase, other_lander: bool
 ) -> None:
     sha = case.candidate("lane", {"docs/replay.md": "land once"})
     task = case.reviewed(sha)
-    caller = case.delegator if different_reviewer else case.reviewer
-    if different_reviewer:
-        case.approve(task, sha, author=caller)
+    lander = case.manager_for(task)
+    caller = case.orchestrator() if other_lander else lander
 
     first = await case.land(task, sha)
     [original] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
@@ -374,44 +225,41 @@ async def test_landing_replays_original_receipt_across_reviewers(
 
     assert replay["receipt_id"] == original.id == first["receipt_id"]
     assert replay["already_landed"] is True
-    assert replay["landed_by_session_id"] == case.reviewer
+    assert replay["landed_by_session_id"] == lander
     assert first["already_landed"] is False
-    assert first["landed_by_session_id"] == case.reviewer
+    assert first["landed_by_session_id"] == lander
     assert [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING] == [original]
     assert manager.get_messages(case.claimant) == original_messages
     assert case.git("rev-parse", "trunk") == original_tip
 
 
-async def test_reports_every_missing_approval_at_once(case: LandingCase) -> None:
+@pytest.mark.parametrize("freeze", ["set", "unreadable"])
+async def test_freeze_refuses_landing_and_restart_class_needs_no_approval(
+    case: LandingCase, freeze: str
+) -> None:
     files = {"src/gobby/cli/entry.py": "candidate", "docs/line\nbreak.md": "candidate"}
     sha = case.candidate("lane", files)
-    other = case.candidate("other", dict.fromkeys(files, "other"))
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    other_task = case.reviewed(other, "Other in-flight candidate")
-    write_freeze(case.repo / ".git", on=True, reason="release hold", session_id=case.creator)
+    task = case.reviewed(sha)
+    marker = case.repo / ".git" / "gobby" / "landing-freeze.json"
+    if freeze == "set":
+        write_freeze(case.repo / ".git", on=True, reason="release hold", session_id=case.creator)
+    else:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("{not json", encoding="utf-8")
     refused = await case.land(task, sha)
     assert refused["landed"] is False
-    assert refused["missing_approvals"] == ["freeze", "overlap", "restart"]
+    assert refused["blockers"] == ["landing_frozen"]
     assert refused["activation_class"] == "restart"
     assert refused["commit_sha"] == sha
-    assert refused["overlaps"] == [
-        {"task_ref": f"#{other_task.seq_num}", "commit_sha": other, "shared_paths": sorted(files)}
-    ]
+    assert "missing_approvals" not in refused
+    assert LocalTaskManager(case.db).get_task(task.id).is_escalated is False
     assert case.git("rev-parse", "trunk") == case.base
-    for author, reason in ((case.creator, "restart"), (case.delegator, "freeze,overlap")):
-        record_close_receipt(
-            case.db,
-            task=task,
-            author_session_id=author,
-            kind=LANDING_APPROVAL,
-            commit_sha=sha,
-            facts={"reason": reason},
-        )
+    marker.unlink()
     landed = await case.land(task, sha)
-    assert landed["landed"] is True
+    assert landed["landed"] is True, landed
+    assert landed["activation_class"] == "restart"
     assert case.git("rev-parse", "trunk") == sha
+    assert all(r.kind == LANDING for r in list_close_receipts(case.db, task.id))
 
 
 async def test_stacked_and_landed_candidates_never_overlap(case: LandingCase) -> None:
@@ -521,7 +369,7 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
     task = case.task()
     case.link(task, sha)
     case.approve(task, sha)
-    case.approve(task, sha, author=case.delegator)
+    lander, second_lander = case.manager_for(task), case.orchestrator()
     original_run = daemon_git.run
     writing = asyncio.Event()
     release = asyncio.Event()
@@ -560,7 +408,7 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
             await asyncio.wait_for(writing.wait(), timeout=5)
             freezing = asyncio.create_task(freeze_during_landing())
             second = asyncio.create_task(
-                case.land(task, sha, caller=case.delegator), name="landing-2"
+                case.land(task, sha, caller=second_lander), name="landing-2"
             )
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(second_branch_read.wait(), timeout=0.1)
@@ -572,7 +420,7 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
         assert (await freezing)["success"] is True
     assert second_result == {**first_result, "already_landed": True}
     assert first_result["already_landed"] is False
-    assert first_result["landed_by_session_id"] == case.reviewer
+    assert first_result["landed_by_session_id"] == lander
     assert first_result["landed"] is True
     assert writes == 1
     with patch("gobby.tasks.land_commit._paths", side_effect=RuntimeError("probe")):
@@ -585,7 +433,7 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
     async with case.db.advisory_lock(MainCheckoutLanding(case.project_id)):
         assert case.git("rev-parse", "trunk") == sha
     refused = await case.land(later_task, later)
-    assert refused["missing_approvals"] == ["freeze"]
+    assert refused["blockers"] == ["landing_frozen"]
     async with case.db.advisory_lock(MainCheckoutLanding(case.project_id)):
         assert case.git("rev-parse", "trunk") == sha
     with session_context_for_test(case.creator):
@@ -712,7 +560,7 @@ async def test_already_landed_candidate_records_landing_once(
     assert first["provenance"] == ("reflog" if recovered else "unknown")
     assert first["mode"] == (mode if recovered else "already_landed")
     assert first["activation_class"] == ("none" if recovered else "unknown")
-    assert first["retest_required"] is (not recovered or mode == "merge")
+    assert first["retest_required"] is False
     if mode == "merge":
         assert first["merge_commit"] == target
     receipts = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
@@ -780,7 +628,7 @@ async def test_landing_records_target_when_observed_tip_advances(case: LandingCa
         if tuple(args[:2]) == ("merge", "--ff-only"):
             assert env is not None and env["GOBBY_LAND_COMMIT"] == "1"
             assert env["GIT_REFLOG_ACTION"] == (
-                f"gobby-land candidate={sha} mode=ff class=none lander={case.reviewer}"
+                f"gobby-land candidate={sha} mode=ff class=none lander={case.manager_for(task)}"
             )
             case.git("merge", "--ff-only", ahead)
         return result
@@ -807,39 +655,45 @@ async def test_moved_tip_with_disjoint_paths_lands_merge_commit(case: LandingCas
 
     merge = case.git("rev-parse", "trunk")
     assert result["landed"] is True, result
-    assert (result["mode"], result["retest_required"]) == ("merge", True)
+    assert (result["mode"], result["retest_required"]) == ("merge", False)
     assert result["landed_tip"] == result["merge_commit"] == merge
-    assert "focused verification commands" in result["retest_procedure"]
-    assert "Send EVENT=LANDED immediately" in result["retest_procedure"]
-    assert "RETEST=UNAVAILABLE" in result["retest_procedure"]
-    assert "clean HEAD" in result["retest_procedure"]
-    assert "wait for" not in result["retest_procedure"]
+    assert "retest_procedure" not in result
     assert case.git("rev-list", "--parents", "-n", "1", merge).split() == [merge, moved, sha]
     assert case.git("log", "-1", "--format=%s", merge) == (
         f"chore: land reviewed {sha[:10]} for #{task.seq_num}"
     )
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert (receipt.facts["mode"], receipt.facts["merge_commit"]) == ("merge", merge)
-    assert receipt.facts["retest_required"] is True
+    assert "retest_required" not in receipt.facts
     assert case.git("diff", "--cached", "--name-only") == "docs/staged.md"
     assert (case.repo / "README.md").read_text() == "dirty\n"
     assert (case.repo / "notes.txt").read_text() == "untracked\n"
     assert (case.repo / "tests" / "test_lane.py").read_text() == "lane = 1\n"
 
 
-async def test_moved_tip_with_shared_paths_requires_base_update(case: LandingCase) -> None:
+async def test_moved_tip_with_shared_paths_escalates_through_land_commit(
+    case: LandingCase,
+) -> None:
     sha = case.candidate("lane", {"docs/shared.md": "lane\n", "src/gobby/lane.py": "x = 1\n"})
     moved = case.direct({"docs/shared.md": "moved\n"})
     task = case.reviewed(sha)
+    variables = SessionVariableManager(case.db)
+    variables.merge_variables(case.claimant, add_claimed_task({}, task.id, f"#{task.seq_num}"))
 
-    result = await case.land(task, sha)
+    with session_context_for_test(case.manager_for(task)):
+        result = await create_task_ops_registry(LocalTaskManager(case.db)).call(
+            "land_commit", {"task_id": task.id, "commit_sha": sha}
+        )
 
     assert result["landed"] is False
-    assert result["blockers"] == ["landing_approval_missing", "base_update_required"]
-    assert (result["shared_paths"], result["missing_approvals"]) == (
-        ["docs/shared.md"],
-        ["restart"],
-    )
+    assert result["blockers"] == ["base_update_required"]
+    assert result["shared_paths"] == ["docs/shared.md"]
+    assert result["escalated"] is True
+    escalated = LocalTaskManager(case.db).get_task(task.id)
+    assert (escalated.is_escalated, escalated.claimed_by_session_id) == (True, None)
+    assert json.loads(escalated.escalation_reason or "")["kind"] == "landing_conflict"
+    claimed = variables.get_variables(case.claimant).get("claimed_tasks") or {}
+    assert task.id not in claimed
     assert case.git("rev-parse", "trunk") == moved
 
 
@@ -914,7 +768,7 @@ async def test_criss_cross_genuine_overlap_still_names_changed_path(case: Landin
             "shared_paths": ["src/gobby/left.py"],
         }
     ]
-    assert result["missing_approvals"] == ["overlap", "restart"]
+    assert result["blockers"] == ["candidate_overlap"]
 
 
 async def test_criss_cross_pending_candidate_does_not_own_carried_source(case: LandingCase) -> None:
@@ -926,14 +780,6 @@ async def test_criss_cross_pending_candidate_does_not_own_carried_source(case: L
         base=case.git("rev-parse", "trunk"),
     )
     task = case.reviewed(sha)
-    record_close_receipt(
-        case.db,
-        task=task,
-        author_session_id=case.creator,
-        kind=LANDING_APPROVAL,
-        commit_sha=sha,
-        facts={"reason": "restart"},
-    )
 
     result = await case.land(task, sha)
 
@@ -964,7 +810,7 @@ async def test_criss_cross_recovery_classifies_only_candidate_contribution(
     assert result["landed"] is True, result
     assert result["provenance"] == "reflog"
     assert result["activation_class"] == "none"
-    assert result["retest_required"] is True
+    assert result["retest_required"] is False
     assert result["merge_commit"] == merged
 
 
@@ -999,7 +845,10 @@ async def test_tip_race_recomputes_and_lands(case: LandingCase) -> None:
     with _intercept_fast_forward(race):
         restart_result = await case.land(case.reviewed(restart, "Restart"), restart)
 
-    contended = case.candidate("contended", {"tests/test_contended.py": "c = 1\n"}, base=rewound)
+    restart_tip = case.git("rev-parse", "trunk")
+    contended = case.candidate(
+        "contended", {"tests/test_contended.py": "c = 1\n"}, base=restart_tip
+    )
     races[:] = [partial(case.direct, {f"docs/race-{n}.md": f"{n}\n"}) for n in range(3)]
     targets.clear()
     with _intercept_fast_forward(race):
@@ -1016,14 +865,19 @@ async def test_tip_race_recomputes_and_lands(case: LandingCase) -> None:
         "base_update_required",
         ["docs/shared.md"],
     )
-    assert restart_result["blockers"] == ["landing_approval_missing"]
-    assert (restart_result["activation_class"], restart_result["missing_approvals"]) == (
-        "restart",
-        ["restart"],
-    )
+    # The moved base pulls the restart-class ancestor in; it lands with no restart approval.
+    assert restart_result["landed"] is True, restart_result
+    assert (restart_result["activation_class"], restart_result["mode"]) == ("restart", "merge")
+    assert case.git("rev-list", "--parents", "-n", "1", restart_tip).split()[1:] == [
+        rewound,
+        restart,
+    ]
     assert contended_result["error"] == "tip_contention"
     assert targets[0] == contended and len(targets) == 3
-    assert case.git("log", "--format=%s", f"{rewound}..trunk").splitlines() == ["direct commit"] * 3
+    assert (
+        case.git("log", "--format=%s", f"{restart_tip}..trunk").splitlines()
+        == ["direct commit"] * 3
+    )
 
 
 async def test_dirty_path_and_index_lock_refuse_without_ref_change(case: LandingCase) -> None:
@@ -1234,17 +1088,6 @@ async def test_project_workflow_sync_landing_and_recovery(
         },
     )
     task = case.reviewed(sha, "Project workflow sync")
-    if expected_class in {"restart", "cutover"}:
-        refused = await case.land(task, sha)
-        assert refused["project_sync_required"] is True
-        record_close_receipt(
-            case.db,
-            task=task,
-            author_session_id=case.creator,
-            kind=LANDING_APPROVAL,
-            commit_sha=sha,
-            facts={"reason": "restart"},
-        )
     if move_tip:
         case.direct({"docs/moved.md": "moved\n"})
     with patch.object(
@@ -1262,7 +1105,7 @@ async def test_project_workflow_sync_landing_and_recovery(
     assert recovered["project_sync_required"] is True
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
-    assert recovered["retest_required"] is move_tip
+    assert recovered["retest_required"] is False
     assert replay == recovered
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert receipt.facts["project_sync_required"] is True
@@ -1296,7 +1139,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
     assert recovered["activation_class"] == "sync"
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
-    assert recovered["retest_required"] is move_tip
+    assert recovered["retest_required"] is False
     assert "project_sync_required" not in recovered
 
 
@@ -1340,7 +1183,7 @@ async def test_receipt_pending_recovery_preserves_original_lander(
 ) -> None:
     sha = case.candidate("pending-lander", {"docs/lander.md": "original lander\n"})
     task = case.reviewed(sha)
-    case.approve(task, sha, case.delegator)
+    lander, other = case.manager_for(task), case.orchestrator()
     if move_tip:
         case.direct({"docs/moved.md": "disjoint writer\n"})
     with patch.object(
@@ -1348,33 +1191,32 @@ async def test_receipt_pending_recovery_preserves_original_lander(
     ):
         first = await case.land(task, sha)
         own_pending = await case.land(task, sha)
-        pending = await case.land(task, sha, case.delegator)
-    recovery_caller = case.reviewer if recover_as_original else case.delegator
-    recovered = await case.land(task, sha, recovery_caller)
+        pending = await case.land(task, sha, other)
+    recovered = await case.land(task, sha, lander if recover_as_original else other)
     replay = await case.land(task, sha)
 
     assert first["receipt_pending"] is True
     assert first["already_landed"] is False
     assert own_pending["receipt_pending"] is True
     assert own_pending["already_landed"] is True
-    assert own_pending["landed_by_session_id"] == case.reviewer
-    assert own_pending["retest_required"] is move_tip
+    assert own_pending["landed_by_session_id"] == lander
+    assert own_pending["retest_required"] is False
     assert pending["receipt_pending"] is True
     assert pending["already_landed"] is True
-    assert pending["landed_by_session_id"] == case.reviewer
+    assert pending["landed_by_session_id"] == lander
     assert recovered["already_landed"] is True
-    assert recovered["landed_by_session_id"] == case.reviewer
-    assert recovered["retest_required"] is move_tip
-    assert replay["landed_by_session_id"] == case.reviewer
+    assert recovered["landed_by_session_id"] == lander
+    assert recovered["retest_required"] is False
+    assert replay["landed_by_session_id"] == lander
     assert replay["already_landed"] is True
-    assert replay["retest_required"] is move_tip
+    assert replay["retest_required"] is False
     assert replay["receipt_id"] == recovered["receipt_id"]
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
-    assert receipt.facts["landed_by_session_id"] == case.reviewer
+    assert receipt.facts["landed_by_session_id"] == lander
     assert case.git("rev-parse", "trunk") == first["landed_tip"]
 
 
-async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCase) -> None:
+async def test_merge_landing_replay_needs_no_retest(case: LandingCase) -> None:
     lane = case.candidate("lane", {"tests/test_lane.py": "lane = 1\n"})
     case.direct({"docs/moved.md": "moved\n"})
     task = case.reviewed(lane, "Merge landing")
@@ -1394,14 +1236,6 @@ async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCas
     stacked_b = case.candidate("stack-b", {"src/gobby/b.py": "b = 1\n"}, base=stacked_a)
     case.direct({"docs/moved-3.md": "moved\n"})
     task_b = case.reviewed(stacked_b, "Stacked B")
-    record_close_receipt(
-        case.db,
-        task=task_b,
-        author_session_id=case.creator,
-        kind=LANDING_APPROVAL,
-        commit_sha=stacked_b,
-        facts={"reason": "restart"},
-    )
     merged_b = await case.land(task_b, stacked_b)
     merged_a = await case.land(case.reviewed(stacked_a, "Stacked A"), stacked_a)
 
@@ -1424,21 +1258,19 @@ async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCas
     assert first["mode"] == "merge"
     assert replay == {**first, "already_landed": True}
     assert first["already_landed"] is False
-    assert replay["retest_required"] is True
-    assert "focused verification commands" in replay["retest_procedure"]
-    assert "Send EVENT=LANDED immediately" in replay["retest_procedure"]
-    assert "RETEST=UNAVAILABLE" in replay["retest_procedure"]
+    assert replay["retest_required"] is False
+    assert "retest_procedure" not in replay
     assert pending["receipt_pending"] is True
     assert (retried["mode"], retried["landed_tip"], retried["activation_class"]) == (
         "merge",
         pending["landed_tip"],
         pending["activation_class"],
     )
-    assert (retried["provenance"], retried["retest_required"]) == ("reflog", True)
+    assert (retried["provenance"], retried["retest_required"]) == ("reflog", False)
     assert (merged_b["mode"], merged_b["activation_class"]) == ("merge", "restart")
     assert (merged_a["mode"], merged_a["retest_required"], merged_a["activation_class"]) == (
         "merge",
-        True,
+        False,
         "ui_build",
     )
     assert merged_a["merge_commit"] == merged_b["merge_commit"]
