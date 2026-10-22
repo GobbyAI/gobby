@@ -97,9 +97,7 @@ async def test_shared_transcript_consumers_survive(tmp_path: Path) -> None:
         created_at=now,
         updated_at=now,
     )
-    evidence = await derive_transcript_evidence(
-        session, now, default_validation_detection_config()
-    )
+    evidence = await derive_transcript_evidence(session, now, default_validation_detection_config())
     assert [run.outcome for run in evidence.validation_runs] == ["failure", "success"]
     assert unresolved_validation_failures(evidence.validation_runs[:1], owner_handoff=False)
     assert unresolved_validation_failures(evidence.validation_runs, owner_handoff=False) == ()
@@ -130,7 +128,7 @@ async def test_live_prefix_has_no_close_semantics(
     assert result["closed"] is True, result
     closed = manager.get_task(task.id)
     assert closed.validation_criteria == criteria
-    assert closed.validation_status is None and closed.validation_fail_count == 0
+    assert closed.review_status == "pending" and closed.review_fail_count == 0
     history = ValidationHistoryManager(temp_db)
     assert history.get_iteration_history(task.id) == []
     assert not hasattr(history, "record_iteration")

@@ -41,10 +41,11 @@ def test_restore_persists_supported_fields_from_current_shape(
             "parent_id": None,
             "deps_on": [],
             "commits": [],
-            "validation": {
-                "state": "valid",
+            "review": {
+                "status": "valid",
                 "feedback": "ok",
                 "fail_count": 0,
+                "epoch": 3,
                 "criteria": "criterion",
             },
             "category": "code",
@@ -58,7 +59,8 @@ def test_restore_persists_supported_fields_from_current_shape(
     task = manager.get_task(task_id)
     assert task is not None
     assert task.task_type == "task"
-    assert task.validation_status == "valid"
+    assert task.review_status == "valid"
+    assert task.review_epoch == 3
     assert task.validation_criteria == "criterion"
     assert task.seq_num == 987
 
@@ -78,7 +80,7 @@ def test_restore_ignores_top_level_legacy_keys(
             "state": {},
             "status": "closed",
             "lifecycle_stage": "done",
-            "validation_status": "invalid",
+            "review_status": "invalid",
             "priority": 2,
             "task_type": "bug",
             "created_at": now,
@@ -87,8 +89,8 @@ def test_restore_ignores_top_level_legacy_keys(
             "parent_id": None,
             "deps_on": [],
             "commits": [],
-            "validation": {
-                "state": "valid",
+            "review": {
+                "status": "valid",
                 "criteria": "The restored task preserves its nested validation contract.",
             },
             "seq_num": 988,
@@ -101,6 +103,6 @@ def test_restore_ignores_top_level_legacy_keys(
     task = manager.get_task(task_id)
     assert task is not None
     assert task.task_type == "bug"
-    assert task.validation_status == "valid"
+    assert task.review_status == "valid"
     assert task.validation_criteria == "The restored task preserves its nested validation contract."
     assert task.closed_at is None

@@ -541,7 +541,7 @@ async def test_deliver_existing_terminal_run_rereads_and_synthesizes_payload() -
     }
 
 
-async def test_terminal_delivery_projects_persisted_task_close_payload() -> None:
+async def test_terminal_delivery_does_not_project_retired_close_reviews() -> None:
     registry = AcknowledgingCompletionRegistry({"parent": True})
     payload = {
         "event": "task_close_review_completed",
@@ -559,6 +559,8 @@ async def test_terminal_delivery_projects_persisted_task_close_payload() -> None
     marked: list[list[str]] = []
 
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if func.__name__ == "_read_durable_subscribers":
+            return []
         if func.__name__ == "terminal_review_delivery":
             return payload, "Task closed."
         if func.__name__ == "mark_terminal_review_delivered":
@@ -574,8 +576,10 @@ async def test_terminal_delivery_projects_persisted_task_close_payload() -> None
         run_db=run_db,
     )
 
-    assert registry.notifications == [("run-1", payload, "Task closed.")]
-    assert marked == [["parent"]]
+    assert registry.notifications == [
+        ("run-1", {"status": "success", "run_id": "run-1"}, "generic")
+    ]
+    assert marked == []
 
 
 class DurableDb(RecordingDb):

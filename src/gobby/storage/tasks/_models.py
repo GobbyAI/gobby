@@ -96,9 +96,12 @@ class TaskHasOpenChildrenError(ValueError):
     def __init__(self, task_id: str, open_children: list[str]) -> None:
         self.task_id = task_id
         self.open_children = open_children
+        child_list = ", ".join(open_children[:3])
+        if len(open_children) > 3:
+            child_list += f" and {len(open_children) - 3} more"
         super().__init__(
             f"Cannot close task {task_id}: has {len(open_children)} open child task(s): "
-            + ", ".join(open_children)
+            + child_list
         )
 
 
@@ -253,11 +256,12 @@ class Task:
     closed_at: datetime | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
-    validation_status: Literal["pending", "valid", "invalid", "error"] | None = None
-    validation_feedback: str | None = None
+    review_status: Literal["pending", "valid", "invalid", "error"] = "pending"
+    review_feedback: str | None = None
     category: str | None = None
     validation_criteria: str | None = None
-    validation_fail_count: int = 0
+    review_fail_count: int = 0
+    review_epoch: int = 1
     validation_override_reason: str | None = None  # Validation or task-scope override audit
     merge_in_progress: bool = False
     blocked_by_merge: bool = False
@@ -333,17 +337,14 @@ class Task:
             closed_at=closed_at,
             labels=labels,
             closed_reason=row["closed_reason"],
-            validation_status=row["validation_status"] if "validation_status" in keys else None,
-            validation_feedback=(
-                row["validation_feedback"] if "validation_feedback" in keys else None
-            ),
+            review_status=row["review_status"] if "review_status" in keys else "pending",
+            review_feedback=(row["review_feedback"] if "review_feedback" in keys else None),
             category=row["category"] if "category" in keys else None,
             validation_criteria=(
                 row["validation_criteria"] if "validation_criteria" in keys else None
             ),
-            validation_fail_count=(
-                row["validation_fail_count"] if "validation_fail_count" in keys else 0
-            ),
+            review_fail_count=(row["review_fail_count"] if "review_fail_count" in keys else 0),
+            review_epoch=row["review_epoch"] if "review_epoch" in keys else 1,
             validation_override_reason=(
                 row["validation_override_reason"] if "validation_override_reason" in keys else None
             ),
@@ -397,11 +398,12 @@ class Task:
             "closed_at": self.closed_at,
             "labels": self.labels,
             "closed_reason": self.closed_reason,
-            "validation_status": self.validation_status,
-            "validation_feedback": self.validation_feedback,
+            "review_status": self.review_status,
+            "review_feedback": self.review_feedback,
             "category": self.category,
             "validation_criteria": self.validation_criteria,
-            "validation_fail_count": self.validation_fail_count,
+            "review_fail_count": self.review_fail_count,
+            "review_epoch": self.review_epoch,
             "validation_override_reason": self.validation_override_reason,
             "merge_in_progress": self.merge_in_progress,
             "blocked_by_merge": self.blocked_by_merge,
@@ -445,7 +447,8 @@ class Task:
             "category": self.category,
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,
-            "validation_fail_count": self.validation_fail_count,
+            "review_fail_count": self.review_fail_count,
+            "review_epoch": self.review_epoch,
             "merge_in_progress": self.merge_in_progress,
             "blocked_by_merge": self.blocked_by_merge,
             "escalated_at": self.escalated_at,

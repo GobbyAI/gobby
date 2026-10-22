@@ -36,7 +36,7 @@ def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
         updated_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
         claimed_by_session_id="00000000-0000-4000-8000-000000000301",
         validation_criteria=criteria,
-        validation_fail_count=0,
+        review_fail_count=0,
     )
 
 

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
+from gobby.sync.task_review_serialization import deserialize_task_review, serialize_task_review
 from gobby.tasks.criteria_text import require_validation_criteria
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
@@ -287,10 +288,17 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
         for dependency in data.get("deps_on") or []:
             _validate_uuid(dependency, field="deps_on entry", line_num=line_num, required=True)
 
-        for field in ("state", "validation"):
+        if "validation" in data:
+            raise TaskRestoreError(f"Task backup line {line_num}: retired validation object")
+        for field in ("state", "review"):
             value = data.get(field)
             if value is not None and not isinstance(value, dict):
                 raise TaskRestoreError(f"Task backup line {line_num}: {field} must be an object")
+
+        try:
+            deserialize_task_review(data.get("review"))
+        except ValueError as exc:
+            raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
         seq_num = data.get("seq_num")
         if seq_num is not None and (type(seq_num) is not int or seq_num <= 0):
@@ -375,17 +383,7 @@ class TaskBackupManager:
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
                     "labels": task.labels if task.labels else None,
-                    "validation": (
-                        {
-                            "state": task.validation_status,
-                            "feedback": task.validation_feedback,
-                            "fail_count": task.validation_fail_count,
-                            "criteria": task.validation_criteria,
-                            "override_reason": task.validation_override_reason,
-                        }
-                        if task.validation_status or task.validation_criteria
-                        else None
-                    ),
+                    "review": serialize_task_review(task),
                     # Expansion fields
                     "category": task.category,
                     # External integrations
@@ -518,17 +516,11 @@ class TaskBackupManager:
                         # Handle commits array stored as JSON in the hub.
                         commits_json = json.dumps(data["commits"]) if data.get("commits") else None
 
-                        # Handle validation object (extract fields)
-                        validation = data.get("validation") or {}
-                        validation_status = validation.get("state") or validation.get("status")
-                        validation_feedback = validation.get("feedback")
-                        validation_fail_count = validation.get("fail_count", 0)
-                        validation_criteria = validation.get("criteria")
-                        validation_override_reason = validation.get("override_reason")
+                        review = deserialize_task_review(data.get("review"))
                         task_type = data.get("task_type", "task")
                         validation_criteria = require_validation_criteria(
                             task_type,
-                            validation_criteria,
+                            review["validation_criteria"],
                         )
 
                         # Handle labels stored as JSON in the hub.
@@ -583,11 +575,8 @@ class TaskBackupManager:
                                 "closed_commit_sha", state.get("closed_commit_sha")
                             ),
                             "labels": labels_json,
-                            "validation_status": validation_status,
-                            "validation_feedback": validation_feedback,
-                            "validation_fail_count": validation_fail_count,
+                            **review,
                             "validation_criteria": validation_criteria,
-                            "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),
                             # Preserve automation and routing policy packed into state on export.
                             "assigned_agent": state.get("assigned_agent"),

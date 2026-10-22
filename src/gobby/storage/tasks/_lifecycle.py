@@ -55,7 +55,7 @@ def repair_closed_candidate(
             raise ValueError("Repair requires a registered caller in the task project.")
         if (
             task["closed_at"] is None
-            or task["validation_status"] != "valid"
+            or task["review_status"] != "valid"
             or task["claimed_by_session_id"] is not None
             or task["is_escalated"]
             or task["merge_in_progress"]
@@ -85,6 +85,7 @@ def repair_closed_candidate(
             raise ValueError("The review's original request and VALID evidence are required.")
         if (
             payload.get("closed") is not True
+            # Archived result bytes retain the original automatic-review vocabulary.
             or payload.get("validation_status") != "valid"
             or payload.get("status") != "closed"
             or payload.get("event") != "task_close_review_completed"
@@ -113,7 +114,7 @@ def repair_closed_candidate(
             "previous_closed_commit_sha": expected_closed_commit_sha,
             "candidate_commit_sha": candidate_commit_sha,
             "closed": True,
-            "validation_status": "valid",
+            "review_status": "valid",
             "applied": False,
             "commit_shas": links,
         }
@@ -169,10 +170,9 @@ def close_task(
             (task_id,),
         )
         if open_children:
-            child_list = ", ".join(f"{c['id']} ({c['title']})" for c in open_children[:3])
-            if len(open_children) > 3:
-                child_list += f" and {len(open_children) - 3} more"
-            raise TaskHasOpenChildrenError(task_id, [child_list])
+            raise TaskHasOpenChildrenError(
+                task_id, [f"{child['id']} ({child['title']})" for child in open_children]
+            )
 
     collected: list[str] = [] if closed_ancestors is None else closed_ancestors
     _close_task_transition(

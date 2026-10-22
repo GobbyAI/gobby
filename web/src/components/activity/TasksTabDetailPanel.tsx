@@ -10,7 +10,7 @@ import { TaskDetailRelationships } from "./taskdetail/TaskDetailRelationships";
 import { TaskDetailTrace } from "./taskdetail/TaskDetailTrace";
 import {
   MetaKVRow,
-  ValidationRow,
+  ReviewRow,
   type ParentTaskRef,
 } from "./taskdetail/TaskDetailKV";
 import {
@@ -67,12 +67,7 @@ export function TasksTabDetailPanel({
 }: TasksTabDetailPanelProps) {
   const computed = computeTaskDetail(task);
 
-  const validationStatus = task.validation_status?.trim() || null;
-  const validationFailCount = task.validation_fail_count ?? 0;
-  const validationFeedback = task.validation_feedback?.trim() || null;
-  const showValidationFeedback =
-    validationFeedback !== null &&
-    (validationStatus === "failed" || validationFailCount > 0);
+  const reviewFeedback = task.review_feedback?.trim() || null;
 
   const escalationReason = task.escalation_reason?.trim() || null;
   const preEscalationStatus = task.pre_escalation_status?.trim() || null;
@@ -134,24 +129,19 @@ export function TasksTabDetailPanel({
         </div>
       )}
 
-      {validationStatus && (
-        <ValidationRow
-          status={validationStatus}
-          failCount={validationFailCount}
-        />
-      )}
+      <ReviewRow status={task.review_status} failCount={task.review_fail_count} />
 
       <TaskDetailEditableCore task={task} edit={edit} />
 
-      {showValidationFeedback && validationFeedback && (
-        <div className="border-b border-border bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] px-4 py-[0.9rem]">
-          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold tracking-[0.08em] text-[var(--color-error)] uppercase">
-            Validation feedback
+      {reviewFeedback && (
+        <div className="border-b border-border px-4 py-[0.9rem]">
+          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold text-[var(--text-secondary)]">
+            Review feedback
           </div>
           <div
             className={`message-content text-[length:var(--text-base)] leading-[1.6] text-[var(--text-secondary)] ${markdownBodyClassName}`}
           >
-            <Markdown content={validationFeedback} id={`task-vf-${task.id}`} />
+            <Markdown content={reviewFeedback} id={`task-review-${task.id}`} />
           </div>
         </div>
       )}

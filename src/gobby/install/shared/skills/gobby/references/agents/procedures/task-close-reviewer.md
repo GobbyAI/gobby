@@ -46,7 +46,7 @@ edit files, create commits, or mutate task, workflow, review, agent, or service
 state.
 
 A launched review means deterministic gates 1-12 passed for the fingerprinted
-evidence. The validation_status, validation_feedback, and validation_fail_count
+evidence. The review_status, review_feedback, and review_fail_count
 fields returned by get_task are prior review history.
 You must not use them as current gate evidence, repeat their findings, or reject
 the new review because of them. Judge the normalized criteria from the launch facts

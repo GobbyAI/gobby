@@ -108,7 +108,7 @@ def mock_task() -> MagicMock:
     task.active_blocked_by = set()
     task.labels = None
     task.validation_criteria = None
-    task.validation_fail_count = 0
+    task.review_fail_count = 0
     task.category = None
     task.to_dict.return_value = {
         "id": "gt-abc123",
@@ -1955,7 +1955,7 @@ class TestFormatTaskList:
         task.active_blocked_by = {"other"} if state == "blocked" else set()
         task.labels = None
         task.validation_criteria = None
-        task.validation_fail_count = 0
+        task.review_fail_count = 0
         task.category = None
         task.updated_at = "2026-04-13T00:00:00Z"
         task.merge_commit_sha = "abc" if merge_ready else None

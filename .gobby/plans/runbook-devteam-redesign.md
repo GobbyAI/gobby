@@ -27,7 +27,7 @@ Josh approved implementing the complete redesign, including finishing removal of
 9. Release Manager runs a roughly two-hour batch from the last successful release SHA to a pinned integration SHA. Its owned lease expires after ten minutes and renews at least every sixty seconds. During the window, landings and NEW DevTeam admissions wait. Existing teams continue work, testing, review and recovery; replacement seats within an admitted team remain allowed. No worker drain, quiet-fleet requirement, parking, heavy grants or new resource caps.
 10. A release validates affected packages and relevant lint/type/build checks, then promotes coherent binaries, restarts and runs fixed smokes. Global announcements, schema preflight, version/source identity checks and new-inode promotion remain. A lost lease invalidates activation; a stale owner cannot renew or clear a successor's lease. Both holds lift on release or expiry. Failure leaves the successful baseline unchanged and creates a regression task for a new DevTeam after the window; source tasks remain closed.
 11. Cargo uses one project-ID-scoped target named `cargo-target-<project_name>` and consistent `CARGO_HOME` across supported agent, sandbox, release and project-shell entry points. Deleting a task worktree never deletes the shared cache. Do not edit global shell dotfiles. Wider host-performance research remains owned by #23902.
-12. Rename/rewrite `lane-manager.yaml` to `dev-manager.yaml` and `inbox-manager.yaml` to `triage.yaml`; add `test-writer.yaml`; rewrite `release-manager.yaml`. Delete `log-monitor.yaml`, `metrics-monitor.yaml`, `recovery-steward.yaml`, and `task-close-reviewer.yaml`. Keep `researcher.yaml`, `security-reviewer.yaml`, and `consolidator.yaml` for standalone use. Keep GitHub `triage-agent` distinct from fleet Triage and preserve current planning roles. Old names receive no compatibility aliases.
+12. Rename/rewrite `lane-manager.yaml` to `dev-manager.yaml` and `inbox-manager.yaml` to `triage.yaml`; add `test-writer.yaml`; rewrite `release-manager.yaml`. Josh's October 21 ruling supersedes the original deletion list: any agent used in runbooks stays. Keep `log-monitor.yaml`, `metrics-monitor.yaml`, `recovery-steward.yaml`, `task-close-reviewer.yaml`, and `expansion-qa.yaml`. Repurpose expansion QA for runbook-spawned post-expansion tree, dependency and plan-consistency checks. Keep `researcher.yaml`, `security-reviewer.yaml`, and `consolidator.yaml` for standalone use. Keep GitHub `triage-agent` distinct from fleet Triage and preserve current planning roles. Old manager names receive no compatibility aliases; any other runbook-used definition proposed for deletion goes to the Orchestrator first.
 13. One complete pilot, then a small concurrent cohort, proves the lifecycle and release success/failure cases before old runbooks retire. No push is authorized by this plan. Operator-owned uncommitted work remains untouched.
 
 ## Existing work and dependency integration
@@ -35,7 +35,7 @@ Josh approved implementing the complete redesign, including finishing removal of
 
 The existing `.gobby/plans/remove-gobby-build.md` and epic #23341 remain authoritative for their existing leaves. Do not duplicate or re-expand them under this plan. Finish #23850 (external dispatch drivers/callers), #23851 (build/dispatch packages), #23852–#23856 (stage-only agents and tools), #23857/#23858/#24062 (consumers and storage), #23859/#23860 (guidance) and #23861 (schema drop) under their current ownership. Preserve already-landed P1 and sections 2.1–2.3.
 
-Reconcile those task descriptions before execution: remove the old instruction to retain task-close-reviewer from #23855; preserve this plan's retained standalone agents; replace stale migration-number text. Migration 471 is occupied by `471_code_overlay_pins.sql`. The build drop takes the next free number at implementation; this plan's schema migration follows it. Numeric allocation is mechanical, verified against all refs and the live schema immediately before writing; no number is reserved by this document.
+The prerequisite epic #23341 and all of #24317 closed on October 22 at `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`. Its absorbed #24799 delivered sections 1.1–1.4. The build drop uses migration 472, and migration 473 retires its stored configuration. Sections 2.1 onward execute under #24797 alone, without expansion or per-leaf claims, as Josh explicitly directed. Preserve task-close-reviewer and all other protected definitions under the later operator ruling. Numeric allocation remains mechanical: verify all refs and the live schema immediately before writing; the next candidate migrations are 474 and 475.
 
 To avoid a cycle, #23861 waits on this plan's 1.4, while 1.1–1.4 wait only on the needed code/storage removals, not #23861 or epic #23341. Sections 2.1 onward that need the schema wait on #23861. Reconcile superseded state task #23817 against Decision 7. Verify #23433's snapshot-only worktree indexing delivery before changing its status. Do not adopt #23902 or create competing performance work.
 
@@ -50,164 +50,37 @@ For every implementation leaf, refresh its literal/import sweep after prerequisi
 
 Use isolated tests: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <focused targets>`. No full pytest suite. Run relevant Ruff, mypy, frontend/Rust checks, test-quality/types and suppression audits while those are required by the active workflow. New flow enforcement is exercised with isolated state before live registry activation. Design edits in task UI load impeccable and the project design contract.
 
-## P1: Remove the close relay
+## P1: Delivered prerequisites
 `kind: framing`
 
-### 1.1 Close enforces four invariants (depends: #23858)
-`kind: deliverable`
-`[category: code]`
+Sections 1.1–1.4 were completed under #24799 within #23341's first landing. Their original acceptance criteria remain in those closed tasks and the landing evidence; they are not new implementation deliverables under #24797.
 
-Targets:
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::*` — scope-reason: replace the complete close gate evaluation with four invariants
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::*` — scope-reason: remove evidence/reviewer finalization while preserving atomic close effects
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py::*` — scope-reason: preview the same four-invariant result
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py::*` — scope-reason: update close tool contract and output
-- `src/gobby/tasks/close_checklist.py::*` — scope-reason: narrow checklist serialization and gate names
-- `src/gobby/tasks/close_invariants.py`
-- `tests/tasks/test_close_invariants.py`
-- `tests/e2e/test_task_close_checklist_e2e.py::*` — scope-reason: replace old checklist expectations at the public boundary
+- 1.1 delivered the shared four-invariant close/preview evaluator, atomic finalization and idempotent close.
+- 1.2 removed retained-RED write enforcement and transcript-based TDD close gates while keeping tests-first reviewer guidance.
+- 1.3 retired automatic close-review launch/recovery and retained immutable historical review access. The task-close-reviewer definition remains protected by the later operator ruling.
+- 1.4 removed close-only evidence evaluators while preserving found-work and general transcript consumers.
 
-**Research context:** The assessment locates thirteen close checks in `_lifecycle_close.py`; the post-mortem records repeated claimant-window revalidation after landing. Keep authorization, task lookup and valid repository input as ordinary API preconditions, not extra workflow proof gates. Split `_lifecycle_close.py` by moving the four invariant evaluators to new `close_invariants.py`; delete the old gate branches. Preview and close must call the same evaluator. Retain no-work reasons, epic child checks, hook attribution and atomic task finalization. A linked commit for work-bearing completion must resolve and be an ancestor of the project's integration tip. A no-work disposition cannot hide dirty task edits. Existing close callers receive a simple result without asynchronous review jobs.
-
-**Acceptance:**
-- 1.1.1 - The close/preview matrix enforces precisely the four approved invariants, including no-work and epic cases. test: `tests/tasks/test_close_invariants.py::test_close_invariant_matrix`.
-- 1.1.2 - A landed, clean task closes without validation transcripts, activation, acceptance-artifact proof or spawned review. test: `tests/tasks/test_close_invariants.py::test_close_needs_no_evidence_relay`.
-- 1.1.3 - A repeat close is idempotent and failed invariants leave ownership and closure unchanged. test: `tests/tasks/test_close_invariants.py::test_close_is_atomic_and_idempotent`.
-
-**Verification:** Planned focused close unit/MCP/e2e tests plus type/lint checks. No passing result is claimed yet.
-
-### 1.2 Retire transcript and edit-time TDD enforcement (depends: 1.1, #23858)
-`kind: deliverable`
-`[category: refactor]`
-
-Targets:
-- `src/gobby/tasks/tdd_evidence.py::*` — operation: delete — scope-reason: retire transcript RED gate
-- `src/gobby/tasks/tdd_python_evidence.py::*` — operation: delete — scope-reason: retire gate-only Python evidence parser
-- `src/gobby/tasks/tdd_pytest_provenance.py::*` — operation: delete — scope-reason: retire gate-only provenance parsing
-- `src/gobby/tasks/tdd_write_authorization.py::*` — operation: delete — scope-reason: retire edit-time named RED authorization
-- `src/gobby/tasks/tdd_retained_output.py::*` — operation: delete — scope-reason: retire TDD-only retained proof
-- `src/gobby/tasks/tdd_compacted_output.py::*` — operation: delete — scope-reason: retire TDD-only compaction proof
-- `src/gobby/tasks/tdd_stub_revert.py::*` — operation: delete — scope-reason: retire gate-only stub proof
-- `src/gobby/workflows/tdd_paths.py::*` — operation: delete — scope-reason: retire edit-time TDD path authorization
-- `src/gobby/workflows/condition_helpers.py::*` — scope-reason: remove TDD authorization bindings and keep unrelated evaluator helpers
-- `src/gobby/workflows/claimed_task_extra_skills.py::*` — scope-reason: decouple useful test-first skill loading from removed gate imports
-- `src/gobby/workflows/condition_helpers_core.py`
-- `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-block.yaml::*` — operation: delete — scope-reason: retire the whole edit-time RED barrier rule
-- `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml::*` — operation: delete — scope-reason: retire the whole gate-only test tracking rule
-- `src/gobby/install/shared/skills/test-driven-development/SKILL.md`
-- `tests/workflows/test_tdd_gate_retirement.py`
-
-**Research context:** The assessment distinguishes close-time RED from the separate edit-time rules; deleting only gate 12 leaves writes blocked. Remove both callers and their exclusive proof modules. Preserve general transcript search/history and any test-path utilities with non-gate consumers. Move surviving general helpers out of `condition_helpers.py` into new `condition_helpers_core.py` if needed to keep its production size bounded. The TDD skill teaches test-first commits and independent reruns without transcript authentication. Registry sync must retire installed rules as well as template files.
-
-**Granularity:** This is one removal boundary across more than six files. The parser modules cannot be safely removed independently of their shared write/close consumers; 1.1 first detaches close, and this leaf removes the edit barrier and its dead imports together.
-
-**Acceptance:**
-- 1.2.1 - Production edits have no retained-RED authorization hook; installed TDD enforcement rows and template references are absent. test: `tests/workflows/test_tdd_gate_retirement.py::test_retired_tdd_rules_are_not_installed`.
-- 1.2.2 - Task skill loading and unrelated transcript consumers import and work without removed modules. test: `tests/workflows/test_tdd_gate_retirement.py::test_surviving_consumers_do_not_import_tdd_gates`.
-- 1.2.3 - The TDD skill specifies tests-first commits and reviewer verification with no gate-proof requirement. file: `src/gobby/install/shared/skills/test-driven-development/SKILL.md`.
-
-**Verification:** Planned rule-sync/import tests and bounded surviving-consumer tests; remove gate-exclusive tests with their production modules and audit their parent packages.
-
-### 1.3 Retire automatic close review and proof-only runtime (depends: 1.1, 1.2, #23858)
-`kind: deliverable`
-`[category: refactor]`
-
-Targets:
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_orchestration.py::*` — operation: delete — scope-reason: retire automatic close reviewer lifecycle
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_review_gate.py::*` — operation: delete — scope-reason: retire gate 13
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py::*` — operation: delete — scope-reason: retire close-evidence accounting
-- `src/gobby/tasks/agentic_close_review.py::*` — operation: delete — scope-reason: retire reviewer-only runtime
-- `src/gobby/tasks/close_review_delivery.py::*` — operation: delete — scope-reason: retire automatic reviewer deliveries
-- `src/gobby/tasks/close_verdict.py::*` — operation: delete — scope-reason: retire old close verdict model
-- `src/gobby/tasks/validation.py::*` — operation: delete — scope-reason: retire gate-only validation coordinator
-- `src/gobby/storage/task_close_reviews.py::*` — operation: delete — scope-reason: replace active review queue with historical reads
-- `src/gobby/storage/review_history.py`
-- `src/gobby/agents/resume_executor.py::*` — scope-reason: remove close-review special resume handling
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: remove reserved automatic-review launch exceptions
-- `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: remove close-review-only guard exceptions
-- `src/gobby/runner_lifecycle_agents.py::*` — scope-reason: remove close-review reconciliation
-- `src/gobby/runner_lifecycle_reconcile.py::*` — scope-reason: remove close-review-only recovery
-- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: remove startup calls to the retired close-review reconciler
-- `src/gobby/runner_background_services.py`
-- `src/gobby/servers/routes/mcp/endpoints/request_context.py::*` — scope-reason: remove close-review session impersonation exceptions
-- `src/gobby/storage/agents/_queries.py::*` — scope-reason: remove close-review-only session query handling
-- `src/gobby/storage/tasks/_delegation.py::*` — scope-reason: remove special reviewer delegation authority
-- `src/gobby/tasks/close_receipts.py::*` — scope-reason: remove automatic-review identity imports while preserving independent reviews
-- `src/gobby/agents/spawn_guard_policy.py`
-- `src/gobby/agents/lifecycle_recovery.py`
-- `tests/agents/test_close_review_retirement.py`
-
-**Research context:** The complete `TASK_CLOSE_REVIEWER_AGENT` sweep is listed in Constraints. Remove queue launches, recovery, exception authority and terminal subscriptions as one lifecycle retirement. Preserve old result bytes through a read-only `review_history.py` adapter until 2.1 moves their storage to the historical namespace. Never resume old queued reviewers. Delete exclusive proof modules only after their importer sweep is empty; general session transcripts remain. Split surviving spawn-guard policy into `spawn_guard_policy.py` and runner recovery into `lifecycle_recovery.py` where size requires it. Split `runner_lifecycle_subsystems.py` by moving background-service wiring into new `runner_background_services.py`. The definition/procedure deletion is owned by 3.5, after no runtime needs it.
-
-**Granularity:** More than six files share one retired lifecycle and constant. Deleting that lifecycle atomically prevents startup and spawn imports from referring to missing review machinery; ordinary close behavior is independently delivered in 1.1.
-
-**Acceptance:**
-- 1.3.1 - Startup, spawn, resume and close launch no automatic task-close reviewer and retain their ordinary agent behavior. test: `tests/agents/test_close_review_retirement.py::test_no_close_reviewer_runtime`.
-- 1.3.2 - Historical close-review results remain readable and immutable; pending legacy jobs cannot run. test: `tests/agents/test_close_review_retirement.py::test_old_reviews_are_history_only`.
-- 1.3.3 - No live importer or rule references a deleted gate-only module. test: `tests/agents/test_close_review_retirement.py::test_retired_review_imports_are_absent`.
-
-**Verification:** Planned focused startup/spawn/resume/close tests and import sweeps. Section 1.4 completes the evidence retirement before #23861's schema drop.
-
-### 1.4 Remove close-only evidence code without breaking shared consumers (depends: 1.3)
-`kind: deliverable`
-`[category: refactor]`
-
-Targets:
-- `src/gobby/tasks/close_checklist.py::*` — scope-reason: remove validation-command evaluation after retaining the four-invariant checklist
-- `src/gobby/tasks/close_integration_credit.py::*` — scope-reason: remove close-credit algorithms while preserving any shared evidence value types
-- `src/gobby/tasks/close_pytest_collection.py::*` — scope-reason: retire close-only collection evidence
-- `src/gobby/tasks/close_test_coverage.py::*` — operation: delete — scope-reason: retire close-only test coverage proof after its checklist and confinement callers
-- `src/gobby/tasks/acceptance_artifacts.py::*` — scope-reason: retire close-only artifact resolution while preserving any plan consumers
-- `src/gobby/tasks/acceptance_references.py`
-- `src/gobby/tasks/validation_evidence.py::*` — scope-reason: retire close-review diff evidence construction
-- `src/gobby/tasks/validation_diagnostics.py::*` — scope-reason: remove close-review proof diagnostics
-- `src/gobby/tasks/validation_confinement.py::*` — operation: delete — scope-reason: retire close-only foreign-path proof credit with its coverage dependency
-- `src/gobby/tasks/validation_history.py::*` — scope-reason: retain historical reads without active close-validation accounting
-- `src/gobby/tasks/criteria_contract.py::*` — scope-reason: remove Live-prefix and close operational proof while preserving useful criteria text validation
-- `src/gobby/tasks/criteria_text.py`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::*` — scope-reason: delete obsolete close evidence preparation
-- `src/gobby/mcp_proxy/tools/tasks/_close_context.py`
-- `src/gobby/tasks/transcript_evidence.py::*` — scope-reason: remove close-specific evidence branches and preserve the found-work stop consumer
-- `src/gobby/tasks/transcript_git_sources.py::*` — scope-reason: remove retired close-credit dependency and retain shared source evidence
-- `src/gobby/tasks/transcript_evidence_sources.py`
-- `src/gobby/workflows/found_work_gate.py::*` — scope-reason: preserve the existing found-work policy while adapting shared evidence imports
-- `src/gobby/workflows/validation_cover.py::*` — scope-reason: preserve found-work validation coverage independent of close gates
-- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: remove automatic close reconciliation and retain only shared evidence pool startup
-- `src/gobby/runner_lifecycle_shutdown.py::*` — scope-reason: retire close-only shutdown resources without breaking shared transcript use
-- `src/gobby/runner_background_services.py`
-- `tests/tasks/test_close_evidence_retirement.py`
-
-**Research context:** A direct import sweep found that `src/gobby/workflows/found_work_gate.py` still calls `derive_transcript_evidence` and `validation_cover.py` uses its models. Those are real consumers outside close/TDD, so deleting the entire general parser would break the still-required found-work policy. Delete close-only functions, tests and modules once their imports are removed, while preserving shared parsing, normal transcript search and history. Split reusable criteria text operations from `criteria_contract.py` into `criteria_text.py`; the `Live:` special meaning and `pending_external` close behavior end. Split reusable parsing helpers from `acceptance_artifacts.py` into new `acceptance_references.py`, preserving plan expansion, claimed-skill loading and task-creation callers. Split reusable source helpers from `transcript_evidence.py` into `transcript_evidence_sources.py`. Split background-service startup/shutdown wiring from `runner_lifecycle_subsystems.py` and `runner_lifecycle_shutdown.py` into new `runner_background_services.py`. Split `_close_evaluation_support.py` by moving the repository and candidate context still needed by the four invariants into new `_close_context.py`, then remove the old evidence preparation. Every surviving evidence function must have an identified non-close consumer; dead proof code is not retained as a compatibility layer. Preserve validation detection configuration used by found-work checks.
-
-**Granularity:** This is the cleanup boundary after the independently testable close, TDD and automatic-review removals. Multiple files implement one evidence consumer graph; the leaf must keep shared found-work behavior green throughout removal.
-
-**Acceptance:**
-- 1.4.1 - Close uses no validation-command, artifact, operational-evidence or transcript-credit evaluator. test: `tests/tasks/test_close_evidence_retirement.py::test_close_has_no_evidence_dependencies`.
-- 1.4.2 - General transcript search/history and found-work validation still work through their retained shared helpers. test: `tests/tasks/test_close_evidence_retirement.py::test_shared_transcript_consumers_survive`.
-- 1.4.3 - Live-prefixed criteria have no deferred close semantics, and old results remain historical. test: `tests/tasks/test_close_evidence_retirement.py::test_live_prefix_has_no_close_semantics`.
-
-**Verification:** Planned focused close/found-work/transcript regression tests and a complete import/literal sweep of removed symbols. #23861 waits for this retirement boundary, not for the new review schema.
+Delivery evidence: `0911dcc603` and its linked correction commits; final #23341 tip `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`; schema-473 activation receipt `5dcd7e32`. The final 20-module acceptance run passed 276 tests. The complete child/criteria and exact-command record is `.gobby/session-context/17257-landing1-candidate.md`, supplemented by the #23341 close summary and its independent landing receipts.
 
 ## P2: Task review and landing authority
 `kind: framing`
 
-### 2.1 Rename review fields and archive old results (depends: 1.4, #23861)
+### 2.1 Rename review fields and archive old results (depends: #24799, #23861)
 `kind: deliverable`
 `[category: code]`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/473_runbook_review_state.sql`
-- `crates/gcore/assets/schema/baseline.sql`
+- `crates/gcore/assets/schema/migrations/474_runbook_review_state.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the complete schema catalog carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: carry regenerated schema identity
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: verify schema and review data migration
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: verify the matching schema identity
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: replace generated expected schema identity
-- `src/gobby/storage/review_history.py`
+- `src/gobby/storage/review_history.py::*` — scope-reason: read archived close-review results from the historical table
 - `src/gobby/storage/tasks/_models.py::*` — scope-reason: replace review fields in deserialization and both response shapes
 - `src/gobby/storage/tasks/_creation.py::*` — scope-reason: initialize renamed fields
 - `src/gobby/storage/tasks/_manager.py::*` — scope-reason: rename update contract
-- `src/gobby/storage/tasks/_update_facade.py`
+- `src/gobby/storage/tasks/_update_facade.py::*` — scope-reason: extract the cohesive task metadata-update facade
 - `src/gobby/storage/tasks/_updates.py::*` — scope-reason: rename SQL updates and arguments
 - `src/gobby/storage/tasks/_transitions.py::*` — scope-reason: rename/reset counters and preserve atomic transition primitive
 - `src/gobby/storage/tasks/_transitions_facade.py::*` — scope-reason: expose renamed transition contract
@@ -221,11 +94,12 @@ Targets:
 - `web/src/types/tasks.ts::*` — scope-reason: replace task review field names
 - `web/src/components/activity/TasksTab.tsx::*` — scope-reason: replace snapshot review-field mapping
 - `web/src/components/activity/TasksTabDetailPanel.tsx::*` — scope-reason: display independent review status feedback and count
+- `web/src/components/activity/taskdetail/TaskDetailKV.tsx::*` — scope-reason: render the four independent review outcomes
 - `web/src/components/activity/__tests__/fixtures.ts::*` — scope-reason: update task fixtures
 - `web/src/components/activity/__tests__/TasksTabDetailPanel.test.tsx::*` — scope-reason: test renamed review fields
 - `web/tests/fixtures/webChatRestorePlan.ts::*` — scope-reason: update restored task review fields
-- `src/gobby/sync/task_review_serialization.py`
-- `tests/storage/test_review_field_migration.py`
+- `src/gobby/sync/task_review_serialization.py::*` — scope-reason: own review backup encoding and validation
+- `tests/storage/test_review_field_migration.py::*` — scope-reason: verify all live review outcomes and retired-field refusals
 - `Cargo.lock`
 - `crates/gcore/Cargo.toml`
 - `crates/gcode/Cargo.toml`
@@ -235,16 +109,18 @@ Targets:
 - `src/gobby/install/version_pins.py::*` — scope-reason: align managed binary pins with schema carrier versions
 - `src/gobby/code_index/gcode_versions.py::*` — scope-reason: align gcode capability floors with schema carrier versions
 
-**Research context:** The field census in Constraints includes all runtime groups after stage removal. Preserve old results as read-only history before resetting open tasks to pending/count zero in a new review epoch. Closed tasks keep historical outcome attribution. Rename the three fields atomically with every live reader/writer; no dual-read aliases. Migration 473 is the concrete candidate path following a 472 build drop; allocate the next free number and update this path before writing if concurrent migrations advance it. Split `src/gobby/sync/tasks.py` by moving review payload encoding to `task_review_serialization.py`. Split `src/gobby/storage/tasks/_manager.py` by moving its update-method facade into new `src/gobby/storage/tasks/_update_facade.py`, keeping mutations in the existing update implementation. Include schema fixtures and every recursively affected shipped binary's patch bump; recheck dependencies rather than blindly bumping unrelated binaries.
+**Research context:** The field census in Constraints includes all runtime groups after stage removal. Preserve old results as read-only history before resetting open tasks to pending/count zero in a new review epoch. Closed tasks keep historical outcome attribution. Rename the three fields atomically with every live reader/writer; no dual-read aliases. Migration 474 follows the completed 472 build drop and 473 retired-config cleanup; recheck allocation before writing. Split `src/gobby/sync/tasks.py` by moving review payload encoding to `task_review_serialization.py`. Split `src/gobby/storage/tasks/_manager.py` by moving its update-method facade into new `src/gobby/storage/tasks/_update_facade.py`, keeping mutations in the existing update implementation. Include schema fixtures and every recursively affected shipped binary's patch bump; recheck dependencies rather than blindly bumping unrelated binaries.
 
 **Granularity:** The cross-language rename exceeds six production files but is one atomic data contract. A split deployment would require the compatibility layer Josh rejected. Migration, adapters and UI consumers therefore ship together.
 
 **Acceptance:**
-- 2.1.1 - Migration preserves historical results and initializes the new epoch for open tasks without losing feedback history. test: `tests/storage/test_review_field_migration.py::test_review_epoch_migration`.
+- 2.1.1 - Migration preserves historical results and initializes the new epoch for open tasks without losing feedback history. test: `crates/gcore/src/schema/runner_tests.rs::review_epoch_migration_preserves_history_and_resets_open_tasks`.
 - 2.1.2 - Storage, sync, CLI/MCP and web expose only review-prefixed fields with pending/valid/invalid/error values. test: `tests/storage/test_review_field_migration.py::test_review_contract_has_no_legacy_fields`.
 - 2.1.3 - Baseline, catalog, native schema identity, Python expected identity and version pins agree. file: `src/gobby/storage/schema_expected_identity.json`.
 
 **Verification:** Planned isolated migration/contract tests, focused task detail tests, mypy/TypeScript checks and affected Rust contract tests. Deployment uses coordinated coherent promotion.
+
+**Implementation reconciliation:** Baseline 420 remains immutable; fresh databases apply baseline plus migration 474, while existing databases apply the same migration. The native upgrade test seeds schema 473 and verifies preserved review rows, task-comment snapshots, new epochs and runtime read-only privileges. CLI/MCP reset arguments were already retired with the old automatic reviewer, so those adapters need no rename. Ordinary reopen preserves review failures; section 2.3 supplies the authorized audited reset. `gcode_versions.py` already derives its floor from the managed version pin. The update facade and backup codec remain in their existing owning packages.
 
 ### 2.2 Five task states agree on every surface (depends: 2.1)
 `kind: deliverable`
@@ -254,7 +130,7 @@ Targets:
 - `src/gobby/tasks/state_semantics.py::*` — scope-reason: replace stage-derived state with the five-state projection
 - `src/gobby/storage/tasks/_queries.py::*` — scope-reason: align list/filter/count state queries
 - `src/gobby/storage/tasks/_aggregates.py::*` — scope-reason: align aggregate state counts
-- `src/gobby/storage/tasks/_ancestor_gate.py::*` — scope-reason: align parent blockers with the five-state semantics
+- `src/gobby/storage/tasks/_blocking.py::*` — scope-reason: align dependency and hold blockers with the five-state semantics
 - `src/gobby/storage/tasks/_transitions.py::*` — scope-reason: make claim/release transitions agree with state projection
 - `src/gobby/storage/tasks/_models.py::*` — scope-reason: unify serialized state
 - `src/gobby/mcp_proxy/tools/tasks/_listing.py::*` — scope-reason: expose the same state/filter contract
@@ -263,7 +139,7 @@ Targets:
 - `web/src/types/tasks.ts::*` — scope-reason: use the five-state union
 - `web/src/components/tasks/TaskBadges.tsx::*` — scope-reason: render five task states
 - `web/src/components/activity/TasksTabFilters.tsx::*` — scope-reason: filter the five-state vocabulary
-- `crates/gcore/assets/schema/migrations/474_runbook_task_states.sql`
+- `crates/gcore/assets/schema/migrations/475_runbook_task_states.sql`
 - `crates/gcore/assets/schema/baseline.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the complete state schema catalog carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: carry state schema identity
@@ -439,10 +315,9 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: enforce the independent review and security contract throughout the definition
 - `src/gobby/install/shared/workflows/agents/release-manager.yaml::*` — scope-reason: replace old release grants with the complete batch release role
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: replace lane staffing and direct seat messaging instructions
-- `src/gobby/install/shared/workflows/agents/log-monitor.yaml::*` — operation: delete — scope-reason: retire the complete unused runbook role
-- `src/gobby/install/shared/workflows/agents/metrics-monitor.yaml::*` — operation: delete — scope-reason: retire the complete unused runbook role
-- `src/gobby/install/shared/workflows/agents/recovery-steward.yaml::*` — operation: delete — scope-reason: retire the complete unused runbook role
-- `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — operation: delete — scope-reason: retire the complete automatic close review role
+- `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — scope-reason: retain the runbook role and replace its retired automatic-close tool instructions
+- `src/gobby/install/shared/workflows/agents/expansion-qa.yaml::*` — scope-reason: repurpose the retained agent for runbook-spawned tree and dependency checks
+- `src/gobby/install/shared/rules/build/build-agent-safety.yaml::*` — operation: delete — scope-reason: retire build-only safety rules after build removal
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/triage.md`
@@ -455,13 +330,13 @@ Targets:
 - `docs/guides/runbooks.md`
 - `tests/workflows/test_devteam_runbooks.py`
 
-**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Delete only the four explicitly retired definitions. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text.
+**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward, task-close-reviewer and expansion-qa under Josh's overriding ruling. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy.
 
 **Granularity:** These configuration files jointly define one usable launch contract. Runtime mechanisms land first; definition and registry activation occur as one coordinated cutover so no partially renamed seat can launch.
 
 **Acceptance:**
 - 3.5.1 - Admin launches exactly Assistant/Orchestrator/Archivist/Release Manager/Triage; DevTeam launches the four approved roles in one prepared task tree. test: `tests/workflows/test_devteam_runbooks.py::test_runbook_seat_catalogues`.
-- 3.5.2 - Retired and renamed source/installed registry identities are absent, and the three retained standalone roles plus triage-agent/planning roles remain callable. test: `tests/workflows/test_devteam_runbooks.py::test_agent_retirement_and_retention`.
+- 3.5.2 - Old manager source/installed identities are absent; log-monitor, metrics-monitor, recovery-steward, task-close-reviewer, expansion-qa, the three standalone roles, triage-agent and planning roles remain callable. Expansion QA is runbook-spawnable for post-expansion checks. test: `tests/workflows/test_devteam_runbooks.py::test_agent_retirement_and_retention`.
 - 3.5.3 - Procedures enforce review/security, claim handoff, summary-before-close, teardown and the release-window contract without lane/activation/TDD-proof relays. test: `tests/workflows/test_devteam_runbooks.py::test_procedures_match_runtime_authority`.
 
 **Verification:** Planned template parsing, registry sync and runbook dry-run tests; inspect installed DB rows after activation before declaring roles/rules live. Preserve existing sessions until the pilot-controlled switchover.
@@ -568,6 +443,10 @@ Targets:
 
 ## V1 Execution status and verification
 `kind: verification`
+
+October 22 reconciliation: #23341, #24799 and #24317 are closed. Sections 1.1–1.4 are delivered and schema 473 is active. Orchestrator #17281 authorized #24797 as the sole claim for sections 2.1 onward and one independent landing review for that completed work. The plan remains deliberately unexpanded by operator choice. The retained-agent ruling supersedes Decision 12 and section 3.5's former deletion list. The per-epic DevTeam variant #24796 remains a later addendum. TDD enforcement stays off through this cohort's landing; focused behavior tests and independent review remain required. The historical execution entry below describes the earlier state, not current completion.
+
+Section 2.1 checkpoint, October 22: migration 474, the review-prefixed storage/API/UI contract, backup epoch validation, historical archive adapter, and planned module extractions are implemented. Isolated upgrade/catalog and 102 native grant/schema tests passed; the daemon identity contract passed separately. The changed Python tests produced 601 passes and two stale expectations, both corrected and covered by an 87-test rerun. The post-extraction storage run passed 154 tests; task-detail UI passed 16 tests. Full source mypy, TypeScript, ESLint, scoped Ruff/format, Rust format/Clippy, changed-test quality/type ratchets and the Python suppression ratchet passed. The close-error child count defect found by this run is fixed in the shared exception formatting. Independent checkpoint review is finishing. Sections 2.2 onward and live activation remain pending; this is not the final #24797 landing candidate.
 
 Observed execution on October 21: Josh waived test-first write ordering for #23850, relayed by Assistant #15976 and applied by Orchestrator #17281. The session projection refreshed and production writes succeeded. Implementation and focused verification are underway in the existing task worktree. Passing checks include maintenance, cron scheduling, messaging, stage transitions and terminal cleanup; final validation, commit, review and landing remain pending. The earlier worktree-root authorization defect remains tracked as #24779. This narrative is still a draft without M1 or expansion; it does not claim that the broader redesign has shipped. The Orchestrator owns installs, restarts and pushes.
 

@@ -966,9 +966,9 @@ class TestLocalTaskManager:
             labels=["l1"],
             category="test",
             validation_criteria="crit",
-            validation_fail_count=2,
-            validation_status="valid",
-            validation_feedback="good",
+            review_fail_count=2,
+            review_status="valid",
+            review_feedback="good",
         )
 
         assert updated.description == "desc"
@@ -977,12 +977,12 @@ class TestLocalTaskManager:
         assert updated.labels == ["l1"]
         assert updated.category == "test"
         assert updated.validation_criteria == "crit"
-        assert updated.validation_fail_count == 2
-        assert updated.validation_status == "valid"
-        assert updated.validation_feedback == "good"
+        assert updated.review_fail_count == 2
+        assert updated.review_status == "valid"
+        assert updated.review_feedback == "good"
 
-    def test_validation_status_error_round_trips(self, task_manager, project_id) -> None:
-        """validation_status='error' (LLM infra failure) persists and reads back."""
+    def test_review_status_error_round_trips(self, task_manager, project_id) -> None:
+        """review_status='error' (LLM infra failure) persists and reads back."""
         task = task_manager.create_task(
             project_id=project_id,
             title="Infra task",
@@ -991,15 +991,15 @@ class TestLocalTaskManager:
 
         updated = task_manager.update_task(
             task.id,
-            validation_status="error",
-            validation_feedback="generation unavailable",
+            review_status="error",
+            review_feedback="generation unavailable",
         )
 
-        assert updated.validation_status == "error"
+        assert updated.review_status == "error"
         reloaded = task_manager.get_task(task.id)
         assert reloaded is not None
-        assert reloaded.validation_status == "error"
-        assert reloaded.validation_feedback == "generation unavailable"
+        assert reloaded.review_status == "error"
+        assert reloaded.review_feedback == "generation unavailable"
 
     def test_clear_parent_task(self, task_manager, project_id) -> None:
         parent = task_manager.create_task(project_id, "P", validation_criteria=VALIDATION_CRITERIA)
@@ -1277,7 +1277,7 @@ class TestLocalTaskManager:
     def test_reopen_task_already_open_claimed_releases_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Reopening an open claimed task should release the claim."""
+        """Reopening releases ownership without bypassing the review failure limit."""
         session = session_manager.register(
             external_id="reopen-claimed-ext",
             machine_id="21000000-0000-4000-8000-000000000002",
@@ -1290,14 +1290,15 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
-        task_manager.update_task(task.id, validation_fail_count=2)
+        task_manager.update_task(task.id, review_fail_count=2)
 
         reopened = task_manager.reopen_task(task.id, reason="Release claim")
 
         assert not is_task_closed(reopened)
         _assert_task_state(reopened, "ready")
         assert reopened.claimed_by_session_id is None
-        assert reopened.validation_fail_count == 0
+        assert reopened.review_fail_count == 2
+        assert reopened.review_epoch == task.review_epoch
         assert "[Reopened: Release claim]" in (reopened.description or "")
 
     def test_reopen_task_from_escalated(self, task_manager, project_id) -> None:
@@ -1711,15 +1712,14 @@ class TestLocalTaskManager:
         assert refreshed.closed_commit_sha is None
         assert refreshed.commits in (None, [])
 
-    def test_close_task_with_validation_override(self, task_manager, project_id) -> None:
-        """Test closing task with validation override reason."""
+    def test_close_task_rejects_retired_validation_override(self, task_manager, project_id) -> None:
+        """Closing has no bypass argument for the independent review contract."""
         task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
-        closed = task_manager.close_task(
-            task.id, validation_override_reason="User approved manually"
-        )
+        with pytest.raises(TypeError, match="validation_override_reason"):
+            task_manager.close_task(task.id, validation_override_reason="User approved manually")
 
-        assert closed.validation_override_reason == "User approved manually"
+        assert not is_task_closed(task_manager.get_task(task.id))
 
     def test_close_task_not_found_raises(self, task_manager) -> None:
         """Test closing non-existent task raises error."""
@@ -2278,7 +2278,7 @@ class TestLocalTaskManager:
         assert task.category == "test"
         assert task.validation_criteria == "All tests pass"
         # Validation status should be pending when criteria is set
-        assert task.validation_status == "pending"
+        assert task.review_status == "pending"
 
 
 @pytest.mark.integration

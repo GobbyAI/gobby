@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { TaskReviewStatus } from "../../../types/tasks";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
@@ -13,8 +14,6 @@ export interface ParentTaskRef {
   ref: string;
   title: string;
 }
-
-export type ValidationStatus = "ok" | "fail" | "neutral";
 
 export function MetaKVRow({
   label,
@@ -63,32 +62,26 @@ export function MetaKVRow({
   );
 }
 
-export function ValidationRow({
+export function ReviewRow({
   status,
   failCount,
 }: {
-  status: string;
+  status: TaskReviewStatus;
   failCount: number;
 }) {
-  const normalized = status.trim().toLowerCase();
-  const variant: ValidationStatus = [
-    "pass",
-    "passed",
-    "approve",
-    "approved",
-  ].includes(normalized)
+  const variant = status === "valid"
     ? "ok"
-    : ["fail", "failed", "reject", "rejected"].includes(normalized)
+    : status === "invalid" || status === "error"
       ? "fail"
       : "neutral";
   return (
     <div
       className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem] border-b border-border bg-[var(--bg-primary)] px-4 py-[0.65rem]"
-      data-task-detail-validation
-      title="Validation status"
+      data-task-detail-review
+      title="Review status"
     >
       <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
-        Validation
+        Review
       </span>
       <span className="flex min-w-0 items-center gap-2">
         <span

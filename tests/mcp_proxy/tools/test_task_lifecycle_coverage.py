@@ -326,7 +326,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
         result = await _create_registry(mock_task_manager).call("close_task", {"task_id": task.id})
         assert result["closed"] is True
         assert mock_task_manager.close_task.call_args.kwargs["closed_commit_sha"] == "abc1234"
-        assert "reset_validation_fail_count" not in mock_task_manager.close_task.call_args.kwargs
+        assert "reset_review_fail_count" not in mock_task_manager.close_task.call_args.kwargs
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("external_worktree", [False, True])

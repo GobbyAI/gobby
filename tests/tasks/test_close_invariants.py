@@ -225,7 +225,7 @@ async def test_close_needs_no_evidence_relay(
     assert closed["closed"] is True, closed
     assert closed["gates"] == preview["gates"]
     assert manager.get_task(task.id).closed_commit_sha == sha
-    assert manager.get_task(task.id).validation_status == task.validation_status
+    assert manager.get_task(task.id).review_status == task.review_status
     evidence.assert_not_called()
 
 

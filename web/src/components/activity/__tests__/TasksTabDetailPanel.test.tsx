@@ -209,14 +209,24 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     expect(getByText("Downstream consumer")).toBeTruthy();
   });
 
-  it("renders the Validation row only when validation_status is set", () => {
-    const { container: a } = render(<TasksTabDetailPanel task={makeTask()} />);
-    expect(a.querySelector("[data-task-detail-validation]")).toBeNull();
-
-    const { container: b, getByText } = render(
-      <TasksTabDetailPanel task={makeTask({ validation_status: "pending" })} />,
-    );
-    expect(b.querySelector("[data-task-detail-validation]")).not.toBeNull();
-    expect(getByText("Validation")).toBeTruthy();
-  });
+  it.each(["pending", "valid", "invalid", "error"] as const)(
+    "renders the %s review outcome and its feedback",
+    (reviewStatus) => {
+      const { container, getByText, queryByText } = render(
+        <TasksTabDetailPanel
+          task={makeTask({
+            review_status: reviewStatus,
+            review_feedback: "The reviewer checked the committed change.",
+            review_fail_count: 0,
+          })}
+        />,
+      );
+      expect(container.querySelector("[data-task-detail-review]")).not.toBeNull();
+      expect(getByText("Review")).toBeTruthy();
+      expect(getByText(reviewStatus)).toBeTruthy();
+      expect(getByText("Review feedback")).toBeTruthy();
+      expect(getByText("The reviewer checked the committed change.")).toBeTruthy();
+      expect(queryByText("Validation")).toBeNull();
+    },
+  );
 });

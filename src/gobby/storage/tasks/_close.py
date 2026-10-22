@@ -55,9 +55,7 @@ def _close_task_in_txn(
             (task_id,),
         ).fetchall()
         if open_children:
-            listed = [f"{child['id']} ({child['title']})" for child in open_children[:3]]
-            if len(open_children) > 3:
-                listed.append(f"and {len(open_children) - 3} more")
+            listed = [f"{child['id']} ({child['title']})" for child in open_children]
             raise TaskHasOpenChildrenError(task_id, listed)
 
     now = closed_at or utc_now()

@@ -71,7 +71,7 @@ def test_deliberate_close_of_escalated_task_succeeds_and_clears_escalation(
         )
 
 
-def test_manual_escalation_reopen_preserves_historical_validation_fail_count(
+def test_manual_escalation_reopen_preserves_historical_review_fail_count(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -81,12 +81,12 @@ def test_manual_escalation_reopen_preserves_historical_validation_fail_count(
         "Manual reopen",
         validation_criteria="Test task completion is observable.",
     )
-    manager.update_task(task.id, validation_fail_count=4)
+    manager.update_task(task.id, review_fail_count=4)
     manager.escalate_task(task.id, reason="manual review")
 
     reopened = manager.reopen_task(task.id, reason="review resolved")
 
-    assert reopened.validation_fail_count == 4
+    assert reopened.review_fail_count == 4
     assert reopened.is_escalated is False
 
 

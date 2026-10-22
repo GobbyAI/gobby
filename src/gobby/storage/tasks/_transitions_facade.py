@@ -147,7 +147,7 @@ class TaskTransitionsMixin:
         task_id: str,
         *,
         description: MaybeUnset[str | None] = UNSET,
-        validation_fail_count: MaybeUnset[int | None] = UNSET,
+        review_fail_count: MaybeUnset[int | None] = UNSET,
         escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
     ) -> Task:
@@ -156,7 +156,7 @@ class TaskTransitionsMixin:
             self.db,
             task_id=task_id,
             description=description,
-            validation_fail_count=validation_fail_count,
+            review_fail_count=review_fail_count,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,
         )
