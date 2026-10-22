@@ -26,16 +26,16 @@ def pad_to_width(text: str, width: int) -> str:
 
 # Column widths for compact task table
 COL_PRIORITY = 2  # Priority emoji (2 visual chars)
-COL_STAGE_LETTER = 1  # Single-letter current-stage code
-COL_FLAGS = 3  # Up to 3 flag letters (B/E/M)
+COL_STATE_LETTER = 1  # Single-letter projected task state
+COL_FLAGS = 3  # Blocked/escalated flags, with spacing before the task ID
 COL_ID_MIN = 6  # #N format minimum (e.g., #1234)
 COL_SESSION_MIN = 6  # #N format minimum for session refs
-PREFIX_W = COL_PRIORITY + COL_STAGE_LETTER + COL_FLAGS  # 6 visual cols before #id
+PREFIX_W = COL_PRIORITY + COL_STATE_LETTER + COL_FLAGS  # 6 visual cols before #id
 _DIM_ANSI = "\033[2m"
 _RESET_ANSI = "\033[0m"
 
 # Projected task state -> single-letter code (O/E/C)
-_STAGE_STATE_LETTER: dict[str, str] = {
+_STATE_LETTER: dict[str, str] = {
     "ready": "O",
     "escalated": "E",
     "closed": "C",
@@ -56,7 +56,7 @@ class _RenderedRow:
     """A task row with all display fields resolved but not yet padded."""
 
     priority_icon: str
-    stage_letter: str
+    state_letter: str
     flags_letters: str
     task_ref: str
     title: str
@@ -118,14 +118,14 @@ def _build_rendered_row(
     owner_session_id = state["owner_session_id"] if is_claimed else None
     if owner_session_id is None and claimed_task_owner_map is not None:
         owner_session_id = claimed_task_owner_map.get(task.id)
-    stage_state = projected_task_state(task)
+    projected_state = projected_task_state(task)
     blocked = state["is_blocked"]
     escalated = state["is_escalated"]
     closed = state["is_closed"]
 
-    stage_letter = _STAGE_STATE_LETTER.get(stage_state, "?")
+    state_letter = _STATE_LETTER.get(projected_state, "?")
     if closed:
-        stage_letter = "C"
+        state_letter = "C"
 
     flags = ""
     if blocked:
@@ -149,7 +149,7 @@ def _build_rendered_row(
 
     return _RenderedRow(
         priority_icon=priority_icon,
-        stage_letter=stage_letter,
+        state_letter=state_letter,
         flags_letters=flags,
         task_ref=task_ref,
         title=task.title,
@@ -173,7 +173,7 @@ def _render_row(
     instead of a trailing suffix.
     """
     pri = pad_to_width(row.priority_icon, COL_PRIORITY)
-    stat = pad_to_width(row.stage_letter, COL_STAGE_LETTER)
+    stat = pad_to_width(row.state_letter, COL_STATE_LETTER)
     flags = pad_to_width(row.flags_letters, COL_FLAGS)
     id_col = pad_to_width(row.task_ref, id_w)
 
@@ -284,7 +284,7 @@ def format_task_header() -> str:
     :func:`format_task_list` renderer does not emit a header in compact mode.
     """
     pri = pad_to_width("", COL_PRIORITY)
-    stat = pad_to_width("", COL_STAGE_LETTER)
+    stat = pad_to_width("", COL_STATE_LETTER)
     flags = pad_to_width("", COL_FLAGS)
     id_col = pad_to_width("#", COL_ID_MIN)
     return f"{pri}{stat}{flags} {id_col}  TITLE"

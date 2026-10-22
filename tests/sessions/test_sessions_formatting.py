@@ -26,14 +26,14 @@ class TestFormatHandoffAsMarkdown:
             active_gobby_task={
                 "id": "gt-123",
                 "title": "Fix auth bug",
-                "state": {"current_stage": {"state": "in_progress"}},
+                "state": {"is_closed": False, "is_escalated": False, "is_claimed": True},
             }
         )
         result = format_handoff_as_markdown(ctx)
 
         assert "### Active Task" in result
         assert "**Fix auth bug** (gt-123)" in result
-        assert "State: in_progress" in result
+        assert "State: ready" in result
 
     def test_formats_active_task_with_missing_fields(self) -> None:
         """Should handle missing fields in active task with defaults."""
@@ -147,21 +147,21 @@ class TestFormatHandoffAsMarkdown:
             active_gobby_task={
                 "id": "gt-123",
                 "title": "Fix bug",
-                "state": {"current_stage": {"state": "ready"}},
+                "state": {"is_closed": False, "is_escalated": False},
             },
         )
         result = format_handoff_as_markdown(ctx)
 
         assert "### Original Goal" in result
 
-    def test_initial_goal_shown_for_in_progress_task(self) -> None:
-        """Should show initial goal when task state is in_progress."""
+    def test_initial_goal_shown_for_claimed_task(self) -> None:
+        """Should show initial goal while an open task is claimed."""
         ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={
                 "id": "gt-123",
                 "title": "Fix bug",
-                "state": {"current_stage": {"state": "in_progress"}},
+                "state": {"is_closed": False, "is_escalated": False, "is_claimed": True},
             },
         )
         result = format_handoff_as_markdown(ctx)
@@ -178,14 +178,14 @@ class TestFormatHandoffAsMarkdown:
 
         assert "### Original Goal" not in result
 
-    def test_initial_goal_hidden_for_review_task(self) -> None:
-        """Should not show initial goal when task is in review."""
+    def test_initial_goal_hidden_for_escalated_task(self) -> None:
+        """Should not show initial goal when task is escalated."""
         ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={
                 "id": "gt-123",
                 "title": "Fix bug",
-                "state": {"current_stage": {"state": "needs_review"}},
+                "state": {"is_closed": False, "is_escalated": True},
             },
         )
         result = format_handoff_as_markdown(ctx)

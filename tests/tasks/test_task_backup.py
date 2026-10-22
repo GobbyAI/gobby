@@ -209,21 +209,12 @@ class TestTaskBackupManager:
             additional_skills=["test-driven-development"],
             validation_criteria="Test task completion is observable.",
         )
-        task_manager.update_task(
-            task.id,
-            allow_automation=True,
-            unattended=True,
-            checkout_mode="clone",
-        )
 
         backup_manager.backup()
         task_manager.db.execute("DELETE FROM tasks WHERE id = %s", (task.id,))
         backup_manager.restore()
 
         imported = task_manager.get_task(task.id)
-        assert imported.allow_automation is True
-        assert imported.unattended is True
-        assert imported.checkout_mode == "clone"
         assert imported.assigned_agent == "backend-developer"
         assert imported.implementation_domain == "backend"
         assert imported.additional_skills == ["test-driven-development"]

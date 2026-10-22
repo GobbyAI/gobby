@@ -130,8 +130,6 @@ class TestToolSchemas:
             "task_type",
             "start_date",
             "due_date",
-            "allow_automation",
-            "checkout_mode",
             "assigned_agent",
             "implementation_domain",
             "additional_skills",
@@ -146,7 +144,6 @@ class TestToolSchemas:
             if parameter.kind not in {Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD}
         }
         assert set(props) <= manager_fields
-        assert set(props["checkout_mode"]["enum"]) == {"none", "worktree", "clone"}
         assert set(props["implementation_domain"]["enum"]) == {"backend", "frontend", "fullstack"}
         assert props["affected_files"]["type"] == "array"
         assert props["affected_files"]["items"]["type"] == "string"
@@ -194,7 +191,6 @@ class TestToolSchemas:
         props = schema["inputSchema"]["properties"]
 
         expected_props = [
-            "current_stage_state",
             "priority",
             "task_type",
             "label",

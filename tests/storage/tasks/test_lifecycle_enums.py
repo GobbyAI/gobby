@@ -1,50 +1,28 @@
-"""Dispatch metadata coverage for stage-native tasks."""
+"""Task assignment metadata coverage."""
 
 from __future__ import annotations
 
 from dataclasses import MISSING, fields
-from enum import StrEnum
-from typing import Any
+from datetime import UTC, datetime
 
 import pytest
 
+from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import serialize_task_state
 
 pytestmark = pytest.mark.unit
 
-EXPECTED_ISOLATIONS = ["none", "worktree", "clone"]
 NEW_TASK_FIELDS = {
-    "allow_automation",
-    "unattended",
-    "checkout_mode",
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
 }
 
 
-def _task_symbols() -> tuple[type[Any], type[StrEnum]]:
-    import gobby.storage.tasks as task_module
-
-    return task_module.Task, task_module.CheckoutMode
-
-
-def test_isolation_is_str_enum_with_dispatch_values() -> None:
-    _Task, CheckoutMode = _task_symbols()
-
-    assert issubclass(CheckoutMode, StrEnum)
-    assert [item.value for item in CheckoutMode] == EXPECTED_ISOLATIONS
-
-
 def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
-    Task, CheckoutMode = _task_symbols()
-
     task_fields = {item.name: item for item in fields(Task)}
 
     assert NEW_TASK_FIELDS.issubset(task_fields)
-    assert task_fields["allow_automation"].default is False
-    assert task_fields["unattended"].default is False
-    assert task_fields["checkout_mode"].default is CheckoutMode.worktree
     assert task_fields["assigned_agent"].default is None
     assert task_fields["implementation_domain"].default is None
     assert task_fields["additional_skills"].default is None
@@ -54,18 +32,14 @@ def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
 
 @pytest.mark.parametrize("serializer", ["serialize_task_state", "to_dict", "to_brief"])
 def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
-    Task, CheckoutMode = _task_symbols()
     task = Task(
         id="task-1",
         project_id="project-1",
-        title="Automated epic",
+        title="Assigned epic",
         priority=1,
         task_type="epic",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
-        allow_automation=True,
-        unattended=True,
-        checkout_mode=CheckoutMode.clone,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         assigned_agent="backend-developer",
         implementation_domain="backend",
         additional_skills=["sql-review", "perf-review"],
@@ -76,9 +50,6 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
     else:
         payload = getattr(task, serializer)()
 
-    assert payload["allow_automation"] is True
-    assert payload["unattended"] is True
-    assert payload["checkout_mode"] == CheckoutMode.clone
     assert payload["assigned_agent"] == "backend-developer"
     assert payload["implementation_domain"] == "backend"
     assert payload["additional_skills"] == ["sql-review", "perf-review"]

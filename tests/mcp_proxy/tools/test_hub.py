@@ -23,15 +23,6 @@ SESS_2 = "99999999-9999-4999-8999-9999999999a2"
 SESS_3 = "99999999-9999-4999-8999-9999999999a3"
 
 
-def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
-    current = task_manager.stage_states.current_stage(task_id)
-    if current is None:
-        task_manager.initialize_task_manifest(task_id)
-        current = task_manager.stage_states.current_stage(task_id)
-    assert current is not None
-    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
-
-
 @pytest.fixture
 def temp_hub_db(hub_db):
     """Use a migrated hub database for hub tool tests."""
@@ -81,14 +72,13 @@ def populated_hub_db(temp_hub_db):
         validation_criteria="Test task completion is observable.",
     )
     task_manager.close_task(task2.id)
-    task3 = task_manager.create_task(
+    task_manager.create_task(
         PROJECT_BETA,
         "Task 3",
         task_type="feature",
         priority=1,
         validation_criteria="Test task completion is observable.",
     )
-    _start_current_stage(task_manager, task3.id)
 
     # Insert test sessions with correct columns
     db.execute(
@@ -252,10 +242,10 @@ class TestListCrossProjectTasks:
         result = asyncio.run(tool(state="ready"))
 
         assert result["success"] is True
-        assert result["count"] == 1
+        assert result["count"] == 2
         tasks = result["tasks"]
         assert tasks, "expected at least one ready task"
-        assert tasks[0]["state"]["current_stage"] is None
+        assert "current_stage" not in tasks[0]["state"]
         assert tasks[0]["state"]["is_closed"] is False
 
     def test_list_cross_project_tasks_with_limit(self, populated_hub_db) -> None:
@@ -351,9 +341,8 @@ class TestHubStats:
 
         assert result["success"] is True
         stats = result["stats"]
-        assert stats["tasks"]["by_state"]["ready"] == 1
+        assert stats["tasks"]["by_state"]["ready"] == 2
         assert stats["tasks"]["by_state"]["closed"] == 1
-        assert stats["tasks"]["by_state"]["in_progress"] == 1
 
     def test_hub_stats_empty_database(self, temp_hub_db) -> None:
         """Test hub_stats handles empty database gracefully."""

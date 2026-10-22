@@ -34,7 +34,6 @@ from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._transitions import claim_task
-from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import ChildEvaluationCancelled, WorkflowEvaluationRuntime
@@ -42,7 +41,6 @@ from gobby.workflows.hooks import WorkflowHookHandler, snapshot_variables
 from gobby.workflows.ledger_reconcile import reconcile_edit_ledgers
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
-from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 pytestmark = pytest.mark.unit
 
@@ -1927,9 +1925,7 @@ class TestVariablePersistence:
             title="Hydrate a real owned review claim",
             validation_criteria="AFTER_AGENT preserves canonical review-stage ownership.",
         )
-        set_stage_state(db, review_task.id, "development", "needs_review")
         claim_task(db, review_task.id, SESSION_ID)
-        assert current_stage_state(task_manager.get_task(review_task.id)) == "needs_review"
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(

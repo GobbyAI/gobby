@@ -11,7 +11,6 @@ from gobby.storage.tasks import Task
 pytestmark = pytest.mark.unit
 
 COMPACT_STATE_KEYS = {
-    "current_stage",
     "claimed_by_session_id",
     "is_closed",
     "closed_at",
@@ -50,9 +49,6 @@ SUMMARY_TASK_KEYS = {
     "updated_at",
     "state",
     "dependencies",
-    "allow_automation",
-    "unattended",
-    "checkout_mode",
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
@@ -225,12 +221,11 @@ class TestGetTaskTool:
             MockDepManager.return_value = mock_dep_instance
 
             # Create a linked task that the blocker resolves to.
-            linked_stage = {"name": "implementation", "state": "in_progress"}
             linked_task = SimpleNamespace(
                 id="550e8400-e29b-41d4-a716-446655440001",
                 seq_num=42,
                 title="Blocking Task",
-                current_stage=linked_stage,
+                claimed_by_session_id="owner",
             )
 
             def get_task_side_effect(task_id: str) -> Task | SimpleNamespace | None:
@@ -251,7 +246,8 @@ class TestGetTaskTool:
             assert blocked_by[0]["ref"] == "#42"
             assert blocked_by[0]["id"] == "550e8400-e29b-41d4-a716-446655440001"
             assert blocked_by[0]["title"] == "Blocking Task"
-            assert blocked_by[0]["state"]["current_stage"] == linked_stage
+            assert blocked_by[0]["state"]["is_claimed"] is True
+            assert blocked_by[0]["state"]["claimed_by_session_id"] == "owner"
             assert set(blocked_by[0]["state"]) == COMPACT_STATE_KEYS
             assert blocked_by[0]["dep_type"] == "blocks"
 
@@ -477,27 +473,6 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_allow_automation(self, mock_task_manager: MagicMock) -> None:
-        """update_task forwards allow_automation to the storage layer."""
-        registry = create_task_registry(mock_task_manager)
-
-        updated_task = MagicMock()
-        mock_task_manager.update_task.return_value = updated_task
-
-        result = await registry.call(
-            "update_task",
-            {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "allow_automation": False,
-            },
-        )
-
-        mock_task_manager.update_task.assert_called_with(
-            "550e8400-e29b-41d4-a716-446655440000", allow_automation=False
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
     async def test_update_task_escalation_reason_without_transition(
         self, mock_task_manager: MagicMock
     ) -> None:
@@ -551,54 +526,6 @@ class TestUpdateTaskTool:
 
         assert result == {
             "error": "Cannot update escalation_reason for a task that is not escalated."
-        }
-        mock_task_manager.update_task.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_update_task_isolation(self, mock_task_manager: MagicMock) -> None:
-        """update_task forwards validated isolation to the storage layer."""
-        registry = create_task_registry(mock_task_manager)
-
-        updated_task = MagicMock()
-        mock_task_manager.update_task.return_value = updated_task
-
-        result = await registry.call(
-            "update_task",
-            {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "checkout_mode": "none",
-            },
-        )
-
-        mock_task_manager.update_task.assert_called_with(
-            "550e8400-e29b-41d4-a716-446655440000", checkout_mode="none"
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_update_task_rejects_isolation_artifact_conflict(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """update_task rejects retargeting to a conflicting isolation artifact family."""
-        registry = create_task_registry(mock_task_manager)
-        mock_task_manager.artifacts.get_artifacts.return_value = MagicMock(
-            worktree_path="/tmp/gobby-worktree",
-            clone_path=None,
-        )
-
-        result = await registry.call(
-            "update_task",
-            {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "checkout_mode": "clone",
-            },
-        )
-
-        assert result == {
-            "error": (
-                "task already has a worktree artifact; clear existing build artifacts "
-                "before switching to clone isolation"
-            )
         }
         mock_task_manager.update_task.assert_not_called()
 
@@ -976,7 +903,6 @@ class TestListTasksTool:
             await registry.call(
                 "list_tasks",
                 {
-                    "current_stage_state": "ready",
                     "priority": 1,
                     "task_type": "bug",
                     "label": "urgent",
@@ -987,7 +913,6 @@ class TestListTasksTool:
             )
 
             mock_task_manager.list_tasks.assert_called_with(
-                current_stage_state="ready",
                 priority=1,
                 task_type="bug",
                 label="urgent",
@@ -1015,21 +940,6 @@ class TestListTasksTool:
 
             call_kwargs = mock_task_manager.list_tasks.call_args.kwargs
             assert call_kwargs["project_id"] is None
-
-    @pytest.mark.asyncio
-    async def test_list_tasks_comma_separated_status(self, mock_task_manager: MagicMock) -> None:
-        """Test list_tasks handles comma-separated current_stage_state strings."""
-        registry = create_task_registry(mock_task_manager)
-
-        mock_task_manager.list_tasks.return_value = []
-
-        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-
-            await registry.call("list_tasks", {"current_stage_state": "ready,in_progress"})
-
-            call_kwargs = mock_task_manager.list_tasks.call_args.kwargs
-            assert call_kwargs["current_stage_state"] == ["ready", "in_progress"]
 
 
 # =============================================================================

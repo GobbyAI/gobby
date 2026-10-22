@@ -218,8 +218,6 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
 
-
-
         closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
         state_filters: TaskStateFilters = {}
         if claimed is not None:

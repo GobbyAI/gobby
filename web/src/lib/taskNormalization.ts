@@ -1,112 +1,8 @@
-import {
-  currentStage as selectCurrentStage,
-  type ReviewPolicy,
-  type StageState5,
-  type StageStateView,
-} from "./stageActions";
 import type { CanonicalTaskState, OwnerSessionRef } from "./taskState";
 import { getCanonicalTaskState, getTaskDisplayState } from "./taskState";
 import { DEFAULT_TASK_PRIORITY } from "./taskOptions";
 
-const STAGE_STATES: readonly StageState5[] = [
-  "ready",
-  "in_progress",
-  "needs_review",
-  "review_approved",
-  "done",
-];
-
-const REVIEW_POLICIES: readonly ReviewPolicy[] = [
-  "none",
-  "required",
-  "optional",
-];
-
-const RETIRED_STAGE_NAMES = new Set(["test_arch"]);
 const MAX_TASK_PAYLOAD_EXTRACT_DEPTH = 5;
-
-export function isRetiredStageName(name: string | null | undefined): boolean {
-  return typeof name === "string" && RETIRED_STAGE_NAMES.has(name);
-}
-
-export interface StageRegistryEntry extends StageStateView {
-  sequence_order?: number | null;
-  description?: string | null;
-  default_agent?: string | null;
-  reviewer_agent_selector_json?: string | null;
-  requires_human?: boolean | null;
-  is_terminal?: boolean | null;
-}
-
-export interface ReviewerAgentSelectorRule {
-  category?: string;
-  reviewer_agent: string;
-}
-
-export interface ReviewerAgentSelector {
-  default: string;
-  rules: ReviewerAgentSelectorRule[];
-}
-
-/**
- * Parse a stage registry reviewer selector payload.
- *
- * Backends send this as JSON text so older clients can ignore it. New callers
- * should use this helper instead of parsing `reviewer_agent_selector_json`
- * inline, because malformed rows should degrade to the legacy reviewer field.
- */
-export function parseReviewerAgentSelector(
-  value: string | null | undefined,
-): ReviewerAgentSelector | null {
-  if (!value) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const record = parsed as { default?: unknown; rules?: unknown };
-  if (typeof record.default !== "string" || !record.default.trim()) return null;
-  const defaultReviewer = record.default.trim();
-  const rules = Array.isArray(record.rules)
-    ? record.rules.flatMap((rule): ReviewerAgentSelectorRule[] => {
-        if (!rule || typeof rule !== "object") return [];
-        const item = rule as { category?: unknown; reviewer_agent?: unknown };
-        if (
-          typeof item.reviewer_agent !== "string" ||
-          !item.reviewer_agent.trim()
-        )
-          return [];
-        const category =
-          typeof item.category === "string" ? item.category.trim() : "";
-        return [
-          {
-            ...(category ? { category } : {}),
-            reviewer_agent: item.reviewer_agent.trim(),
-          },
-        ];
-      })
-    : [];
-  return { default: defaultReviewer, rules };
-}
-
-export interface StagesRegistryWireResponse {
-  registry?: RawStagePayload[];
-  stages?: RawStagePayload[];
-}
-
-export type RawStagePayload = Partial<StageStateView> & {
-  stage_name?: string | null;
-  display_label?: string | null;
-  position_hint?: number | null;
-  sequence_order?: number | null;
-  description?: string | null;
-  default_agent?: string | null;
-  reviewer_agent_selector_json?: string | null;
-  requires_human?: boolean | null;
-  is_terminal?: boolean | null;
-};
 
 export type RawTaskPayload = {
   id: string;
@@ -135,20 +31,14 @@ export type RawTaskPayload = {
   labels?: string[] | null;
   validation_criteria?: string | null;
   owner_session_ref?: OwnerSessionRef | null;
-  current_stage?: RawStagePayload | null;
-  stages?: RawStagePayload[] | null;
   state?: Partial<CanonicalTaskState> | null;
-  allow_automation?: boolean | null;
-  yolo?: boolean | null;
-  checkout_mode?: string | null;
-  dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
 };
 
 export type NormalizedTaskPayload = Omit<
   RawTaskPayload,
-  "current_stage" | "stages" | "state"
+  "state"
 > & {
   ref: string;
   title: string;
@@ -165,8 +55,6 @@ export type NormalizedTaskPayload = Omit<
   start_date: string | null;
   due_date: string | null;
   project_id: string;
-  current_stage: StageStateView | null;
-  stages: StageStateView[];
   state: CanonicalTaskState;
 };
 
@@ -180,10 +68,6 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || value === null || typeof value === "number";
-}
-
-function isOptionalBoolean(value: unknown): boolean {
-  return value === undefined || value === null || typeof value === "boolean";
 }
 
 function isOptionalRecord(value: unknown): boolean {
@@ -235,15 +119,10 @@ const OPTIONAL_TASK_FIELD_VALIDATORS = {
   category: isOptionalString,
   description: isOptionalString,
   validation_criteria: isOptionalString,
-  checkout_mode: isOptionalString,
   assigned_agent: isOptionalString,
   priority: isOptionalNumber,
   seq_num: isOptionalNumber,
   sequence_order: isOptionalNumber,
-  dispatch_failure_count: isOptionalNumber,
-  allow_automation: isOptionalBoolean,
-  yolo: isOptionalBoolean,
-  current_stage: isOptionalRecord,
   state: isOptionalRecord,
   owner_session_ref: isOptionalOwnerSessionRef,
   labels: isStringArrayOrNull,
@@ -254,10 +133,7 @@ function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
   return (
     Object.entries(OPTIONAL_TASK_FIELD_VALIDATORS).every(([field, validate]) =>
       validate(record[field]),
-    ) &&
-    (record.stages === undefined ||
-      record.stages === null ||
-      (Array.isArray(record.stages) && record.stages.every(isRecord)))
+    )
   );
 }
 
@@ -287,150 +163,9 @@ export function extractTaskPayload(
   return null;
 }
 
-function isStageState(value: unknown): value is StageState5 {
-  return (
-    typeof value === "string" && STAGE_STATES.includes(value as StageState5)
-  );
-}
-
-function isReviewPolicy(value: unknown): value is ReviewPolicy {
-  return (
-    typeof value === "string" && REVIEW_POLICIES.includes(value as ReviewPolicy)
-  );
-}
-
-const STAGE_NAME_ACRONYMS = new Set([
-  "qa",
-  "pr",
-  "ui",
-  "api",
-  "cli",
-  "mcp",
-  "json",
-  "xml",
-  "http",
-  "https",
-  "css",
-  "html",
-  "sql",
-  "tui",
-  "ide",
-  "db",
-  "ci",
-  "cd",
-  "sdk",
-  "url",
-  "id",
-]);
-
-function titleizeStageName(name: string): string {
-  return name
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => {
-      if (STAGE_NAME_ACRONYMS.has(part.toLowerCase())) {
-        return part.toUpperCase();
-      }
-      return (part[0]?.toUpperCase() ?? "") + part.slice(1);
-    })
-    .join(" ");
-}
-
-export function normalizeStageRow(
-  row: RawStagePayload | null | undefined,
-  fallback?: Partial<StageStateView> | null,
-): StageStateView {
-  const name = row?.name ?? row?.stage_name ?? fallback?.name ?? "";
-  const position =
-    row?.position ??
-    row?.position_hint ??
-    row?.sequence_order ??
-    fallback?.position ??
-    null;
-
-  return {
-    name,
-    display_name:
-      row?.display_name ??
-      row?.display_label ??
-      fallback?.display_name ??
-      titleizeStageName(name),
-    category: row?.category ?? fallback?.category ?? "",
-    state: isStageState(row?.state) ? row.state : (fallback?.state ?? "ready"),
-    review_policy: isReviewPolicy(row?.review_policy)
-      ? row.review_policy
-      : (fallback?.review_policy ?? "required"),
-    updated_at: row?.updated_at ?? fallback?.updated_at ?? null,
-    position,
-    reviewer_agent: row?.reviewer_agent ?? fallback?.reviewer_agent ?? null,
-    work_attempt_count:
-      row?.work_attempt_count ?? fallback?.work_attempt_count ?? null,
-    review_round_count:
-      row?.review_round_count ?? fallback?.review_round_count ?? null,
-    max_work_attempts:
-      row?.max_work_attempts ?? fallback?.max_work_attempts ?? null,
-    max_review_rounds:
-      row?.max_review_rounds ?? fallback?.max_review_rounds ?? null,
-    artifact_refs: row?.artifact_refs ?? fallback?.artifact_refs ?? null,
-  };
-}
-
-export function normalizeStageRegistryEntry(
-  row: RawStagePayload,
-): StageRegistryEntry {
-  const normalized = normalizeStageRow(row);
-  const position =
-    normalized.position ?? row.position_hint ?? row.sequence_order ?? null;
-  return {
-    ...normalized,
-    position,
-    sequence_order: row.sequence_order ?? position,
-    description: row.description ?? null,
-    default_agent: row.default_agent ?? null,
-    reviewer_agent_selector_json: row.reviewer_agent_selector_json ?? null,
-    requires_human: row.requires_human ?? null,
-    is_terminal: row.is_terminal ?? null,
-  };
-}
-
-export function normalizeStagesRegistryResponse(
-  data: StagesRegistryWireResponse | null | undefined,
-): StageRegistryEntry[] {
-  const rows = data?.stages ?? data?.registry ?? [];
-  return rows
-    .map((row) => normalizeStageRegistryEntry(row))
-    .filter((stage) => !isRetiredStageName(stage.name));
-}
-
-function normalizeCurrentStage(
-  task: RawTaskPayload,
-  stages: StageStateView[],
-): StageStateView | null {
-  const selected = selectCurrentStage<RawStagePayload>({
-    stages: Array.isArray(task.stages) ? stages : undefined,
-    state: {
-      current_stage: task.state?.current_stage as
-        RawStagePayload | null | undefined,
-    },
-    current_stage: task.current_stage,
-  });
-  if (!selected) return null;
-
-  const currentName = selected.name ?? selected.stage_name ?? null;
-  if (isRetiredStageName(currentName)) return null;
-  const matchingStage = currentName
-    ? stages.find((stage) => stage.name === currentName)
-    : null;
-  return normalizeStageRow(selected, matchingStage);
-}
-
 export function normalizeTaskPayload<T extends RawTaskPayload>(
   task: T,
 ): T & NormalizedTaskPayload {
-  const stages = (task.stages ?? [])
-    .map((stage) => normalizeStageRow(stage))
-    .filter((stage) => !isRetiredStageName(stage.name));
-  const currentStage = normalizeCurrentStage(task, stages);
   const projected = {
     ...task,
     ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
@@ -447,22 +182,13 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
     start_date: task.start_date ?? null,
     due_date: task.due_date ?? null,
     project_id: task.project_id ?? "",
-    current_stage: currentStage,
-    stages,
   };
-  const canonical = getCanonicalTaskState({
-    ...projected,
-    state: {
-      ...task.state,
-      current_stage: currentStage,
-    },
-  });
+  const canonical = getCanonicalTaskState(projected);
   const status = getTaskDisplayState({ ...projected, state: canonical });
 
   return {
     ...projected,
     status,
-    current_stage: canonical.current_stage,
     state: canonical,
   } as T & NormalizedTaskPayload;
 }

@@ -8,7 +8,6 @@ from typing import Any, cast
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
 from gobby.storage.task_dependencies import DependencyCycleError
-from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._transitions import (
     ancestor_ids_in_txn,

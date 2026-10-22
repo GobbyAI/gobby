@@ -25,11 +25,6 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
     start_date: null,
     due_date: null,
     project_id: "proj-1",
-    current_stage: null,
-    stages: [],
-    allow_automation: null,
-    yolo: null,
-    checkout_mode: null,
   } satisfies GobbyTask;
   return { ...base, ...overrides };
 }

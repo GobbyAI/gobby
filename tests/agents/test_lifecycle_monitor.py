@@ -30,7 +30,6 @@ import pytest
 import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.config.tmux import TmuxConfig
@@ -46,7 +45,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.composer import composer_clear_sequence
@@ -643,44 +641,6 @@ def test_idle_check_handler_receives_monitor_database(
     assert monitor._idle_check_handler.db is temp_db
 
 
-@pytest.mark.parametrize(
-    ("metadata", "expected"),
-    [
-        ({"stage_name": "development", "stage_state": "in_progress"}, True),
-        (
-            {
-                "initial_variables": {
-                    "stage_name": "development",
-                    "stage_state": "in_progress",
-                }
-            },
-            True,
-        ),
-        ({"stage_name": "development"}, False),
-        ({"stage_state": "in_progress"}, False),
-        ({"stage_name": "development", "stage_state": 1}, False),
-        (None, False),
-        (["stage_name", "development"], False),
-    ],
-)
-def test_has_dispatch_stage_context_requires_string_stage_fields(
-    metadata: object,
-    expected: bool,
-) -> None:
-    assert (
-        has_dispatch_stage_context(_metadata_run(_rid("run-stage-context"), metadata)) is expected
-    )
-
-
-def test_has_dispatch_stage_context_handles_metadata_access_failure() -> None:
-    class BrokenMetadataRun:
-        @property
-        def resume_metadata_json(self) -> object:
-            raise RuntimeError("metadata unavailable")
-
-    assert has_dispatch_stage_context(cast(AgentRun, BrokenMetadataRun())) is False
-
-
 @pytest.mark.asyncio
 async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
     temp_db: HubDatabase,
@@ -926,7 +886,7 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
 
 
 @pytest.mark.asyncio
-async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stage_context(
+async def test_refresh_active_run_dispatch_mutexes_restores_manual_task_run(
     agent_run_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_session: dict[str, Any],
@@ -968,8 +928,10 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
         terminal_services=_fake_terminal_services(temp_db),
     )
 
-    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
-    assert mutexes.get_mutex(task.id) is None
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
+    restored = mutexes.get_mutex(task.id)
+    assert restored is not None
+    assert restored.run_id == run.id
 
 
 def _link_child_session_to_run(
@@ -1608,17 +1570,6 @@ def _make_dispatched_stage_run(
         claimed_by_session_id=child_session_id,
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.stage_states.initialize_manifest(
-        task.id,
-        [StageManifestSpec(stage_name="development", position=0)],
-        by_session_id="dispatcher",
-    )
-    task_manager.stage_states.start_stage(
-        task.id,
-        "development",
-        by_session_id="dispatcher",
-    )
-
     run = agent_run_manager.create(
         parent_session_id=parent_session_id,
         child_session_id=child_session_id,
@@ -1639,10 +1590,6 @@ def _make_dispatched_stage_run(
     assert _live_run is not None
     make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
 
-    agent_run_manager.update_resume_metadata(
-        run.id,
-        {"stage_name": "development", "stage_state": "in_progress"},
-    )
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
 
@@ -3477,9 +3424,6 @@ class TestCheckExpiredAgents:
         assert lease_holder is not None
         assert lease_holder.startswith("task_recovery:")
         assert mutexes.get_mutex(task.id) is None
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "ready"
         recovered = task_manager.get_task(task.id)
         assert recovered is not None
         assert recovered.claimed_by_session_id is None
@@ -3593,76 +3537,9 @@ class TestCheckExpiredAgents:
         assert "tool_call_count=0" in (updated.error or "")
         assert "CANARY-OK" in (updated.error or "")
 
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered.claimed_by_session_id is None
-        assert recovered.dispatch_failure_count == 1
-
-    @pytest.mark.asyncio
-    async def test_bootstrap_accounting_stalls_escalate_at_retry_cap(
-        self,
-        agent_run_manager: LocalAgentRunManager,
-        sample_session: dict[str, Any],
-        sample_project: dict[str, Any],
-        session_manager: SessionManager,
-        temp_db: HubDatabase,
-    ) -> None:
-        """Repeated bootstrap/accounting stalls stop redispatching the same reviewer."""
-        child = session_manager.register(
-            external_id="child-zero-accounting-cap",
-            machine_id="21000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-        )
-        task_manager = LocalTaskManager(temp_db)
-        task, run, _mutexes = _make_dispatched_stage_run(
-            agent_run_manager=agent_run_manager,
-            task_manager=task_manager,
-            temp_db=temp_db,
-            sample_project=sample_project,
-            parent_session_id=sample_session["id"],
-            child_session_id=child.id,
-            run_id=_rid("run-zero-accounting-cap"),
-            terminal_id="gobby-zero-accounting-cap",
-            provider="claude",
-        )
-        task_manager.update_task(task.id, dispatch_failure_count=2)
-        past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
-        temp_db.execute(
-            "UPDATE agent_runs SET started_at = %s, timeout_seconds = %s WHERE id = %s",
-            (past, 120, run.id),
-        )
-
-        monitor = AgentLifecycleMonitor(
-            detection_registry=DETECTION_REGISTRY,
-            agent_run_manager=agent_run_manager,
-            db=temp_db,
-            session_manager=session_manager,
-            task_manager=task_manager,
-            check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
-            terminal_services=_fake_terminal_services(temp_db),
-        )
-
-        with (
-            _pane_text(monitor, "QA verdict: PASS\n"),
-            patch.object(
-                monitor._health_monitor,
-                "_terminate_tmux_run",
-                new=_successful_termination_stub(monitor),
-            ),
-        ):
-            cleaned = await monitor.check_unhealthy_agents()
-
-        assert cleaned == 1
-        recovered = task_manager.get_task(task.id)
-        assert recovered.claimed_by_session_id is None
-        assert recovered.dispatch_failure_count == 0
-        assert recovered.escalated_at is not None
-        assert recovered.escalation_reason == "Bootstrap/accounting stalled 3 dispatch attempts"
 
     @pytest.mark.asyncio
     async def test_expired_agent_expires_child_session(
@@ -3895,14 +3772,10 @@ class TestCheckExpiredAgents:
             for record in caplog.records
             if record.levelno >= logging.WARNING and record.name.startswith("gobby.agents")
         ]
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered is not None
         assert recovered.claimed_by_session_id is None
-        assert recovered.dispatch_failure_count == 1
         expired_session = session_manager.get(child.id)
         assert expired_session is not None
         assert expired_session.status == "expired"
@@ -3954,16 +3827,11 @@ class TestCheckExpiredAgents:
         )
         events: list[str] = []
         release_observations: list[tuple[list[str], str | None, str | None]] = []
-        original_fail_stage = task_manager.stage_states.fail_stage
         original_release_claim = task_manager.release_task_claim
 
         async def verified_dead(*args: object, **kwargs: object) -> dict[str, object]:
             events.append("verified_dead")
             return {"success": True, "pid": 12345}
-
-        def fail_stage(*args: Any, **kwargs: Any) -> object:
-            events.append("fail_stage")
-            return original_fail_stage(*args, **kwargs)
 
         def release_task_claim(*args: Any, **kwargs: Any) -> object:
             mutex = mutexes.get_mutex(task.id)
@@ -3983,16 +3851,15 @@ class TestCheckExpiredAgents:
                 new_callable=AsyncMock,
                 side_effect=verified_dead,
             ),
-            patch.object(task_manager.stage_states, "fail_stage", side_effect=fail_stage),
             patch.object(task_manager, "release_task_claim", side_effect=release_task_claim),
         ):
             expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
-        assert events == ["verified_dead", "fail_stage", "release_task_claim"]
+        assert events == ["verified_dead", "release_task_claim"]
         assert len(release_observations) == 1
         observed_events, lease_holder, mutex_run_id = release_observations[0]
-        assert observed_events == ["verified_dead", "fail_stage"]
+        assert observed_events == ["verified_dead"]
         assert lease_holder is not None
         assert lease_holder.startswith("task_recovery:")
         assert mutex_run_id is None
@@ -4055,14 +3922,10 @@ class TestCheckExpiredAgents:
             expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "in_progress"
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered is not None
         assert recovered.claimed_by_session_id is None
-        assert recovered.dispatch_failure_count in (None, 0)
         expired_session = session_manager.get(child.id)
         assert expired_session is not None
         assert expired_session.status == "expired"
@@ -4416,9 +4279,6 @@ class TestCheckProviderStallsKillsAgent:
             stalled = await monitor.check_provider_stalls()
 
         assert stalled == 1
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered.claimed_by_session_id is None
@@ -4569,8 +4429,6 @@ class TestCheckInitializationTimeout:
 
         terminal = terminal_manager.get(run.terminal_id)
         assert terminal is not None and terminal.state == "exited"
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None and stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         assert task_manager.get_task(task.id).claimed_by_session_id is None
 
@@ -4758,8 +4616,6 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
         assert updated.pid is None
         assert "never initialized" in (updated.error or "")
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None and stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         assert task_manager.get_task(task.id).claimed_by_session_id is None
 
@@ -4909,9 +4765,6 @@ class TestCheckInitializationTimeout:
         killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        stage = task_manager.stage_states.get(task.id, "development")
-        assert stage is not None
-        assert stage.state == "ready"
         assert mutexes.get_mutex(task.id) is None
         recovered = task_manager.get_task(task.id)
         assert recovered.claimed_by_session_id is None

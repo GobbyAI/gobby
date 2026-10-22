@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click import ClickException
@@ -53,15 +53,7 @@ def _owner_session_row(session_id: str, seq_num: int) -> dict[str, Any]:
 pytestmark = pytest.mark.unit
 
 
-def _stage_row(state: str = "ready", name: str = "development") -> SimpleNamespace:
-    return SimpleNamespace(stage_name=name, name=name, position=1, state=state)
-
-
 def _set_task_state(task: MagicMock, state: str = "ready") -> None:
-    task.current_stage = None
-    task.stages = (
-        _stage_row(state if state not in {"closed", "escalated", "blocked"} else "ready"),
-    )
     task.closed_at = "2026-01-01T00:00:00Z" if state == "closed" else None
     task.escalated_at = "2026-01-01T00:00:00Z" if state == "escalated" else None
     task.is_escalated = state == "escalated"
@@ -105,12 +97,6 @@ def mock_task() -> MagicMock:
     task.parent_task_id = None
     task.claimed_by_session_id = None
     task.claimed_by_session_id = None
-    task.current_stage = None
-    task.stages = (
-        SimpleNamespace(stage_name="development", name="development", position=1, state="ready"),
-        SimpleNamespace(stage_name="pr", name="pr", position=2, state="ready"),
-        SimpleNamespace(stage_name="merge", name="merge", position=3, state="ready"),
-    )
     task.closed_at = None
     task.closed_reason = None
     task.closed_in_session_id = None
@@ -135,12 +121,10 @@ def mock_task() -> MagicMock:
         "project_id": "proj-123",
         "state": {
             "owner_session_id": None,
-            "current_stage": {"name": "development", "state": "ready"},
             "is_claimed": False,
             "is_closed": False,
             "is_escalated": False,
             "is_blocked": False,
-            "is_merge_ready": False,
             "closed_at": None,
             "closed_reason": None,
             "closed_in_session_id": None,
@@ -315,47 +299,6 @@ class TestListTasksCommand:
         assert len(data) == 1
         assert data[0]["id"] == "gt-abc123"
 
-    @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.get_project_context")
-    def test_list_with_stage_and_state_filter(
-        self,
-        mock_project_ctx: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_filter: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test list with exact stage and state filters."""
-        mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = [mock_task]
-        mock_get_manager.return_value = mock_manager
-        mock_filter.return_value = [mock_task]
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "list", "--stage", "development", "--state", "ready", "--json"],
-        )
-
-        assert result.exit_code == 0
-        mock_manager.list_tasks.assert_called_once()
-        assert mock_manager.list_tasks.call_args.kwargs["limit"] == 10000
-        mock_filter.assert_called_once_with(
-            mock_manager,
-            [mock_task],
-            stage_name="development",
-            state="ready",
-            project_id=ANY,
-        )
-
-    def test_list_state_requires_stage(self, runner: CliRunner) -> None:
-        """Test --state is only accepted with an explicit --stage."""
-        result = runner.invoke(cli, ["tasks", "list", "--state", "ready"])
-
-        assert result.exit_code == 0
-        assert "--state requires --stage" in result.output
-
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
     def test_list_with_active_flag(
@@ -400,37 +343,6 @@ class TestListTasksCommand:
         assert call_kwargs["closed"] is False
         assert call_kwargs["escalated"] is True
         assert call_kwargs["limit"] == 7
-
-    @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.get_project_context")
-    def test_list_with_stage_filter(
-        self,
-        mock_project_ctx: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_filter: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test list with canonical stage filter."""
-        mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = [mock_task]
-        mock_get_manager.return_value = mock_manager
-        mock_filter.return_value = [mock_task]
-
-        result = runner.invoke(cli, ["tasks", "list", "--stage", "development", "--json"])
-
-        assert result.exit_code == 0
-        mock_filter.assert_called_once_with(
-            mock_manager,
-            [mock_task],
-            stage_name="development",
-            state=None,
-            project_id=ANY,
-        )
-        assert mock_filter.call_count == 1
-        assert mock_filter.call_args is not None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -766,7 +678,7 @@ class TestTaskStatsCommand:
         assert result.exit_code == 0
         assert "Task Statistics" in result.output
         assert "Total: 1" in result.output
-        assert "development:ready: 1" in result.output
+        assert "Ready (no blockers): 1" in result.output
         assert "Claimed: 0" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -787,7 +699,7 @@ class TestTaskStatsCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "total" in data
-        assert "by_stage_state" in data
+        assert "ready" in data
         assert "by_priority" in data
         assert "closed" in data
 
@@ -1043,7 +955,8 @@ class TestShowTaskCommand:
         assert result.exit_code == 0
         assert "Test Task" in result.output
         assert "gt-abc123" in result.output
-        assert "Current Stage: development:ready" in result.output
+        assert "Closed: no" in result.output
+        assert "Current Stage" not in result.output
         assert "Legacy Status" not in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -1283,54 +1196,6 @@ class TestUpdateTaskCommand:
         mock_manager.update_task.assert_called_once()
         call_kwargs = mock_manager.update_task.call_args.kwargs
         assert call_kwargs["task_type"] == "epic"
-
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_update_task_with_isolation(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """--checkout-mode forwards the new automation isolation mode."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--checkout-mode", "none"])
-
-        assert result.exit_code == 0
-        mock_manager.update_task.assert_called_once()
-        call_kwargs = mock_manager.update_task.call_args.kwargs
-        assert call_kwargs["checkout_mode"] == "none"
-
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_update_task_rejects_isolation_artifact_conflict(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.artifacts.get_artifacts.return_value = SimpleNamespace(
-            worktree_path=None,
-            clone_path="/tmp/gobby-clone",
-        )
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--checkout-mode", "worktree"])
-
-        assert result.exit_code != 0
-        assert (
-            "task already has a clone artifact; clear existing build artifacts "
-            "before switching to worktree isolation"
-        ) in result.output
-        mock_manager.update_task.assert_not_called()
 
 
 class TestCloseTaskCommand:
@@ -1996,15 +1861,14 @@ class TestUtilsHelpers:
     def test_format_task_row_different_states(self, mock_task: MagicMock) -> None:
         """Test format_task_row with different task states.
 
-        Under the compact layout each stage/flag condition maps to a
-        single letter: O/P/R/A/C for stage states, B/E/M for flags.
+        The compact layout uses O/C for open/closed tasks and B/E for flags.
         """
         from gobby.cli.tasks._utils import format_task_row
 
-        # Test in_progress stage state -> "P"
-        _set_task_state(mock_task, "in_progress")
+        # Test an open task -> "O"
+        _set_task_state(mock_task, "ready")
         result = format_task_row(mock_task)
-        assert "P" in result
+        assert "O" in result
 
         # Test closed task -> "C" (rendered dim)
         _set_task_state(mock_task, "closed")
@@ -2080,15 +1944,6 @@ class TestFormatTaskList:
         task.project_id = project_id
         task.parent_task_id = None
         task.claimed_by_session_id = owner
-        task.current_stage = None
-        task.stages = (
-            SimpleNamespace(
-                stage_name="development",
-                name="development",
-                position=1,
-                state="ready" if state in {"blocked", "escalated", "closed"} else state,
-            ),
-        )
         task.closed_at = "2026-01-01T00:00:00Z" if state == "closed" else None
         task.closed_reason = None
         task.closed_in_session_id = None
@@ -2228,27 +2083,6 @@ class TestFormatTaskList:
         assert "…" in plain
         # And the full original title must NOT be there in one piece
         assert "truncated" not in plain
-
-    def test_group_by_stage_emits_headers(self) -> None:
-        from gobby.cli.tasks._utils import format_task_list
-
-        open_task = self._make_task(seq_num=1, title="new work", state="ready")
-        progress_task = self._make_task(seq_num=2, title="active work", state="in_progress")
-        mock_db = MagicMock()
-        mock_db.fetchall.return_value = []
-
-        rendered = format_task_list(
-            [open_task, progress_task],
-            db=mock_db,
-            group_by="stage",
-            term_width=120,
-        )
-        plain = self._strip_ansi(rendered)
-
-        assert "development:ready (1)" in plain
-        assert "development:in_progress (1)" in plain
-        assert "#1" in plain
-        assert "#2" in plain
 
     def test_group_by_project_resolves_names(self) -> None:
         from gobby.cli.tasks._utils import format_task_list
@@ -2708,14 +2542,6 @@ class TestTaskUtilsFunctions:
             check_tasks_enabled()
             check_tasks_enabled()
         assert runtime.require_config.call_count == 2
-
-    def test_stage_state_choices(self) -> None:
-        """Test stage-state CLI choices."""
-        from gobby.cli.tasks._stage_filters import STAGE_STATES
-
-        assert "ready" in STAGE_STATES
-        assert "in_progress" in STAGE_STATES
-        assert "needs_review" in STAGE_STATES
 
     def test_pad_to_width(self) -> None:
         """Test pad_to_width function."""

@@ -4,7 +4,6 @@ import {
   normalizeTaskPayload,
   type RawTaskPayload,
 } from "../../lib/taskNormalization";
-import { getCanonicalStageName } from "../../lib/taskState";
 
 export function getBaseUrl(): string {
   // Empty means same-origin; production serves the UI and API from one daemon origin.
@@ -30,13 +29,6 @@ export function normalizeActivityTask(
   return normalizeTaskPayload({
     ...fallback,
     ...raw,
-    stages: raw.stages ?? fallback?.stages ?? [],
-    current_stage:
-      raw.current_stage ??
-      raw.state?.current_stage ??
-      fallback?.current_stage ??
-      fallback?.state?.current_stage ??
-      null,
   }) as GobbyTask;
 }
 
@@ -49,10 +41,6 @@ export function areSetsEqual<T>(
     if (!right.has(value)) return false;
   }
   return true;
-}
-
-export function getCurrentStageName(task: GobbyTask): string | null {
-  return getCanonicalStageName(task);
 }
 
 export function mergeTasksById(...taskGroups: GobbyTask[][]): GobbyTask[] {

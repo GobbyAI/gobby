@@ -26,7 +26,6 @@ import {
 import {
   installResizeObserverMock,
   setupDefaultFetchRoutes,
-  stagePayload,
   taskStatePayload,
 } from "./TasksTab.setup";
 
@@ -77,22 +76,14 @@ describe("TasksTab — filters", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders stage chips, canonical status labels, and grouped filters", async () => {
-    const reviewStage = {
-      stage_name: "development",
-      position: 10,
-      category: "delivery",
-      state: "needs_review",
-      review_policy: "required",
-      updated_at: "2026-04-13T00:00:00Z",
-    };
+  it("renders claim-based status labels and grouped filters", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [
         {
-          id: "task-needs-review",
+          id: "task-claimed",
           ref: "#601",
-          title: "Canonical needs review task",
+          title: "Canonical claimed task",
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -101,16 +92,12 @@ describe("TasksTab — filters", () => {
           seq_num: 601,
           path_cache: "601",
           project_id: "proj-1",
-          current_stage: { name: "development", state: "needs_review" },
-          stages: [reviewStage],
           state: {
             owner_session_id: "session-1",
-            current_stage: { name: "development", state: "needs_review" },
             is_claimed: true,
             is_closed: false,
             is_escalated: false,
             is_blocked: false,
-            is_merge_ready: false,
             closed_at: null,
             closed_reason: null,
             closed_in_session_id: null,
@@ -125,18 +112,17 @@ describe("TasksTab — filters", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Canonical needs review task")).toBeTruthy();
+      expect(screen.getByText("Canonical claimed task")).toBeTruthy();
     });
 
-    expect(screen.getByText("Development")).toBeTruthy();
     expect(
-      screen.getByLabelText("Status: Development: Needs Review · Claimed"),
+      screen.getByLabelText("Status: In Progress · Claimed"),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 
     expect(screen.queryByText("Stage")).toBeNull();
-    expect(screen.getByText("Stage state")).toBeTruthy();
+    expect(screen.getByText("State")).toBeTruthy();
     expect(screen.getByText("Status")).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: "Development" })).toBeNull();
     expect(taskListRequestUrls().every((url) => !/[?&]stage=/.test(url))).toBe(
@@ -147,8 +133,8 @@ describe("TasksTab — filters", () => {
         String(url).includes("/api/stages/registry"),
       ),
     ).toBe(false);
-    expect(screen.getByText("Needs Review")).toBeTruthy();
-    expect(screen.getByText("Review Approved")).toBeTruthy();
+    expect(screen.getByLabelText("Ready")).toBeChecked();
+    expect(screen.getByLabelText("In Progress")).toBeChecked();
     expect(screen.getByText("Closed")).toBeTruthy();
   });
 
@@ -156,7 +142,7 @@ describe("TasksTab — filters", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     const funnel = screen.getByLabelText("Filter tasks");
@@ -167,7 +153,7 @@ describe("TasksTab — filters", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     const getBadgeText = () =>
@@ -208,7 +194,7 @@ describe("TasksTab — filters", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByLabelText("Filter tasks"));
@@ -248,11 +234,10 @@ describe("TasksTab — filters", () => {
           id: "task-closed-only",
           ref: "#777",
           title: "Closed only task",
-          state: taskStatePayload("done", {
+          state: taskStatePayload("closed", {
             is_closed: true,
             closed_at: "2026-04-13T00:00:00Z",
           }),
-          current_stage: stagePayload("done"),
           closed_at: "2026-04-13T00:00:00Z",
           priority: 2,
           task_type: "task",

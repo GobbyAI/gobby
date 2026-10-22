@@ -17,8 +17,6 @@ describe("StatusBadge", () => {
     const statuses = [
       "open",
       "in_progress",
-      "needs_review",
-      "review_approved",
       "closed",
       "escalated",
     ];
@@ -42,8 +40,8 @@ describe("StatusDot", () => {
   });
 
   it("renders with title", () => {
-    render(<StatusDot status="needs_review" />);
-    expect(screen.getByTitle("Needs Review")).toBeTruthy();
+    render(<StatusDot status="in_progress" />);
+    expect(screen.getByTitle("In Progress")).toBeTruthy();
   });
 
   it("uses the canonical task-state kind without a fallback branch", () => {
@@ -63,9 +61,7 @@ describe("StatusDot — honest task-state glyphs (#14769 / D2)", () => {
   const cases: Array<[string, string, string]> = [
     ["open", "circle", "info"],
     ["in_progress", "activity", "warning"],
-    ["needs_review", "eye", "info"],
     ["blocked", "lock", "error"],
-    ["review_approved", "check", "success"],
     ["closed", "dash", "disabled"],
   ];
 

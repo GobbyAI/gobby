@@ -448,8 +448,7 @@ def test_reporter_bounds_queue_resolution_and_names_unreadable_rows() -> None:
     assert "refill only lanes still short" in sources
     assert "five eligible tasks are found or its queue is exhausted" in sources
     assert "refs resolution ignores filters" in sources
-    assert "stage object" in sources
-    assert "A null current_stage means no recorded stage" in sources
+    assert "state object" in sources
     assert 'Never print "state ?"' in sources
     assert "ref_errors, omitted rows or unreadable state" in sources
     assert "GAP: Lane <N> <task ref and known title, or title unavailable>" in sources

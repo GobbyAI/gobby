@@ -13,8 +13,6 @@ import { MetaKVRow, ParentKVRow, type ParentTaskRef } from "./TaskDetailKV";
 const SUBTASK_STATE_ORDER: TaskDisplayState[] = [
   "ready",
   "in_progress",
-  "needs_review",
-  "review_approved",
   "blocked",
   "closed",
 ];

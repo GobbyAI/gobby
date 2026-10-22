@@ -47,9 +47,6 @@ def _task_state_label(task: Any) -> str:
         return "closed"
     if state["is_escalated"]:
         return "escalated"
-    legacy_status = getattr(task, "status", None)
-    if isinstance(legacy_status, str):
-        return legacy_status
     return "ready"
 
 

@@ -11,20 +11,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _current_stage_join_sql(task_alias: str = "task") -> str:
-    return f"""
-    LEFT JOIN task_stage_states current_stage
-      ON current_stage.task_id = {task_alias}.id
-     AND current_stage.state != 'done'
-     AND current_stage.position = (
-         SELECT MIN(stage_scan.position)
-           FROM task_stage_states stage_scan
-          WHERE stage_scan.task_id = {task_alias}.id
-            AND stage_scan.state != 'done'
-     )
-    """
-
-
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
@@ -83,8 +69,6 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "ready": 0,
             "in_progress": 0,
             "closed": 0,
-            "needs_review": 0,
-            "review_approved": 0,
             "escalated": 0,
             "ready_unblocked": 0,
             "blocked": 0,
@@ -113,12 +97,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             ready_rows = await server.run_db(
                 db.fetchall,
                 "SELECT COUNT(*) as cnt FROM tasks t "
-                f"{_current_stage_join_sql('t')} "
                 f"WHERE {_not_closed_or_escalated_sql('t')} "
-                "AND ("
-                "  current_stage.state IN ('ready', 'in_progress') "
-                "  OR NOT EXISTS (SELECT 1 FROM task_stage_states s WHERE s.task_id = t.id)"
-                ") "
                 f"{tf_aliased} "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_dependencies td "

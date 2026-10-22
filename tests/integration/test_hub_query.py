@@ -24,15 +24,6 @@ PROJECT_FRONTEND = _test_uuid("project-frontend")
 PROJECT_BACKEND = _test_uuid("project-backend")
 
 
-def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
-    current = task_manager.stage_states.current_stage(task_id)
-    if current is None:
-        task_manager.initialize_task_manifest(task_id)
-        current = task_manager.stage_states.current_stage(task_id)
-    assert current is not None
-    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
-
-
 @pytest.fixture
 def multi_project_hub(hub_db):
     """Create a hub database with data from multiple projects."""
@@ -54,7 +45,7 @@ def multi_project_hub(hub_db):
         for j, (state, task_type) in enumerate(
             [
                 ("ready", "task"),
-                ("in_progress", "feature"),
+                ("ready", "feature"),
                 ("closed", "bug"),
             ]
         ):
@@ -65,9 +56,7 @@ def multi_project_hub(hub_db):
                 priority=j + 1,
                 validation_criteria="Test task completion is observable.",
             )
-            if state == "in_progress":
-                _start_current_stage(task_manager, task.id)
-            elif state == "closed":
+            if state == "closed":
                 task_manager.close_task(task.id)
 
         # Insert sessions for this project
@@ -164,10 +153,10 @@ class TestHubQueryIntegration:
         result = asyncio.run(tool(state="ready"))
 
         assert result["success"] is True
-        assert result["count"] == 2  # 1 ready task per project
+        assert result["count"] == 4  # 2 open tasks per project
 
         for task in result["tasks"]:
-            assert task["state"]["current_stage"] is None
+            assert "current_stage" not in task["state"]
             assert task["state"]["is_closed"] is False
 
     def test_list_cross_project_tasks_respects_limit(self, multi_project_hub) -> None:
@@ -234,9 +223,8 @@ class TestHubQueryIntegration:
 
         # 6 total tasks (3 per project)
         assert stats["tasks"]["total"] == 6
-        # State breakdown: 2 ready, 2 in_progress, 2 closed
-        assert stats["tasks"]["by_state"]["ready"] == 2
-        assert stats["tasks"]["by_state"]["in_progress"] == 2
+        # State breakdown: 4 ready, 2 closed
+        assert stats["tasks"]["by_state"]["ready"] == 4
         assert stats["tasks"]["by_state"]["closed"] == 2
 
         # 4 total sessions (2 per project)

@@ -22,9 +22,6 @@ def _has_timestamp(value: Any) -> bool:
     return isinstance(value, datetime) or (isinstance(value, str) and bool(value))
 
 
-
-
-
 def projected_task_state(task: Any) -> str:
     """Return the canonical workflow-facing task state."""
     if is_task_closed(task):
@@ -77,7 +74,6 @@ def _task_is_escalated(task: Any) -> bool:
 is_task_escalated = _task_is_escalated
 
 
-
 def get_claimed_session_id(task: Any) -> str | None:
     """Return the best available owning session ID for a task-like object."""
     if task is None:
@@ -119,7 +115,6 @@ def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
 def is_task_claimed_by_session(task: Any, session_id: str) -> bool:
     """Ownership includes an escalated task claimed by its close reviewer."""
     return not is_task_closed(task) and get_claimed_session_id(task) == session_id
-
 
 
 def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[str, Any]:

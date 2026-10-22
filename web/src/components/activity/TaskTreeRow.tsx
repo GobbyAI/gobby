@@ -3,14 +3,11 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import type { GobbyTask } from "../../types/tasks";
 import { PriorityGlyph, StatusDot, TypeBadge } from "../tasks/TaskBadges";
 import {
-  getCanonicalTaskState,
   getTaskDisplayState,
   getTaskStateSummary,
-  type CanonicalTaskState,
   type TaskDisplayState,
 } from "../../lib/taskState";
 import {
-  getStageStateColor,
   PRIORITY_TEXT_COLORS,
   PRIORITY_TEXT_WEIGHTS,
   type VisibleTaskRow,
@@ -40,32 +37,13 @@ interface TaskTreeRowProps {
 const TASK_ROW_BASE_INDENT_REM = 0.75;
 const TASK_ROW_DEPTH_INDENT_REM = 1.25;
 
-const FALLBACK_TASK_STATE: CanonicalTaskState = {
-  owner_session_id: null,
-  owner_session_ref: null,
-  current_stage: null,
-  is_claimed: false,
-  is_closed: false,
-  is_escalated: false,
-  is_blocked: false,
-  is_merge_ready: false,
-  closed_at: null,
-  closed_reason: null,
-  closed_in_session_id: null,
-  closed_commit_sha: null,
-  escalated_at: null,
-  escalation_reason: null,
-};
-
 function deriveSafeTaskState(task: GobbyTask): {
-  taskState: CanonicalTaskState;
   displayState: TaskDisplayState;
   stateSummary: string;
   failed: boolean;
 } {
   try {
     return {
-      taskState: getCanonicalTaskState(task),
       displayState: getTaskDisplayState(task),
       stateSummary: getTaskStateSummary(task),
       failed: false,
@@ -73,7 +51,6 @@ function deriveSafeTaskState(task: GobbyTask): {
   } catch (error) {
     console.warn("Failed to derive task row state", { taskId: task.id, error });
     return {
-      taskState: FALLBACK_TASK_STATE,
       displayState: "ready",
       stateSummary: "Ready",
       failed: true,
@@ -93,9 +70,8 @@ function TaskTreeRowComponent({
   onRowKeyDown,
 }: TaskTreeRowProps) {
   const task = row.node.task;
-  const { taskState, displayState, stateSummary, failed } =
+  const { displayState, stateSummary, failed } =
     deriveSafeTaskState(task);
-  const currentStage = taskState.current_stage;
   const priority = task.priority ?? DEFAULT_TASK_PRIORITY;
   const textColor = PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
   const textWeight =
@@ -179,20 +155,6 @@ function TaskTreeRowComponent({
       <span className="inline-flex shrink-0 items-center gap-[0.3rem]">
         <TypeBadge type={task.task_type} />
       </span>
-      {currentStage && (
-        <span
-          className="inline-flex h-[1.15rem] max-w-[7.5rem] min-w-0 flex-[0_1_auto] items-center gap-1 rounded-[0.35rem] border border-border bg-[color-mix(in_srgb,var(--bg-secondary)_82%,transparent)] px-[0.35rem] text-[length:var(--text-2xs)] leading-none font-medium text-[var(--text-secondary)]"
-          data-task-row-stage
-          title={stateSummary}
-        >
-          <span
-            className="size-[0.4rem] shrink-0 rounded-full"
-            style={{ backgroundColor: getStageStateColor(currentStage.state) }}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 truncate">{currentStage.display_name}</span>
-        </span>
-      )}
       <Button
         type="button"
         variant="ghost"

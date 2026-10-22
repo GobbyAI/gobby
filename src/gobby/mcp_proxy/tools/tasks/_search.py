@@ -64,8 +64,6 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
-
-
         # Resolve parent_task_id if provided (#N, N, or UUID -> UUID)
         resolved_parent_id = None
         if parent_task_id:

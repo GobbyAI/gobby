@@ -160,12 +160,14 @@ def adopt(
     task_id = plan.prior_by_section.get(section_id)
     if task_id is None:
         return None
-    # Read Committed is what makes the post-lock stage read a fresh snapshot.
-    # A transaction-wide snapshot would predate the task lock.
+    # Read Committed sees the latest task row after waiting for its lock.
+    # A transaction-wide snapshot would predate a concurrent claim or close.
     _require_read_committed(conn)
     row = conn.execute(
         """
-        SELECT closed_at, closed_reason, claimed_by_session_id
+        SELECT closed_at, closed_reason, claimed_by_session_id, escalated_at,
+               closed_commit_sha,
+               COALESCE(commits::jsonb, '[]'::jsonb) <> '[]'::jsonb AS has_commits
         FROM tasks
         WHERE id = %s
         FOR UPDATE
@@ -180,28 +182,16 @@ def adopt(
             return None
         plan.preserved.append(binding)
         return AdoptedLeaf(task_id=task_id, action="preserve")
+    reason = None
     if row["claimed_by_session_id"]:
-        claimed = SectionBinding(section_id=section_id, task_id=task_id, reason="claimed")
-        plan.untouched.append(claimed)
-        return AdoptedLeaf(task_id=task_id, action="untouched", reason="claimed")
-    # Fresh Read Committed snapshot. A stage insert or start that committed
-    # before this task lock is visible here; one still in flight cannot commit
-    # past the lock, because the stage trigger updates this task. Do not lock
-    # these rows: the inserter may hold them while that trigger waits.
-    stage_rows = conn.execute(
-        """
-        SELECT state, entered_at, completed_at, work_attempt_count,
-               review_round_count, artifact_refs, notes
-          FROM task_stage_states
-         WHERE task_id = %s
-         ORDER BY position, stage_name
-        """,
-        (task_id,),
-    ).fetchall()
-    if _stage_rows_progressed(stage_rows):
-        active = SectionBinding(section_id=section_id, task_id=task_id, reason="in_progress")
-        plan.untouched.append(active)
-        return AdoptedLeaf(task_id=task_id, action="untouched", reason="in_progress")
+        reason = "claimed"
+    elif row["has_commits"] or row["closed_commit_sha"]:
+        reason = "linked_commits"
+    elif row["escalated_at"]:
+        reason = "escalated"
+    if reason is not None:
+        plan.untouched.append(SectionBinding(section_id=section_id, task_id=task_id, reason=reason))
+        return AdoptedLeaf(task_id=task_id, action="untouched", reason=reason)
     return AdoptedLeaf(task_id=task_id, action="update")
 
 
@@ -293,22 +283,6 @@ def _placeholder_sections(spec: dict[str, Any]) -> set[str]:
         if isinstance(section_id, str) and is_placeholder_task_ref(task_ref):
             sections.add(section_id)
     return sections
-
-
-def _stage_rows_progressed(rows: list[Any]) -> bool:
-    """True when a locked stage row has left the untouched ready state."""
-    for stage in rows:
-        if (
-            stage["state"] != "ready"
-            or stage["entered_at"] is not None
-            or stage["completed_at"] is not None
-            or stage["work_attempt_count"]
-            or stage["review_round_count"]
-            or stage["artifact_refs"] is not None
-            or stage["notes"] is not None
-        ):
-            return True
-    return False
 
 
 def _section_id(task_item: dict[str, Any]) -> str | None:

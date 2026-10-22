@@ -1,8 +1,6 @@
-"""Stage-native task model regression tests."""
+"""Task model projection regression tests."""
 
 from __future__ import annotations
-
-from types import SimpleNamespace
 
 import pytest
 
@@ -29,13 +27,11 @@ def test_task_from_row_does_not_require_legacy_status_column() -> None:
             "closed_reason": None,
         }
     )
-    task.stages = (SimpleNamespace(stage_name="development", position=0, state="in_progress"),)
 
     state = serialize_task_state(task)
 
     assert not hasattr(task, "status")
     assert "status" not in task.to_dict()
-    assert state["current_stage"] == {
-        "name": "development",
-        "state": "in_progress",
-    }
+    assert "current_stage" not in state
+    assert state["is_closed"] is False
+    assert state["is_claimed"] is False

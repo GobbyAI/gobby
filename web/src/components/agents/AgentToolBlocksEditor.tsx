@@ -107,7 +107,7 @@ export function AgentToolBlocksEditor({
             <ChipInput
               values={blockedMcpTools}
               onChange={onBlockedMcpToolsChange}
-              placeholder="e.g. gobby-tasks-ops:submit_for_review"
+              placeholder="e.g. gobby-tasks:close_task"
             />
           )}
         </FormField>

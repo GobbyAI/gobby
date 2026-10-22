@@ -24,13 +24,11 @@ from gobby.plans.semantic_lint import collect_target_inventory
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import Transaction
-from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
 _DEFAULT_AGENT = "developer"
 _DEFAULT_PHASE_ID = "phase-1"
-_EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "epic_qa", "pr"})
 _FRONTEND_SIGNALS = frozenset(
     {
         "accessibility",
@@ -89,26 +87,6 @@ _BACKEND_SIGNALS = frozenset(
         "worker",
     }
 )
-
-
-def _stage_name(stage: Any) -> str | None:
-    if isinstance(stage, dict):
-        value = stage.get("stage_name", stage.get("name"))
-    else:
-        value = getattr(stage, "stage_name", getattr(stage, "name", None))
-    return value if isinstance(value, str) and value else None
-
-
-def _manifest_stage_names(task: Task) -> tuple[str, ...]:
-    """Return stage names from the persisted manifest attached to a task."""
-    return tuple(
-        stage_name for stage in task.stages if (stage_name := _stage_name(stage)) is not None
-    )
-
-
-def _dev_is_only_enabled_stage(task: Task) -> bool:
-    enabled = set(_manifest_stage_names(task))
-    return bool(enabled) and enabled & _EXPANSION_STAGES == {"development"}
 
 
 def _append_agent_selection_marker(description: str) -> str:

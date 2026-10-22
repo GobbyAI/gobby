@@ -110,7 +110,6 @@ def _roster_run(
     *,
     terminal: AttentionRosterTerminal | None = None,
     task_ref: str | None = None,
-    task_stage: str | None = None,
 ) -> AttentionRosterRow:
     return AttentionRosterRow(
         kind="run",
@@ -119,7 +118,6 @@ def _roster_run(
         lifecycle_status=run.status,
         task_id=run.task_id,
         task_ref=task_ref,
-        task_stage=task_stage,
         provider=run.provider,
         model=run.model,
         pid=run.pid,
@@ -138,7 +136,6 @@ def _roster_session(session: Any) -> AttentionRosterRow:
         lifecycle_status=session.status,
         task_id=None,
         task_ref=None,
-        task_stage=None,
         provider=session.source,
         model=session.model,
         pid=None,
@@ -431,7 +428,6 @@ def test_interactive_entry_end_to_end(
                 run,
                 terminal=terminal,
                 task_ref="#42",
-                task_stage="development",
             ),
             _roster_session(session),
         ],
@@ -603,10 +599,7 @@ def test_roster_cold_path_is_bounded_and_cursor_invalidates_cache(
         )
         for index in range(50)
     ]
-    rows = [
-        _roster_run(run, task_ref=f"#{index}", task_stage="development")
-        for index, run in enumerate(runs)
-    ]
+    rows = [_roster_run(run, task_ref=f"#{index}") for index, run in enumerate(runs)]
     monkeypatch.setattr(manager, "load_roster_rows", lambda *_args, **_kwargs: rows)
     db_jobs = 0
 
@@ -786,7 +779,6 @@ def test_bounded_roster_query_joins_task_payload(
     row = next(item for item in rows if item.source_id == run.id)
     assert row.task_id == task.id
     assert row.task_ref == f"#{task.seq_num}"
-    assert row.task_stage is None
 
 
 def test_roster_row_decodes_the_hub_serialized_terminal_json() -> None:
@@ -940,7 +932,6 @@ def test_roster_run_entries_carry_the_task_title(
     assert entry["task"] == {
         "id": task.id,
         "ref": f"#{task.seq_num}",
-        "stage": None,
         "title": "Roster run task",
     }
 
@@ -969,7 +960,6 @@ def test_roster_session_entries_carry_the_open_claimed_task(
     assert _live_roster_entry(temp_db, entry_id)["task"] == {
         "id": task.id,
         "ref": f"#{task.seq_num}",
-        "stage": None,
         "title": "Claimed roster task",
     }
 

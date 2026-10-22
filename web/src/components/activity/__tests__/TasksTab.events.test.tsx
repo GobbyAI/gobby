@@ -28,7 +28,6 @@ import {
 import {
   installResizeObserverMock,
   setupDefaultFetchRoutes,
-  stagePayload,
   taskList,
   taskStatePayload,
 } from "./TasksTab.setup";
@@ -84,7 +83,7 @@ async function openTaskMenu(title: string): Promise<void> {
 }
 
 async function openReviewTaskMenu(): Promise<void> {
-  await openTaskMenu("Review approved task");
+  await openTaskMenu("Ready task");
 }
 
 function findPostCall(path: string) {
@@ -127,7 +126,6 @@ describe("TasksTab — events and row actions", () => {
           ref: "#900",
           title: "WS created task",
           state: taskStatePayload("ready"),
-          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -193,7 +191,7 @@ describe("TasksTab — events and row actions", () => {
   it("keeps the focused detail draft mounted during a WebSocket refetch", async () => {
     render(<TasksTab projectId="proj-1" />);
 
-    fireEvent.click(await screen.findByText("Review approved task"));
+    fireEvent.click(await screen.findByText("Ready task"));
     const description = (await screen.findByLabelText(
       "Description",
     )) as HTMLTextAreaElement;
@@ -269,7 +267,7 @@ describe("TasksTab — events and row actions", () => {
   it("keeps the detail editor mounted while refreshing the selected task", async () => {
     render(<TasksTab projectId="proj-1" />);
 
-    fireEvent.click(await screen.findByText("Review approved task"));
+    fireEvent.click(await screen.findByText("Ready task"));
     const description = (await screen.findByLabelText(
       "Description",
     )) as HTMLTextAreaElement;
@@ -339,7 +337,6 @@ describe("TasksTab — events and row actions", () => {
           ref: "#999",
           title: "Other project task",
           state: taskStatePayload("ready"),
-          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -388,7 +385,7 @@ describe("TasksTab — events and row actions", () => {
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     const isListFetch = (url: unknown) => {
@@ -437,7 +434,7 @@ describe("TasksTab — events and row actions", () => {
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     await openReviewTaskMenu();
@@ -455,7 +452,7 @@ describe("TasksTab — events and row actions", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
     await openReviewTaskMenu();
 
@@ -476,7 +473,7 @@ describe("TasksTab — events and row actions", () => {
     const claimedTask = {
       ...taskList[0],
       claimed_by_session_id: "main-chat-1",
-      state: taskStatePayload("review_approved", {
+      state: taskStatePayload("ready", {
         is_claimed: true,
         owner_session_id: "main-chat-1",
       }),
@@ -486,7 +483,7 @@ describe("TasksTab — events and row actions", () => {
     mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
       task: {
         ...claimedTask,
-        description: "Review approved task detail",
+        description: "Ready task detail",
         category: null,
         validation_criteria: null,
         closed_at: null,
@@ -496,14 +493,14 @@ describe("TasksTab — events and row actions", () => {
       task: {
         ...claimedTask,
         claimed_by_session_id: null,
-        state: taskStatePayload("review_approved", { is_claimed: false }),
+        state: taskStatePayload("ready", { is_claimed: false }),
       },
     });
 
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
     await openReviewTaskMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Release Claim" }));
@@ -523,7 +520,7 @@ describe("TasksTab — events and row actions", () => {
       task: {
         ...taskList[0],
         closed_at: "2026-04-14T00:00:00Z",
-        state: taskStatePayload("done", {
+        state: taskStatePayload("closed", {
           is_closed: true,
           closed_at: "2026-04-14T00:00:00Z",
         }),
@@ -533,7 +530,7 @@ describe("TasksTab — events and row actions", () => {
     render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
     await openReviewTaskMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Close..." }));
@@ -564,7 +561,6 @@ describe("TasksTab — events and row actions", () => {
         ...taskList.find((task) => task.id === "task-closed"),
         closed_at: null,
         state: taskStatePayload("ready", { is_closed: false }),
-        current_stage: stagePayload("ready"),
       },
     });
 

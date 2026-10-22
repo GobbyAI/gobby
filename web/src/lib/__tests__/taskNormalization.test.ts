@@ -1,14 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { currentStage, type StageStateView } from "../stageActions";
-import { getCanonicalStageName } from "../taskState";
 import {
   extractTaskPayload,
   isRawTaskPayload,
-  normalizeStageRow,
-  normalizeStagesRegistryResponse,
   normalizeTaskPayload,
-  parseReviewerAgentSelector,
-  type RawStagePayload,
 } from "../taskNormalization";
 
 describe("isRawTaskPayload optional field guard", () => {
@@ -100,194 +94,43 @@ describe("extractTaskPayload", () => {
   });
 });
 
-describe("normalizeStageRow display_name fallback", () => {
-  it("preserves QA as an acronym when titleizing snake_case stage names", () => {
-    const stage = normalizeStageRow({ name: "epic_qa" });
-    expect(stage.display_name).toBe("Epic QA");
-  });
-
-  it("preserves PR as an acronym when titleizing snake_case stage names", () => {
-    expect(normalizeStageRow({ name: "pr" }).display_name).toBe("PR");
-  });
-
-  it("preserves multi-letter acronyms in mixed segments", () => {
-    expect(normalizeStageRow({ name: "mcp_audit" }).display_name).toBe(
-      "MCP Audit",
-    );
-    expect(normalizeStageRow({ name: "cli_smoke" }).display_name).toBe(
-      "CLI Smoke",
-    );
-  });
-
-  it("title-cases non-acronym segments", () => {
-    expect(normalizeStageRow({ name: "development" }).display_name).toBe(
-      "Development",
-    );
-    expect(normalizeStageRow({ name: "planning_review" }).display_name).toBe(
-      "Planning Review",
-    );
-  });
-
-  it("prefers display_label over the titleizer fallback", () => {
-    const stage = normalizeStageRow({
-      name: "epic_qa",
-      display_label: "Epic QA Review",
+describe("normalizeTaskPayload", () => {
+  it("fills display defaults for a ready task", () => {
+    const task = normalizeTaskPayload({ id: "task-1", seq_num: 42 });
+    expect(task).toMatchObject({
+      id: "task-1",
+      ref: "#42",
+      title: "",
+      status: "ready",
+      task_type: "task",
+      parent_task_id: null,
+      state: { is_claimed: false, is_closed: false, is_blocked: false },
     });
-    expect(stage.display_name).toBe("Epic QA Review");
   });
 
-  it("prefers display_name over display_label when both are present", () => {
-    const stage = normalizeStageRow({
-      name: "epic_qa",
-      display_name: "Custom Name",
-      display_label: "Epic QA",
-    });
-    expect(stage.display_name).toBe("Custom Name");
-  });
-
-  it("filters retired stages from registry and task payloads", () => {
-    expect(
-      normalizeStagesRegistryResponse({
-        stages: [
-          { name: "development", display_name: "Development" },
-          { name: "test_arch", display_name: "Test Architecture" },
-        ],
-      }).map((stage) => stage.name),
-    ).toEqual(["development"]);
-
+  it("preserves canonical ownership and derives claimed status", () => {
     const task = normalizeTaskPayload({
       id: "task-1",
-      current_stage: { name: "test_arch", state: "ready" },
-      stages: [
-        { name: "test_arch", state: "ready" },
-        { name: "development", state: "ready" },
-      ],
+      state: {
+        owner_session_id: "session-1",
+        is_claimed: true,
+        is_closed: false,
+      },
     });
-
-    expect(task.current_stage?.name).toBe("development");
-    expect(task.stages.map((stage) => stage.name)).toEqual(["development"]);
+    expect(task.status).toBe("in_progress");
+    expect(task.state.owner_session_id).toBe("session-1");
   });
 
-  it("rejects arrays as current-stage records", () => {
+  it("projects closure from its timestamp", () => {
     const task = normalizeTaskPayload({
       id: "task-1",
-      current_stage: [] as unknown as RawStagePayload,
-      stages: [{ name: "development", state: "ready" }],
+      closed_at: "2026-10-21T12:00:00Z",
     });
-
-    expect(task.current_stage?.name).toBe("development");
-  });
-});
-
-describe("normalizeStageRow review_policy fallback", () => {
-  it("defaults a missing review policy to required", () => {
-    const stage = normalizeStageRow({ name: "development" });
-
-    expect(stage.review_policy).toBe("required");
-  });
-
-  it("defaults an invalid review policy to required", () => {
-    const row = {
-      name: "development",
-      review_policy: "invalid",
-    } as unknown as Parameters<typeof normalizeStageRow>[0];
-
-    expect(normalizeStageRow(row).review_policy).toBe("required");
-  });
-});
-
-describe("current stage parity", () => {
-  it("uses backend state semantics across normalization, task state, and stage actions", () => {
-    const stages: StageStateView[] = [
-      normalizeStageRow({ name: "zeta", state: "in_progress", position: 0 }),
-      normalizeStageRow({ name: "done_first", state: "done", position: -1 }),
-      normalizeStageRow({ name: "alpha", state: "ready" }),
-      normalizeStageRow({ name: "later", state: "ready", position: 2 }),
-    ];
-    const direct = normalizeStageRow({ name: "direct", state: "needs_review" });
-    const payload = {
-      id: "task-1",
-      stages,
-      state: { current_stage: direct },
-      current_stage: direct,
-    };
-
-    expect(currentStage(payload)?.name).toBe("alpha");
-    expect(getCanonicalStageName(payload)).toBe("alpha");
-    expect(normalizeTaskPayload(payload).current_stage?.name).toBe("alpha");
-  });
-
-  it("uses state current stage before the top-level fallback when rows are absent", () => {
-    const stateCurrent = normalizeStageRow({
-      name: "state",
-      state: "in_progress",
-    });
-    const topLevelCurrent = normalizeStageRow({
-      name: "top_level",
-      state: "ready",
-    });
-    const payload = {
-      id: "task-1",
-      state: { current_stage: stateCurrent },
-      current_stage: topLevelCurrent,
-    };
-
-    expect(currentStage(payload)?.name).toBe("state");
-    expect(getCanonicalStageName(payload)).toBe("state");
-  });
-});
-
-describe("parseReviewerAgentSelector", () => {
-  it("rejects missing, blank, non-object, and blank-default payloads", () => {
-    expect(parseReviewerAgentSelector(null)).toBeNull();
-    expect(parseReviewerAgentSelector(undefined)).toBeNull();
-    expect(parseReviewerAgentSelector("")).toBeNull();
-    expect(parseReviewerAgentSelector("   ")).toBeNull();
-    expect(parseReviewerAgentSelector("[]")).toBeNull();
-    expect(parseReviewerAgentSelector('"qa-reviewer"')).toBeNull();
-    expect(parseReviewerAgentSelector("42")).toBeNull();
-    expect(parseReviewerAgentSelector("true")).toBeNull();
-    expect(
-      parseReviewerAgentSelector(JSON.stringify({ default: "   ", rules: [] })),
-    ).toBeNull();
-  });
-
-  it("parses reviewer agent selector JSON for future stage registry callers", () => {
-    expect(
-      parseReviewerAgentSelector(
-        JSON.stringify({
-          default: "qa-reviewer",
-          rules: [
-            { category: "docs", reviewer_agent: "doc-reviewer" },
-            { category: "", reviewer_agent: "fallback-reviewer" },
-            { category: "bad" },
-          ],
-        }),
-      ),
-    ).toEqual({
-      default: "qa-reviewer",
-      rules: [
-        { category: "docs", reviewer_agent: "doc-reviewer" },
-        { reviewer_agent: "fallback-reviewer" },
-      ],
-    });
-    expect(parseReviewerAgentSelector("{bad")).toBeNull();
-    expect(
-      parseReviewerAgentSelector(JSON.stringify({ rules: [] })),
-    ).toBeNull();
-  });
-
-  it("trims padded selector defaults, categories, and reviewer agents", () => {
-    expect(
-      parseReviewerAgentSelector(
-        JSON.stringify({
-          default: " qa-reviewer ",
-          rules: [{ category: " docs ", reviewer_agent: " doc-reviewer " }],
-        }),
-      ),
-    ).toEqual({
-      default: "qa-reviewer",
-      rules: [{ category: "docs", reviewer_agent: "doc-reviewer" }],
+    expect(task.status).toBe("closed");
+    expect(task.state).toMatchObject({
+      is_closed: true,
+      is_claimed: false,
+      closed_at: "2026-10-21T12:00:00Z",
     });
   });
 });

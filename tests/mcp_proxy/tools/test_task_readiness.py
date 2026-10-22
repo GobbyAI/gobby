@@ -327,7 +327,6 @@ class TestSuggestNextTask:
         # Mock list_tasks to indicate parent has children, leaf doesn't
         def mock_list_tasks(
             parent_task_id=None,
-            current_stage_state=None,
             closed=None,
             claimed=None,
             limit=None,

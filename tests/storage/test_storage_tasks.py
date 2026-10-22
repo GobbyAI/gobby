@@ -2,18 +2,15 @@ from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
-from psycopg.errors import RaiseException
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
     LocalTaskManager,
-    StageManifestSpec,
     TaskIDCollisionError,
 )
 from gobby.tasks.state_semantics import (
-    current_stage_state,
     is_task_closed,
     projected_task_state,
     serialize_task_state,
@@ -54,49 +51,6 @@ def project_id(sample_project):
     return sample_project["id"]
 
 
-def _start_current_stage(
-    task_manager: LocalTaskManager, task_id: str, session_id: str | None = None
-) -> None:
-    current = task_manager.stage_states.current_stage(task_id)
-    if current is None:
-        task_manager.initialize_task_manifest(task_id)
-        current = task_manager.stage_states.current_stage(task_id)
-    assert current is not None
-    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
-
-
-def _planning_needs_review(
-    task_manager: LocalTaskManager,
-    project_id: str,
-    session_id: str,
-    *,
-    title: str = "Enhance me",
-):
-    """Create a task whose single planning stage is in needs_review."""
-    task = task_manager.create_task(project_id, title, validation_criteria=VALIDATION_CRITERIA)
-    task_manager.stage_states.initialize_manifest(
-        task.id,
-        [StageManifestSpec("planning", 0)],
-        by_session_id=session_id,
-    )
-    task_manager.claim_task(task.id, session_id)
-    task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session_id)
-    task_manager.submit_for_review(task.id, "planning", by_session_id=session_id)
-    return task
-
-
-def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: str) -> None:
-    task_manager.db.execute(
-        """
-        UPDATE tasks
-           SET closed_at = %s,
-               closed_reason = %s
-         WHERE id = %s
-        """,
-        ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", task_id),
-    )
-
-
 def _create_closed_task(
     task_manager: LocalTaskManager,
     project_id: str,
@@ -116,7 +70,7 @@ def _create_closed_task(
     )
 
 
-def _assert_stage_state(task, state: str) -> None:
+def _assert_task_state(task, state: str) -> None:
     assert projected_task_state(task) == state
 
 
@@ -135,7 +89,7 @@ class TestLocalTaskManager:
 
         assert task.title == "Fix bug"
         assert task.project_id == project_id
-        _assert_stage_state(task, "ready")
+        _assert_task_state(task, "ready")
         assert task.labels == ["urgent", "backend"]
         assert task.priority == 1
         assert task.task_type == "bug"
@@ -179,7 +133,7 @@ class TestLocalTaskManager:
         )
         updated = task_manager.update_task(task.id, title="New Title")
         assert updated.title == "New Title"
-        _assert_stage_state(updated, "ready")
+        _assert_task_state(updated, "ready")
         assert updated.updated_at > task.updated_at
 
     def test_update_task_persists_schedule_fields(self, task_manager, project_id) -> None:
@@ -273,7 +227,7 @@ class TestLocalTaskManager:
                 claimed_by_session_id="sess-123",
             )
 
-    def test_reconcile_task_state_preserves_owner_without_stage_mutation(
+    def test_reconcile_task_state_preserves_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
         session = session_manager.register(
@@ -287,7 +241,6 @@ class TestLocalTaskManager:
             title="Original Title",
             validation_criteria=VALIDATION_CRITERIA,
         )
-        _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
 
         updated = task_manager.reconcile_task_state(
@@ -296,8 +249,7 @@ class TestLocalTaskManager:
         )
 
         assert updated.title == "From Linear"
-        _assert_stage_state(updated, "in_progress")
-        assert updated.claimed_by_session_id == session.id
+        _assert_task_state(updated, "ready")
         assert updated.claimed_by_session_id == session.id
 
     def test_reconcile_task_state_noop_preserves_updated_at(self, task_manager, project_id) -> None:
@@ -322,20 +274,21 @@ class TestLocalTaskManager:
 
         assert reconciled.updated_at == task.updated_at
 
-    def test_state_projects_from_current_stage_rows(self, task_manager, project_id) -> None:
-        """Stage rows drive task projection after legacy state columns are dropped."""
+    def test_state_projects_from_task_flags(self, task_manager, project_id) -> None:
+        """New tasks expose open, unclaimed state without lifecycle stages."""
         task = task_manager.create_task(
             project_id=project_id,
             title="Projected",
             validation_criteria=VALIDATION_CRITERIA,
         )
-        _start_current_stage(task_manager, task.id)
 
         projected = task_manager.get_task(task.id)
         state = serialize_task_state(projected)
 
-        assert state["current_stage"]["name"] == "development"
-        assert state["current_stage"]["state"] == "in_progress"
+        assert state["is_closed"] is False
+        assert state["is_claimed"] is False
+        assert state["is_escalated"] is False
+        assert "current_stage" not in state
         assert "status" not in projected.to_dict()
 
     def test_close_task(self, task_manager, project_id) -> None:
@@ -347,25 +300,6 @@ class TestLocalTaskManager:
         closed = task_manager.close_task(task.id, reason="Done")
         assert is_task_closed(closed)
         assert closed.closed_reason == "Done"
-
-    def test_close_task_preserves_lifecycle_stage_projection(
-        self, task_manager, project_id
-    ) -> None:
-        """Closed tasks keep their last lifecycle stage as latent context."""
-        task = task_manager.create_task(
-            project_id=project_id,
-            title="To Close Cleanly",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        _start_current_stage(task_manager, task.id)
-        task_manager.submit_for_review(task.id)
-        reviewed = task_manager.approve_review(task.id)
-
-        closed = task_manager.close_task(reviewed.id, reason="Merged")
-
-        assert is_task_closed(closed)
-        assert current_stage_state(closed) == "review_approved"
-        assert closed.closed_reason == "Merged"
 
     def test_delete_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(
@@ -741,7 +675,7 @@ class TestLocalTaskManager:
     def test_dependency_unblocks_only_when_blocker_is_closed(
         self, task_manager, dep_manager, project_id
     ) -> None:
-        """Review stages should not satisfy blocking dependencies."""
+        """Escalating an open blocker does not satisfy its blocking dependency."""
         blocked = task_manager.create_task(
             project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
@@ -750,14 +684,12 @@ class TestLocalTaskManager:
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
-        _start_current_stage(task_manager, blocker.id)
-        task_manager.submit_for_review(blocker.id)
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
         assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
 
-        task_manager.approve_review(blocker.id)
+        task_manager.escalate_task(blocker.id, reason="Needs human input")
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
@@ -772,7 +704,7 @@ class TestLocalTaskManager:
     def test_list_blocked_tasks_includes_escalated_tasks(
         self, task_manager, dep_manager, project_id
     ) -> None:
-        """Blocked is an independent predicate from the active lifecycle stage."""
+        """Blocked is independent of escalation."""
         blocked = task_manager.create_task(
             project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
@@ -1311,7 +1243,7 @@ class TestLocalTaskManager:
         reopened = task_manager.reopen_task(task.id)
 
         assert not is_task_closed(reopened)
-        _assert_stage_state(reopened, "ready")
+        _assert_task_state(reopened, "ready")
         assert reopened.closed_reason is None
         assert reopened.closed_at is None
         assert reopened.closed_in_session_id is None
@@ -1358,16 +1290,14 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
-        task_manager.update_task(task.id, validation_fail_count=2, dispatch_failure_count=3)
+        task_manager.update_task(task.id, validation_fail_count=2)
 
         reopened = task_manager.reopen_task(task.id, reason="Release claim")
 
         assert not is_task_closed(reopened)
-        _assert_stage_state(reopened, "ready")
-        assert reopened.claimed_by_session_id is None
+        _assert_task_state(reopened, "ready")
         assert reopened.claimed_by_session_id is None
         assert reopened.validation_fail_count == 0
-        assert reopened.dispatch_failure_count == 0
         assert "[Reopened: Release claim]" in (reopened.description or "")
 
     def test_reopen_task_from_escalated(self, task_manager, project_id) -> None:
@@ -1381,13 +1311,13 @@ class TestLocalTaskManager:
 
         assert not reopened.is_escalated
         assert reopened.escalated_at is None
-        _assert_stage_state(reopened, "ready")
+        _assert_task_state(reopened, "ready")
         assert reopened.claimed_by_session_id is None
 
     def test_claim_task_sets_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Claiming should dual-write canonical ownership and legacy claimed_by_session_id."""
+        """Claiming records the owning session without changing the task's open state."""
         session = session_manager.register(
             external_id="claim-ext",
             machine_id="21000000-0000-4000-8000-000000000002",
@@ -1400,36 +1330,13 @@ class TestLocalTaskManager:
 
         claimed = task_manager.claim_task(task.id, session.id)
 
-        _assert_stage_state(claimed, "ready")
-        assert claimed.claimed_by_session_id == session.id
-        assert claimed.claimed_by_session_id == session.id
-
-    def test_claim_task_preserves_review_status(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Review ownership should be explicit without regressing lifecycle state."""
-        session = session_manager.register(
-            external_id="review-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id, "Needs review", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id)
-
-        claimed = task_manager.claim_task(task.id, session.id)
-
-        _assert_stage_state(claimed, "needs_review")
-        assert claimed.claimed_by_session_id == session.id
+        _assert_task_state(claimed, "ready")
         assert claimed.claimed_by_session_id == session.id
 
     def test_release_task_claim_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Ownership release should clear both canonical and legacy fields."""
+        """Ownership release clears the owning session."""
         session = session_manager.register(
             external_id="release-ext",
             machine_id="21000000-0000-4000-8000-000000000002",
@@ -1443,8 +1350,7 @@ class TestLocalTaskManager:
 
         released = task_manager.release_task_claim(task.id)
 
-        _assert_stage_state(released, "ready")
-        assert released.claimed_by_session_id is None
+        _assert_task_state(released, "ready")
         assert released.claimed_by_session_id is None
 
     def test_agent_claim_is_idempotent_and_close_preserves_other_claims(
@@ -1697,436 +1603,6 @@ class TestLocalTaskManager:
         assert claimed.claimed_by_session_id == child.id
         assert task_manager.get_task(held.id).claimed_by_session_id == child.id
 
-    def test_submit_for_review_clears_canonical_owner(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Submitting work for review should release the active claim."""
-        session = session_manager.register(
-            external_id="needs-review-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id, "Review me", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.claim_task(task.id, session.id)
-
-        reviewed = task_manager.submit_for_review(task.id, review_notes="Ready for QA")
-
-        _assert_stage_state(reviewed, "needs_review")
-        assert reviewed.claimed_by_session_id is None
-        assert reviewed.claimed_by_session_id is None
-
-    def test_approve_review_clears_canonical_owner(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Approving work should release the active claim."""
-        session = session_manager.register(
-            external_id="approved-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id, "Approve me", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.claim_task(task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="Ready")
-
-        approved = task_manager.approve_review(
-            task.id,
-            approval_notes="LGTM",
-        )
-
-        _assert_stage_state(approved, "review_approved")
-        assert approved.claimed_by_session_id is None
-        assert approved.claimed_by_session_id is None
-
-    def test_reject_review_reopens_and_clears_canonical_owner(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Rejecting review should reopen work and release the active claim."""
-        session = session_manager.register(
-            external_id="rejected-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id, "Reject me", validation_criteria=VALIDATION_CRITERIA
-        )
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="Ready for adversary")
-        task_manager.claim_task(task.id, session.id)
-
-        rejected = task_manager.reject_review(
-            task.id,
-            rejection_notes="Needs another planning round",
-            round_number=1,
-        )
-
-        _assert_stage_state(rejected, "ready")
-        assert rejected.claimed_by_session_id is None
-        assert rejected.claimed_by_session_id is None
-        assert "## Adversary Findings — Round 1" in (rejected.description or "")
-        assert not any(label.startswith("planning-round:") for label in rejected.labels or [])
-
-    def test_reject_review_requires_review_state(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Rejecting outside the review state raises and preserves ownership."""
-        session = session_manager.register(
-            external_id="rejected-in-progress-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id,
-            "Reject me from in_progress",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-
-        with pytest.raises(ValueError):
-            task_manager.reject_review(
-                task.id,
-                rejection_notes="Needs another planning round",
-                round_number=1,
-            )
-
-        unchanged = task_manager.get_task(task.id)
-        _assert_stage_state(unchanged, "in_progress")
-        assert unchanged.claimed_by_session_id == session.id
-
-    def test_reject_review_dedups_same_round_heading(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Re-running reject_review with the same round_number must
-        replace the existing `## Adversary Findings — Round N` section instead
-        of stacking.
-        """
-        session = session_manager.register(
-            external_id="rejected-dedup-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id,
-            "Dedup me",
-            description="## Adversary Findings — Round 70\n\nfuture findings",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="Ready")
-
-        # First rejection at round 7.
-        first = task_manager.reject_review(
-            task.id, rejection_notes="initial findings", round_number=7
-        )
-        assert (first.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
-        assert "initial findings" in (first.description or "")
-
-        # Re-claim and reject the same round again with different notes.
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="Ready again")
-        second = task_manager.reject_review(
-            task.id, rejection_notes="updated findings", round_number=7
-        )
-
-        # Exactly one Round 7 section, with the NEW body, and the old body gone.
-        assert (second.description or "").splitlines().count("## Adversary Findings — Round 7") == 1
-        assert "updated findings" in (second.description or "")
-        assert "initial findings" not in (second.description or "")
-        assert "## Adversary Findings — Round 70\n\nfuture findings" in (second.description or "")
-
-    def test_record_plan_enhancement_suggestions_route_back_to_ready(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """A suggestions round returns planning to ready WITHOUT bumping review rounds."""
-        session = session_manager.register(
-            external_id="enhance-suggestions-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = _planning_needs_review(task_manager, project_id, session.id)
-        assert task_manager.stage_states.get(task.id, "planning").review_round_count == 0
-
-        updated = task_manager.record_plan_enhancement(
-            task.id,
-            round_number=1,
-            converged=False,
-            suggestions=["Tighten the acceptance items", "Cover the empty case"],
-            by_session_id=session.id,
-        )
-
-        _assert_stage_state(updated, "ready")
-        assert updated.claimed_by_session_id is None
-        assert "## Enhancement Suggestions — Round 1" in (updated.description or "")
-        assert "Tighten the acceptance items" in (updated.description or "")
-
-        # Enhancement is tracked independently of the adversary review budget.
-        stage = task_manager.stage_states.get(task.id, "planning")
-        assert stage.review_round_count == 0
-
-        artifacts = task_manager.artifacts.get_artifacts(task.id)
-        assert artifacts.plan_enhancement_rounds_completed == 1
-        assert artifacts.plan_enhancement_converged is False
-
-    @pytest.mark.parametrize(
-        ("converged", "suggestions"),
-        [
-            pytest.param(False, ["Must not persist"], id="suggestions"),
-            pytest.param(True, [], id="converged"),
-        ],
-    )
-    def test_record_plan_enhancement_rolls_back_all_writes_on_task_update_failure(
-        self,
-        task_manager: LocalTaskManager,
-        project_id: str,
-        session_manager: SessionManager,
-        converged: bool,
-        suggestions: list[str],
-    ) -> None:
-        """A late task-write failure rolls back both enhancement transaction paths."""
-        session = session_manager.register(
-            external_id="enhance-rollback-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = _planning_needs_review(task_manager, project_id, session.id)
-        task_before = task_manager.get_task(task.id)
-        events_before = task_manager.lifecycle_events.list_lifecycle_events(task.id)
-        try:
-            task_manager.db.execute(
-                """
-                CREATE OR REPLACE FUNCTION fail_plan_enhancement_update_fn()
-                RETURNS trigger
-                LANGUAGE plpgsql
-                AS $$
-                BEGIN
-                    RAISE EXCEPTION 'plan enhancement update boom';
-                END;
-                $$
-                """
-            )
-            task_manager.db.execute(
-                """
-                CREATE TRIGGER fail_plan_enhancement_update
-                BEFORE UPDATE OF description ON tasks
-                FOR EACH ROW
-                EXECUTE FUNCTION fail_plan_enhancement_update_fn()
-                """
-            )
-
-            with pytest.raises(RaiseException, match="plan enhancement update boom"):
-                task_manager.record_plan_enhancement(
-                    task.id,
-                    round_number=1,
-                    converged=converged,
-                    suggestions=suggestions,
-                    by_session_id=session.id,
-                )
-
-            unchanged = task_manager.get_task(task.id)
-            _assert_stage_state(unchanged, "needs_review")
-            assert unchanged.claimed_by_session_id == task_before.claimed_by_session_id
-            assert unchanged.description == task_before.description
-            artifacts = task_manager.artifacts.get_artifacts(task.id)
-            assert artifacts.plan_enhancement_rounds_completed == 0
-            assert artifacts.plan_enhancement_converged is False
-            assert task_manager.lifecycle_events.list_lifecycle_events(task.id) == events_before
-        finally:
-            task_manager.db.execute("DROP TRIGGER IF EXISTS fail_plan_enhancement_update ON tasks")
-            task_manager.db.execute("DROP FUNCTION IF EXISTS fail_plan_enhancement_update_fn()")
-
-    def test_record_plan_enhancement_converged_stays_in_needs_review(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """A converged round leaves needs_review so the adversary gate proceeds."""
-        session = session_manager.register(
-            external_id="enhance-converged-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = _planning_needs_review(task_manager, project_id, session.id)
-
-        updated = task_manager.record_plan_enhancement(
-            task.id,
-            round_number=2,
-            converged=True,
-            suggestions=[],
-            by_session_id=session.id,
-        )
-
-        _assert_stage_state(updated, "needs_review")
-        stage = task_manager.stage_states.get(task.id, "planning")
-        assert stage.review_round_count == 0
-
-        artifacts = task_manager.artifacts.get_artifacts(task.id)
-        # rounds_completed takes the max of current and the reported round.
-        assert artifacts.plan_enhancement_rounds_completed == 2
-        assert artifacts.plan_enhancement_converged is True
-
-    def test_record_plan_enhancement_dedups_same_round(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Re-running the same round replaces its section and never bumps review rounds."""
-        session = session_manager.register(
-            external_id="enhance-dedup-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = _planning_needs_review(task_manager, project_id, session.id)
-
-        first = task_manager.record_plan_enhancement(
-            task.id,
-            round_number=2,
-            converged=False,
-            suggestions=["Add retry budget"],
-            by_session_id=session.id,
-        )
-        assert (first.description or "").count("## Enhancement Suggestions — Round 2") == 1
-        assert "Add retry budget" in (first.description or "")
-
-        # Re-enter needs_review and re-run the same round with different suggestions.
-        task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session.id)
-        task_manager.submit_for_review(task.id, "planning", by_session_id=session.id)
-        second = task_manager.record_plan_enhancement(
-            task.id,
-            round_number=2,
-            converged=False,
-            suggestions=["Add idempotency guard"],
-            by_session_id=session.id,
-        )
-
-        assert (second.description or "").count("## Enhancement Suggestions — Round 2") == 1
-        assert "Add idempotency guard" in (second.description or "")
-        assert "Add retry budget" not in (second.description or "")
-
-        # Two enhancement rounds, zero review-budget consumption.
-        assert task_manager.stage_states.get(task.id, "planning").review_round_count == 0
-
-    def test_record_plan_enhancement_requires_needs_review_state(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Recording outside needs_review raises and preserves ownership."""
-        session = session_manager.register(
-            external_id="enhance-wrong-state-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id,
-            "Planning in progress",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        task_manager.stage_states.initialize_manifest(
-            task.id,
-            [StageManifestSpec("planning", 0)],
-            by_session_id=session.id,
-        )
-        task_manager.claim_task(task.id, session.id)
-        task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session.id)
-
-        with pytest.raises(ValueError):
-            task_manager.record_plan_enhancement(
-                task.id,
-                round_number=1,
-                converged=False,
-                suggestions=["x"],
-                by_session_id=session.id,
-            )
-
-        unchanged = task_manager.get_task(task.id)
-        _assert_stage_state(unchanged, "in_progress")
-        assert unchanged.claimed_by_session_id == session.id
-
-    def test_record_plan_enhancement_requires_planning_stage(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Recording against a non-planning needs_review stage raises."""
-        session = session_manager.register(
-            external_id="enhance-wrong-stage-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id,
-            "Development review",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        task_manager.stage_states.initialize_manifest(
-            task.id,
-            [StageManifestSpec("development", 0)],
-            by_session_id=session.id,
-        )
-        task_manager.claim_task(task.id, session.id)
-        task_manager.stage_states.start_stage(task.id, "development", by_session_id=session.id)
-        task_manager.submit_for_review(task.id, "development", by_session_id=session.id)
-
-        with pytest.raises(ValueError):
-            task_manager.record_plan_enhancement(
-                task.id,
-                round_number=1,
-                converged=False,
-                suggestions=["x"],
-                by_session_id=session.id,
-            )
-
-    def test_reject_review_preserves_other_round_headings(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Dedup is per-round: re-running round 7 must not touch round 6's section."""
-        session = session_manager.register(
-            external_id="rejected-other-rounds-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id,
-            "Multi-round target",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="r6 ready")
-        task_manager.reject_review(task.id, rejection_notes="round six body", round_number=6)
-
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="r7 ready")
-        task_manager.reject_review(task.id, rejection_notes="round seven first", round_number=7)
-
-        task_manager.claim_task(task.id, session.id)
-        _start_current_stage(task_manager, task.id, session.id)
-        task_manager.submit_for_review(task.id, review_notes="r7 retry")
-        result = task_manager.reject_review(
-            task.id, rejection_notes="round seven second", round_number=7
-        )
-
-        desc = result.description or ""
-        assert "round six body" in desc
-        assert "round seven second" in desc
-        assert "round seven first" not in desc
-        assert desc.count("## Adversary Findings — Round 6") == 1
-        assert desc.count("## Adversary Findings — Round 7") == 1
-
     def test_escalate_task_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
@@ -2306,10 +1782,10 @@ class TestLocalTaskManager:
     # List Tasks Additional Filter Tests
     # =========================================================================
 
-    def test_list_tasks_with_current_stage_state_list(
+    def test_list_open_tasks_includes_claimed_and_unclaimed(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Test filtering tasks by multiple current-stage states."""
+        """The open filter includes both claimed and unclaimed tasks."""
         session = session_manager.register(
             external_id="filter-ext",
             machine_id="21000000-0000-4000-8000-000000000002",
@@ -2322,14 +1798,12 @@ class TestLocalTaskManager:
         t2 = task_manager.create_task(
             project_id, "In Progress", validation_criteria=VALIDATION_CRITERIA
         )
-        _start_current_stage(task_manager, t2.id, session.id)
         task_manager.claim_task(t2.id, session.id)
         t3 = task_manager.create_task(project_id, "Closed", validation_criteria=VALIDATION_CRITERIA)
         task_manager.close_task(t3.id)
 
         tasks = task_manager.list_tasks(
             project_id=project_id,
-            current_stage_state=["ready", "in_progress"],
             closed=False,
         )
 
@@ -2337,73 +1811,6 @@ class TestLocalTaskManager:
         assert t1.id in task_ids
         assert t2.id in task_ids
         assert t3.id not in task_ids
-
-    def test_list_tasks_current_stage_state_excludes_stale_closed_task(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Current-stage filters should ignore closed tasks unless closed is explicit."""
-        session = session_manager.register(
-            external_id="stage-filter-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, open_review.id, session.id)
-        task_manager.submit_for_review(open_review.id)
-        stale_closed_review = task_manager.create_task(
-            project_id,
-            "Closed stale review",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        _start_current_stage(task_manager, stale_closed_review.id, session.id)
-        task_manager.submit_for_review(stale_closed_review.id)
-        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
-
-        tasks = task_manager.list_tasks(
-            project_id=project_id,
-            current_stage_state="needs_review",
-        )
-        task_ids = {task.id for task in tasks}
-
-        assert open_review.id in task_ids
-        assert stale_closed_review.id not in task_ids
-
-    def test_list_tasks_current_stage_state_closed_true_keeps_explicit_closed_behavior(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """The closed=True filter should still allow closed tasks with stale stage rows."""
-        session = session_manager.register(
-            external_id="stage-filter-closed-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, open_review.id, session.id)
-        task_manager.submit_for_review(open_review.id)
-        stale_closed_review = task_manager.create_task(
-            project_id,
-            "Closed stale review",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        _start_current_stage(task_manager, stale_closed_review.id, session.id)
-        task_manager.submit_for_review(stale_closed_review.id)
-        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
-
-        tasks = task_manager.list_tasks(
-            project_id=project_id,
-            current_stage_state="needs_review",
-            closed=True,
-        )
-        task_ids = {task.id for task in tasks}
-
-        assert stale_closed_review.id in task_ids
-        assert open_review.id not in task_ids
 
     def test_list_tasks_with_title_like(self, task_manager, project_id) -> None:
         """Test filtering tasks by title pattern."""
@@ -2658,47 +2065,6 @@ class TestLocalTaskManager:
         count = task_manager.count_tasks(project_id=project_id)
         assert count == 3
 
-    def test_count_tasks_by_current_stage_state(self, task_manager, project_id) -> None:
-        """Test counting tasks by current stage state."""
-        task_manager.create_task(project_id, "Open", validation_criteria=VALIDATION_CRITERIA)
-        t2 = task_manager.create_task(
-            project_id, "In Progress", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, t2.id)
-
-        assert task_manager.count_tasks(project_id=project_id, current_stage_state="ready") == 1
-        assert (
-            task_manager.count_tasks(project_id=project_id, current_stage_state="in_progress") == 1
-        )
-
-    def test_count_tasks_by_current_stage_state_excludes_stale_closed_task(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Aggregate current-stage filters should use the same open-only default."""
-        session = session_manager.register(
-            external_id="count-stage-filter-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id=project_id,
-        )
-        open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
-        )
-        _start_current_stage(task_manager, open_review.id, session.id)
-        task_manager.submit_for_review(open_review.id)
-        stale_closed_review = task_manager.create_task(
-            project_id,
-            "Closed stale review",
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-        _start_current_stage(task_manager, stale_closed_review.id, session.id)
-        task_manager.submit_for_review(stale_closed_review.id)
-        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
-
-        assert (
-            task_manager.count_tasks(project_id=project_id, current_stage_state="needs_review") == 1
-        )
-
     def test_count_tasks_empty(self, task_manager, project_id) -> None:
         """Test counting when no tasks exist."""
         count = task_manager.count_tasks(project_id=project_id)
@@ -2806,7 +2172,8 @@ class TestLocalTaskManager:
         assert brief["id"] == task.id
         assert brief["title"] == "Full Task"
         assert "status" not in brief
-        assert brief["state"]["current_stage"] is None
+        assert "current_stage" not in brief["state"]
+        assert brief["state"]["is_claimed"] is True
         assert brief["priority"] == 1
         assert brief["task_type"] == "bug"
         assert brief["parent_task_id"] is None
@@ -3113,15 +2480,6 @@ class TestCreateTaskWithDecomposition:
 @pytest.mark.integration
 class TestListTasksBranchCoverage:
     """Additional tests for branch coverage in list_tasks."""
-
-    def test_list_tasks_with_single_current_stage_state(self, task_manager, project_id) -> None:
-        """Test filtering with a single current stage state string."""
-        task_manager.create_task(project_id, "Open Task", validation_criteria=VALIDATION_CRITERIA)
-
-        tasks = task_manager.list_tasks(project_id=project_id, current_stage_state="ready")
-
-        assert len(tasks) == 1
-        _assert_stage_state(tasks[0], "ready")
 
     def test_list_tasks_with_parent_filter(self, task_manager, project_id) -> None:
         """Test filtering tasks by parent_task_id."""

@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 COMPACT_STATE_KEYS = {
-    "current_stage",
     "is_closed",
     "closed_at",
     "is_claimed",
@@ -389,67 +388,6 @@ class TestSearchTasksResults:
             func(query="alpha")
 
 
-class TestSearchTasksStageStateFilter:
-    """Tests for current-stage-state filter handling."""
-
-    def test_single_stage_state_passed_as_string(
-        self,
-        task_manager: LocalTaskManager,
-        real_project: dict[str, Any],
-    ) -> None:
-        ctx = _make_ctx(task_manager, project_id=real_project["id"])
-        # Use a mock to verify the stage state is passed as-is.
-        ctx.task_manager = MagicMock()
-        ctx.task_manager.search_tasks.return_value = []
-
-        registry = create_search_registry(ctx)
-        func = registry.get_tool("search_tasks")
-        assert func is not None
-
-        func(query="test", current_stage_state="ready")
-
-        call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["current_stage_state"] == "ready"
-
-    def test_list_stage_state_passed_through(
-        self,
-        task_manager: LocalTaskManager,
-    ) -> None:
-        ctx = _make_ctx(task_manager)
-        ctx.task_manager = MagicMock()
-        ctx.task_manager.search_tasks.return_value = []
-
-        registry = create_search_registry(ctx)
-        func = registry.get_tool("search_tasks")
-        assert func is not None
-
-        func(query="test", current_stage_state=["ready", "needs_review"])
-
-        call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["current_stage_state"] == ["ready", "needs_review"]
-
-    def test_comma_stage_state_splits_correctly(
-        self,
-        task_manager: LocalTaskManager,
-    ) -> None:
-        ctx = _make_ctx(task_manager)
-        ctx.task_manager = MagicMock()
-        ctx.task_manager.search_tasks.return_value = []
-
-        registry = create_search_registry(ctx)
-        func = registry.get_tool("search_tasks")
-        assert func is not None
-
-        func(query="test", current_stage_state="ready, in_progress, needs_review")
-
-        call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["current_stage_state"] == [
-            "ready",
-            "in_progress",
-            "needs_review",
-        ]
-
-
 class TestSearchTasksParentFilter:
     """Tests for parent_task_id resolution."""
 
@@ -529,7 +467,6 @@ class TestSearchTasksAllFilters:
 
         func(
             query="  test query  ",
-            current_stage_state="ready",
             task_type="bug",
             priority=1,
             category="code",
@@ -539,7 +476,6 @@ class TestSearchTasksAllFilters:
 
         call_kwargs = ctx.task_manager.search_tasks.call_args[1]
         assert call_kwargs["query"] == "test query"
-        assert call_kwargs["current_stage_state"] == "ready"
         assert call_kwargs["task_type"] == "bug"
         assert call_kwargs["priority"] == 1
         assert call_kwargs["category"] == "code"

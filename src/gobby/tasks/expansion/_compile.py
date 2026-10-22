@@ -182,17 +182,13 @@ async def compile_and_apply_run(
     *,
     session_id: str | None,
     auto_apply: bool = True,
-    suppress_parent_stage_transition: bool = False,
 ) -> ExpansionRun:
     """Compile a run and optionally apply it."""
     run = self.run_manager.get(run_id)
     if run is None:
         raise ValueError(f"Expansion run {run_id} not found")
     if run.compiled_spec is None:
-        run = await self.compile_run(
-            run_id,
-            suppress_parent_stage_transition=suppress_parent_stage_transition,
-        )
+        run = await self.compile_run(run_id)
     if run.compiled_spec is None and run.status == "completed":
         return cast(ExpansionRun, run)
     if auto_apply:
@@ -201,7 +197,6 @@ async def compile_and_apply_run(
             self.apply_run(
                 run.id,
                 session_id=session_id,
-                suppress_parent_stage_transition=suppress_parent_stage_transition,
             ),
         )
     return cast(ExpansionRun, run)
@@ -310,12 +305,10 @@ def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str,
     if file_context:
         research_sections.append(file_context)
 
-    enabled_stages = sorted(_manifest_stage_names(task)) if task.stages else []
     return {
         "task_id": task.id,
         "title": task.title,
         "description": task.description or "",
-        "enabled_stages": enabled_stages,
         "context_str": "\n\n".join(research_sections),
         "research_str": file_context or "No repository files were selected for context.",
     }

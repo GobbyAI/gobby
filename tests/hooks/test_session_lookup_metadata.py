@@ -721,37 +721,6 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
     session_manager.register_session.assert_not_called()
 
 
-def test_task_context_uses_stage_native_state() -> None:
-    session_manager = MagicMock()
-    session_manager.get.return_value = SimpleNamespace(
-        id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
-    )
-    session_manager.backfill_terminal_context.return_value = (None, False)
-    session_task_manager = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Stage-native task",
-        stages=[SimpleNamespace(name="implementation", state="in_progress", position=1)],
-        closed_at=None,
-        is_escalated=False,
-        active_blocked_by=[],
-    )
-    session_task_manager.get_worked_on_task.return_value = task
-    service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
-    event = _event({"_platform_session_id": "platform-session"})
-
-    service.resolve(event)
-
-    assert event.task_id == "task-1"
-    assert event.metadata["_task_id_origin"] == "session_context"
-    assert event.metadata["_task_title"] == "Stage-native task"
-    assert event.metadata["_task_context"] == {
-        "id": "task-1",
-        "title": "Stage-native task",
-        "state": "in_progress",
-    }
-
-
 def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
@@ -761,7 +730,6 @@ def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> No
     explicit_task = SimpleNamespace(
         id="task-explicit",
         title="Explicit event task",
-        stages=[],
         closed_at=None,
         is_escalated=False,
         active_blocked_by=[],

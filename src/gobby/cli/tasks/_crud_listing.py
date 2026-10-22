@@ -102,13 +102,7 @@ def list_tasks_impl(
 
     primary_ids: set[str] | None = None
     display_tasks = tasks_list
-    if (
-        ready
-        or blocked
-        or escalated
-        or claimed_filter is not None
-        or closed_filter is not None
-    ):
+    if ready or blocked or escalated or claimed_filter is not None or closed_filter is not None:
         display_tasks, primary_ids = services.collect_ancestors(tasks_list, manager)
 
     display_tasks = services.sort_tasks_for_tree(display_tasks)

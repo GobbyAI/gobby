@@ -17,4 +17,6 @@ def coerce_task_state(value: object, *, default: str = "unknown") -> str:
         return "closed"
     if value.get("is_escalated") is True:
         return "escalated"
+    if value.get("is_closed") is False and value.get("is_escalated") is False:
+        return "ready"
     return default

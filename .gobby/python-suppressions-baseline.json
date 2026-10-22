@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 175,
+  "site_count": 174,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1681,16 +1681,6 @@
         "arg-type"
       ],
       "statement": "return manager . upsert_with_steps ( name , payload , step_workflow , project_id = project_id , source = source , )"
-    },
-    {
-      "fingerprint": "74ab83df420cabc1f9fcc2ba09af017a3168da7e745d85ff41f72fbe5b547206",
-      "path": "tests/workflows/test_condition_helpers_task_state.py",
-      "symbol": "test_task_state_in_matches_current_stage_state",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "assert task_state_in ( manager , task . id , \" NEEDS_REVIEW \" , 42 ) is True"
     },
     {
       "fingerprint": "2cf35001b676f72e07c4a0e679353790afcf0755684ef85b6112127e3ff9e5de",

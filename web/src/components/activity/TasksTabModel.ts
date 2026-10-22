@@ -6,7 +6,6 @@ import {
   TASK_STATE_LABELS,
   type TaskDisplayState,
 } from "../../lib/taskState";
-import type { StageState5 } from "../../lib/stageActions";
 
 export interface TreeNode {
   id: string;
@@ -21,14 +20,11 @@ export interface VisibleTaskRow {
   isOpen: boolean;
 }
 
-export type TaskFilterKey = TaskDisplayState | "escalated" | "review_rejected";
+export type TaskFilterKey = TaskDisplayState | "escalated";
 
-export const STAGE_STATE_FILTERS: TaskFilterKey[] = [
+export const ACTIVE_STATE_FILTERS: TaskFilterKey[] = [
   "ready",
   "in_progress",
-  "needs_review",
-  "review_approved",
-  "review_rejected",
 ];
 export const STATUS_FILTERS: TaskFilterKey[] = [
   "blocked",
@@ -36,7 +32,7 @@ export const STATUS_FILTERS: TaskFilterKey[] = [
   "closed",
 ];
 export const DEFAULT_FILTERS = new Set<TaskFilterKey>([
-  ...STAGE_STATE_FILTERS,
+  ...ACTIVE_STATE_FILTERS,
   "blocked",
   "escalated",
 ]);
@@ -215,26 +211,12 @@ export function collectVisibleTaskRows(
 
 export function getTaskFilterLabel(filter: TaskFilterKey): string {
   if (filter === "escalated") return "Escalated";
-  if (filter === "review_rejected") return "Review Rejected";
   return TASK_STATE_LABELS[filter];
 }
 
 export function getTaskFilterColor(filter: TaskFilterKey): string {
   if (filter === "escalated") return "var(--color-error)";
-  if (filter === "review_rejected") return "var(--color-warning-foreground)";
   return TASK_STATE_COLORS[filter] ?? "var(--text-muted)";
-}
-
-export function getStageStateColor(state: StageState5): string {
-  return state === "done" ? TASK_STATE_COLORS.closed : TASK_STATE_COLORS[state];
-}
-
-function hasRejectedCurrentReview(task: GobbyTask): boolean {
-  const currentStage = getCanonicalTaskState(task).current_stage;
-  return (
-    currentStage?.state === "ready" &&
-    (currentStage.review_round_count ?? 0) > 0
-  );
 }
 
 export function matchesTaskFilter(
@@ -244,6 +226,5 @@ export function matchesTaskFilter(
   const state = getCanonicalTaskState(task);
   if (state.is_closed) return filters.has("closed");
   if (state.is_escalated) return filters.has("escalated");
-  if (hasRejectedCurrentReview(task)) return filters.has("review_rejected");
   return filters.has(getTaskDisplayState(task));
 }

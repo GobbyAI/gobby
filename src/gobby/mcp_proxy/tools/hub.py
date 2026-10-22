@@ -22,50 +22,18 @@ from gobby.storage.hub.protocol import HubDatabase
 __all__ = ["create_hub_registry"]
 
 
-def _current_stage_join_sql(task_alias: str = "t") -> str:
-    return f"""
-    LEFT JOIN task_stage_states current_stage
-      ON current_stage.task_id = {task_alias}.id
-     AND current_stage.state != 'done'
-     AND current_stage.position = (
-         SELECT MIN(stage_scan.position)
-           FROM task_stage_states stage_scan
-          WHERE stage_scan.task_id = {task_alias}.id
-            AND stage_scan.state != 'done'
-     )
-    """
-
-
 def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
     closed_at = row["closed_at"]
     escalated_at = row["escalated_at"]
     is_closed = bool(closed_at)
     is_escalated = not is_closed and bool(escalated_at or row["is_escalated"])
     owner_session_id = row["claimed_by_session_id"]
-    current_stage = None
-    if row["current_stage_name"]:
-        current_stage = {
-            "name": row["current_stage_name"],
-            "display_name": row["current_stage_display_name"] or row["current_stage_name"],
-            "category": row["current_stage_category"] or "",
-            "state": row["current_stage_state"],
-            "review_policy": row["current_stage_review_policy"] or "none",
-            "updated_at": row["current_stage_updated_at"],
-        }
-    stage_state = row["current_stage_state"]
-    active_stage = stage_state in {"ready", "in_progress", "needs_review", "review_approved"}
     return {
         "owner_session_id": owner_session_id,
-        "current_stage": current_stage,
-        "is_claimed": bool(
-            owner_session_id and active_stage and not is_closed and not is_escalated
-        ),
+        "is_claimed": bool(owner_session_id and not is_closed and not is_escalated),
         "is_closed": is_closed,
         "is_escalated": is_escalated,
         "is_blocked": bool(row["is_blocked"]),
-        "is_merge_ready": bool(
-            stage_state == "review_approved" and not is_closed and not is_escalated
-        ),
         "closed_at": closed_at,
         "closed_reason": row["closed_reason"],
         "closed_in_session_id": row["closed_in_session_id"],
@@ -216,7 +184,7 @@ def create_hub_registry(
         List tasks across all projects in the hub.
 
         Args:
-            state: Optional projected state filter (ready, closed, in_progress, needs_review)
+            state: Optional projected state filter (ready, closed, escalated)
             limit: Maximum number of tasks to return (default 50)
         """
         if db is None:
@@ -239,12 +207,6 @@ def create_hub_registry(
                        t.closed_at, t.closed_reason, t.closed_in_session_id,
                        t.closed_commit_sha, t.escalated_at, t.escalation_reason,
                        COALESCE(t.is_escalated, false) as is_escalated,
-                       current_stage.stage_name as current_stage_name,
-                       current_stage.state as current_stage_state,
-                       current_stage.review_policy as current_stage_review_policy,
-                       current_stage.updated_at as current_stage_updated_at,
-                       registry.display_label as current_stage_display_name,
-                       registry.category as current_stage_category,
                        EXISTS (
                            SELECT 1
                              FROM task_dependencies td
@@ -254,9 +216,6 @@ def create_hub_registry(
                               AND blocker.closed_at IS NULL
                        ) as is_blocked
                 FROM tasks t
-                {_current_stage_join_sql("t")}
-                LEFT JOIN task_stages_registry registry
-                  ON registry.name = current_stage.stage_name
                 {where_clause}
                 ORDER BY t.updated_at DESC
                 LIMIT %s

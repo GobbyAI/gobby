@@ -29,7 +29,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.agentic_close_review import build_terminal_review_payload
-from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -1904,11 +1903,6 @@ def _make_task(
     claimed_by_session_id: str | None = SESSION_ID,
 ) -> Task:
     """Create a minimal Task dataclass for reconciliation tests."""
-    stage_state = {
-        "open": "ready",
-        "closed": "done",
-        "escalated": "ready",
-    }.get(status, status)
     return Task(
         id=task_id,
         project_id="proj-1",
@@ -1921,13 +1915,6 @@ def _make_task(
         claimed_by_session_id=claimed_by_session_id,
         escalated_at=datetime(2026, 1, 2, tzinfo=UTC) if status == "escalated" else None,
         is_escalated=status == "escalated",
-        stages=(
-            {
-                "stage_name": "development",
-                "position": 0,
-                "state": stage_state,
-            },
-        ),
     )
 
 
@@ -2223,7 +2210,7 @@ class TestClaimedTaskReconciliation:
         task_manager.list_tasks.assert_called_once()
         call_kwargs = task_manager.list_tasks.call_args.kwargs
         assert call_kwargs["claimed_by_session_id"] == SESSION_ID
-        assert set(call_kwargs["current_stage_state"]) == set(ACTIVE_STAGE_STATES)
+        assert "current_stage_state" not in call_kwargs
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:
         """DB task without seq_num should use truncated UUID as ref."""

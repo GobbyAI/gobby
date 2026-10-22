@@ -38,7 +38,7 @@ def format_task_list(
     """Render a list of tasks as one compact block.
 
     Columns:
-        ``[pri][stage][flags] #id  title  #session``
+        ``[pri][state][flags] #id  title  #session``
 
     The session column is present iff at least one row has an owner. Column
     widths are computed once across all rows so the session column is a true
@@ -51,7 +51,7 @@ def format_task_list(
             ancestors. If omitted, every task is primary.
         tree_prefixes: Precomputed ``task_id -> (prefix, is_primary)`` from
             :func:`compute_tree_prefixes`. When omitted, no tree prefix is used.
-        group_by: ``"project"``, ``"stage"``, or ``None``.
+        group_by: ``"project"`` or ``None``.
         term_width: Terminal width override (for tests). Defaults to the live
             terminal size.
         db: Borrowed database handle for batch lookups.

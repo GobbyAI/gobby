@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
+from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
 from gobby.storage.tasks import Task
 
 
@@ -17,7 +17,6 @@ class ResetExpansionOutputResult:
     parent_task_id: str
     run_id: str | None
     deleted_task_ids: list[str] = field(default_factory=list)
-    reset_stage: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,30 +65,39 @@ def reset_expansion_output(
 ) -> ResetExpansionOutputResult:
     """Delete generated task output for one expansion run without touching other descendants."""
     parent = self.task_manager.get_task(parent_task_id)
-    run = _resolve_reset_run(self, parent, run_id)
-    if run is None:
-        reset_stage = _reset_parent_expansion_stage(self, parent.id, session_id=session_id)
-        self.task_manager.artifacts.set_artifact(parent.id, "expansion_run_id", None)
-        return ResetExpansionOutputResult(
-            parent_task_id=parent.id,
-            run_id=run_id,
-            deleted_task_ids=[],
-            reset_stage=reset_stage,
-        )
-
-    target_ids = _target_task_ids(self, parent, run)
-    _validate_reset_targets(self, target_ids)
-
     deleted_ids: list[str] = []
-    with self.task_manager.db.transaction():
-        for task_id in _bottom_up(self, target_ids):
+    with self.task_manager.db.transaction_immediate(
+        TaskSeqAllocation(project_id=parent.project_id)
+    ) as conn:
+        conn.acquire_additional_lock(ExpansionApplyMutation(parent_task_id=parent.id))
+        run = _resolve_reset_run(self, parent, run_id)
+        if run is None:
+            self.task_manager.artifacts.set_artifact(parent.id, "expansion_run_id", None)
+            return ResetExpansionOutputResult(
+                parent_task_id=parent.id,
+                run_id=run_id,
+                deleted_task_ids=[],
+            )
+
+        target_ids = _target_task_ids(self, parent, run)
+        ordered_ids = _bottom_up(self, target_ids)
+        # Use the same leaf-before-ancestor order as close. Hold every task
+        # and existing artifact row through validation and deletion; the task
+        # locks also fence inserts of new child/artifact rows through their FKs.
+        for task_id in ordered_ids:
+            conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
+            conn.execute(
+                "SELECT task_id FROM task_artifacts WHERE task_id = %s FOR UPDATE", (task_id,)
+            ).fetchone()
+        _validate_reset_targets(self, target_ids)
+
+        for task_id in ordered_ids:
             if self.task_manager.delete_task(task_id, unlink=True):
                 deleted_ids.append(task_id)
 
         artifacts = self.task_manager.artifacts.get_artifacts(parent.id)
         if artifacts.expansion_run_id in {None, run.id}:
             self.task_manager.artifacts.set_artifact(parent.id, "expansion_run_id", None)
-        reset_stage = _reset_parent_expansion_stage(self, parent.id, session_id=session_id)
         self.run_manager.append_log(
             run.id,
             level="info",
@@ -100,7 +108,6 @@ def reset_expansion_output(
         parent_task_id=parent.id,
         run_id=run.id,
         deleted_task_ids=deleted_ids,
-        reset_stage=reset_stage,
     )
 
 
@@ -182,6 +189,8 @@ def _validate_reset_targets(self: Any, target_ids: set[str]) -> None:
             problems.append(f"{ref} has linked commits")
         if task.closed_at:
             problems.append(f"{ref} is closed")
+        if task.is_escalated:
+            problems.append(f"{ref} is escalated")
         artifacts = self.task_manager.artifacts.get_artifacts(task.id)
         if any(
             (
@@ -192,8 +201,6 @@ def _validate_reset_targets(self: Any, target_ids: set[str]) -> None:
             )
         ):
             problems.append(f"{ref} has isolation artifacts")
-        if _has_progressed_stage_state(self, task.id):
-            problems.append(f"{ref} has progressed stage state")
         for child in children_by_parent.get(task.id, []):
             if child["id"] not in target_ids:
                 child_ref = f"#{child['seq_num']}" if child["seq_num"] else child["id"]
@@ -223,21 +230,6 @@ def _child_rows_by_parent(self: Any, parent_ids: set[str]) -> dict[str, list[Any
     return children
 
 
-def _has_progressed_stage_state(self: Any, task_id: str) -> bool:
-    for row in self.task_manager.stage_states.list_for_task(task_id):
-        if (
-            row.state != "ready"
-            or row.entered_at is not None
-            or row.completed_at is not None
-            or row.work_attempt_count
-            or row.review_round_count
-            or row.artifact_refs is not None
-            or row.notes is not None
-        ):
-            return True
-    return False
-
-
 def _bottom_up(self: Any, target_ids: set[str]) -> list[str]:
     return sorted(target_ids, key=lambda task_id: _depth(self, task_id), reverse=True)
 
@@ -250,78 +242,12 @@ def _depth(self: Any, task_id: str) -> int:
     return len(str(path_cache).split("."))
 
 
-def _reset_parent_expansion_stage(
-    self: Any,
-    parent_task_id: str,
-    *,
-    session_id: str | None,
-) -> bool:
-    row = self.task_manager.stage_states.get(parent_task_id, "expansion")
-    if row is None:
-        return False
-    now = datetime.now(UTC).isoformat()
-    holder = session_id or "system"
-    with self.db.transaction() as conn:
-        conn.execute(
-            """
-            UPDATE task_stage_states
-               SET state = 'ready',
-                   entered_at = NULL,
-                   entered_by_session_id = NULL,
-                   completed_at = NULL,
-                   completed_by_session_id = NULL,
-                   completed_commit_sha = NULL,
-                   work_attempt_count = 0,
-                   review_round_count = 0,
-                   artifact_refs = NULL,
-                   notes = NULL,
-                   updated_at = %s
-             WHERE task_id = %s AND stage_name = 'expansion'
-            """,
-            (now, parent_task_id),
-        )
-        self.task_manager.lifecycle_events.record_lifecycle_event(
-            parent_task_id,
-            f"expansion:{row.state}",
-            "expansion:ready",
-            "reset_expansion_output",
-            by_actor=holder,
-        )
-    return True
-
-
-def complete_parent_expansion_stage_if_current(
-    self: Any,
-    parent_task_id: str,
-    *,
-    session_id: str | None,
-) -> bool:
-    """Complete the parent expansion stage only when it is the active current stage."""
-    row = self.task_manager.stage_states.get(parent_task_id, "expansion")
-    if row is None or row.state == "done":
-        return False
-    current = self.task_manager.stage_states.current_stage(parent_task_id)
-    if current is None or current.stage_name != "expansion":
-        return False
-    if row.state not in {"in_progress", "review_approved"}:
-        return False
-    override = "expansion_apply_completed" if row.state == "in_progress" else None
-    self.task_manager.stage_states.complete_stage(
-        parent_task_id,
-        "expansion",
-        by_session_id=session_id,
-        validation_override_reason=override,
-    )
-    return True
-
-
 def _task_ref(task: Task) -> str:
     return f"#{task.seq_num}" if task.seq_num is not None else task.id
 
 
 __all__ = [
     "ResetExpansionOutputResult",
-    "complete_parent_expansion_stage_if_current",
     "find_apply_blocking_expansion_output",
     "find_existing_expansion_output",
     "reset_expansion_output",

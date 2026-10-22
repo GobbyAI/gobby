@@ -14,7 +14,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -120,14 +119,12 @@ async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
 @pytest.mark.parametrize(
     "binding", ["rebound", "same", "unbound", "rebind-during-kill", "reclaim-during-kill"]
 )
-@pytest.mark.parametrize("in_progress", [False, True], ids=["ready-stage", "running-stage"])
 async def test_restarted_recovery_preserves_rebound_session_claim(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     taskless: bool,
     status: str,
     binding: str,
-    in_progress: bool,
 ) -> None:
     sessions = SessionManager(temp_db)
     session = sessions.register(
@@ -152,11 +149,6 @@ async def test_restarted_recovery_preserves_rebound_session_claim(
         sample_project["id"], "Live seat claim", validation_criteria="Claim survives restart."
     )
     tasks.claim_task(task.id, session.id)
-    tasks.stage_states.initialize_manifest(
-        task.id, [StageManifestSpec(stage_name="development", position=0)], by_session_id=session.id
-    )
-    if in_progress:
-        tasks.stage_states.start_stage(task.id, "development", by_session_id=session.id)
     if binding == "rebound":
         sessions.update_terminal_pickup_metadata(session.id, agent_run_id=new_id)
     mutexes = TaskDispatchMutexManager(temp_db)
@@ -208,13 +200,6 @@ async def test_restarted_recovery_preserves_rebound_session_claim(
         else session.id
     )
     assert tasks.get_task(task.id).claimed_by_session_id == expected_owner
-    stage = tasks.stage_states.get(task.id, "development")
-    assert stage is not None
-    stage_failed = owns_recovery and status == "error"
-    assert stage.state == ("in_progress" if in_progress and not stage_failed else "ready")
-    assert tasks.get_task(task.id).dispatch_failure_count == (
-        1 if in_progress and stage_failed else 0
-    )
     assert (mutexes.get_mutex(task.id) is None) == owns_recovery
     if owns_recovery:
         assert task.id not in variables.get_variables(session.id)["claimed_tasks"]

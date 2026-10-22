@@ -115,7 +115,6 @@ def test_expires_at_contract(
                 lifecycle_status=session.status,
                 task_id=None,
                 task_ref=None,
-                task_stage=None,
                 provider=session.source,
                 model=session.model,
                 pid=None,

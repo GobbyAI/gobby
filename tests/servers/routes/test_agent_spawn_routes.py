@@ -24,7 +24,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._title_defaults import format_provisional_session_title
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_resolver import AgentResolutionError
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -99,12 +98,6 @@ def _create_task(task_manager: LocalTaskManager, project_id: str, title: str = "
         project_id=project_id,
         validation_criteria="Test task completion is observable.",
     )
-
-
-def _submit_for_development_review(task_manager: LocalTaskManager, task_id: str) -> None:
-    task_manager.initialize_task_manifest(task_id)
-    task_manager.stage_states.start_stage(task_id, "development", by_session_id=None)
-    task_manager.submit_for_review(task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -396,28 +389,6 @@ class TestSpawnAgent:
         assert conversation.title == f"{test_project.name}#{conversation.seq_num}: Claude"
         assert conversation.title_source == "provisional"
 
-    def test_spawn_web_chat_preserves_review_status(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
-    ) -> None:
-        """Web chat spawn on needs_review should set claimed_by_session_id without regressing status."""
-        task = _create_task(task_manager, test_project.id, "Review task")
-        _submit_for_development_review(task_manager, task.id)
-
-        with patch(
-            "gobby.utils.project_context.get_project_context",
-            return_value={"id": test_project.id},
-        ):
-            response = client.post(
-                "/api/agents/spawn",
-                json={"task_id": task.id, "web_chat": True},
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        updated = task_manager.get_task(task.id)
-        assert current_stage_state(updated) == "needs_review"
-        assert updated.claimed_by_session_id == data["conversation_id"]
-
     def test_spawn_web_chat_does_not_steal_claimed_review_task(
         self,
         client: TestClient,
@@ -433,7 +404,6 @@ class TestSpawnAgent:
             project_id=test_project.id,
         )
         task = _create_task(task_manager, test_project.id, "Claimed review task")
-        _submit_for_development_review(task_manager, task.id)
         task_manager.claim_task(task.id, existing_owner.id)
 
         with patch(
@@ -447,7 +417,6 @@ class TestSpawnAgent:
 
         assert response.status_code == 200
         updated = task_manager.get_task(task.id)
-        assert current_stage_state(updated) == "needs_review"
         assert updated.claimed_by_session_id == existing_owner.id
 
     @pytest.mark.parametrize("batch", [False, True])

@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -72,17 +72,11 @@ def _memory_terminal_services(*terminal_ids: str) -> TerminalServices:
     )
 
 
-def _stage(state: str) -> dict[str, object]:
-    return {"name": "development", "state": state, "position": 0}
-
-
 def _task(
     *,
     task_id: str = "task-123",
     owner: str | None = "owner-1",
-    stage_state: str = "in_progress",
     seq_num: int | None = 5,
-    dispatch_failure_count: int = 0,
     closed_at: datetime | None = None,
 ) -> Task:
     return Task(
@@ -96,8 +90,6 @@ def _task(
         claimed_by_session_id=owner,
         closed_at=closed_at,
         seq_num=seq_num,
-        dispatch_failure_count=dispatch_failure_count,
-        stages=(_stage(stage_state),),
     )
 
 
@@ -156,10 +148,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_task_mgr.get_task.assert_called_with("task-123")
         assert mock_task_mgr.get_task.call_count == 3
         assert mock_task_mgr.get_task.call_args is not None
-        # Provider error: dispatch_failure_count unchanged (stays at 0)
-        mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-123", dispatch_failure_count=0
-        )
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-123")
         assert mock_task_mgr.release_task_claim.call_count == 1
         assert mock_task_mgr.release_task_claim.call_args is not None
 
@@ -221,10 +210,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_task_mgr.get_task.assert_called_with("task-fallback")
         assert mock_task_mgr.get_task.call_count == 3
         assert mock_task_mgr.get_task.call_args is not None
-        # Non-provider error: dispatch_failure_count incremented from 0 to 1
-        mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-fallback", dispatch_failure_count=1
-        )
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-fallback")
         assert mock_task_mgr.release_task_claim.call_count == 1
         assert mock_task_mgr.release_task_claim.call_args is not None
 
@@ -260,7 +246,6 @@ class TestRecoverTaskFromFailedAgent:
         mock_task = _task(
             task_id="task-review",
             owner="reviewer-1",
-            stage_state="needs_review",
             seq_num=22,
         )
         mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
@@ -323,110 +308,6 @@ class TestRecoverTaskFromFailedAgent:
         mock_task_mgr.release_task_claim.assert_not_called()
         assert mock_task_mgr.release_task_claim.call_count == 0
         assert not mock_task_mgr.release_task_claim.called
-
-    @pytest.mark.asyncio
-    async def test_recover_task_escalates_after_three_failures(self) -> None:
-        """Task set to 'escalated' after 3 non-provider failures, counter reset."""
-        mock_run_mgr = MagicMock()
-        mock_task_mgr = MagicMock()
-        mock_stall = MagicMock()
-
-        monitor = AgentLifecycleMonitor(
-            detection_registry=DETECTION_REGISTRY,
-            agent_run_manager=mock_run_mgr,
-            db=MagicMock(),
-            task_manager=mock_task_mgr,
-        )
-        _use_stall_classifier(monitor, mock_stall)
-
-        db_run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            child_session_id="owner-1",
-            task_id="task-1",
-            provider="claude",
-            prompt="p",
-            status="error",
-            error="agent crashed",
-            created_at=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
-        )
-        mock_run_mgr.get.return_value = db_run
-
-        mock_task = _task(
-            task_id="task-1",
-            owner="owner-1",
-            seq_num=10,
-            dispatch_failure_count=2,
-        )
-        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
-        cursor = (
-            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
-        )
-        cursor.rowcount = 1
-        mock_task_mgr.get_task.return_value = mock_task
-        mock_stall.is_provider_error.return_value = False
-
-        await monitor._recover_task_from_failed_agent("run-1")
-
-        mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-1",
-            dispatch_failure_count=0,
-            escalated_at=ANY,
-            escalation_reason="Failed 3 dispatch attempts",
-        )
-        assert mock_task_mgr.release_task_claim.call_count == 1
-        assert mock_task_mgr.release_task_claim.call_args is not None
-
-    @pytest.mark.asyncio
-    async def test_recover_task_provider_error_not_counted(self) -> None:
-        """Provider errors don't increment dispatch_failure_count."""
-        mock_run_mgr = MagicMock()
-        mock_task_mgr = MagicMock()
-        mock_stall = MagicMock()
-
-        monitor = AgentLifecycleMonitor(
-            detection_registry=DETECTION_REGISTRY,
-            agent_run_manager=mock_run_mgr,
-            db=MagicMock(),
-            task_manager=mock_task_mgr,
-        )
-        _use_stall_classifier(monitor, mock_stall)
-
-        db_run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            child_session_id="owner-1",
-            task_id="task-1",
-            provider="claude",
-            prompt="p",
-            status="error",
-            error="rate limit exceeded",
-            created_at=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
-        )
-        mock_run_mgr.get.return_value = db_run
-
-        mock_task = _task(
-            task_id="task-1",
-            owner="owner-1",
-            seq_num=10,
-            dispatch_failure_count=2,
-        )
-        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
-        cursor = (
-            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
-        )
-        cursor.rowcount = 1
-        mock_task_mgr.get_task.return_value = mock_task
-        mock_stall.is_provider_error.return_value = True  # Provider error
-
-        await monitor._recover_task_from_failed_agent("run-1")
-
-        # Should NOT block — provider errors are excluded
-        mock_task_mgr.release_task_claim.assert_called_once_with("task-1", dispatch_failure_count=2)
-        assert mock_task_mgr.release_task_claim.call_count == 1
-        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_ignores_persisted_claimed_session_when_child_missing(
@@ -1170,96 +1051,6 @@ class TestPeriodicAgentTerminalEnter:
         assert runtime.write_log == []
 
 
-class TestDispatchFailureCountCRUD:
-    """Tests for dispatch_failure_count in task CRUD operations."""
-
-    def test_task_has_dispatch_failure_count_field(self) -> None:
-        """Task dataclass includes dispatch_failure_count defaulting to 0."""
-
-        task = Task(
-            id="t-1",
-            project_id="p-1",
-            title="test",
-            priority=2,
-            task_type="task",
-            created_at=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
-            stages=(_stage("ready"),),
-        )
-        assert task.dispatch_failure_count == 0
-
-    def test_dispatch_failure_count_in_to_dict(self) -> None:
-        """dispatch_failure_count appears in to_dict output."""
-
-        task = Task(
-            id="t-1",
-            project_id="p-1",
-            title="test",
-            priority=2,
-            task_type="task",
-            created_at=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
-            dispatch_failure_count=3,
-            stages=(_stage("ready"),),
-        )
-        d = task.to_dict()
-        assert d["dispatch_failure_count"] == 3
-
-    def test_dispatch_failure_count_in_to_brief(self) -> None:
-        """dispatch_failure_count appears in to_brief output."""
-
-        task = Task(
-            id="t-1",
-            project_id="p-1",
-            title="test",
-            priority=2,
-            task_type="task",
-            created_at=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
-            dispatch_failure_count=3,
-            escalated_at=datetime(2024, 1, 2, tzinfo=UTC),
-            escalation_reason="manual review",
-            stages=(_stage("ready"),),
-        )
-        brief = task.to_brief()
-        assert brief["dispatch_failure_count"] == 3
-
-    def test_update_task_sets_dispatch_failure_count(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        """update_task can set dispatch_failure_count."""
-
-        mgr = LocalTaskManager(temp_db)
-        task = mgr.create_task(
-            title="test",
-            task_type="task",
-            project_id=sample_project["id"],
-            validation_criteria="Dispatch failure count can be updated.",
-        )
-        updated = mgr.update_task(task.id, dispatch_failure_count=2)
-        assert updated.dispatch_failure_count == 2
-
-    def test_reopen_resets_dispatch_failure_count(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        """Reopening a task resets dispatch_failure_count to 0."""
-
-        mgr = LocalTaskManager(temp_db)
-        task = mgr.create_task(
-            title="test",
-            task_type="task",
-            project_id=sample_project["id"],
-            validation_criteria="Reopening resets the dispatch failure count.",
-        )
-        # Set failure count and move out of open state
-        mgr.update_task(task.id, dispatch_failure_count=3)
-        mgr.escalate_task(task.id, reason="dispatch failures")
-        # Reopen
-        mgr.reopen_task(task.id)
-        reopened = mgr.get_task(task.id)
-        assert reopened.dispatch_failure_count == 0
-
-
 class TestTerminalizeCancelledRun:
     """Tests for terminalize_cancelled_run."""
 
@@ -1267,7 +1058,6 @@ class TestTerminalizeCancelledRun:
     async def test_reopens_in_progress_task_and_notifies(self) -> None:
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
-        mock_task_mgr.stage_states.get.return_value = None
         mock_completion_registry = MagicMock()
         mock_completion_registry.notify = AsyncMock()
         mock_session_mgr = MagicMock()
@@ -1289,7 +1079,6 @@ class TestTerminalizeCancelledRun:
         task = _task(
             task_id="task-1",
             owner="child-1",
-            stage_state="in_progress",
             seq_num=42,
         )
         mock_task_mgr.db.fetchone.return_value = {"agent_run_id": run.id}
@@ -1362,7 +1151,6 @@ class TestTerminalizeCancelledRun:
         task = _task(
             task_id="task-review",
             owner="child-1",
-            stage_state="needs_review",
             seq_num=7,
         )
         mock_task_mgr.db.fetchone.return_value = {"agent_run_id": run.id}
@@ -1414,8 +1202,6 @@ class TestTerminalizeCancelledRun:
             category="code",
             validation_criteria="Test task completion is observable.",
         )
-        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
-        task_manager.stage_states.start_stage(task.id, "development", by_session_id=child.id)
         claimed = task_manager.claim_task(task.id, child.id)
 
         session_vars = SessionVariableManager(temp_db)
@@ -1500,8 +1286,6 @@ class TestTerminalizeCancelledRun:
             category="code",
             validation_criteria="Test task completion is observable.",
         )
-        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
-        task_manager.stage_states.start_stage(task.id, "development", by_session_id=old_child.id)
         claimed = task_manager.claim_task(task.id, replacement.id)
 
         session_vars = SessionVariableManager(temp_db)

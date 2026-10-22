@@ -8,27 +8,15 @@ const taskDetailPillClassName =
   "inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]";
 
 /**
- * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits,
+ * D5 §5 — collapsed-by-default Trace: timestamps, commits,
  * and close provenance. "Path" is intentionally cut. Escalation is handled
  * by the panel and only rendered when the task is escalated.
  */
 export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
   const labels = task.labels?.filter(Boolean) ?? [];
   const commits = task.commits?.filter(Boolean) ?? [];
-  const checkout_mode =
-    task.checkout_mode && task.checkout_mode !== "none"
-      ? task.checkout_mode
-      : null;
-  const dispatchFailures = task.dispatch_failure_count ?? 0;
-  const showAutomationRow =
-    Boolean(task.allow_automation) ||
-    Boolean(task.yolo) ||
-    checkout_mode !== null ||
-    dispatchFailures > 0;
-
   const hasTrace =
     labels.length > 0 ||
-    showAutomationRow ||
     commits.length > 0 ||
     Boolean(task.closed_commit_sha) ||
     Boolean(task.closed_reason) ||
@@ -63,53 +51,6 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
                   {l}
                 </span>
               ))}
-            </div>
-          </MetaKVRow>
-        )}
-        {showAutomationRow && (
-          <MetaKVRow label="Automation">
-            <div className="flex flex-wrap gap-[0.4rem]">
-              {task.allow_automation && (
-                <span
-                  className={taskDetailPillClassName}
-                  title="Dispatcher is allowed to drive this task"
-                >
-                  Dispatch on
-                </span>
-              )}
-              {checkout_mode && (
-                <span
-                  className={cn(
-                    taskDetailPillClassName,
-                    "font-mono tracking-normal",
-                  )}
-                  title="Checkout mode for automated work"
-                >
-                  {checkout_mode}
-                </span>
-              )}
-              {task.yolo && (
-                <span
-                  className={cn(
-                    taskDetailPillClassName,
-                    "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] font-semibold text-accent",
-                  )}
-                  title="Dispatcher uses fallback choices instead of escalating"
-                >
-                  YOLO
-                </span>
-              )}
-              {dispatchFailures > 0 && (
-                <span
-                  className={cn(
-                    taskDetailPillClassName,
-                    "border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_10%,transparent)] text-[var(--color-warning-foreground)] [&_strong]:text-[var(--color-warning-foreground)]",
-                  )}
-                  title="Consecutive dispatcher failures"
-                >
-                  <strong>{dispatchFailures}</strong> dispatch fails
-                </span>
-              )}
             </div>
           </MetaKVRow>
         )}

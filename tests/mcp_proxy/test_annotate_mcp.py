@@ -221,7 +221,7 @@ def test_managed_annotation_template_proxy_and_restart(
     details = task_call("get_task", {"task_id": standalone["id"], "brief": False})
     assert details.get("parent_task_id") is None
     assert not details["state"]["is_claimed"]
-    assert not details["state"]["allow_automation"]
+    assert "allow_automation" not in details["state"]
     assert "annotate-revision:1" in details["labels"]
     assert "annotate-revision:2" not in details["labels"]
 

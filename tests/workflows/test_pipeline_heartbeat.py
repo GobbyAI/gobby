@@ -402,9 +402,8 @@ def _create_in_progress_task(
     task_manager: LocalTaskManager,
     project_id: str = PROJECT_ID,
     claimed_by_session_id: str = DEAD_AGENT_SESSION_ID,
-    max_work_attempts: int | None = None,
 ) -> str:
-    """Create a task with an in-progress current stage and an owner."""
+    """Create an open task with an owner."""
     _seed_session(task_manager.db, claimed_by_session_id)
     task = task_manager.create_task(
         title="Test stale task",
@@ -416,23 +415,6 @@ def _create_in_progress_task(
         "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (claimed_by_session_id, task.id),
     )
-    task_manager.initialize_task_manifest(task.id)
-    current_stage = task_manager.stage_states.current_stage(task.id)
-    assert current_stage is not None
-    task_manager.stage_states.start_stage(
-        task.id,
-        current_stage.stage_name,
-        by_session_id=None,
-    )
-    if max_work_attempts is not None:
-        task_manager.db.execute(
-            """
-            UPDATE task_stage_states
-               SET max_work_attempts = %s
-             WHERE task_id = %s AND stage_name = %s
-            """,
-            (max_work_attempts, task.id, current_stage.stage_name),
-        )
     return task.id
 
 
@@ -550,22 +532,19 @@ async def test_stale_task_recovery_respects_concurrent_dispatch_mutex(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
-    stage = task_manager.stage_states.current_stage(task_id)
-    assert stage is not None
-    assert stage.state == "in_progress"
 
     assert mutexes.release_mutex(task_id, holder)
     assert (await heartbeat_with_tasks.check_stale_tasks()).recovered == 1
 
 
 @pytest.mark.asyncio
-async def test_stale_task_recovery_rolls_back_stage_when_claim_release_fails(
+async def test_stale_task_recovery_preserves_owner_when_claim_release_fails(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stage recovery and claim release commit atomically."""
+    """A failed claim release leaves the existing owner in place."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager)
 
@@ -579,19 +558,16 @@ async def test_stale_task_recovery_rolls_back_stage_when_claim_release_fails(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
-    stage = task_manager.stage_states.current_stage(task_id)
-    assert stage is not None
-    assert stage.state == "in_progress"
 
 
 @pytest.mark.asyncio
-async def test_stale_task_with_commits_promoted_to_needs_review(
+async def test_stale_task_with_commits_releases_claim_and_preserves_commits(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
 ) -> None:
-    """In-progress task with linked commits but no live agent moves to review."""
+    """A stale claim is released without changing its linked commits."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager)
 
@@ -621,53 +597,9 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "needs_review"
+    assert projected_task_state(task) == "ready"
+    assert task.commits == ["abc123de"]
     assert task.claimed_by_session_id is None
-    assert task.claimed_by_session_id is None
-
-
-@pytest.mark.asyncio
-async def test_stale_review_task_releases_claim_without_status_regression(
-    heartbeat_with_tasks: PipelineHeartbeat,
-    task_manager: LocalTaskManager,
-    temp_db: HubDatabase,
-) -> None:
-    """needs_review task with dead claimed_by_session_id should only clear ownership."""
-    _seed_db(temp_db)
-    task = task_manager.create_task(
-        title="Review me",
-        task_type="task",
-        project_id=PROJECT_ID,
-        validation_criteria="Test task completion is observable.",
-    )
-    stale_session_id = STALE_REVIEW_SESSION_ID
-    _seed_session(task_manager.db, stale_session_id)
-    task_manager.db.execute(
-        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
-        (stale_session_id, task.id),
-    )
-    task_manager.initialize_task_manifest(task.id)
-    current_stage = task_manager.stage_states.current_stage(task.id)
-    assert current_stage is not None
-    task_manager.stage_states.start_stage(
-        task.id,
-        current_stage.stage_name,
-        by_session_id=None,
-    )
-    task_manager.stage_states.submit_for_review(
-        task.id,
-        current_stage.stage_name,
-        by_session_id=None,
-    )
-
-    result = await heartbeat_with_tasks.check_stale_tasks()
-    assert result.recovered == 1
-
-    updated = task_manager.get_task(task.id)
-    assert updated is not None
-    assert projected_task_state(updated) == "needs_review"
-    assert updated.claimed_by_session_id is None
-    assert updated.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -695,7 +627,8 @@ async def test_task_with_active_agent_run_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "in_progress"
+    assert projected_task_state(task) == "ready"
+    assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
 
 
 @pytest.mark.asyncio
@@ -726,7 +659,7 @@ async def test_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "in_progress"
+    assert projected_task_state(task) == "ready"
     assert task.claimed_by_session_id == SESSION_ID
 
 
@@ -753,7 +686,7 @@ async def test_protected_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "in_progress"
+    assert projected_task_state(task) == "ready"
     assert task.claimed_by_session_id == SESSION_ID
 
 
@@ -770,7 +703,6 @@ async def test_expired_session_task_recovered(
     task_id = _create_in_progress_task(
         task_manager,
         claimed_by_session_id=SESSION_ID,
-        max_work_attempts=1,
     )
 
     result = await heartbeat_with_tasks.check_stale_tasks()
@@ -782,9 +714,6 @@ async def test_expired_session_task_recovered(
     assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
-    stage = task_manager.stage_states.get(task_id, "development")
-    assert stage is not None
-    assert stage.work_attempt_count == 0
 
 
 @pytest.mark.asyncio
@@ -830,7 +759,7 @@ async def test_paused_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "in_progress"
+    assert projected_task_state(task) == "ready"
     assert task.claimed_by_session_id == SESSION_ID
 
 

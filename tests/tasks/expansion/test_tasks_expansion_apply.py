@@ -14,6 +14,7 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.postgres_pool import _PostgresTransaction
 from gobby.storage.hub.protocol import Cursor, HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
@@ -116,22 +117,13 @@ def _save_run(
     return run
 
 
-def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project) -> None:
+def test_contract_apply_records_generated_ids_and_artifacts(temp_db, sample_project) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
         validation_criteria="Test task completion is observable.",
-    )
-    service.task_manager.initialize_task_manifest(
-        parent.id,
-        stage_names=["development", "epic_qa", "pr", "merge"],
-        stage_caps=[
-            {"stage_name": "development", "max_review_rounds": 3},
-            {"stage_name": "epic_qa", "max_review_rounds": 4},
-            {"stage_name": "pr", "max_work_attempts": 2},
-        ],
     )
     spec = {
         "version": 1,
@@ -176,19 +168,6 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
     leaf_id = applied.task_id_map["leaf-1"]
     assert phase_epic_id in applied.created_task_ids
     assert leaf_id in applied.created_task_ids
-    phase_rows = service.task_manager.stage_states.list_for_task(phase_epic_id)
-    leaf_rows = service.task_manager.stage_states.list_for_task(leaf_id)
-    assert [row.stage_name for row in phase_rows] == [
-        "development",
-        "epic_qa",
-        "pr",
-        "merge",
-    ]
-    assert [row.stage_name for row in leaf_rows] == ["development", "pr", "merge"]
-    assert phase_rows[0].max_review_rounds == 3
-    assert phase_rows[1].max_review_rounds == 4
-    assert leaf_rows[0].max_review_rounds == 3
-    assert leaf_rows[1].max_work_attempts == 2
     leaf = service.task_manager.get_task(leaf_id)
     assert f"expansion-run:{run.id}" in (leaf.labels or [])
     assert service.task_manager.artifacts.get_artifacts(parent.id).expansion_run_id == run.id
@@ -280,114 +259,6 @@ def test_contract_apply_creates_placeholder_deferral_tasks(
     assert deferral_blockers == {leaf_id}
 
 
-def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(
-    temp_db,
-    sample_project,
-) -> None:
-    service = _service(temp_db)
-    parent = service.task_manager.create_task(
-        project_id=sample_project["id"],
-        title="No stages parent",
-        task_type="epic",
-        validation_criteria="Test task completion is observable.",
-    )
-    spec = {
-        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [
-            {
-                "id": "leaf",
-                "phase_id": "phase-1",
-                "title": "Leaf",
-                "category": "code",
-                "validation": "Test task completion is observable.",
-            }
-        ],
-        "dependencies": [],
-    }
-    run = _save_run(service, parent, sample_project, spec)
-
-    applied = service.apply_run(run.id, session_id=None)
-
-    assert applied.status == "completed"
-    assert service.task_manager.stage_states.list_for_task(parent.id) == []
-    assert service.task_manager.stage_states.list_for_task(applied.task_id_map["leaf"]) == []
-
-
-def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> None:
-    service = _service(temp_db)
-    parent = service.task_manager.create_task(
-        project_id=sample_project["id"],
-        title="Expansion stage parent",
-        task_type="epic",
-        validation_criteria="Test task completion is observable.",
-    )
-    service.task_manager.initialize_task_manifest(
-        parent.id,
-        stage_names=["expansion", "development"],
-    )
-    service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
-    spec = {
-        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [
-            {
-                "id": "leaf",
-                "phase_id": "phase-1",
-                "title": "Leaf",
-                "category": "code",
-                "validation": "Test task completion is observable.",
-            }
-        ],
-        "dependencies": [],
-    }
-    run = _save_run(service, parent, sample_project, spec)
-
-    service.apply_run(run.id, session_id=None)
-
-    row = service.task_manager.stage_states.get(parent.id, "expansion")
-    assert row is not None
-    assert row.state == "done"
-
-
-def test_apply_can_suppress_parent_expansion_stage_transition(temp_db, sample_project) -> None:
-    service = _service(temp_db)
-    parent = service.task_manager.create_task(
-        project_id=sample_project["id"],
-        title="Pipeline-owned expansion parent",
-        task_type="epic",
-        validation_criteria="Test task completion is observable.",
-    )
-    service.task_manager.initialize_task_manifest(
-        parent.id,
-        stage_names=["expansion", "development"],
-    )
-    service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
-    spec = {
-        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [
-            {
-                "id": "leaf",
-                "phase_id": "phase-1",
-                "title": "Leaf",
-                "category": "code",
-                "validation": "Test task completion is observable.",
-            }
-        ],
-        "dependencies": [],
-    }
-    run = _save_run(service, parent, sample_project, spec)
-
-    applied = service.apply_run(
-        run.id,
-        session_id=None,
-        suppress_parent_stage_transition=True,
-    )
-
-    row = service.task_manager.stage_states.get(parent.id, "expansion")
-    assert row is not None
-    assert row.state == "in_progress"
-    assert applied.task_id_map["leaf"] in applied.created_task_ids
-
-
 def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
@@ -395,10 +266,6 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
         title="Reset parent",
         task_type="epic",
         validation_criteria="Test task completion is observable.",
-    )
-    service.task_manager.initialize_task_manifest(
-        parent.id,
-        stage_names=["expansion", "development"],
     )
     unrelated = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -429,7 +296,6 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
     assert set(result.deleted_task_ids) == set(applied.created_task_ids)
     assert service.task_manager.get_task(unrelated.id).id == unrelated.id
     assert service.task_manager.artifacts.get_artifacts(parent.id).expansion_run_id is None
-    assert service.task_manager.stage_states.get(parent.id, "expansion").state == "ready"
 
 
 def test_reset_rolls_back_all_deletions_when_one_fails(temp_db, sample_project) -> None:
@@ -534,7 +400,12 @@ def test_reset_discovers_historical_phase_ancestor(temp_db, sample_project) -> N
     assert set(result.deleted_task_ids) == {leaf.id, phase.id}
 
 
-def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> None:
+@pytest.mark.parametrize("protected_state", ["claimed", "closed", "linked commits"])
+def test_reset_preserves_started_generated_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    protected_state: str,
+) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -550,8 +421,18 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         category="code",
         validation_criteria="Test task completion is observable.",
     )
-    service.task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
-    service.task_manager.stage_states.start_stage(leaf.id, "development", by_session_id=None)
+    if protected_state == "claimed":
+        session = SessionManager(temp_db).register(
+            external_id="reset-protected-owner",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        service.task_manager.claim_task(leaf.id, session.id)
+    elif protected_state == "closed":
+        service.task_manager.close_task(leaf.id, force=True)
+    else:
+        temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", ('["abc123"]', leaf.id))
     run = service.run_manager.create(
         parent_task_id=parent.id,
         project_id=sample_project["id"],
@@ -568,8 +449,9 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         created_task_ids=[leaf.id],
     )
 
-    with pytest.raises(ValueError, match="progressed stage state"):
+    with pytest.raises(ValueError, match=protected_state):
         service.reset_expansion_output(parent.id, run_id=run.id)
+    assert service.task_manager.get_task(leaf.id).id == leaf.id
 
 
 def test_apply_refuses_duplicate_output_without_reset(temp_db, sample_project) -> None:

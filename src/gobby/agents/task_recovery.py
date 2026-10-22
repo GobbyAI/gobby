@@ -80,7 +80,6 @@ class _Task(Protocol):
     def seq_num(self) -> int | None: ...
 
 
-
 class TaskRecoveryHandler:
     """Handles task ownership recovery for failed or cancelled agent runs."""
 

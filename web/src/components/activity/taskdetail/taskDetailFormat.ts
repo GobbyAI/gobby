@@ -42,7 +42,7 @@ export function stageVariant(
   if (isEscalated) return "escalated";
   if (displayState === "blocked") return "blocked";
   if (displayState === "closed") return "closed";
-  if (displayState === "in_progress" || displayState === "review_approved") {
+  if (displayState === "in_progress") {
     return "active";
   }
   return "default";
@@ -56,7 +56,6 @@ export function stageLabel(
 ): string {
   if (isEscalated) return "Escalated";
   if (taskState.is_closed) return "Closed";
-  if (taskState.current_stage) return taskState.current_stage.display_name;
   if (task.expansion_status === "in_progress") return "Expanding";
   return TASK_STATE_LABELS[displayState];
 }

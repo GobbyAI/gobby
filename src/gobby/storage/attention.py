@@ -175,7 +175,6 @@ class AttentionRosterRow:
     lifecycle_status: str
     task_id: str | None
     task_ref: str | None
-    task_stage: str | None
     provider: str
     model: str | None
     pid: int | None
@@ -217,7 +216,6 @@ class AttentionRosterRow:
             lifecycle_status=str(row["lifecycle_status"]),
             task_id=str(row["task_id"]) if row.get("task_id") is not None else None,
             task_ref=str(row["task_ref"]) if row.get("task_ref") is not None else None,
-            task_stage=(str(row["task_stage"]) if row.get("task_stage") is not None else None),
             provider=str(row["provider"]),
             model=str(row["model"]) if row.get("model") is not None else None,
             pid=int(row["pid"]) if row.get("pid") is not None else None,
@@ -313,7 +311,6 @@ class AttentionStateManager:
                     WHEN task.seq_num IS NOT NULL THEN '#' || task.seq_num::text
                     ELSE LEFT(task.id::text, 8)
                 END AS task_ref,
-                current_stage.stage_name AS task_stage,
                 run.provider,
                 run.model,
                 run.pid,
@@ -341,13 +338,6 @@ class AttentionStateManager:
             LEFT JOIN sessions parent ON parent.id = run.parent_session_id
             LEFT JOIN session_variables seat ON seat.session_id = child.id
             LEFT JOIN tasks task ON task.id = run.task_id
-            LEFT JOIN LATERAL (
-                SELECT stage.stage_name
-                FROM task_stage_states stage
-                WHERE stage.task_id = task.id AND stage.state != 'done'
-                ORDER BY stage.position
-                LIMIT 1
-            ) current_stage ON TRUE
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
             WHERE run.status IN ('queued', 'running', 'pending')
 
@@ -364,7 +354,6 @@ class AttentionStateManager:
                     WHEN claimed.seq_num IS NOT NULL THEN '#' || claimed.seq_num::text
                     ELSE LEFT(claimed.id::text, 8)
                 END AS task_ref,
-                NULL::text AS task_stage,
                 session.source AS provider,
                 session.model,
                 NULL::bigint AS pid,

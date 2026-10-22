@@ -1,18 +1,41 @@
-import type {
-  LifecycleTask,
-  ReviewPolicy,
-  StageState5,
-  StageStateView,
-} from "../lib/stageActions";
 import type { CanonicalTaskState, OwnerSessionRef } from "../lib/taskState";
 
-export type {
-  LifecycleTask,
-  OwnerSessionRef,
-  ReviewPolicy,
-  StageState5,
-  StageStateView,
-};
+export type { OwnerSessionRef };
+
+export interface LifecycleTask {
+  id: string;
+  title: string;
+  task_type: string;
+  state?: {
+    owner_session_id?: string | null;
+    owner_session_ref?: unknown | null;
+    is_claimed?: boolean;
+    is_closed?: boolean;
+    is_escalated?: boolean;
+    is_blocked?: boolean;
+    blocked_reason?: string | null;
+    closed_at?: string | null;
+    closed_reason?: string | null;
+    closed_in_session_id?: string | null;
+    closed_commit_sha?: string | null;
+    escalated_at?: string | null;
+    escalation_reason?: string | null;
+  } | null;
+  is_blocked?: boolean;
+  blocked_reason?: string | null;
+  claimed_by_session_id?: string | null;
+  closed_at?: string | null;
+  closed_reason?: string | null;
+  closed_in_session_id?: string | null;
+  closed_commit_sha?: string | null;
+  validation_fail_count?: number | null;
+  escalation_reason?: string | null;
+  escalated_at?: string | null;
+  is_escalated?: boolean;
+  ref?: string;
+  priority?: number | null;
+  owner_session_ref?: unknown | null;
+}
 
 export interface GobbyTask extends LifecycleTask {
   id: string;
@@ -40,12 +63,6 @@ export interface GobbyTask extends LifecycleTask {
   escalated_at?: string | null;
   pre_escalation_status?: string | null;
   category?: string | null;
-  current_stage: StageStateView | null;
-  stages: StageStateView[];
-  allow_automation?: boolean | null;
-  yolo?: boolean | null;
-  checkout_mode?: string | null;
-  dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
 }
@@ -71,10 +88,6 @@ export interface GobbyTaskDetail extends GobbyTask {
   complexity_score: number | null;
   is_expanded: boolean;
   expansion_status: string;
-  allow_automation?: boolean | null;
-  yolo?: boolean | null;
-  checkout_mode?: string | null;
-  dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
 }
@@ -85,8 +98,6 @@ export interface TaskFilters {
   taskType: string | null;
   label: string | null;
   parentTaskId: string | null;
-  stage: string | null;
-  stageState: StageState5 | null;
   search: string;
   projectId?: string | null;
 }

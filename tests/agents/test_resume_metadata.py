@@ -39,7 +39,6 @@ def test_snapshot_persists_pre_commit_prewarm_for_resume(prewarm: bool) -> None:
         task_id=None,
         task_ref=None,
         stage_name=None,
-        stage_state=None,
         agent_slug="qa-reviewer",
         workflow=None,
         initial_variables={},

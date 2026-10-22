@@ -134,7 +134,6 @@ export const TasksTab = memo(function TasksTab({
       params.set("limit", String(limit));
       params.set("sort_by", "updated_at");
       params.set("sort_order", "desc");
-      params.set("include_stages", "1");
       return params;
     };
 
@@ -413,7 +412,7 @@ export const TasksTab = memo(function TasksTab({
         if (err.name !== "AbortError") setTaskDependencies(null);
       });
     fetch(
-      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200&include_stages=1`,
+      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`,
       { signal: controllerSubtasks.signal },
     )
       .then((res) => (res.ok ? res.json() : null))

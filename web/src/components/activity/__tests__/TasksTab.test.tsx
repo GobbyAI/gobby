@@ -27,7 +27,6 @@ import {
 import {
   installResizeObserverMock,
   setupDefaultFetchRoutes,
-  stagePayload,
   taskStatePayload,
 } from "./TasksTab.setup";
 
@@ -78,11 +77,11 @@ describe("TasksTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("includes review-approved tasks by default and shows all active tasks without pagination", async () => {
+  it("includes ready tasks by default and shows all active tasks without pagination", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
       expect(screen.getByText("Open task 2")).toBeTruthy();
       expect(screen.getByText("Open task 10")).toBeTruthy();
     });
@@ -90,7 +89,7 @@ describe("TasksTab", () => {
     expect(screen.queryByText("Closed task")).toBeNull();
     expect(screen.queryByText("Load more")).toBeNull();
     const taskRequest = taskListRequestUrls()[0];
-    expect(taskRequest).toContain("include_stages=1");
+    expect(taskRequest).not.toContain("include_stages");
     expect(taskRequest).toContain("closed=false");
     expect(taskRequest).not.toMatch(/[?&]stage=/);
 
@@ -150,7 +149,7 @@ describe("TasksTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
     // The header registers only New; WS task events keep the list current, so
@@ -170,114 +169,6 @@ describe("TasksTab", () => {
     expect(consoleError).toHaveBeenCalled();
   });
 
-  it("separates review-rejected tasks from ordinary ready tasks", async () => {
-    mockFetch.resetRoutes();
-    const rejectedStage = {
-      ...stagePayload("ready"),
-      review_round_count: 1,
-    };
-    const plainReadyStage = stagePayload("ready");
-    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
-      tasks: [
-        {
-          id: "task-review-rejected",
-          ref: "#601",
-          title: "Review rejected task",
-          state: taskStatePayload("ready", { current_stage: rejectedStage }),
-          current_stage: rejectedStage,
-          stages: [rejectedStage],
-          priority: 2,
-          task_type: "task",
-          parent_task_id: null,
-          created_at: "2026-04-05T00:00:00Z",
-          updated_at: "2026-04-05T00:00:00Z",
-          seq_num: 601,
-          path_cache: "601",
-          requires_user_review: false,
-          agent_name: null,
-          sequence_order: null,
-          start_date: null,
-          due_date: null,
-          project_id: "proj-1",
-        },
-        {
-          id: "task-ready",
-          ref: "#602",
-          title: "Plain ready task",
-          state: taskStatePayload("ready", { current_stage: plainReadyStage }),
-          current_stage: plainReadyStage,
-          stages: [plainReadyStage],
-          priority: 2,
-          task_type: "task",
-          parent_task_id: null,
-          created_at: "2026-04-06T00:00:00Z",
-          updated_at: "2026-04-06T00:00:00Z",
-          seq_num: 602,
-          path_cache: "602",
-          requires_user_review: false,
-          agent_name: null,
-          sequence_order: null,
-          start_date: null,
-          due_date: null,
-          project_id: "proj-1",
-        },
-      ],
-    });
-    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
-      task: {
-        id: "task-review-rejected",
-        ref: "#601",
-        title: "Review rejected task",
-        state: taskStatePayload("ready", { current_stage: rejectedStage }),
-        current_stage: rejectedStage,
-        stages: [rejectedStage],
-        priority: 2,
-        task_type: "task",
-        parent_task_id: null,
-        created_at: "2026-04-05T00:00:00Z",
-        updated_at: "2026-04-05T00:00:00Z",
-        seq_num: 601,
-        path_cache: "601",
-        requires_user_review: false,
-        agent_name: null,
-        sequence_order: null,
-        start_date: null,
-        due_date: null,
-        project_id: "proj-1",
-        description: null,
-        category: null,
-        validation_criteria: null,
-        closed_at: null,
-      },
-    });
-
-    render(<TasksTab projectId="proj-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review rejected task")).toBeTruthy();
-      expect(screen.getByText("Plain ready task")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    expect(screen.getByLabelText("Review Rejected")).toBeChecked();
-
-    fireEvent.click(screen.getByLabelText("Ready"));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Review rejected task")).toBeTruthy();
-      expect(screen.queryByText("Plain ready task")).toBeNull();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    fireEvent.click(screen.getByLabelText("Review Rejected"));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    await waitFor(() => {
-      expect(screen.queryByText("Review rejected task")).toBeNull();
-    });
-  });
-
   it("limits closed tasks to the 20 most recently closed entries", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
@@ -285,11 +176,10 @@ describe("TasksTab", () => {
         id: `closed-${index + 1}`,
         ref: `#${700 + index}`,
         title: `Closed task ${index + 1}`,
-        state: taskStatePayload("done", {
+        state: taskStatePayload("closed", {
           is_closed: true,
           closed_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
         }),
-        current_stage: stagePayload("done"),
         closed_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
         priority: 2,
         task_type: "task",
@@ -340,7 +230,6 @@ describe("TasksTab", () => {
         ref: "#701",
         title: "Root medium",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: null,
@@ -360,7 +249,6 @@ describe("TasksTab", () => {
         ref: "#702",
         title: "Root high late",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 1,
         task_type: "task",
         parent_task_id: null,
@@ -380,7 +268,6 @@ describe("TasksTab", () => {
         ref: "#703",
         title: "Root high early",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 1,
         task_type: "task",
         parent_task_id: null,
@@ -400,7 +287,6 @@ describe("TasksTab", () => {
         ref: "#704",
         title: "Parent root",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "epic",
         parent_task_id: null,
@@ -420,7 +306,6 @@ describe("TasksTab", () => {
         ref: "#705",
         title: "Child medium new",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: "parent-root",
@@ -440,7 +325,6 @@ describe("TasksTab", () => {
         ref: "#706",
         title: "Child critical",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 0,
         task_type: "bug",
         parent_task_id: "parent-root",
@@ -460,7 +344,6 @@ describe("TasksTab", () => {
         ref: "#707",
         title: "Child medium old",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: "parent-root",
@@ -518,7 +401,6 @@ describe("TasksTab", () => {
           ref: "#801",
           title: "Expandable parent",
           state: taskStatePayload("ready"),
-          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -538,7 +420,6 @@ describe("TasksTab", () => {
           ref: "#802",
           title: "Nested child",
           state: taskStatePayload("ready"),
-          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: "parent-task",
@@ -561,7 +442,6 @@ describe("TasksTab", () => {
         ref: "#801",
         title: "Expandable parent",
         state: taskStatePayload("ready"),
-        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: null,
@@ -624,7 +504,6 @@ describe("TasksTab", () => {
       ref: "#902",
       title: "Visible child task",
       state: taskStatePayload("ready"),
-      current_stage: stagePayload("ready"),
       priority: 2,
       task_type: "task",
       parent_task_id: "missing-root-epic",
@@ -643,11 +522,10 @@ describe("TasksTab", () => {
       id: "missing-root-epic",
       ref: "#901",
       title: "Fetched root epic",
-      state: taskStatePayload("done", {
+      state: taskStatePayload("closed", {
         is_closed: true,
         closed_at: "2026-04-01T00:00:00Z",
       }),
-      current_stage: stagePayload("done"),
       closed_at: "2026-04-01T00:00:00Z",
       priority: 2,
       task_type: "epic",
@@ -711,13 +589,13 @@ describe("TasksTab", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
+      expect(screen.getByText("Ready task")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getAllByText("Review approved task")[0]);
+    fireEvent.click(screen.getAllByText("Ready task")[0]);
 
     await waitFor(() => {
-      expect(screen.getByText("Review approved task detail")).toBeTruthy();
+      expect(screen.getByText("Ready task detail")).toBeTruthy();
       expect(screen.queryByText("Task not found")).toBeNull();
       expect(screen.queryByText("Close")).toBeNull();
     });
@@ -727,8 +605,8 @@ describe("TasksTab", () => {
     const user = userEvent.setup();
     render(<TasksTab projectId="proj-1" />);
 
-    await user.click(await screen.findByText("Review approved task"));
-    await screen.findByText("Review approved task detail");
+    await user.click(await screen.findByText("Ready task"));
+    await screen.findByText("Ready task detail");
     expect(screen.getByText("Task #401")).toBeInTheDocument();
 
     const originalFetch = mockFetch.fn.getMockImplementation();
@@ -750,22 +628,14 @@ describe("TasksTab", () => {
 
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {
     mockFetch.resetRoutes();
-    const detailStage = {
-      stage_name: "development",
-      position: 10,
-      state: "needs_review",
-      review_policy: "required",
-      updated_at: "2026-04-11T11:30:00Z",
-    };
     const detailTask = {
       id: "task-detail",
       ref: "#510",
       title: "Detail pane task",
       state: {
-        ...taskStatePayload("needs_review"),
+        ...taskStatePayload("in_progress"),
         owner_session_id: "session-123",
         is_claimed: true,
-        current_stage: { name: "development", state: "needs_review" },
       },
       priority: 2,
       task_type: "bug",
@@ -780,8 +650,6 @@ describe("TasksTab", () => {
       start_date: null,
       due_date: null,
       project_id: "proj-1",
-      current_stage: { name: "development", state: "needs_review" },
-      stages: [detailStage],
     };
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [detailTask],

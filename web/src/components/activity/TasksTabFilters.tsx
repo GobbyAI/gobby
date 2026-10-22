@@ -9,7 +9,7 @@ import {
   DEFAULT_FILTERS,
   getTaskFilterColor,
   getTaskFilterLabel,
-  STAGE_STATE_FILTERS,
+  ACTIVE_STATE_FILTERS,
   STATUS_FILTERS,
   type TaskFilterKey,
 } from "./TasksTabModel";
@@ -67,9 +67,9 @@ export function TasksTabFilters({
     >
       <div>
         <div className="flex min-w-0 flex-col gap-0.5 p-1.5">
-          <FilterSection label="Stage state">
+          <FilterSection label="State">
             <FilterCheckboxList
-              states={STAGE_STATE_FILTERS}
+              states={ACTIVE_STATE_FILTERS}
               draftFilters={draftFilters}
               onToggle={toggleDraftFilter}
             />

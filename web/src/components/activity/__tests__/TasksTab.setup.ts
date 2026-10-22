@@ -1,31 +1,17 @@
 import type { MockFetchInstance } from "../../../test/mocks/fetch";
 
-export type TestStageState =
-  "ready" | "in_progress" | "needs_review" | "review_approved" | "done";
-
-export function stagePayload(
-  state: TestStageState = "ready",
-  name = "development",
-) {
-  return {
-    name,
-    display_name: name
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" "),
-    category: "delivery",
-    state,
-    review_policy: "required",
-    updated_at: "2026-04-12T00:00:00Z",
-  };
-}
+export type TestTaskState = "ready" | "in_progress" | "closed";
 
 export function taskStatePayload(
-  state: TestStageState = "ready",
+  state: TestTaskState = "ready",
   overrides: Record<string, unknown> = {},
 ) {
   return {
-    current_stage: stagePayload(state),
+    owner_session_id: state === "in_progress" ? "fixture-session" : null,
+    is_claimed: state === "in_progress",
+    is_closed: state === "closed",
+    is_escalated: false,
+    is_blocked: false,
     ...overrides,
   };
 }
@@ -34,9 +20,8 @@ export const taskList = [
   {
     id: "task-review",
     ref: "#401",
-    title: "Review approved task",
-    state: taskStatePayload("review_approved"),
-    current_stage: stagePayload("review_approved"),
+    title: "Ready task",
+    state: taskStatePayload("ready"),
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -50,15 +35,12 @@ export const taskList = [
     start_date: null,
     due_date: null,
     project_id: "proj-1",
-    // Build was started then stopped: allow_automation is off but the durable
-    // `gobby build` lifecycle event persists, so the backend reports paused.
   },
   ...Array.from({ length: 10 }, (_, index) => ({
     id: `task-${index + 1}`,
     ref: `#${410 + index}`,
     title: `Open task ${index + 1}`,
     state: taskStatePayload("ready"),
-    current_stage: stagePayload("ready"),
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -77,11 +59,10 @@ export const taskList = [
     id: "task-closed",
     ref: "#499",
     title: "Closed task",
-    state: taskStatePayload("done", {
+    state: taskStatePayload("closed", {
       is_closed: true,
       closed_at: "2026-04-13T00:00:00Z",
     }),
-    current_stage: stagePayload("done"),
     closed_at: "2026-04-13T00:00:00Z",
     priority: 2,
     task_type: "task",
@@ -112,7 +93,7 @@ export function setupDefaultFetchRoutes(mockFetch: MockFetchInstance): void {
   mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
     task: {
       ...taskList[0],
-      description: "Review approved task detail",
+      description: "Ready task detail",
       category: null,
       validation_criteria: null,
       closed_at: null,

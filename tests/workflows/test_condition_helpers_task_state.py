@@ -28,24 +28,6 @@ def _task(manager: LocalTaskManager, sample_project: dict[str, Any]) -> Task:
     )
 
 
-def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
-    manager.initialize_task_manifest(task_id)
-    manager.stage_states.start_stage(task_id, "development", by_session_id=None)
-
-
-def test_task_state_in_matches_current_stage_state(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
-) -> None:
-    manager = _manager(temp_db)
-    task = _task(manager, sample_project)
-    _start_development_stage(manager, task.id)
-    manager.submit_for_review(task.id)
-
-    assert task_state_in(manager, task.id, "needs_review", "closed") is True
-    assert task_state_in(manager, task.id, " NEEDS_REVIEW ", 42) is True  # type: ignore[arg-type]
-    assert task_state_in(manager, task.id, "ready", "review_approved") is False
-
-
 def test_task_state_in_projects_closed_and_escalated(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
@@ -59,35 +41,11 @@ def test_task_state_in_projects_closed_and_escalated(
     assert task_state_in(manager, escalated.id, "escalated") is True
 
 
-def test_task_state_in_uses_real_stage_native_task_fields(
+def test_task_state_in_defaults_to_ready_for_open_task(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
-
-    assert not hasattr(task, "status")
-    assert task.closed_at is None
-    assert task.is_escalated is False
-    assert task_state_in(manager, task.id, "ready") is True
-
-    _start_development_stage(manager, task.id)
-    in_progress = manager.get_task(task.id)
-    assert not hasattr(in_progress, "status")
-    assert task_state_in(manager, task.id, "in_progress") is True
-
-    manager.escalate_task(task.id, reason="blocked")
-    escalated = manager.get_task(task.id)
-    assert not hasattr(escalated, "status")
-    assert escalated.is_escalated is True
-    assert task_state_in(manager, task.id, "escalated") is True
-
-
-def test_task_state_in_defaults_to_ready_without_current_stage(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
-) -> None:
-    manager = _manager(temp_db)
-    task = _task(manager, sample_project)
-    temp_db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
 
     assert task_state_in(manager, task.id, "ready") is True
 

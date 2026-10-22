@@ -313,7 +313,7 @@ class TestSuggestNextTasks:
         tm.list_ready_tasks.return_value = [ready_task, ip_task]
 
         def list_tasks_side(**kwargs: Any) -> list[MagicMock]:
-            if kwargs.get("current_stage_state") == "in_progress":
+            if kwargs.get("claimed") is True:
                 return [ip_task]
             return []
 

@@ -15,7 +15,6 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.session_activity import ProviderIdentityRebind
 from gobby.storage.sessions._update_sentinel import UNSET
-from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 from ._event_handler_helpers import empty_database_mock
@@ -1032,7 +1031,7 @@ class TestComposeSessionResponse:
         handler = _TestHandler()
         session = _make_session()
 
-        claimed_context = "## Claimed Tasks\n- #42 [in_progress] Fix auth bug"
+        claimed_context = "## Claimed Tasks\n- #42 [ready] Fix auth bug"
         result = handler._compose_session_response(
             session=session,
             session_id="sess-uuid-1",
@@ -1093,13 +1092,14 @@ class TestClaimedTaskHelpers:
         }
         task = MagicMock()
         task.seq_num = 42
-        task.status = "in_progress"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Fix auth bug"
         task.claimed_by_session_id = "sess-1"
         handler._task_manager.get_task.return_value = task
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
-        assert result == [("#42", "in_progress", "Fix auth bug")]
+        assert result == [("#42", "ready", "Fix auth bug")]
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_stale_claimed_task_owned_by_other_session_is_pruned(
@@ -1113,7 +1113,8 @@ class TestClaimedTaskHelpers:
         }
         task = MagicMock()
         task.seq_num = 14997
-        task.status = "ready"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Coordinate gobby build for #12746"
         task.claimed_by_session_id = "session-5815"
         handler._task_manager.get_task.return_value = task
@@ -1140,7 +1141,8 @@ class TestClaimedTaskHelpers:
         }
         task = MagicMock()
         task.seq_num = 21507
-        task.status = "ready"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Make workspace binary installs set-coherent"
         task.claimed_by_session_id = "sess-1"
         task.is_escalated = True
@@ -1162,16 +1164,16 @@ class TestClaimedTaskHelpers:
         task = MagicMock()
         task.id = "uuid-review"
         task.seq_num = 55
-        task.status = "needs_review"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Review the patch"
         handler._task_manager.list_tasks.return_value = [task]
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
 
-        assert result == [("#55", "needs_review", "Review the patch")]
+        assert result == [("#55", "ready", "Review the patch")]
         handler._task_manager.list_tasks.assert_called_once_with(
             claimed_by_session_id="sess-1",
-            current_stage_state=list(ACTIVE_STAGE_STATES),
             project_id="proj-1",
         )
         mock_svm.merge_variables.assert_called_once_with(
@@ -1192,13 +1194,14 @@ class TestClaimedTaskHelpers:
         task = MagicMock()
         task.id = "uuid-review"
         task.seq_num = 55
-        task.status = "needs_review"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Review the patch"
         handler._task_manager.list_tasks.return_value = [task]
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
 
-        assert result == [("#55", "needs_review", "Review the patch")]
+        assert result == [("#55", "ready", "Review the patch")]
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_multiple_claimed_tasks(self, mock_svm_cls: MagicMock) -> None:
@@ -1210,13 +1213,15 @@ class TestClaimedTaskHelpers:
 
         task_a = MagicMock()
         task_a.seq_num = 42
-        task_a.status = "in_progress"
+        task_a.closed_at = None
+        task_a.is_escalated = False
         task_a.title = "Fix auth"
         task_a.claimed_by_session_id = "sess-1"
 
         task_b = MagicMock()
         task_b.seq_num = 43
-        task_b.status = "open"
+        task_b.closed_at = None
+        task_b.is_escalated = False
         task_b.title = "Write tests"
         task_b.claimed_by_session_id = "sess-1"
 
@@ -1225,8 +1230,8 @@ class TestClaimedTaskHelpers:
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result is not None
         assert len(result) == 2
-        assert ("#42", "in_progress", "Fix auth") in result
-        assert ("#43", "open", "Write tests") in result
+        assert ("#42", "ready", "Fix auth") in result
+        assert ("#43", "ready", "Write tests") in result
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_deleted_task_graceful_fallback(self, mock_svm_cls: MagicMock) -> None:
@@ -1255,13 +1260,14 @@ class TestClaimedTaskHelpers:
         }
         task = MagicMock()
         task.seq_num = None
-        task.status = "open"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "No seq task"
         task.claimed_by_session_id = "sess-1"
         handler._task_manager.get_task.return_value = task
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
-        assert result == [("abcdef12", "open", "No seq task")]
+        assert result == [("abcdef12", "ready", "No seq task")]
 
     def test_session_variable_error_returns_none(self) -> None:
         """DB errors (e.g. mocked DB) are handled gracefully."""
@@ -1286,7 +1292,8 @@ class TestClaimedTaskHelpers:
         }
         task = MagicMock()
         task.seq_num = 42
-        task.status = "in_progress"
+        task.closed_at = None
+        task.is_escalated = False
         task.title = "Fix auth bug"
         task.claimed_by_session_id = "sess-1"
         handler._task_manager.get_task.return_value = task
@@ -1294,5 +1301,5 @@ class TestClaimedTaskHelpers:
         ctx = handler._build_claimed_task_context("sess-1", "proj-1")
         assert ctx is not None
         assert "## Claimed Tasks (Persisted)" in ctx
-        assert "#42 [in_progress] Fix auth bug" in ctx
+        assert "#42 [ready] Fix auth bug" in ctx
         assert "still assigned to you" in ctx

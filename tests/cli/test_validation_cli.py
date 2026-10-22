@@ -94,83 +94,6 @@ class TestDeEscalateCommand:
             "gt-test123",
             reason="Fixed manually",
             reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
-        )
-
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_de_escalate_with_reset_stage_attempts_flag(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test de-escalate with --reset-stage-attempts flag."""
-        mock_task = MagicMock()
-        mock_task.id = "gt-test123"
-        mock_task.is_escalated = True
-        mock_resolve.return_value = mock_task
-
-        mock_manager = MagicMock()
-        mock_manager.de_escalate_task.return_value = mock_task
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "de-escalate", "gt-test123", "--reason", "Fixed", "--reset-stage-attempts"],
-        )
-
-        assert result.exit_code == 0
-        assert result.exception is None
-        assert "Current stage work attempts reset to 0" in result.output
-        mock_manager.de_escalate_task.assert_called_once_with(
-            "gt-test123",
-            reason="Fixed",
-            reset_validation=False,
-            reset_stage_attempts=True,
-            restore_stage_from_history=False,
-        )
-
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_de_escalate_with_restore_stage_from_history_flag(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test de-escalate with --restore-stage-from-history flag."""
-        mock_task = MagicMock()
-        mock_task.id = "gt-test123"
-        mock_task.is_escalated = True
-        mock_resolve.return_value = mock_task
-
-        mock_manager = MagicMock()
-        mock_manager.de_escalate_task.return_value = mock_task
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            [
-                "tasks",
-                "de-escalate",
-                "gt-test123",
-                "--reason",
-                "Fixed",
-                "--restore-stage-from-history",
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert result.exception is None
-        assert "Current stage restored from lifecycle history" in result.output
-        mock_manager.de_escalate_task.assert_called_once_with(
-            "gt-test123",
-            reason="Fixed",
-            reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=True,
         )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -233,8 +156,6 @@ class TestDeEscalateCommand:
             "gt-test123",
             reason="Fixed",
             reset_validation=True,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
         )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -428,7 +349,6 @@ class TestListTasksEscalatedFilter:
         mock_task.escalation_reason = "recurring_issues"
         mock_task.is_escalated = True
         mock_task.claimed_by_session_id = None
-        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
         mock_task.active_blocked_by = set()
         mock_task.to_dict.return_value = {
             "id": "gt-test123",
@@ -473,7 +393,6 @@ class TestListTasksEscalatedFilter:
         mock_task.closed_in_session_id = None
         mock_task.closed_commit_sha = None
         mock_task.claimed_by_session_id = None
-        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
         mock_task.active_blocked_by = set()
         mock_task.priority = 2
         mock_task.task_type = "task"

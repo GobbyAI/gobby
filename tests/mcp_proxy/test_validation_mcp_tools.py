@@ -54,12 +54,11 @@ def _task_like(
         is_escalated=is_escalated,
         validation_fail_count=validation_fail_count,
         seq_num=None,
-        current_stage=SimpleNamespace(name="development", state="ready"),
     )
 
 
 class Task(SimpleNamespace):
-    """Small stage-native stand-in for historical Task(status=...) test data."""
+    """Small task stand-in for lifecycle validation tests."""
 
     def __init__(self, **kwargs: Any) -> None:
         status = kwargs.pop("status", None)
@@ -77,17 +76,6 @@ class Task(SimpleNamespace):
         kwargs.setdefault("escalation_reason", None)
         kwargs.setdefault("validation_fail_count", 0)
         kwargs.setdefault("seq_num", None)
-        kwargs.setdefault(
-            "current_stage",
-            SimpleNamespace(
-                name="development",
-                state={
-                    "in_progress": "in_progress",
-                    "needs_review": "needs_review",
-                    "review_approved": "review_approved",
-                }.get(status, "ready"),
-            ),
-        )
         super().__init__(**kwargs)
 
 
@@ -158,8 +146,6 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Fixed manually",
             reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
         )
 
     @pytest.mark.integration
@@ -234,8 +220,6 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Resolved manually",
             reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
@@ -269,8 +253,6 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Human fixed the issue",
             reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
         )
 
     @pytest.mark.integration
@@ -297,71 +279,9 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Fixed",
             reset_validation=True,
-            reset_stage_attempts=False,
-            restore_stage_from_history=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_de_escalate_task_resets_stage_attempts(
-        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
-    ) -> None:
-        """Test that de_escalate_task optionally resets current stage attempts."""
-        escalated_task = _task_like(
-            title="Escalated task",
-            is_escalated=True,
-            escalated_at="2024-01-01T00:00:00",
-            escalation_reason="development_max_work_attempts",
-        )
-        mock_task_manager.get_task.return_value = escalated_task
-
-        result = await task_registry_with_patches.call(
-            "de_escalate_task",
-            {"task_id": "t1", "reason": "Fixed", "reset_stage_attempts": True},
-        )
-
-        assert "error" not in result
-        mock_task_manager.de_escalate_task.assert_called_once_with(
-            "t1",
-            reason="Fixed",
-            reset_validation=False,
-            reset_stage_attempts=True,
-            restore_stage_from_history=False,
-        )
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_de_escalate_task_restores_stage_from_history(
-        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
-    ) -> None:
-        """Test that de_escalate_task can request stage restoration from history."""
-        escalated_task = _task_like(
-            title="Escalated task",
-            is_escalated=True,
-            escalated_at="2024-01-01T00:00:00",
-            escalation_reason="expansion_work_failed:max",
-        )
-        mock_task_manager.get_task.return_value = escalated_task
-
-        result = await task_registry_with_patches.call(
-            "de_escalate_task",
-            {
-                "task_id": "t1",
-                "reason": "Fixed",
-                "restore_stage_from_history": True,
-            },
-        )
-
-        assert "error" not in result
-        mock_task_manager.de_escalate_task.assert_called_once_with(
-            "t1",
-            reason="Fixed",
-            reset_validation=False,
-            reset_stage_attempts=False,
-            restore_stage_from_history=True,
-        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -374,7 +294,7 @@ class TestDeEscalateTaskTool:
 
         properties = schema["inputSchema"]["properties"]
         assert "target_state" not in properties
-        assert "restore_stage_from_history" in properties
+        assert "restore_stage_from_history" not in properties
 
 
 # ============================================================================
@@ -406,7 +326,7 @@ class TestValidationToolsRegistration:
         assert "properties" in input_schema
         assert "task_id" in input_schema["properties"]
         assert "reason" in input_schema["properties"]
-        assert "reset_stage_attempts" in input_schema["properties"]
+        assert "reset_stage_attempts" not in input_schema["properties"]
         # Both should be required
         assert "task_id" in input_schema.get("required", [])
         assert "reason" in input_schema.get("required", [])
