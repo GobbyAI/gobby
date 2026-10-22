@@ -25,7 +25,6 @@ from gobby.tasks import land_commit
 from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.commits import extract_task_ids_from_message
 from gobby.tasks.landing_policy import write_freeze
-from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
@@ -260,48 +259,6 @@ async def test_freeze_refuses_landing_and_restart_class_needs_no_approval(
     assert landed["activation_class"] == "restart"
     assert case.git("rev-parse", "trunk") == sha
     assert all(r.kind == LANDING for r in list_close_receipts(case.db, task.id))
-
-
-async def test_stacked_and_landed_candidates_never_overlap(case: LandingCase) -> None:
-    ancestor = case.candidate("ancestor", {"docs/shared.md": "ancestor"})
-    sha = case.candidate("lane", {"docs/shared.md": "candidate"}, base=ancestor)
-    descendant = case.candidate("descendant", {"docs/shared.md": "descendant"}, base=sha)
-    closed = case.candidate("closed", {"docs/shared.md": "closed sibling"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    for name, candidate in (
-        ("Ancestor", ancestor),
-        ("Descendant", descendant),
-        ("Already landed", case.base),
-    ):
-        case.reviewed(candidate, name)
-    closed_task = case.reviewed(closed, "Closed candidate")
-    case.db.execute(
-        "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s",
-        (closed_task.id,),
-    )
-    result = await case.land(task, sha)
-    assert result["landed"] is True
-    assert result["activation_class"] == "none"
-    assert case.git("rev-parse", "trunk") == sha
-
-
-async def test_unavailable_foreign_candidate_does_not_block_landing(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "candidate"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    foreign_task = case.task("Reviewed in another object store")
-    unavailable = "1" * 40
-    case.link(foreign_task, unavailable)
-    case.approve(foreign_task, unavailable)
-    result = await case.land(task, sha)
-    assert result["landed"] is True
-    assert result["mode"] == "ff"
-    assert case.git("rev-parse", "trunk") == sha
-    [foreign_review] = list_task_step_records(case.db, foreign_task.id)
-    assert foreign_review.commit_sha == unavailable
 
 
 async def test_refuses_unlinked_candidate(case: LandingCase) -> None:
@@ -733,12 +690,6 @@ async def test_clean_merge_of_moved_shared_path_still_requires_base_update(
 
 async def test_criss_cross_merge_paths_equal_to_tip_are_not_shared(case: LandingCase) -> None:
     sha = _criss_cross_candidate(case)
-    other = case.candidate(
-        "other",
-        {"src/gobby/left.py": "left = 2\n", "src/gobby/right.py": "right = 2\n"},
-        base=case.git("rev-parse", "trunk"),
-    )
-    case.reviewed(other, "Pending source changes")
 
     result = await case.land(case.reviewed(sha), sha)
 
@@ -748,46 +699,6 @@ async def test_criss_cross_merge_paths_equal_to_tip_are_not_shared(case: Landing
     assert case.git("diff", "--name-only", "trunk^1", "trunk") == "docs/lane.md"
     assert (case.repo / "src/gobby/left.py").read_text() == "left = 1\n"
     assert (case.repo / "src/gobby/right.py").read_text() == "right = 1\n"
-
-
-async def test_criss_cross_genuine_overlap_still_names_changed_path(case: LandingCase) -> None:
-    docs = _criss_cross_candidate(case)
-    sha = case.candidate("changed-lane", {"src/gobby/left.py": "left = 2\n"}, base=docs)
-    other = case.candidate(
-        "other", {"src/gobby/left.py": "left = 3\n"}, base=case.git("rev-parse", "trunk")
-    )
-    other_task = case.reviewed(other, "Pending source change")
-
-    result = await case.land(case.reviewed(sha), sha)
-
-    assert result["landed"] is False
-    assert result["overlaps"] == [
-        {
-            "task_ref": f"#{other_task.seq_num}",
-            "commit_sha": other,
-            "shared_paths": ["src/gobby/left.py"],
-        }
-    ]
-    assert result["blockers"] == ["candidate_overlap"]
-
-
-async def test_criss_cross_pending_candidate_does_not_own_carried_source(case: LandingCase) -> None:
-    docs = _criss_cross_candidate(case)
-    case.reviewed(docs, "Pending docs")
-    sha = case.candidate(
-        "source-lane",
-        {"src/gobby/left.py": "left = 2\n", "src/gobby/right.py": "right = 2\n"},
-        base=case.git("rev-parse", "trunk"),
-    )
-    task = case.reviewed(sha)
-
-    result = await case.land(task, sha)
-
-    assert result["landed"] is True, result
-    assert result["activation_class"] == "restart"
-    assert not (case.repo / "docs/lane.md").exists()
-    assert (case.repo / "src/gobby/left.py").read_text() == "left = 2\n"
-    assert (case.repo / "src/gobby/right.py").read_text() == "right = 2\n"
 
 
 async def test_criss_cross_recovery_classifies_only_candidate_contribution(

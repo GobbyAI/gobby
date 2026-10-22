@@ -128,8 +128,8 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "Orchestrator as a last resort. The current review step must approve that exact "
             "SHA and be written by another session; reviewers and any session that has ever "
             "claimed the task are refused. A landing freeze refuses. Disjoint integration "
-            "changes land as a merge; shared paths, overlapping in-flight candidates and "
-            "merge conflicts escalate the task to Triage."
+            "changes land as a merge; paths the integration tip also changed and merge "
+            "conflicts escalate the task to Triage. Unlanded candidates never block."
         ),
         input_schema={
             "type": "object",

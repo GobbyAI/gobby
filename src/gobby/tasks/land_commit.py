@@ -36,7 +36,6 @@ from gobby.tasks.landing_policy import (
 )
 from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
 from gobby.tasks.step_records import (
-    STEP_RECORD_AUTHOR_TYPE,
     TaskStepRecord,
     independent_review_approval,
     list_task_step_records,
@@ -56,14 +55,8 @@ _LANDING_ACTION = re.compile(
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
 # Conflicts go to Triage; every other blocker is the caller's to fix.
-_CONFLICTS = frozenset({"base_update_required", "candidate_overlap", "merge_conflict"})
+_CONFLICTS = frozenset({"base_update_required", "merge_conflict"})
 _ORCHESTRATOR = frozenset({"orchestrator"})
-
-
-class Overlap(TypedDict):
-    task_ref: str
-    commit_sha: str
-    shared_paths: list[str]
 
 
 class LandingResult(TypedDict, total=False):
@@ -75,7 +68,6 @@ class LandingResult(TypedDict, total=False):
     blockers: list[str]
     escalated: bool
     missing_schema_carriers: list[str]
-    overlaps: list[Overlap]
     shared_paths: list[str]
     commit_sha: str
     branch: str
@@ -169,46 +161,6 @@ async def _merge_tree(main: Path, tip: str, sha: str) -> GitOk | GitFailed:
 async def _candidate_paths(main: Path, tip: str, sha: str, tree: str) -> set[str]:
     # Conflicted trees can relocate files to synthesized names absent from both tips.
     return await _paths(main, tip, tree) & await _paths(main, tip, sha)
-
-
-async def _overlaps(
-    db: HubDatabase, task: Task, main: Path, tip: str, sha: str, paths: set[str]
-) -> list[Overlap]:
-    rows = db.fetchall(
-        """
-        SELECT DISTINCT t.id::text AS id, t.seq_num
-        FROM tasks t JOIN task_comments c ON c.task_id = t.id
-        WHERE t.project_id = %s AND t.id <> %s AND t.closed_at IS NULL
-          AND c.author_type = %s
-        ORDER BY t.seq_num
-        """,
-        (task.project_id, task.id, STEP_RECORD_AUTHOR_TYPE),
-    )
-    overlaps: list[Overlap] = []
-    for row in rows:
-        # Approvals from every epoch count: a superseded candidate can still be in flight.
-        candidates = {
-            record.commit_sha
-            for record in list_task_step_records(db, row["id"])
-            if record.step == "review" and record.status == "approved" and record.commit_sha
-        }
-        for other in sorted(candidates):
-            if await _resolve(main, other) is None:
-                continue
-            if (
-                await _ancestor(main, other, tip)
-                or await _ancestor(main, other, sha)
-                or await _ancestor(main, sha, other)
-            ):
-                continue
-            merged = await _merge_tree(main, tip, other)
-            tree = merged.stdout.split("\n", 1)[0]
-            shared = sorted(paths & await _candidate_paths(main, tip, other, tree))
-            if shared:
-                overlaps.append(
-                    {"task_ref": f"#{row['seq_num']}", "commit_sha": other, "shared_paths": shared}
-                )
-    return overlaps
 
 
 def _reflog_entries(text: str, oid_length: int) -> list[_ReflogEntry] | None:
@@ -413,7 +365,6 @@ def _escalate(db: HubDatabase, task: Task, refusal: LandingResult) -> LandingRes
         "commit_sha": refusal["commit_sha"],
         "blockers": refusal["blockers"],
         "shared_paths": refusal.get("shared_paths", []),
-        "overlaps": refusal.get("overlaps", []),
     }
     try:
         LocalTaskManager(db).escalate_task(task.id, json.dumps(reason))
@@ -459,7 +410,7 @@ async def land_candidate(
     """Land a linked candidate another session approved, as the task's Dev Manager.
 
     A tip that moved by paths disjoint from the candidate's lands a generated merge;
-    shared paths, in-flight overlaps and merge conflicts escalate the task to Triage.
+    paths the tip changed too and merge conflicts escalate the task to Triage.
     A tip that moves during the call is re-read and every policy check repeats.
     """
     if not caller_session_id:
@@ -533,17 +484,14 @@ async def land_candidate(
                 # A freeze refuses outright; restart-class landings need no extra approval.
                 if (await asyncio.to_thread(read_freeze, common)).on:
                     blockers.append("landing_frozen")
+                # Only the integration tip counts; unlanded peers never block a landing.
                 if shared:
                     blockers.append("base_update_required")
-                overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
-                if overlaps:
-                    blockers.append("candidate_overlap")
                 refusal = {
                     "landed": False,
                     "commit_sha": sha,
                     "activation_class": activation_class,
                     "project_sync_required": requires_project_sync(paths),
-                    "overlaps": overlaps,
                     "shared_paths": shared,
                     "missing_schema_carriers": missing_carriers,
                     "blockers": blockers,

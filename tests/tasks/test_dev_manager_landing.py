@@ -89,11 +89,11 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
 
 @pytest.mark.parametrize(
     "scenario",
-    ["disjoint", "shared_paths", "in_flight_overlap", "frozen_conflict", "unauthorized_conflict"],
+    ["disjoint", "shared_paths", "in_flight_peer", "frozen_conflict", "unauthorized_conflict"],
 )
 async def test_disjoint_and_overlapping_landings(case: LandingCase, scenario: str) -> None:
-    other = ""
-    if scenario == "in_flight_overlap":
+    if scenario == "in_flight_peer":
+        # Only the integration tip counts: an unlanded peer never blocks the first lander.
         sha = case.candidate("lane", {"docs/shared.md": "lane\n"})
         other = case.candidate("other", {"docs/shared.md": "other\n"})
         other_task = case.reviewed(other, "Other in-flight candidate")
@@ -110,6 +110,15 @@ async def test_disjoint_and_overlapping_landings(case: LandingCase, scenario: st
     result = await case.land(task, sha, caller=caller)
 
     after = LocalTaskManager(case.db).get_task(task.id)
+    if scenario == "in_flight_peer":
+        assert (result["landed"], result["mode"]) == (True, "ff"), result
+        assert "overlaps" not in result
+        # The later lander's path changed in between, so it escalates against the tip.
+        later = await case.land(other_task, other)
+        assert later["blockers"] == ["base_update_required"]
+        assert later["escalated"] is True
+        assert case.git("rev-parse", "trunk") == sha
+        return
     if scenario == "disjoint":
         merge = case.git("rev-parse", "trunk")
         assert result["landed"] is True, result
@@ -122,23 +131,13 @@ async def test_disjoint_and_overlapping_landings(case: LandingCase, scenario: st
         return
     expected = {
         "shared_paths": ["base_update_required"],
-        "in_flight_overlap": ["candidate_overlap"],
         "frozen_conflict": ["landing_frozen", "base_update_required"],
         "unauthorized_conflict": ["caller_not_task_manager", "base_update_required"],
     }[scenario]
     assert result["landed"] is False
     assert result["blockers"] == expected
     assert case.git("rev-parse", "trunk") == tip
-    if scenario == "in_flight_overlap":
-        assert result["overlaps"] == [
-            {
-                "task_ref": f"#{other_task.seq_num}",
-                "commit_sha": other,
-                "shared_paths": ["docs/shared.md"],
-            }
-        ]
-    else:
-        assert result["shared_paths"] == ["docs/shared.md"]
+    assert result["shared_paths"] == ["docs/shared.md"]
     if scenario in {"frozen_conflict", "unauthorized_conflict"}:
         assert "escalated" not in result
         assert after.is_escalated is False
@@ -151,8 +150,7 @@ async def test_disjoint_and_overlapping_landings(case: LandingCase, scenario: st
         "kind": "landing_conflict",
         "commit_sha": sha,
         "blockers": expected,
-        "shared_paths": result["shared_paths"],
-        "overlaps": result["overlaps"],
+        "shared_paths": ["docs/shared.md"],
     }
 
 
