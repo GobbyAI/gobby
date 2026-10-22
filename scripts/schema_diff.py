@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import importlib
 import json
 import os
 import re
@@ -31,6 +32,18 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from gobby.config.bootstrap import load_bootstrap
 from gobby.storage.schema_contract import apply_schema
+
+if __package__:
+    from scripts.schema_sql_lexer import (
+        _split_sql_statements as _split_sql_statements,
+    )
+    from scripts.schema_sql_lexer import (
+        _split_top_level_commas as _split_top_level_commas,
+    )
+else:
+    _schema_sql_lexer = importlib.import_module("schema_sql_lexer")
+    _split_sql_statements = _schema_sql_lexer._split_sql_statements
+    _split_top_level_commas = _schema_sql_lexer._split_top_level_commas
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
@@ -79,128 +92,6 @@ def _strip_dump_noise(dump: str) -> str:
     return "\n".join(lines)
 
 
-def _split_sql_statements(source: str) -> Iterator[str]:
-    """Split SQL statements while preserving strings, comments, and dollar bodies."""
-    statement_start = 0
-    index = 0
-    while index < len(source):
-        char = source[index]
-        if char == "-" and source.startswith("--", index):
-            index = _skip_line_comment(source, index)
-            continue
-        if char == "/" and source.startswith("/*", index):
-            index = _skip_block_comment(source, index)
-            continue
-        if char == "'":
-            prefix = source[index - 1] if index > 0 else ""
-            escape_backslashes = (
-                prefix in "eE"
-                and bool(prefix)
-                and (index < 2 or not _is_identifier_continuation(source[index - 2]))
-            )
-            index = _skip_single_quoted_string(
-                source,
-                index,
-                escape_backslashes=escape_backslashes,
-            )
-            continue
-        if char == '"':
-            index = _skip_double_quoted_identifier(source, index)
-            continue
-        if char == "$":
-            tag = _dollar_quote_tag_at(source, index)
-            if tag is not None:
-                close = source.find(tag, index + len(tag))
-                if close < 0:
-                    raise ValueError(f"unterminated dollar-quote tag {tag!r}")
-                index = close + len(tag)
-                continue
-        if char == ";":
-            yield source[statement_start:index]
-            statement_start = index + 1
-        index += 1
-    if tail := source[statement_start:]:
-        yield tail
-
-
-def _skip_line_comment(source: str, start: int) -> int:
-    end = source.find("\n", start + 2)
-    return len(source) if end < 0 else end + 1
-
-
-def _skip_block_comment(source: str, start: int) -> int:
-    index = start + 2
-    depth = 1
-    while index < len(source) and depth:
-        if source.startswith("/*", index):
-            depth += 1
-            index += 2
-            continue
-        if source.startswith("*/", index):
-            depth -= 1
-            index += 2
-            continue
-        index += 1
-    return index
-
-
-def _skip_single_quoted_string(
-    source: str,
-    start: int,
-    *,
-    escape_backslashes: bool,
-) -> int:
-    index = start + 1
-    while index < len(source):
-        if escape_backslashes and source[index] == "\\":
-            index += 2
-            continue
-        if source[index] == "'":
-            if index + 1 < len(source) and source[index + 1] == "'":
-                index += 2
-                continue
-            return index + 1
-        index += 1
-    return index
-
-
-def _skip_double_quoted_identifier(source: str, start: int) -> int:
-    index = start + 1
-    while index < len(source):
-        if source[index] == '"':
-            if index + 1 < len(source) and source[index + 1] == '"':
-                index += 2
-                continue
-            return index + 1
-        index += 1
-    return index
-
-
-def _dollar_quote_tag_at(source: str, start: int) -> str | None:
-    if start > 0 and _is_identifier_continuation(source[start - 1]):
-        return None
-    if start + 1 >= len(source):
-        return None
-    if source[start + 1] == "$":
-        return "$$"
-    if not _is_identifier_start(source[start + 1]):
-        return None
-    tag_end = start + 2
-    while tag_end < len(source) and _is_identifier_continuation(source[tag_end]):
-        tag_end += 1
-    if tag_end < len(source) and source[tag_end] == "$":
-        return source[start : tag_end + 1]
-    return None
-
-
-def _is_identifier_start(char: str) -> bool:
-    return char.isalpha() or char == "_"
-
-
-def _is_identifier_continuation(char: str) -> bool:
-    return char.isalnum() or char == "_"
-
-
 def _replace_schema_token(statement: str, schema_name: str, replacement: str) -> str:
     normalized = statement.replace(f'"{schema_name}"', f'"{replacement}"')
     normalized = normalized.replace(f"'{schema_name}'", f"'{replacement}'")
@@ -213,39 +104,6 @@ def _replace_schema_token(statement: str, schema_name: str, replacement: str) ->
 
 def _replace_schema_name(statement: str, schema_name: str) -> str:
     return _replace_schema_token(statement, schema_name, "__schema__")
-
-
-def _split_top_level_commas(value: str) -> list[str]:
-    parts: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    index = 0
-    while index < len(value):
-        char = value[index]
-        if quote is not None:
-            if char == quote:
-                if index + 1 < len(value) and value[index + 1] == quote:
-                    index += 2
-                    continue
-                quote = None
-            elif char == "\\" and quote == "'":
-                index += 2
-                continue
-            index += 1
-            continue
-        if char in {"'", '"'}:
-            quote = char
-        elif char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        elif char == "," and depth == 0:
-            parts.append(value[start:index])
-            start = index + 1
-        index += 1
-    parts.append(value[start:])
-    return parts
 
 
 def _normalize_not_null_constraint_names(statement: str) -> str:
@@ -520,26 +378,6 @@ _SESSION_RUNTIME_COLUMNS = frozenset(
         "workflow_name",
     }
 )
-_STAGE_REGISTRY_DEFINITION_COLUMNS = frozenset(
-    {
-        "bundled_hash",
-        "category",
-        "default_agent",
-        "default_max_review_rounds",
-        "default_max_work_attempts",
-        "description",
-        "dispatch_inputs_json",
-        "dispatch_target",
-        "dispatch_type",
-        "display_label",
-        "is_terminal",
-        "position_hint",
-        "requires_human",
-        "review_policy",
-        "reviewer_agent",
-        "reviewer_agent_selector_json",
-    }
-)
 SEED_TABLE_SPECS: Mapping[str, SeedTableSpec] = {
     "projects": SeedTableSpec(
         key_columns=("id",),
@@ -554,17 +392,6 @@ SEED_TABLE_SPECS: Mapping[str, SeedTableSpec] = {
         live_mutable_columns=_SESSION_RUNTIME_COLUMNS,
         live_namespace_owned=False,
         live_owned_key_prefixes=("00000000-",),
-    ),
-    "task_stages_registry": SeedTableSpec(
-        key_columns=("name",),
-        machine_mutable_columns=frozenset({"updated_at"}),
-        live_mutable_columns=_STAGE_REGISTRY_DEFINITION_COLUMNS,
-        live_namespace_owned=False,
-    ),
-    "task_type_default_stages": SeedTableSpec(
-        key_columns=("task_type", "stage_name"),
-        live_mutable_columns=frozenset({"position"}),
-        live_namespace_owned=False,
     ),
 }
 

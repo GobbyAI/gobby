@@ -461,162 +461,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "build_history_events.action",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_history_events.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "build_history_events.event_type",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_history_events.id",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "build_history_events.message",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_history_events.payload_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "build_history_events.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "build_history_events.root_task_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "build_history_events.run_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "build_history_events.task_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "build_profiles.bundled_hash",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_profiles.checkout_mode",
-      "definition": "text|text|NO|'worktree'::text|NEVER"
-    },
-    {
-      "name": "build_profiles.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "build_profiles.deleted_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "build_profiles.delivery_mode",
-      "definition": "text|text|NO|'auto'::text|NEVER"
-    },
-    {
-      "name": "build_profiles.delivery_target_repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_profiles.description",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.display_label",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.enabled",
-      "definition": "boolean|bool|NO|true|NEVER"
-    },
-    {
-      "name": "build_profiles.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.plan_enhancement_rounds",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "build_profiles.project_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "build_profiles.skip_stages_json",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "build_profiles.source",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.tags_json",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "build_profiles.unattended",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "build_profiles.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "build_runs.action",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "build_runs.actor",
-      "definition": "text|text|NO|'build'::text|NEVER"
-    },
-    {
-      "name": "build_runs.completed_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "build_runs.error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_runs.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "build_runs.input_ref",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "build_runs.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "build_runs.root_task_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "build_runs.started_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "build_runs.status",
-      "definition": "text|text|NO|'started'::text|NEVER"
-    },
-    {
-      "name": "build_runs.summary_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
       "name": "chat_attachment_cleanup_fences.claimed_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
@@ -2973,10 +2817,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "plan_review_evidence.dispatch_run_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
       "name": "plan_review_evidence.evidence_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -4713,178 +4553,6 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
-      "name": "task_stage_states.artifact_refs",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.completed_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.completed_by_actor",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.completed_by_session_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.completed_commit_sha",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.entered_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.entered_by_actor",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.entered_by_session_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.max_review_rounds",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.max_work_attempts",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.notes",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.position",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "task_stage_states.retry_neutral_failure_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "task_stage_states.review_policy",
-      "definition": "text|text|NO|'none'::text|NEVER"
-    },
-    {
-      "name": "task_stage_states.review_round_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "task_stage_states.reviewer_agent",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stage_states.stage_name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_stage_states.state",
-      "definition": "text|text|NO|'ready'::text|NEVER"
-    },
-    {
-      "name": "task_stage_states.task_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "task_stage_states.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_stage_states.work_attempt_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "task_stages_registry.bundled_hash",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.category",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_stages_registry.default_agent",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.default_max_review_rounds",
-      "definition": "integer|int4|NO|5|NEVER"
-    },
-    {
-      "name": "task_stages_registry.default_max_work_attempts",
-      "definition": "integer|int4|NO|3|NEVER"
-    },
-    {
-      "name": "task_stages_registry.deleted_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.description",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_stages_registry.dispatch_inputs_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.dispatch_target",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.dispatch_type",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.display_label",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_stages_registry.is_terminal",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "task_stages_registry.name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_stages_registry.position_hint",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "task_stages_registry.requires_human",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "task_stages_registry.review_policy",
-      "definition": "text|text|NO|'none'::text|NEVER"
-    },
-    {
-      "name": "task_stages_registry.reviewer_agent",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.reviewer_agent_selector_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_stages_registry.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_type_default_stages.position",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "task_type_default_stages.stage_name",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_type_default_stages.task_type",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
       "name": "task_validation_backoff.consecutive_failures",
       "definition": "integer|int4|NO|0|NEVER"
     },
@@ -4953,10 +4621,6 @@
       "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
-      "name": "tasks.allow_automation",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
       "name": "tasks.assigned_agent",
       "definition": "text|text|YES||NEVER"
     },
@@ -4967,10 +4631,6 @@
     {
       "name": "tasks.category",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "tasks.checkout_mode",
-      "definition": "text|text|NO|'worktree'::text|NEVER"
     },
     {
       "name": "tasks.claimed_by_session_id",
@@ -5027,10 +4687,6 @@
     {
       "name": "tasks.description",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "tasks.dispatch_failure_count",
-      "definition": "integer|int4|YES|0|NEVER"
     },
     {
       "name": "tasks.due_date",
@@ -5099,10 +4755,6 @@
     {
       "name": "tasks.title",
       "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "tasks.unattended",
-      "definition": "boolean|bool|NO|false|NEVER"
     },
     {
       "name": "tasks.updated_at",
@@ -6107,78 +5759,6 @@
       "definition": "PRIMARY KEY (machine_id, tool_name)"
     },
     {
-      "name": "build_history_events.build_history_events_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "build_history_events.build_history_events_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "build_history_events.build_history_events_root_task_id_fkey",
-      "definition": "FOREIGN KEY (root_task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
-    },
-    {
-      "name": "build_history_events.build_history_events_run_id_fkey",
-      "definition": "FOREIGN KEY (run_id) REFERENCES build_runs(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "build_history_events.build_history_events_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
-    },
-    {
-      "name": "build_profiles.build_profiles_check",
-      "definition": "CHECK (source <> 'installed'::text OR project_id IS NULL)"
-    },
-    {
-      "name": "build_profiles.build_profiles_checkout_mode_check",
-      "definition": "CHECK (checkout_mode = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
-    },
-    {
-      "name": "build_profiles.build_profiles_delivery_mode_check",
-      "definition": "CHECK (delivery_mode = ANY (ARRAY['auto'::text, 'pull_request'::text]))"
-    },
-    {
-      "name": "build_profiles.build_profiles_enabled_check",
-      "definition": "CHECK (enabled = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "build_profiles.build_profiles_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "build_profiles.build_profiles_plan_enhancement_rounds_check",
-      "definition": "CHECK (plan_enhancement_rounds >= 0)"
-    },
-    {
-      "name": "build_profiles.build_profiles_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "build_profiles.build_profiles_source_check",
-      "definition": "CHECK (source = ANY (ARRAY['installed'::text, 'project'::text]))"
-    },
-    {
-      "name": "build_profiles.build_profiles_unattended_check",
-      "definition": "CHECK (unattended = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "build_runs.build_runs_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "build_runs.build_runs_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "build_runs.build_runs_root_task_id_fkey",
-      "definition": "FOREIGN KEY (root_task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
-    },
-    {
-      "name": "build_runs.build_runs_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['started'::text, 'completed'::text, 'failed'::text, 'skipped'::text]))"
-    },
-    {
       "name": "chat_attachment_cleanup_fences.chat_attachment_cleanup_fences_pkey",
       "definition": "PRIMARY KEY (scope_kind, scope_id)"
     },
@@ -6856,11 +6436,7 @@
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_bound_lease_cleared",
-      "definition": "CHECK (dispatch_run_id IS NULL AND static_writer_session_id IS NULL OR lease_expires_at IS NULL)"
-    },
-    {
-      "name": "plan_review_evidence.plan_review_evidence_dispatch_run_id_fkey",
-      "definition": "FOREIGN KEY (dispatch_run_id) REFERENCES agent_runs(id) ON DELETE RESTRICT DEFERRABLE"
+      "definition": "CHECK (static_writer_session_id IS NULL OR lease_expires_at IS NULL)"
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_lifecycle_exclusive",
@@ -6896,7 +6472,7 @@
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_static_binding",
-      "definition": "CHECK (static_writer_session_id IS NULL AND static_coordinator_session_id IS NULL OR static_writer_session_id IS NOT NULL AND static_coordinator_session_id IS NOT NULL AND session_id IS NOT NULL AND dispatch_run_id IS NULL)"
+      "definition": "CHECK (static_writer_session_id IS NULL AND static_coordinator_session_id IS NULL OR static_writer_session_id IS NOT NULL AND static_coordinator_session_id IS NOT NULL AND session_id IS NOT NULL)"
     },
     {
       "name": "plan_review_evidence.plan_review_evidence_task_id_fkey",
@@ -7507,50 +7083,6 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
-      "name": "task_stage_states.task_stage_states_pkey",
-      "definition": "PRIMARY KEY (task_id, stage_name)"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_review_policy_check",
-      "definition": "CHECK (review_policy = ANY (ARRAY['none'::text, 'required'::text, 'optional'::text]))"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_stage_name_fkey",
-      "definition": "FOREIGN KEY (stage_name) REFERENCES task_stages_registry(name) ON DELETE RESTRICT DEFERRABLE"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_state_check",
-      "definition": "CHECK ((state = ANY (ARRAY['ready'::text, 'in_progress'::text, 'done'::text])) OR (state = ANY (ARRAY['needs_review'::text, 'review_approved'::text])))"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "task_stages_registry.task_stages_registry_category_check",
-      "definition": "CHECK (category = ANY (ARRAY['discovery'::text, 'design'::text, 'verification'::text, 'implementation'::text, 'delivery'::text]))"
-    },
-    {
-      "name": "task_stages_registry.task_stages_registry_dispatch_type_check",
-      "definition": "CHECK (dispatch_type IS NULL OR (dispatch_type = ANY (ARRAY['agent'::text, 'pipeline'::text])))"
-    },
-    {
-      "name": "task_stages_registry.task_stages_registry_pkey",
-      "definition": "PRIMARY KEY (name)"
-    },
-    {
-      "name": "task_stages_registry.task_stages_registry_review_policy_check",
-      "definition": "CHECK (review_policy = ANY (ARRAY['none'::text, 'required'::text, 'optional'::text]))"
-    },
-    {
-      "name": "task_type_default_stages.task_type_default_stages_pkey",
-      "definition": "PRIMARY KEY (task_type, stage_name)"
-    },
-    {
-      "name": "task_type_default_stages.task_type_default_stages_stage_name_fkey",
-      "definition": "FOREIGN KEY (stage_name) REFERENCES task_stages_registry(name) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
       "name": "task_validation_backoff.task_validation_backoff_pkey",
       "definition": "PRIMARY KEY (task_id)"
     },
@@ -7571,16 +7103,8 @@
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
-      "name": "tasks.tasks_allow_automation_check",
-      "definition": "CHECK (allow_automation = ANY (ARRAY[false, true]))"
-    },
-    {
       "name": "tasks.tasks_blocked_by_merge_check",
       "definition": "CHECK (blocked_by_merge = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "tasks.tasks_checkout_mode_check",
-      "definition": "CHECK (checkout_mode = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
     },
     {
       "name": "tasks.tasks_claimed_by_session_id_fkey",
@@ -7632,11 +7156,7 @@
     },
     {
       "name": "tasks.tasks_state_bucket_check",
-      "definition": "CHECK (state_bucket = ANY (ARRAY['ready'::text, 'in_progress'::text, 'needs_review'::text, 'review_approved'::text, 'closed'::text, 'escalated'::text]))"
-    },
-    {
-      "name": "tasks.tasks_unattended_check",
-      "definition": "CHECK (unattended = ANY (ARRAY[false, true]))"
+      "definition": "CHECK (state_bucket = ANY (ARRAY['ready'::text, 'closed'::text, 'escalated'::text]))"
     },
     {
       "name": "tasks.tasks_validation_status_check",
@@ -8102,7 +7622,7 @@
     },
     {
       "name": "$schema.compute_task_state_bucket(p_task_id uuid)",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE COALESCE(\n(\nSELECT CASE\nWHEN stage_scan.state IN (\n'ready', 'in_progress', 'needs_review', 'review_approved'\n)\nTHEN stage_scan.state\nELSE 'ready'\nEND\nFROM task_stage_states stage_scan\nWHERE stage_scan.task_id = p_task_id\nAND stage_scan.state <> 'done'\nORDER BY stage_scan.position\nLIMIT 1\n),\n'ready'\n)\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
+      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE 'ready'\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
     },
     {
       "name": "$schema.coordination_message_committed()",
@@ -8127,10 +7647,6 @@
     {
       "name": "$schema.refresh_task_state_bucket(p_task_id uuid)",
       "definition": "CREATE OR REPLACE FUNCTION $schema.refresh_task_state_bucket(p_task_id uuid)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nUPDATE tasks\nSET state_bucket = compute_task_state_bucket(p_task_id)\nWHERE id = p_task_id;\nEND;\n$function$"
-    },
-    {
-      "name": "$schema.refresh_task_state_bucket_from_stage()",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.refresh_task_state_bucket_from_stage()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nIF TG_OP = 'DELETE' THEN\nPERFORM refresh_task_state_bucket(OLD.task_id);\nRETURN OLD;\nEND IF;\n\nPERFORM refresh_task_state_bucket(NEW.task_id);\nIF TG_OP = 'UPDATE' AND OLD.task_id IS DISTINCT FROM NEW.task_id THEN\nPERFORM refresh_task_state_bucket(OLD.task_id);\nEND IF;\nRETURN NEW;\nEND;\n$function$"
     },
     {
       "name": "$schema.refresh_task_state_bucket_from_task()",
@@ -8205,18 +7721,6 @@
     {
       "name": "bin_update_state_pkey",
       "definition": "CREATE UNIQUE INDEX bin_update_state_pkey ON $schema.bin_update_state USING btree (machine_id, tool_name)"
-    },
-    {
-      "name": "build_history_events_pkey",
-      "definition": "CREATE UNIQUE INDEX build_history_events_pkey ON $schema.build_history_events USING btree (id)"
-    },
-    {
-      "name": "build_profiles_pkey",
-      "definition": "CREATE UNIQUE INDEX build_profiles_pkey ON $schema.build_profiles USING btree (id)"
-    },
-    {
-      "name": "build_runs_pkey",
-      "definition": "CREATE UNIQUE INDEX build_runs_pkey ON $schema.build_runs USING btree (id)"
     },
     {
       "name": "chat_attachment_cleanup_fences_pkey",
@@ -8509,42 +8013,6 @@
     {
       "name": "idx_auth_sessions_user_id",
       "definition": "CREATE INDEX idx_auth_sessions_user_id ON $schema.auth_sessions USING btree (user_id)"
-    },
-    {
-      "name": "idx_build_history_events_project",
-      "definition": "CREATE INDEX idx_build_history_events_project ON $schema.build_history_events USING btree (project_id, created_at DESC)"
-    },
-    {
-      "name": "idx_build_history_events_root",
-      "definition": "CREATE INDEX idx_build_history_events_root ON $schema.build_history_events USING btree (root_task_id, created_at DESC)"
-    },
-    {
-      "name": "idx_build_history_events_run",
-      "definition": "CREATE INDEX idx_build_history_events_run ON $schema.build_history_events USING btree (run_id, created_at DESC)"
-    },
-    {
-      "name": "idx_build_profiles_active_unique",
-      "definition": "CREATE UNIQUE INDEX idx_build_profiles_active_unique ON $schema.build_profiles USING btree (name, project_id, source) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
-    },
-    {
-      "name": "idx_build_profiles_project_source",
-      "definition": "CREATE INDEX idx_build_profiles_project_source ON $schema.build_profiles USING btree (project_id, source, name)"
-    },
-    {
-      "name": "idx_build_runs_input_started",
-      "definition": "CREATE INDEX idx_build_runs_input_started ON $schema.build_runs USING btree (project_id, input_ref, started_at DESC)"
-    },
-    {
-      "name": "idx_build_runs_project_root_started",
-      "definition": "CREATE INDEX idx_build_runs_project_root_started ON $schema.build_runs USING btree (project_id, root_task_id, started_at DESC)"
-    },
-    {
-      "name": "idx_build_runs_project_started",
-      "definition": "CREATE INDEX idx_build_runs_project_started ON $schema.build_runs USING btree (project_id, started_at DESC)"
-    },
-    {
-      "name": "idx_build_runs_root_started",
-      "definition": "CREATE INDEX idx_build_runs_root_started ON $schema.build_runs USING btree (root_task_id, started_at DESC)"
     },
     {
       "name": "idx_cc_caller",
@@ -9039,10 +8507,6 @@
       "definition": "CREATE UNIQUE INDEX idx_plan_review_evidence_active_path ON $schema.plan_review_evidence USING btree (project_id, plan_path) WHERE ((finalized_at IS NULL) AND (expired_at IS NULL))"
     },
     {
-      "name": "idx_plan_review_evidence_dispatch_run",
-      "definition": "CREATE UNIQUE INDEX idx_plan_review_evidence_dispatch_run ON $schema.plan_review_evidence USING btree (dispatch_run_id) WHERE (dispatch_run_id IS NOT NULL)"
-    },
-    {
       "name": "idx_plan_review_evidence_interactive_round",
       "definition": "CREATE UNIQUE INDEX idx_plan_review_evidence_interactive_round ON $schema.plan_review_evidence USING btree (session_id, plan_path, round_number) WHERE ((session_id IS NOT NULL) AND (expired_at IS NULL))"
     },
@@ -9327,26 +8791,6 @@
       "definition": "CREATE INDEX idx_task_selection_task ON $schema.task_selection_history USING btree (session_id, task_id, selected_at DESC)"
     },
     {
-      "name": "idx_task_stage_states_open",
-      "definition": "CREATE INDEX idx_task_stage_states_open ON $schema.task_stage_states USING btree (task_id, \"position\") WHERE (state <> 'done'::text)"
-    },
-    {
-      "name": "idx_task_stage_states_position",
-      "definition": "CREATE UNIQUE INDEX idx_task_stage_states_position ON $schema.task_stage_states USING btree (task_id, \"position\")"
-    },
-    {
-      "name": "idx_task_stage_states_state",
-      "definition": "CREATE INDEX idx_task_stage_states_state ON $schema.task_stage_states USING btree (stage_name, state)"
-    },
-    {
-      "name": "idx_task_stages_registry_deleted",
-      "definition": "CREATE INDEX idx_task_stages_registry_deleted ON $schema.task_stages_registry USING btree (deleted_at)"
-    },
-    {
-      "name": "idx_task_type_default_stages_position",
-      "definition": "CREATE INDEX idx_task_type_default_stages_position ON $schema.task_type_default_stages USING btree (task_type, \"position\")"
-    },
-    {
       "name": "idx_tasks_claimed_session",
       "definition": "CREATE INDEX idx_tasks_claimed_session ON $schema.tasks USING btree (claimed_by_session_id)"
     },
@@ -9357,10 +8801,6 @@
     {
       "name": "idx_tasks_created_session",
       "definition": "CREATE INDEX idx_tasks_created_session ON $schema.tasks USING btree (created_in_session_id)"
-    },
-    {
-      "name": "idx_tasks_dispatch_scan",
-      "definition": "CREATE INDEX idx_tasks_dispatch_scan ON $schema.tasks USING btree (allow_automation, closed_at, is_escalated)"
     },
     {
       "name": "idx_tasks_parent",
@@ -9807,18 +9247,6 @@
       "definition": "CREATE UNIQUE INDEX task_selection_history_pkey ON $schema.task_selection_history USING btree (id)"
     },
     {
-      "name": "task_stage_states_pkey",
-      "definition": "CREATE UNIQUE INDEX task_stage_states_pkey ON $schema.task_stage_states USING btree (task_id, stage_name)"
-    },
-    {
-      "name": "task_stages_registry_pkey",
-      "definition": "CREATE UNIQUE INDEX task_stages_registry_pkey ON $schema.task_stages_registry USING btree (name)"
-    },
-    {
-      "name": "task_type_default_stages_pkey",
-      "definition": "CREATE UNIQUE INDEX task_type_default_stages_pkey ON $schema.task_type_default_stages USING btree (task_type, stage_name)"
-    },
-    {
       "name": "task_validation_backoff_pkey",
       "definition": "CREATE UNIQUE INDEX task_validation_backoff_pkey ON $schema.task_validation_backoff USING btree (task_id)"
     },
@@ -10019,18 +9447,6 @@
     {
       "name": "sessions.sessions_transcript_processing_recovery",
       "definition": "CREATE TRIGGER sessions_transcript_processing_recovery BEFORE UPDATE OF source, transcript_path, external_id, status ON sessions FOR EACH ROW EXECUTE FUNCTION reset_transcript_processing_on_recovery()"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_state_bucket_ad",
-      "definition": "CREATE TRIGGER task_stage_states_state_bucket_ad AFTER DELETE ON task_stage_states FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_stage()"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_state_bucket_ai",
-      "definition": "CREATE TRIGGER task_stage_states_state_bucket_ai AFTER INSERT ON task_stage_states FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_stage()"
-    },
-    {
-      "name": "task_stage_states.task_stage_states_state_bucket_au",
-      "definition": "CREATE TRIGGER task_stage_states_state_bucket_au AFTER UPDATE OF state, \"position\" ON task_stage_states FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_stage()"
     },
     {
       "name": "tasks.tasks_claim_interval",

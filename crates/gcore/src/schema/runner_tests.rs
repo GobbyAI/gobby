@@ -1194,6 +1194,142 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 472)
+        .expect("build retirement migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    let task_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'build retirement')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, validation_criteria) \
+         VALUES ($1, $2, 'retire build', 'stage state is retired')",
+        &[&task_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO task_stage_states(task_id, stage_name, position, state) \
+         VALUES ($1, 'development', 1, 'in_progress')",
+        &[&task_id],
+    )?;
+    let before: String = client
+        .query_one("SELECT state_bucket FROM tasks WHERE id = $1", &[&task_id])?
+        .get(0);
+    assert_eq!(before, "in_progress");
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for table in [
+        "task_stage_states",
+        "task_type_default_stages",
+        "task_stages_registry",
+        "build_history_events",
+        "build_runs",
+        "build_profiles",
+    ] {
+        let exists: bool = client
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
+            .get(0);
+        assert!(!exists, "retired table {table} remains");
+    }
+    for column in [
+        "allow_automation",
+        "unattended",
+        "checkout_mode",
+        "dispatch_failure_count",
+    ] {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'tasks' AND column_name = $1)",
+                &[&column],
+            )?
+            .get(0);
+        assert!(!exists, "retired tasks column {column} remains");
+    }
+    let stage_function: bool = client
+        .query_one(
+            "SELECT to_regprocedure('refresh_task_state_bucket_from_stage()') IS NOT NULL",
+            &[],
+        )?
+        .get(0);
+    assert!(!stage_function);
+    let after: String = client
+        .query_one("SELECT state_bucket FROM tasks WHERE id = $1", &[&task_id])?
+        .get(0);
+    assert_eq!(after, "ready");
+    let invalid_bucket = client
+        .execute(
+            "UPDATE tasks SET state_bucket = 'in_progress' WHERE id = $1",
+            &[&task_id],
+        )
+        .expect_err("retired stage buckets must fail the replacement constraint");
+    assert_eq!(invalid_bucket.code(), Some(&SqlState::CHECK_VIOLATION));
+
+    let run_binding: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = 'public' AND table_name = 'plan_review_evidence' \
+         AND column_name = 'dispatch_run_id')",
+            &[],
+        )?
+        .get(0);
+    assert!(!run_binding);
+    for constraint in [
+        "plan_review_evidence_bound_lease_cleared",
+        "plan_review_evidence_static_binding",
+    ] {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conrelid = 'plan_review_evidence'::regclass AND conname = $1)",
+                &[&constraint],
+            )?
+            .get(0);
+        assert!(
+            exists,
+            "static binding constraint {constraint} must survive"
+        );
+    }
+    for table in ["task_lifecycle_events", "task_dispatch_mutex"] {
+        let exists: bool = client
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
+            .get(0);
+        assert!(exists, "shared table {table} must survive");
+    }
+    for (mutation, bucket) in [
+        ("escalated_at = now(), is_escalated = true", "escalated"),
+        ("closed_at = now()", "closed"),
+    ] {
+        client.execute(
+            &format!("UPDATE tasks SET {mutation} WHERE id = $1"),
+            &[&task_id],
+        )?;
+        let observed: String = client
+            .query_one("SELECT state_bucket FROM tasks WHERE id = $1", &[&task_id])?
+            .get(0);
+        assert_eq!(observed, bucket);
+    }
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
@@ -1238,11 +1374,13 @@ fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Resul
             &[&Uuid::new_v4(), &mode, &body.to_string()],
         )?;
     }
-    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
-    assert_eq!(
-        report.migrations_applied,
-        MIGRATIONS.len() - migration_index
-    );
+    let report = SchemaRunner::with_migrations_for_test(
+        &mut client,
+        "public",
+        &MIGRATIONS[..=migration_index],
+    )?
+    .apply()?;
+    assert_eq!(report.migrations_applied, 1);
     for table in ["tasks", "build_profiles"] {
         let modes: Vec<String> = client
             .query(
@@ -1272,9 +1410,13 @@ fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Resul
         .expect_err("retired checkout modes must fail the renamed constraint");
     assert_eq!(invalid_mode.code(), Some(&SqlState::CHECK_VIOLATION));
     assert_eq!(
-        SchemaRunner::new(&mut client, "public")?
-            .apply()?
-            .migrations_applied,
+        SchemaRunner::with_migrations_for_test(
+            &mut client,
+            "public",
+            &MIGRATIONS[..=migration_index],
+        )?
+        .apply()?
+        .migrations_applied,
         0
     );
     Ok(())

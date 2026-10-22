@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
@@ -18,6 +17,7 @@ from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
 from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
+from gobby.utils.native_bin import resolve_native_bin
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
@@ -42,7 +42,7 @@ async def test_native_maintenance_preserves_daemon_home(
     merge_env: bool,
     matching_machine: bool,
 ) -> None:
-    binary = shutil.which("gcode")
+    binary = resolve_native_bin("gcode")
     if binary is None:
         pytest.skip("native maintenance regression requires installed gcode")
     fixture = authorization_fixture

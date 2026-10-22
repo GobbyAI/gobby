@@ -56,13 +56,12 @@ def test_seed_rows_survive_reset(
     Covers acceptance 2.2.3 across all five required behaviors:
 
     1. Capture happens before the first reset — `postgres_canonical_seed`
-       already contains the baseline seed rows for `projects` and
-       `task_type_default_stages` when this test runs.
+       already contains the canonical seed rows for `projects` when this test runs.
     2. Entry and exit resets receive the same snapshot — verified by
        confirming the snapshot dict is not mutated by `_reset_schema`.
     3. Extra `projects` row inserted between resets is removed; only the
        four canonical placeholders survive.
-    4. Mutating a `task_type_default_stages` row is reverted to the
+    4. Mutating a canonical `projects` row is reverted to the
        canonical value on reset.
     5. `schema_migrations` is verifiably absent from the computed
        `truncate_tables` set inside `_reset_schema`.
@@ -77,7 +76,6 @@ def test_seed_rows_survive_reset(
     # 1) Capture happened before this test was created; seed must already
     # include the canonical baseline rows.
     assert "projects" in postgres_canonical_seed
-    assert "task_type_default_stages" in postgres_canonical_seed
     assert len(postgres_canonical_seed["projects"]) == 4
 
     # Snapshot copy so we can verify it is not mutated by reset operations.
@@ -100,11 +98,10 @@ def test_seed_rows_survive_reset(
                 "test-extra-project",
             ),
         )
-        # (4) Mutate task_type_default_stages (seed-bearing).
+        # (4) Mutate an existing seed-bearing projects row.
         conn.execute(
-            "UPDATE task_type_default_stages SET position = 999 "
-            "WHERE task_type = %s AND stage_name = %s",
-            ("feature", "development"),
+            "UPDATE projects SET name = %s WHERE id = %s",
+            ("changed-placeholder", "00000000-0000-0000-0000-000000000000"),
         )
 
     # Exit-style reset — same snapshot in.
@@ -127,15 +124,13 @@ def test_seed_rows_survive_reset(
             "00000000-0000-0000-0000-000000060887",
         ]
 
-        # (4) task_type_default_stages mutation reverted.
+        # (4) Canonical project name mutation reverted.
         row = conn.execute(
-            "SELECT position FROM task_type_default_stages "
-            "WHERE task_type = %s AND stage_name = %s",
-            ("feature", "development"),
+            "SELECT name FROM projects WHERE id = %s",
+            ("00000000-0000-0000-0000-000000000000",),
         ).fetchone()
         assert row is not None
-        # Canonical value for feature → development is position 2.
-        assert row[0] == 2
+        assert row[0] == "_orphaned"
 
         # (5) schema_migrations is filtered out of the computed truncate set
         # inside _reset_schema. Recompute truncate_tables here against the live

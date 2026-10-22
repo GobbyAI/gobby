@@ -554,6 +554,7 @@ def _restart_preflight(
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.cli.install_setup_srt.restage_srt_runner", lambda: None)
     monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", lambda: None)
 
     stopped: list[str] = []

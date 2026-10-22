@@ -65,8 +65,6 @@ _SEED_TABLES = (
     "config_state",
     "projects",
     "sessions",
-    "task_stages_registry",
-    "task_type_default_stages",
 )
 _ROLE_PREAMBLE_START = "SELECT pg_advisory_xact_lock("
 _ROLE_PREAMBLE_END = "SET check_function_bodies = false;"

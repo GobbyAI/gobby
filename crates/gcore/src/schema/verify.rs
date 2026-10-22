@@ -630,26 +630,6 @@ fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
                 | "usage_output_tokens"
                 | "workflow_name"
         ),
-        "task_stages_registry" => matches!(
-            field,
-            "bundled_hash"
-                | "category"
-                | "default_agent"
-                | "default_max_review_rounds"
-                | "default_max_work_attempts"
-                | "description"
-                | "dispatch_inputs_json"
-                | "dispatch_target"
-                | "dispatch_type"
-                | "display_label"
-                | "is_terminal"
-                | "position_hint"
-                | "requires_human"
-                | "review_policy"
-                | "reviewer_agent"
-                | "reviewer_agent_selector_json"
-        ),
-        "task_type_default_stages" => field == "position",
         _ => false,
     }
 }

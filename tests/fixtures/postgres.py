@@ -345,9 +345,8 @@ def _capture_canonical_seed(
     `apply_migrations()`.
 
     Captures dynamically rather than hard-coding a fixed set of seed-bearing
-    tables: any table that ships seed rows in the baseline (`projects`,
-    `task_type_default_stages`, `task_stages_registry`, `sessions`, plus
-    any table a future baseline adds) is automatically protected.
+    tables: any table that ships seed rows after migrations (`projects`,
+    `sessions`, plus any table a future migration adds) is automatically protected.
     Bookkeeping tables (the shared `_BASELINE_BOOKKEEPING_TABLES` set owned
     by `gobby.storage.hub.postgres`) are skipped because their rows survive
     resets verbatim.
