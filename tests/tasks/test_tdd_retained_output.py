@@ -166,9 +166,13 @@ def test_mixed_full_report_credits_only_bound_ni_nodes(
     )
     first = AcceptanceTest(f"{PY_TEST}::test_first", PY_TEST, "test_first", "")
     assertion = AcceptanceTest(f"{PY_TEST}::test_assertion", PY_TEST, "test_assertion", "")
+    first_only = evaluate_tdd_evidence((first,), evidence)
+    assert first_only.passed, first_only.findings
+    assert first_only.red_runs == (PYTEST,)
     result = evaluate_tdd_evidence((first, assertion), evidence)
-    assert result.passed, result.findings
-    assert result.red_runs == (PYTEST,)
+    assert not result.passed
+    assert any(assertion.reference in finding for finding in result.findings)
+    assert result.red_runs == ()
     assertion_only = evaluate_tdd_evidence((assertion,), evidence)
     assert not assertion_only.passed
     assert assertion_only.red_runs == ()

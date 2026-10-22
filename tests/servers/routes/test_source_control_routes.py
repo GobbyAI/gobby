@@ -1443,7 +1443,7 @@ class TestDeleteWorktree:
             force=True,
             delete_branch=True,
             force_delete_branch=False,
-            branch_name="feature",
+            branch_name=None,
             base_branch="main",
             merged_into=merged_into,
         )

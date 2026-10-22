@@ -219,8 +219,6 @@ async def test_update_task_schema_rejects_unsupported_fields(
         "escalation_reason",
         "start_date",
         "due_date",
-        "allow_automation",
-        "checkout_mode",
         "assigned_agent",
         "implementation_domain",
         "additional_skills",

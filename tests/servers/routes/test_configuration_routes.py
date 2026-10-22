@@ -562,7 +562,7 @@ class TestSecretsEndpoints:
         assert response.status_code == 500
 
     def test_database_not_available(self, real_config: Any) -> None:
-        """When database is not a hub adapter, _get_secret_store raises 503."""
+        """An unavailable hub returns the public 503 error envelope."""
         server = create_http_server(
             config=real_config,
             database="not-a-database",
@@ -573,7 +573,7 @@ class TestSecretsEndpoints:
         )
         response = c.get("/api/config/secrets")
         assert response.status_code == 503
-        assert "Database not available" in response.json()["detail"]
+        assert response.json()["error"] == "Database not available"
 
 
 # ---------------------------------------------------------------------------

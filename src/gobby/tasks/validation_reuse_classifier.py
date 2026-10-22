@@ -369,11 +369,13 @@ def disposition_pin(disposition: Disposition, sources: Sources) -> str:
 # Literal pins are populated after reviewing the root chain at the task's base.
 REVIEWED_DISPOSITIONS: tuple[Disposition, ...] = (
     # Operator-home capture/comparisons and isolated temporary bootstrap provisioning.
+    # Re-reviewed for #23341: composer and checkout helpers changed behind
+    # TYPE_CHECKING imports; the module's runtime isolation boundary is unchanged.
     Disposition(
         "tests/conftest.py",
         "<module>",
         "isolation",
-        "6481f05140bd680e44f83fec0a6968b3056df9683ab61dd78bb62acc21f550e2",
+        "dbd6de069b1ae9063e1fc58fb9406d6c37bbc9141b981bcb34984529fc3360c7",
     ),
     Disposition(
         "tests/conftest.py",

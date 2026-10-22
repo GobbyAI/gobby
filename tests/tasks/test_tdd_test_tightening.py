@@ -301,7 +301,7 @@ def test_post_production_proof_rejects_behavior_changes(cause: str) -> None:
 
 
 @pytest.mark.parametrize("source", [BEFORE, "def test_feature():\n    pass\n", AFTER])
-def test_post_production_green_must_retain_red_expectation(source: str) -> None:
+def test_post_fix_test_rewrite_requires_fresh_proof(source: str) -> None:
     test, evidence = cycle()
     evidence = replace(
         evidence,
@@ -309,7 +309,25 @@ def test_post_production_green_must_retain_red_expectation(source: str) -> None:
         validation_runs=(*evidence.validation_runs[:-1], run(8)),
     )
 
-    assert evaluate_tdd_evidence((test,), evidence).passed is (source == AFTER)
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert not result.passed
+    assert result.red_runs == ()
+
+
+def test_identical_test_rewrite_can_establish_a_fresh_tightening_cycle() -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=(
+            *evidence.edits[:-1],
+            edit(TEST_PATH, 5, AFTER),
+            edit("src/feature.py", 7, "class Engine:\n    def run(self):\n        return 2\n"),
+        ),
+        validation_runs=(run(3), run(6, red=True), run(8)),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed, result.findings
 
 
 @pytest.mark.parametrize("body", [BEFORE, "def test_feature():\n    assert True\n"])

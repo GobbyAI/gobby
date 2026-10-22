@@ -251,17 +251,20 @@ def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     assert "gobby-tasks:submit_close_review" in step["allowed_mcp_tools"]
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
-    assert "submit_close_review" in body["prompts"]["agent"]
+    procedure = "references/agents/procedures/task-close-reviewer.md"
+    assert f"gobby:{procedure}" in body["step_workflow"]["variables"]["required_skills"]
+    assert f"gobby:{procedure}" in body["prompts"]["agent"]
+    guidance = body["prompts"]["agent"] + (path.parents[2] / "skills/gobby" / procedure).read_text()
+    assert "submit_close_review" in guidance
     assert body["version"] == "2.0"
-    assert "First apply the stated closure_reason" in body["prompts"]["agent"]
-    assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
-    assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
-    assert "terminal closed, invalid, external_pending" in body["prompts"]["agent"]
-    assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
-    assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
+    assert "First apply the stated closure_reason" in guidance
+    assert '"state": "satisfied|gap|pending_external"' in guidance
+    assert "criterion beginning `Live:` case-insensitively" in guidance
+    assert "terminal closed, invalid, external_pending" in guidance
+    assert '"required_evidence": null|"complete evidence set"' in guidance
+    assert "complete evidence set the next close has to supply" in guidance
     # Gate 10's run record is the authority on command runs; the reviewer must
     # never demand a committed receipt or its own reproduction instead.
-    guidance = body["prompts"]["agent"]
     assert "validation_commands facts are gate 10's transcript-derived" in guidance
     assert "same normalization contract" in guidance
     assert "criterion_commands" in guidance

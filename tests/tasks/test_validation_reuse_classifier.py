@@ -30,11 +30,9 @@ def tree_sources() -> dict[str, str]:
 def test_real_root_chain_leaves_plain_module_eligible(tree_sources: dict[str, str]) -> None:
     plain = classify_module("tests/tasks/test_criterion_commands.py", tree_sources)
     assert plain.eligible, plain.reasons
-    refused = classify_module(
-        "tests/agents/test_plan_adversary_no_edits_on_reject.py", tree_sources
-    )
+    refused = classify_module("tests/skills/test_commit_message_guidance.py", tree_sources)
     assert not refused.eligible
-    assert any("agent->repo_root" in reason for reason in refused.reasons)
+    assert any("bundled_skills_root->repo_root" in reason for reason in refused.reasons)
 
 
 def test_disposition_pins_are_current_and_fail_closed(tree_sources: dict[str, str]) -> None:

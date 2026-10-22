@@ -31,10 +31,20 @@ from tests.tasks.test_tdd_cycle_continuity import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", ["same-task", "escalated", "other-task-before", "other-task-between"]
+    "case",
+    [
+        "same-task",
+        "escalated",
+        "other-task-before",
+        "other-task-between",
+        "other-task-before-red",
+        "other-task-between-red",
+    ],
 )
 async def test_reclaim_credits_only_edits_selected_for_same_task(tmp_path: Path, case: str) -> None:
     credited = case in {"same-task", "escalated"}
+    foreign_red = case.endswith("-red")
+    prior_case = case.removesuffix("-red")
     root = str(tmp_path.resolve())
     source = "src/feature.py"
     paths = {TEST_PATH, source}
@@ -87,11 +97,11 @@ async def test_reclaim_credits_only_edits_selected_for_same_task(tmp_path: Path,
         "task_selection_history": [
             {
                 "epoch": START.isoformat(),
-                "task_id": "other" if case == "other-task-before" else "task",
+                "task_id": "other" if prior_case == "other-task-before" else "task",
             },
             {
                 "epoch": (
-                    START + timedelta(seconds=1 if case == "other-task-between" else 6)
+                    START + timedelta(seconds=1 if prior_case == "other-task-between" else 6)
                 ).isoformat(),
                 "task_id": None if case == "escalated" else "other",
             },
@@ -99,11 +109,14 @@ async def test_reclaim_credits_only_edits_selected_for_same_task(tmp_path: Path,
         ],
     }
     if not credited:
-        # RED and implementation belong to A: rejecting this cycle must depend
-        # on the earlier test edit belonging to B, rather than an off-task RED.
+        # The test edit belongs to B. A can earn its own RED without that edit,
+        # but returning after RED must never credit B's failure to A.
         variables["task_selection_history"].insert(
-            1 if case == "other-task-before" else 2,
-            {"epoch": (START + timedelta(seconds=2.5)).isoformat(), "task_id": "task"},
+            1 if prior_case == "other-task-before" else 2,
+            {
+                "epoch": (START + timedelta(seconds=3.5 if foreign_red else 2.5)).isoformat(),
+                "task_id": "task",
+            },
         )
     ctx = MagicMock()
     ctx.config = None
@@ -141,17 +154,17 @@ async def test_reclaim_credits_only_edits_selected_for_same_task(tmp_path: Path,
             repo_path=root,
         )
     result = evaluate_tdd_evidence((_test(),), evidence)
-    assert result.passed is credited, result.findings
-    if credited:
+    assert {edit.path for edit in evidence.edits if edit.task_attributed} == (
+        paths if credited else {source}
+    )
+    assert result.passed is not foreign_red, result.findings
+    if not foreign_red:
         assert result.red_runs == (f"uv run pytest {TEST_PATH} -q",)
         assert result.green_runs == (f"uv run pytest {TEST_PATH} -q",)
-        assert {edit.path for edit in evidence.edits} == paths
     else:
         assert result.red_runs == ()
-        if case == "other-task-between":
-            assert any(
-                edit.path == TEST_PATH and not edit.task_attributed for edit in evidence.edits
-            )
+    if prior_case == "other-task-between":
+        assert any(edit.path == TEST_PATH and not edit.task_attributed for edit in evidence.edits)
     assert parse.await_count == 1
 
 
