@@ -28,6 +28,10 @@ from gobby.workflows.task_dirty_state import committable_task_paths_async
 logger = logging.getLogger(__name__)
 
 
+class CloseAttributionLookupError(Exception):
+    """The owner's persisted variables could not be loaded for close evaluation."""
+
+
 @dataclass(frozen=True)
 class CloseAttributionSnapshot:
     clean_checkouts: dict[str, frozenset[str]]
@@ -47,7 +51,12 @@ async def capture_attribution(
     prospective_commit_shas: Sequence[str],
 ) -> CloseAttributionSnapshot:
     owner = get_claimed_session_id(task) or resolved_session_id
-    variables = await asyncio.to_thread(ctx.session_var_manager.get_variables, owner)
+    try:
+        variables = await asyncio.to_thread(ctx.session_var_manager.get_variables, owner)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise CloseAttributionLookupError(
+            "Could not load the task owner's session variables."
+        ) from exc
     raw = task_edited_file_set(variables, task.id)
     checkouts = task_live_checkout_files(variables, task.id)
     recorded_paths = {path for _, path in task_edited_checkout_paths(variables, task.id)}

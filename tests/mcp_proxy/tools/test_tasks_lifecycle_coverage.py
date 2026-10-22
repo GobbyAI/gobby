@@ -1,25 +1,22 @@
-"""Focused coverage tests for task MCP tools."""
+"""Task lifecycle contracts through the public MCP registry."""
 
+import subprocess
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
-from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
-from gobby.tasks.validation import PreparedCloseReview
+from gobby.utils.daemon_git import daemon_git
 from gobby.utils.session_context import session_context_for_test
-from tests.mcp_proxy.tools.close_review_test_support import (
-    CLOSE_COMMIT_SEQ_NUM,
-    ECHOING_DAEMON_GIT,
-    complete_valid_close_review,
-)
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
@@ -60,6 +57,7 @@ def _stub_checkout_resolvers() -> Iterator[None]:
             "gobby.storage.project_checkouts.require_local_machine_id",
             return_value=_CHECKOUT_MACHINE,
         ),
+        patch("gobby.sessions.machine_scope.get_machine_id", return_value=_CHECKOUT_MACHINE),
         patch(
             "gobby.storage.project_checkouts.require_root",
             return_value=TEST_REPO_PATH,
@@ -87,29 +85,7 @@ def _contract_task() -> Any:
     )
 
 
-def create_task_registry(
-    task_manager: Any,
-    *args: Any,
-    with_passing_validator: bool = False,
-    **kwargs: Any,
-) -> Any:
-    if with_passing_validator:
-        assert not args
-        assert "task_validator_resolver" not in kwargs
-        validator = AsyncMock()
-        validator.prepare_task_review = MagicMock(
-            side_effect=lambda **kwargs: PreparedCloseReview(
-                criteria=(kwargs["validation_criteria"],),
-                review_fingerprint="close",
-                evidence_fingerprint="evidence",
-                diff_sha="diff",
-                test_bodies_sha="tests",
-                stable_facts={},
-                manifest_count=1,
-                excerpt_chars=10,
-            )
-        )
-        kwargs["task_validator_resolver"] = lambda: validator
+def create_task_registry(task_manager: Any, *args: Any, **kwargs: Any) -> Any:
     with patch(
         "gobby.mcp_proxy.tools.tasks._context.SessionManager",
         return_value=_checkout_session_manager(),
@@ -117,1155 +93,401 @@ def create_task_registry(
         return _create_task_registry(task_manager, *args, **kwargs)
 
 
-def _resolve_sha(sha: str, cwd: str | None = None) -> str | None:
-    return None if sha == "bad-sha" else sha
+@dataclass
+class CloseCase:
+    registry: InternalToolRegistry
+    manager: MagicMock
+    sessions: MagicMock
+    variables: MagicMock
+    session_tasks: MagicMock
+    task: Task
+    repo: Path
+    sha: str
+
+    async def close(self, **kwargs: Any) -> dict[str, Any]:
+        result = await self.registry.call("close_task", {"task_id": self.task.id, **kwargs})
+        assert isinstance(result, dict)
+        return result
+
+    def attribute(self, paths: list[str]) -> dict[str, Any]:
+        return {
+            "task_edited_files": {self.task.id: paths},
+            "task_edited_file_checkouts": {self.task.id: {str(self.repo): paths}},
+        }
 
 
-@pytest.fixture(autouse=True)
-def _linked_commits_exist() -> Iterator[None]:
-    """Close gates read linked commits through daemon Git; every SHA but bad-sha resolves."""
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def close_case(tmp_path: Path, mock_task_manager: MagicMock) -> Iterator[CloseCase]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "owned.py").write_text("owned = 1\n")
+    (repo / "other.py").write_text("other = 1\n")
+    (repo / ".gitignore").write_text("scratch/\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "fixture")
+    sha = _git(repo, "rev-parse", "HEAD")
+    task = _contract_task()
+    task.seq_num = 42
+    task.commits = [sha]
+    task.claimed_by_session_id = "owner-session"
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_manager.close_task.return_value = task
+    mock_task_manager.close_task_with_commit.return_value = task
+    sessions = _checkout_session_manager()
+    variables = MagicMock()
+    variables.get_variables.return_value = {}
+    session_tasks = MagicMock()
+    projects = MagicMock()
+    projects.get.return_value = MagicMock()
+    projects.db.fetchone.return_value = None
+    projects.db.fetchall.return_value = []
     with (
+        session_context_for_test("closer-session"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager", return_value=sessions),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.normalize_commit_sha",
-            side_effect=_resolve_sha,
+            "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager", return_value=variables
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
-            side_effect=_resolve_sha,
+            "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager", return_value=session_tasks
+        ),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager", return_value=projects),
+        patch("gobby.mcp_proxy.tools.task_repo_paths.require_root", return_value=str(repo)),
+        patch("gobby.storage.project_checkouts.require_root", return_value=str(repo)),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.resolve_close_worktree_root_async",
+            new=AsyncMock(return_value=SimpleNamespace(repo_path=None)),
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
-            new=ECHOING_DAEMON_GIT,
-        ),
-        # The link step stores Git's short form of each close SHA (#23251).
-        patch("gobby.utils.git.normalize_commit_sha", side_effect=_resolve_sha),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
-            return_value=NetCommitPaths(),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
+            new=AsyncMock(return_value=(repo, "main")),
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.collect_commit_paths",
-            return_value=set(),
+            "gobby.mcp_proxy.tools.tasks._close_context.foreign_owned_dirty_paths_async",
+            new=AsyncMock(return_value=set()),
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
-            return_value=(([], []), None),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._queue_close_memory_review"
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.unlinked_tagged_commits",
-            return_value=(([], []), None),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.notify_parent_on_task_state_change"
         ),
+        patch("gobby.sessions.title_lifecycle.recompute_automatic_title"),
     ):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def _disable_validation_backoff_storage() -> Iterator[None]:
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.TaskValidationBackoffStore.get",
-            return_value=None,
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration",
-            return_value=1,
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration"
-            ".TaskCloseReviewStore.get_active_for_task",
-            return_value=None,
-        ),
-        patch.object(close_tool, "launch_close_review", new=complete_valid_close_review),
-    ):
-        yield
+        yield CloseCase(
+            _create_task_registry(mock_task_manager),
+            mock_task_manager,
+            sessions,
+            variables,
+            session_tasks,
+            task,
+            repo,
+            sha,
+        )
 
 
 class TestCloseTaskTool:
-    """Tests for close_task MCP tool."""
-
-    @pytest.fixture(autouse=True)
-    def _set_session_context(self) -> Iterator[None]:
-        with (
-            session_context_for_test("test-session"),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
-                return_value=(
-                    "diff --git a/src/example.py b/src/example.py\n"
-                    "--- a/src/example.py\n"
-                    "+++ b/src/example.py\n"
-                    "@@ -0,0 +1 @@\n"
-                    "+example\n"
-                ),
-            ),
-        ):
-            yield
-
     @pytest.mark.asyncio
-    async def test_close_task_not_found(self, mock_task_manager: MagicMock) -> None:
-        """Test close_task returns error when task not found."""
-        registry = create_task_registry(mock_task_manager)
-
-        mock_task_manager.get_task.return_value = None
-
-        result = await registry.call(
-            "close_task", {"task_id": "00000000-0000-0000-0000-000000000000"}
-        )
-
-        assert "error" in result
+    async def test_close_task_not_found(self, close_case: CloseCase) -> None:
+        close_case.manager.get_task.side_effect = ValueError("Task not found")
+        result = await close_case.close()
         assert result["error"] == "task_not_found"
+        close_case.manager.close_task.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_no_commits_error(self, mock_task_manager: MagicMock) -> None:
-        """Test close_task requires commits to be linked."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
-            MockSVManager.return_value.get_variables.return_value = {
-                "task_edited_files": {"550e8400-e29b-41d4-a716-446655440000": ["src/owned.py"]},
-            }
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "changes_summary": "test changes",
-                    "response_detail": "diagnostic",
-                },
-            )
-
-            assert "error" in result
-            assert result["error"] == "no_commits_linked"
-            assert result["attributed_paths"] == ["src/owned.py"]
-
-    @pytest.mark.asyncio
-    async def test_close_task_with_skip_reason_skips_commit_check(
-        self, mock_task_manager: MagicMock
+    @pytest.mark.parametrize("reason,expected", [("completed", False), ("duplicate", True)])
+    async def test_commitless_close_requires_no_work_reason(
+        self, close_case: CloseCase, reason: str, expected: bool
     ) -> None:
-        """Test close_task with skip reason bypasses commit check."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.requires_user_review = False  # Avoid review routing
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []  # No children
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "reason": "duplicate",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert "error" not in result
-            mock_task_manager.close_task.assert_called_once()
-            assert mock_task_manager.close_task.call_count == 1
-            assert mock_task_manager.close_task.call_args is not None
+        close_case.task.commits = []
+        result = await close_case.close(reason=reason)
+        assert result["success"] is expected
+        assert result["closed"] is expected
+        assert result.get("error") == (None if expected else "linked_commits")
+        assert close_case.manager.close_task.call_count == int(expected)
+        close_case.manager.link_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_parent_with_open_children(self, mock_task_manager: MagicMock) -> None:
-        """Test close_task fails for parent with open children."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
-        mock_task.commits = ["abc123"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task_manager.get_task.return_value = mock_task
-
-        # Create open child tasks
-        child1 = MagicMock()
-        child1.id = "550e8400-e29b-41d4-a716-446655440021"
-        child1.title = "Open Child 1"
-        child1.status = "open"
-
-        child2 = MagicMock()
-        child2.id = "550e8400-e29b-41d4-a716-446655440022"
-        child2.title = "Open Child 2"
-        child2.status = "in_progress"
-
-        mock_task_manager.list_tasks.return_value = [child1, child2]
-
-        with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task", {"task_id": "550e8400-e29b-41d4-a716-446655440020"}
-            )
-
-            assert "error" in result
-            assert result["error"] == "children_open"
-            assert "open_children" in result
+    @pytest.mark.parametrize("preview", [False, True])
+    async def test_parent_with_open_children(self, close_case: CloseCase, preview: bool) -> None:
+        child = _contract_task()
+        child.id = "child-id"
+        close_case.manager.list_tasks.return_value = [child]
+        result = await close_case.close(preview=preview)
+        assert result["success"] is False
+        assert result["can_close"] is False
+        assert result["closed"] is False
+        assert result["error"] == "children_closed"
+        close_case.manager.close_task.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_success_with_commits(self, mock_task_manager: MagicMock) -> None:
-        """Test close_task succeeds when commits are linked."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = ["abc123"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.requires_user_review = False  # Explicitly set to avoid review routing
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []  # No children
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "commit_sha": "abc123",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert result["success"] is True
-            assert mock_task_manager.close_task.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_close_task_uses_explicit_candidate_for_closed_commit_sha(
-        self, mock_task_manager: MagicMock
+    @pytest.mark.parametrize("explicit_candidate", [False, True])
+    async def test_close_records_candidate_atomically(
+        self, close_case: CloseCase, explicit_candidate: bool
     ) -> None:
-        """The reviewed candidate becomes closed_commit_sha, not link order or ambient HEAD."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = ["old-commit", "repair-commit"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "ambient-head"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "commit_sha": "old-commit",
-                    "changes_summary": "Closed after coordinator repair.",
-                },
-            )
-
-            assert result["success"] is True
-            close_call = mock_task_manager.close_task.call_args
-            assert close_call.kwargs["closed_commit_sha"] == "old-commit"
-            mock_git.assert_not_called()
+        if explicit_candidate:
+            (close_case.repo / "other.py").write_text("other = 2\n")
+            _git(close_case.repo, "add", "other.py")
+            _git(close_case.repo, "commit", "-m", "later commit")
+            newer = _git(close_case.repo, "rev-parse", "HEAD")
+            assert newer != close_case.sha
+            close_case.task.commits = [close_case.sha, newer]
+        arguments = {"commit_sha": close_case.sha[:12]} if explicit_candidate else {}
+        result = await close_case.close(**arguments)
+        assert result["closed"] is True
+        close_case.manager.link_commit.assert_not_called()
+        if explicit_candidate:
+            close_case.manager.close_task.assert_not_called()
+            method = close_case.manager.close_task_with_commit
+            assert method.call_args.args == (close_case.task.id, close_case.sha)
+            assert method.call_args.kwargs["cwd"] == str(close_case.repo)
+        else:
+            close_case.manager.close_task_with_commit.assert_not_called()
+            method = close_case.manager.close_task
+            assert method.call_args.args == (close_case.task.id,)
+            assert method.call_args.kwargs["closed_commit_sha"] == close_case.sha
+        method.assert_called_once()
+        assert method.call_args.kwargs["closed_in_session_id"] == "closer-session"
 
     @pytest.mark.asyncio
-    async def test_close_task_reports_auto_closed_ancestors(
-        self, mock_task_manager: MagicMock
+    async def test_new_candidate_is_linked_only_after_clean_evaluation(
+        self, close_case: CloseCase
     ) -> None:
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.task_type = "epic"
-        mock_task.seq_num = 20557
-        mock_task.requires_user_review = False
+        close_case.task.commits = []
+        close_case.variables.get_variables.return_value = close_case.attribute(["owned.py"])
+        (close_case.repo / "owned.py").write_text("owned = 2\n")
+        refused = await close_case.close(commit_sha=close_case.sha)
+        assert refused["error"] == "uncommitted_task_edits"
+        close_case.manager.link_commit.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
+        _git(close_case.repo, "add", "owned.py")
+        _git(close_case.repo, "commit", "-m", "task change")
+        candidate = _git(close_case.repo, "rev-parse", "HEAD")
+        closed = await close_case.close(commit_sha=candidate)
+        assert closed["closed"] is True
+        assert close_case.manager.close_task_with_commit.call_args.args == (
+            close_case.task.id,
+            candidate,
+        )
+        close_case.manager.link_commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reports_auto_closed_ancestors(self, close_case: CloseCase) -> None:
+        close_case.task.task_type = "epic"
         ancestor = _contract_task()
-        ancestor.id = "ancestor-epic-id"
-        ancestor.title = "Phase epic"
-        ancestor.task_type = "epic"
-        ancestor.seq_num = 20555
-        ancestor.project_id = mock_task.project_id
+        ancestor.id, ancestor.seq_num, ancestor.title = "ancestor-id", 20555, "Phase epic"
 
-        def _close_task(*_args: object, **kwargs: object) -> Any:
-            collected = kwargs.get("closed_ancestors")
-            if isinstance(collected, list):
-                collected.append(ancestor.id)
-            return mock_task
+        def close(*_args: object, closed_ancestors: list[str], **_kwargs: object) -> Task:
+            closed_ancestors.append(ancestor.id)
+            return close_case.task
 
-        def _get_task(task_id: str) -> Any:
-            if task_id == ancestor.id:
-                return ancestor
-            return mock_task
-
-        mock_task_manager.get_task.side_effect = _get_task
-        mock_task_manager.list_tasks.return_value = []
-        mock_task_manager.close_task.side_effect = _close_task
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command", return_value="abc123"),
-            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "changes_summary": "Landed the leaf.",
-                },
-            )
-
+        close_case.manager.get_task.side_effect = lambda task_id: (
+            ancestor if task_id == ancestor.id else close_case.task
+        )
+        close_case.manager.close_task.side_effect = close
+        with patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive:
+            result = await close_case.close()
         assert result["success"] is True
         assert result["closed_ancestors"] == [
             {"id": ancestor.id, "ref": "#20555", "title": "Phase epic"}
         ]
         archive.assert_called_once()
-        event = archive.call_args.args[0]
-        assert event["task_ref"] == "#20557"
+        assert archive.call_args.args[0]["task_ref"] == "#42"
 
     @pytest.mark.asyncio
-    async def test_close_task_with_commit_sha_links_after_evaluation(
-        self, mock_task_manager: MagicMock, tmp_path: Path
-    ) -> None:
-        """A prospective commit is linked only after the checklist passes."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.seq_num = CLOSE_COMMIT_SEQ_NUM
-        mock_task.commits = ["abc123"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.link_commit.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-
-        expected_repo_path = str((tmp_path / "repo").resolve())
-        (tmp_path / "repo").mkdir()
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
-                side_effect=_resolve_sha,
-            ) as mock_norm,
-            patch(
-                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
-                return_value=expected_repo_path,
-            ),
-            patch(
-                "gobby.storage.project_checkouts.require_root",
-                return_value=expected_repo_path,
-            ),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            # Build the registry inside the patch so RegistryContext picks up
-            # the mocked LocalProjectManager.
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "commit_sha": "new-commit",
-                    "changes_summary": "Closed with the explicitly linked commit.",
-                },
-            )
-
-            assert result["closed"] is True
-            # The SHA resolves against the task repository before the manager links it.
-            mock_norm.assert_any_call("new-commit", cwd=expected_repo_path)
-            assert mock_task_manager.link_commit.call_args == call(
-                "550e8400-e29b-41d4-a716-446655440000", "new-commit"
-            )
-
-            close_call = mock_task_manager.close_task.call_args
-            assert close_call[0] == ("550e8400-e29b-41d4-a716-446655440000",)
-            assert close_call.kwargs["closed_commit_sha"] == "new-commit"
-
-    @pytest.mark.asyncio
-    async def test_close_task_fails_when_commit_sha_cannot_be_resolved(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """Test close_task surfaces explicit commit SHA resolution failures."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.requires_user_review = False
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-        mock_task_manager.link_commit.side_effect = ValueError(
-            "Invalid or unresolved commit SHA: bad-sha"
-        )
-
-        with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "commit_sha": "bad-sha",
-                    "changes_summary": "test changes",
-                },
-            )
-
+    async def test_unresolved_candidate_never_links(self, close_case: CloseCase) -> None:
+        result = await close_case.close(commit_sha="bad-sha")
         assert result["success"] is False
         assert result["error"] == "invalid_commit_sha"
-        mock_task_manager.link_commit.assert_not_called()
-        assert mock_task_manager.close_task.call_count == 0
+        close_case.manager.link_commit.assert_not_called()
+        close_case.manager.close_task.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_rejects_commit_when_repo_path_is_unresolved(
-        self, mock_task_manager: MagicMock
+    @pytest.mark.parametrize("commit_mode", ["explicit", "linked", "claimed"])
+    async def test_unresolved_repository_refuses_before_git(
+        self, close_case: CloseCase, commit_mode: str
     ) -> None:
-        """Commit operations fail closed when the task repository cannot be resolved."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.claimed_by_session_id = None
-        mock_task_manager.get_task.return_value = mock_task
-
+        if commit_mode != "linked":
+            close_case.task.commits = []
+        arguments = {"commit_sha": close_case.sha} if commit_mode == "explicit" else {}
         with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
-            patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
-            patch("gobby.utils.git.run_git_command") as mock_run_git,
             patch(
-                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.resolve_task_repo_path",
                 side_effect=CheckoutNotFoundError("no checkout"),
             ),
-            patch(
-                "gobby.storage.project_checkouts.require_root",
-                side_effect=CheckoutNotFoundError("no checkout"),
-            ),
+            patch.object(daemon_git, "run", new_callable=AsyncMock) as git,
         ):
-            MockProjManager.return_value.get.return_value = None
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": mock_task.id,
-                    "commit_sha": "abc1234",
-                    "changes_summary": "test changes",
-                },
-            )
-
+            result = await close_case.close(**arguments)
         assert result["success"] is False
-        assert result["error"] == "task_repo_path_unavailable"
-        assert result["message"] == "close_task requires a registered repository path."
-        assert mock_task_manager.link_commit.call_count == 0
-        assert mock_run_git.call_count == 0
-        mock_task_manager.link_commit.assert_not_called()
-        mock_autolink.assert_not_called()
-        mock_normalize.assert_not_called()
-        mock_run_git.assert_not_called()
-        mock_task_manager.close_task.assert_not_called()
+        assert result["error"] == "invalid_project_path"
+        git.assert_not_awaited()
+        close_case.manager.link_commit.assert_not_called()
+        close_case.manager.close_task.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_rejects_linked_commit_when_repo_path_is_unresolved(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """Linked commits are not normalized against the daemon working directory."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = ["abc1234"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.claimed_by_session_id = None
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
-            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
-            patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
-            patch("gobby.utils.git.run_git_command") as mock_run_git,
-            patch(
-                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
-                side_effect=CheckoutNotFoundError("no checkout"),
-            ),
-            patch(
-                "gobby.storage.project_checkouts.require_root",
-                side_effect=CheckoutNotFoundError("no checkout"),
-            ),
-        ):
-            MockProjManager.return_value.get.return_value = None
-            MockSVM.return_value.get_variables.return_value = {}
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": mock_task.id,
-                    "changes_summary": "test changes",
-                },
-            )
-
-        assert result["error"] == "task_repo_path_unavailable"
-        assert result["success"] is False
-        mock_autolink.assert_not_called()
-        mock_normalize.assert_not_called()
-        mock_run_git.assert_not_called()
-        mock_task_manager.close_task.assert_not_called()
+    async def test_no_work_reason_still_refuses_target_dirt(self, close_case: CloseCase) -> None:
+        close_case.task.commits = []
+        close_case.variables.get_variables.return_value = close_case.attribute(["owned.py"])
+        (close_case.repo / "owned.py").write_text("owned = 2\n")
+        result = await close_case.close(reason="out_of_repo")
+        assert result["error"] == "uncommitted_task_edits"
+        close_case.manager.close_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_rejects_claim_autolink_when_repo_path_is_unresolved(
-        self, mock_task_manager: MagicMock
+    @pytest.mark.parametrize("scoped_ledger", [False, True])
+    async def test_ignored_edits_need_checkout_attribution(
+        self, close_case: CloseCase, scoped_ledger: bool
     ) -> None:
-        """Claim-window commit discovery requires the task repository path."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.claimed_by_session_id = "test-session"
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
-            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
-            patch(
-                "gobby.mcp_proxy.tools.task_repo_paths.require_root",
-                side_effect=CheckoutNotFoundError("no checkout"),
-            ),
-            patch(
-                "gobby.storage.project_checkouts.require_root",
-                side_effect=CheckoutNotFoundError("no checkout"),
-            ),
-        ):
-            MockProjManager.return_value.get.return_value = None
-            MockSessionManager.return_value = _checkout_session_manager()
-            MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
-            MockSTM.return_value.get_task_sessions.return_value = [
-                {
-                    "action": "claimed",
-                    "session_id": "test-session",
-                    "created_at": "2026-07-12T10:00:00+00:00",
-                }
-            ]
-            MockSVM.return_value.get_variables.return_value = {}
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": mock_task.id,
-                    "changes_summary": "test changes",
-                },
-            )
-
-        assert result["error"] == "task_repo_path_unavailable"
-        assert result["success"] is False
-        mock_autolink.assert_not_called()
-        mock_task_manager.close_task.assert_not_called()
+        close_case.task.commits = []
+        (close_case.repo / "scratch").mkdir()
+        (close_case.repo / "scratch/notes.md").write_text("notes\n")
+        variables = close_case.attribute(["scratch/notes.md"])
+        if not scoped_ledger:
+            variables.pop("task_edited_file_checkouts")
+        close_case.variables.get_variables.return_value = variables
+        result = await close_case.close(reason="out_of_repo")
+        assert result["success"] is scoped_ledger
+        assert result.get("error") == (None if scoped_ledger else "uncommitted_task_edits")
+        assert close_case.manager.close_task.call_count == int(scoped_ledger)
+        close_case.manager.link_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_out_of_repo_blocked_when_target_task_has_edits(
-        self, mock_task_manager: MagicMock
+    async def test_no_work_close_ignores_other_task_dirt(self, close_case: CloseCase) -> None:
+        close_case.task.commits = []
+        (close_case.repo / "other.py").write_text("other = 2\n")
+        close_case.variables.get_variables.return_value = {
+            "task_edited_files": {"other-task": ["other.py"]},
+            "task_edited_file_checkouts": {"other-task": {str(close_case.repo): ["other.py"]}},
+        }
+        result = await close_case.close(reason="out_of_repo")
+        assert result["closed"] is True
+        close_case.manager.close_task.assert_called_once()
+        assert close_case.variables.merge_variables.call_args.args[1]["task_edited_files"] == {
+            "other-task": ["other.py"]
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("other_claim", [False, True])
+    async def test_close_cleans_only_target_claim_and_attribution(
+        self, close_case: CloseCase, other_claim: bool
     ) -> None:
-        """Test out_of_repo reason still enforces commit check for target-task edits."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
-
-        def fake_run_git_command(
-            command: list[str], cwd: str | None = None, timeout: int = 5
-        ) -> str | None:
-            del cwd, timeout
-            if command[:2] == ["git", "check-ignore"]:
-                return None  # exit 1 => path is NOT gitignored (a real tracked file)
-            return "abc123"
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch(
-                "gobby.utils.git.run_git_command",
-                side_effect=fake_run_git_command,
-            ),
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            mock_session_instance = MagicMock()
-            mock_session_instance.resolve_session_reference.return_value = "test-session"
-            MockSessionManager.return_value = mock_session_instance
-            MockSVManager.return_value.get_variables.return_value = {
-                "task_edited_files": {"550e8400-e29b-41d4-a716-446655440000": ["src/owned.py"]},
+        variables = close_case.attribute(["owned.py"])
+        variables.update(
+            task_claimed=True,
+            claimed_tasks={close_case.task.id: "#42"},
+            active_task_id=close_case.task.id,
+        )
+        if other_claim:
+            variables["claimed_tasks"]["other-task"] = "#43"
+            variables["task_edited_files"]["other-task"] = ["other.py"]
+            variables["task_edited_file_checkouts"]["other-task"] = {
+                str(close_case.repo): ["other.py"]
             }
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "reason": "out_of_repo",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert result.get("error") == "no_commits_linked"
-            mock_task_manager.close_task.assert_not_called()
-            assert mock_task_manager.close_task.call_count == 0
-            assert not mock_task_manager.close_task.called
+        close_case.variables.get_variables.return_value = variables
+        result = await close_case.close(commit_sha=close_case.sha)
+        assert result["closed"] is True
+        close_case.session_tasks.link_task.assert_called_once_with(
+            "closer-session", close_case.task.id, "closed"
+        )
+        close_case.variables.merge_variables.assert_called_once_with(
+            "owner-session",
+            {
+                "task_claimed": other_claim,
+                "claimed_tasks": {"other-task": "#43"} if other_claim else {},
+                "active_task_id": None,
+                **({"task_has_commits": False} if not other_claim else {}),
+                "task_edited_files": {"other-task": ["other.py"]} if other_claim else {},
+                "task_edited_file_checkouts": (
+                    {"other-task": {str(close_case.repo): ["other.py"]}} if other_claim else {}
+                ),
+            },
+        )
+        assert close_case.sessions.clear_had_edits.call_count == int(not other_claim)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("evaluation_read", [1, 2])
     @pytest.mark.parametrize(
-        ("ledger_paths", "expected_error"),
+        "lookup_error",
         [
-            pytest.param(("wiki/knowledge/topics/x.md",), None, id="ignored-ledger"),
-            pytest.param((), "task_edit_paths_unavailable", id="missing-ledger"),
+            KeyError("vars unavailable"),
+            ValueError("vars unavailable"),
+            TypeError("vars unavailable"),
+            RuntimeError("programming error"),
         ],
     )
-    async def test_close_task_succeeds_when_only_gitignored_paths_edited(
-        self,
-        mock_task_manager: MagicMock,
-        ledger_paths: tuple[str, ...],
-        expected_error: str | None,
+    async def test_owner_variable_failure_never_closes(
+        self, close_case: CloseCase, lookup_error: Exception, evaluation_read: int
     ) -> None:
-        """Gitignored-only edits (e.g. a vault under wiki/) never need a commit."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.requires_user_review = False
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
-
-        def fake_run_git_command(
-            command: list[str], cwd: str | None = None, timeout: int = 5
-        ) -> str:
-            del cwd, timeout
-            if command[:2] == ["git", "check-ignore"]:
-                return ""  # exit 0 => path IS gitignored
-            return "abc123"
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch(
-                "gobby.utils.git.run_git_command",
-                side_effect=fake_run_git_command,
-            ),
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            mock_session_instance = MagicMock()
-            mock_session_instance.resolve_session_reference.return_value = "test-session"
-            MockSessionManager.return_value = mock_session_instance
-            MockSVManager.return_value.get_variables.return_value = {
-                "task_edited_files": {
-                    "550e8400-e29b-41d4-a716-446655440000": list(ledger_paths),
-                },
-            }
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "changes_summary": "vault-only research notes",
-                },
-            )
-
-            assert result["success"] is (expected_error is None)
-            assert result.get("error") == expected_error
-            assert mock_task_manager.close_task.call_count == int(expected_error is None)
-            assert mock_task_manager.link_commit.call_count == 0
+        close_case.variables.get_variables.side_effect = [{}] * (evaluation_read - 1) + [
+            lookup_error
+        ]
+        if isinstance(lookup_error, RuntimeError):
+            with pytest.raises(RuntimeError, match="programming error"):
+                await close_case.close()
+        else:
+            result = await close_case.close()
+            assert result["success"] is False
+            assert result["error"] == "session_variable_lookup_failed"
+        assert close_case.variables.get_variables.call_count == evaluation_read
+        assert {c.args for c in close_case.variables.get_variables.call_args_list} == {
+            ("owner-session",)
+        }
+        close_case.manager.close_task.assert_not_called()
+        close_case.manager.close_task_with_commit.assert_not_called()
+        close_case.variables.merge_variables.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_close_task_out_of_repo_succeeds_with_unrelated_task_edits(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """Test out_of_repo reason succeeds when only another task has edits."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = None
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Test task completion is observable."
-        mock_task.requires_user_review = False
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
+    async def test_cleanup_refetches_owner_after_close(self, close_case: CloseCase) -> None:
+        initial = close_case.attribute(["owned.py"])
+        initial.update(
+            task_claimed=True,
+            claimed_tasks={close_case.task.id: "#42"},
+            active_task_id=close_case.task.id,
+        )
+        fresh = close_case.attribute(["owned.py"])
+        fresh.update(
+            task_claimed=True,
+            claimed_tasks={close_case.task.id: "#42", "concurrent": "#99"},
+            active_task_id=close_case.task.id,
+        )
+        fresh["task_edited_files"]["concurrent"] = ["other.py"]
+        fresh["task_edited_file_checkouts"]["concurrent"] = {str(close_case.repo): ["other.py"]}
+        close_case.variables.get_variables.return_value = initial
 
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
+        def close(*_args: object, **_kwargs: object) -> Task:
+            close_case.variables.get_variables.return_value = fresh
+            return close_case.task
 
-            mock_session_instance = MagicMock()
-            mock_session_instance.resolve_session_reference.return_value = "test-session"
-            MockSessionManager.return_value = mock_session_instance
-            MockSVManager.return_value.get_variables.return_value = {
-                "task_edited_files": {"other-task": ["src/other.py"]},
-            }
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "reason": "out_of_repo",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert result["success"] is True
-            mock_task_manager.close_task.assert_called_once()
-            assert mock_task_manager.close_task.call_count == 1
-            assert mock_task_manager.close_task.call_args is not None
-
-    @pytest.mark.asyncio
-    async def test_close_task_clears_task_claimed_variables(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """close_task must remove task from claimed_tasks session variables.
-
-        Regression test for #9064: after successful close, the workflow state
-        variables were not cleared due to scoping issues, causing stale
-        'Task (unknown) is still in_progress' blocks after compaction.
-        """
-        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_st_instance = MagicMock()
-            MockSessionTaskManager.return_value = mock_st_instance
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = None
-            MockSessionManager.return_value = mock_session_manager
-
-            # Session variables with only this task claimed
-            mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.return_value = {
-                "task_claimed": True,
-                "claimed_tasks": {task_uuid: "#42"},
-                "active_task_id": task_uuid,
-                "task_has_commits": True,
-                "task_edited_files": {task_uuid: ["src/owned.py"]},
-            }
-            MockSVManager.return_value = mock_sv_manager
-
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            mock_task = _contract_task()
-            mock_task.id = task_uuid
-            mock_task.commits = ["abc123"]
-            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = "Test task completion is observable."
-            mock_task.requires_user_review = False
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.close_task.return_value = mock_task
-            mock_task_manager.list_tasks.return_value = []
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": task_uuid,
-                    "commit_sha": "abc123",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert "error" not in result
-            # Variables must show task removed from claimed_tasks
-            mock_sv_manager.merge_variables.assert_called_once_with(
-                "test-session",
-                {
-                    "task_claimed": False,
-                    "claimed_tasks": {},
-                    "active_task_id": None,
-                    "task_has_commits": False,
-                    "task_edited_files": {},
-                },
-            )
-            assert mock_sv_manager.merge_variables.call_count == 1
-            assert mock_sv_manager.merge_variables.call_args is not None
-
-    @pytest.mark.asyncio
-    async def test_close_task_prunes_only_target_task_edit_state(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """close_task must preserve edit state for other claimed tasks."""
-        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        other_task_uuid = "550e8400-e29b-41d4-a716-446655440001"
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_session_task_manager = MagicMock()
-            MockSessionTaskManager.return_value = mock_session_task_manager
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = None
-            MockSessionManager.return_value = mock_session_manager
-
-            mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.return_value = {
-                "task_claimed": True,
-                "claimed_tasks": {task_uuid: "#42", other_task_uuid: "#43"},
-                "active_task_id": task_uuid,
-                "task_edited_files": {
-                    task_uuid: ["src/owned.py"],
-                    other_task_uuid: ["src/other.py"],
-                },
-            }
-            MockSVManager.return_value = mock_sv_manager
-
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            mock_task = _contract_task()
-            mock_task.id = task_uuid
-            mock_task.commits = ["abc123"]
-            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = "Test task completion is observable."
-            mock_task.requires_user_review = False
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.close_task.return_value = mock_task
-            mock_task_manager.list_tasks.return_value = []
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": task_uuid,
-                    "commit_sha": "abc123",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert "error" not in result
-            mock_task_manager.close_task.assert_called_once()
-            close_call = mock_task_manager.close_task.call_args
-            assert close_call.args == (task_uuid,)
-            assert close_call.kwargs["closed_in_session_id"] == "test-session"
-            assert close_call.kwargs["closed_commit_sha"] == "abc123"
-            mock_session_task_manager.link_task.assert_called_once_with(
-                "test-session",
-                task_uuid,
-                "closed",
-            )
-            mock_sv_manager.merge_variables.assert_called_once_with(
-                "test-session",
-                {
-                    "task_claimed": True,
-                    "claimed_tasks": {other_task_uuid: "#43"},
-                    "active_task_id": None,
-                    "task_edited_files": {other_task_uuid: ["src/other.py"]},
-                },
-            )
-            mock_session_manager.clear_had_edits.assert_not_called()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("lookup_error", "is_expected_lookup_failure"),
-        [
-            (KeyError("vars unavailable"), True),
-            (ValueError("vars unavailable"), True),
-            (TypeError("vars unavailable"), True),
-            (RuntimeError("programming error"), False),
-        ],
-    )
-    async def test_close_task_fails_closed_when_owner_variables_cannot_load(
-        self,
-        mock_task_manager: MagicMock,
-        lookup_error: Exception,
-        is_expected_lookup_failure: bool,
-    ) -> None:
-        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-        ):
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "closer-session"
-            mock_session_manager.get.return_value = None
-            MockSessionManager.return_value = mock_session_manager
-
-            mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.side_effect = lookup_error
-            MockSVManager.return_value = mock_sv_manager
-
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            registry = create_task_registry(mock_task_manager)
-            mock_task = _contract_task()
-            mock_task.id = task_uuid
-            mock_task.claimed_by_session_id = "owner-session"
-            mock_task.commits = []
-            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = "Test task completion is observable."
-            mock_task.requires_user_review = False
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.list_tasks.return_value = []
-
-            close_arguments = {
-                "task_id": task_uuid,
-                "changes_summary": "test changes",
-            }
-            if not is_expected_lookup_failure:
-                with pytest.raises(RuntimeError, match="programming error"):
-                    await registry.call("close_task", close_arguments)
-                mock_task_manager.close_task.assert_not_called()
-                return
-            result = await registry.call("close_task", close_arguments)
-
-        assert result["success"] is False
-        assert result["error"] == "session_variable_lookup_failed"
-        mock_sv_manager.get_variables.assert_called_once_with("owner-session")
-        mock_task_manager.close_task.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_close_task_uses_owner_variables_and_refetches_before_merge(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        concurrent_uuid = "550e8400-e29b-41d4-a716-446655440099"
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-        ):
-            MockSessionTaskManager.return_value = MagicMock()
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "closer-session"
-            mock_session_manager.get.return_value = None
-            MockSessionManager.return_value = mock_session_manager
-
-            initial_owner_vars = {
-                "task_claimed": True,
-                "claimed_tasks": {task_uuid: "#42"},
-                "active_task_id": task_uuid,
-                "task_edited_files": {task_uuid: ["src/owned.py"]},
-            }
-            fresh_owner_vars = {
-                "task_claimed": True,
-                "claimed_tasks": {task_uuid: "#42", concurrent_uuid: "#99"},
-                "active_task_id": task_uuid,
-                "task_edited_files": {
-                    task_uuid: ["src/owned.py"],
-                    concurrent_uuid: ["src/concurrent.py"],
-                },
-            }
-            owner_reads: list[str] = []
-
-            def _owner_vars(session_id: str) -> dict[str, Any]:
-                owner_reads.append(session_id)
-                return initial_owner_vars if len(owner_reads) == 1 else fresh_owner_vars
-
-            mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.side_effect = _owner_vars
-            MockSVManager.return_value = mock_sv_manager
-
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-            mock_task = _contract_task()
-            mock_task.id = task_uuid
-            mock_task.claimed_by_session_id = "owner-session"
-            mock_task.commits = ["abc123"]
-            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = "Test task completion is observable."
-            mock_task.requires_user_review = False
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.close_task.return_value = mock_task
-            mock_task_manager.list_tasks.return_value = []
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": task_uuid,
-                    "commit_sha": "abc123",
-                    "changes_summary": "test changes",
-                },
-            )
-
-        assert "error" not in result
-        # Every read targets the owner, and the merge below proves the last read was fresh.
-        assert len(owner_reads) >= 2
-        assert set(owner_reads) == {"owner-session"}
-        mock_sv_manager.merge_variables.assert_called_once_with(
+        close_case.manager.close_task.side_effect = close
+        result = await close_case.close()
+        assert result["closed"] is True
+        assert close_case.variables.get_variables.call_count >= 3
+        assert {c.args for c in close_case.variables.get_variables.call_args_list} == {
+            ("owner-session",)
+        }
+        close_case.variables.merge_variables.assert_called_once_with(
             "owner-session",
             {
                 "task_claimed": True,
-                "claimed_tasks": {concurrent_uuid: "#99"},
+                "claimed_tasks": {"concurrent": "#99"},
                 "active_task_id": None,
-                "task_edited_files": {concurrent_uuid: ["src/concurrent.py"]},
+                "task_edited_files": {"concurrent": ["other.py"]},
+                "task_edited_file_checkouts": {"concurrent": {str(close_case.repo): ["other.py"]}},
             },
         )
-
-
-# =============================================================================
-# reopen_task Tool Tests
-# =============================================================================
 
 
 class TestReopenTaskTool:
@@ -1362,11 +584,6 @@ class TestReopenTaskTool:
             assert not mock_wt_instance.update.called
 
 
-# =============================================================================
-# delete_task Tool Tests
-# =============================================================================
-
-
 class TestSessionVariableMirroring:
     """Tests that task lifecycle operations mirror state to session_variables.
 
@@ -1377,19 +594,7 @@ class TestSessionVariableMirroring:
 
     @pytest.fixture(autouse=True)
     def _set_session_context(self) -> Iterator[None]:
-        with (
-            session_context_for_test("test-session"),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
-                return_value=(
-                    "diff --git a/src/example.py b/src/example.py\n"
-                    "--- a/src/example.py\n"
-                    "+++ b/src/example.py\n"
-                    "@@ -0,0 +1 @@\n"
-                    "+example\n"
-                ),
-            ),
-        ):
+        with session_context_for_test("test-session"):
             yield
 
     @pytest.mark.asyncio
@@ -1446,83 +651,6 @@ class TestSessionVariableMirroring:
             assert "task_claimed" not in merged
             assert "claimed_tasks" not in merged
             assert "active_task_id" not in merged
-
-    @pytest.mark.asyncio
-    async def test_close_task_mirrors_clear_to_session_variables(
-        self, mock_task_manager: MagicMock
-    ) -> None:
-        """close_task must clear claim and commit state in session_variables."""
-        task_uuid = "550e8400-e29b-41d4-a716-446655440099"
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_st_instance = MagicMock()
-            MockSessionTaskManager.return_value = mock_st_instance
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = None
-            MockSessionManager.return_value = mock_session_manager
-
-            mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.return_value = {
-                "task_claimed": True,
-                "claimed_tasks": {task_uuid: "#200"},
-                "active_task_id": task_uuid,
-                "task_edited_files": {task_uuid: ["src/owned.py"]},
-            }
-            MockSVManager.return_value = mock_sv_manager
-
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock()
-            MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
-
-            registry = create_task_registry(
-                mock_task_manager,
-                with_passing_validator=True,
-            )
-
-            mock_task = _contract_task()
-            mock_task.id = task_uuid
-            mock_task.commits = ["abc123"]
-            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = "Test task completion is observable."
-            mock_task.requires_user_review = False
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.close_task.return_value = mock_task
-            mock_task_manager.list_tasks.return_value = []
-
-            result = await registry.call(
-                "close_task",
-                {"task_id": task_uuid, "commit_sha": "abc123", "changes_summary": "done"},
-            )
-
-            assert "error" not in result
-            # session_variables must show task removed
-            mock_sv_manager.merge_variables.assert_called_once_with(
-                "test-session",
-                {
-                    "task_claimed": False,
-                    "claimed_tasks": {},
-                    "active_task_id": None,
-                    "task_edited_files": {},
-                    "task_has_commits": False,
-                },
-            )
-            assert mock_sv_manager.merge_variables.call_count == 1
-            assert mock_sv_manager.merge_variables.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_leaves_claim_mirroring_to_storage(

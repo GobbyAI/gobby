@@ -10,7 +10,11 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_close_worktree_root_async,
     resolve_task_repo_path,
 )
-from gobby.mcp_proxy.tools.tasks._close_context import capture_attribution, children
+from gobby.mcp_proxy.tools.tasks._close_context import (
+    CloseAttributionLookupError,
+    capture_attribution,
+    children,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -113,13 +117,16 @@ async def _evaluate_close(
         if isinstance(resolved, GitOk):
             evaluation.candidate_commit_sha = resolved.stdout.strip()
     evaluation.commit_shas = commits
-    attribution = await capture_attribution(
-        ctx,
-        task=task,
-        resolved_session_id=session_id,
-        repo_path=repo,
-        prospective_commit_shas=commits,
-    )
+    try:
+        attribution = await capture_attribution(
+            ctx,
+            task=task,
+            resolved_session_id=session_id,
+            repo_path=repo,
+            prospective_commit_shas=commits,
+        )
+    except CloseAttributionLookupError as exc:
+        return evaluation.refuse("session_variable_lookup_failed", str(exc))
     child_tasks = await asyncio.to_thread(children, ctx, task.id)
     try:
         target = (
