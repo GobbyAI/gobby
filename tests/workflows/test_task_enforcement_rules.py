@@ -76,7 +76,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "remove_label",
     "reopen_task",
     "repair_closed_candidate",
-    "restore_tasks",
     "transfer_task_authority",
     "unlink_commit",
     "update_observed_files",

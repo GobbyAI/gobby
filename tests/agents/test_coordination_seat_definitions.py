@@ -216,6 +216,21 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "Report each recovery to the Assistant" in prompt
 
 
+def test_orchestrator_writes_every_step_record_only_as_a_last_resort() -> None:
+    assert _load("orchestrator").task_step_writes == [
+        "test",
+        "implementation",
+        "review",
+        "closing",
+    ]
+    prompt = _prompt("orchestrator")
+    assert "For a missing step record, delegate first" in prompt
+    assert "an independent reviewer or a Dev Manager from outside the team" in prompt
+    assert "only when every other avenue is exhausted" in prompt
+    for name in ("assistant", "default"):
+        assert _load(name).task_step_writes == [], name
+
+
 def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubDatabase) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     row = RuleDefinitionManager(temp_db).get_by_name("inject-seat-common")

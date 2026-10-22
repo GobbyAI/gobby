@@ -61,7 +61,7 @@ def create_task_registry(
     # Create the main registry
     registry = InternalToolRegistry(
         name="gobby-tasks",
-        description="Task management - CRUD, dependencies, backup and restore",
+        description="Task management - CRUD, dependencies and backup",
     )
 
     # Merge CRUD tools
@@ -90,7 +90,7 @@ def create_task_registry(
     # Merge core affected files tools (update_observed_files only; rest in gobby-tasks-ops)
     registry.merge_from(create_core_affected_files_registry(ctx))
 
-    # Merge explicit JSONL backup and restore tools.
+    # Merge the explicit JSONL backup tool; restore is the operator's CLI only.
     registry.merge_from(create_backup_registry(ctx))
 
     # Merge commit linking tools.

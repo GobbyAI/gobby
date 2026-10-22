@@ -2,7 +2,7 @@
 
 Verifies that workflow action functions are exposed as MCP tools:
 - gobby-memory: backup_memories, restore_memories
-- gobby-tasks: backup_tasks, restore_tasks
+- gobby-tasks: backup_tasks (restore is the operator's CLI only)
 - gobby-sessions: set_handoff, get_handoff
 """
 
@@ -161,24 +161,33 @@ class TestMemoryBackup:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# gobby-tasks: backup_tasks / restore_tasks
+# gobby-tasks: backup_tasks
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestTaskBackupRestore:
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.tools.tasks._backup.TaskBackupManager")
-    async def test_backup_and_restore_are_registered_and_callable(
-        self, manager_cls: MagicMock, task_backup_registry
+    async def test_backup_writes_only_the_default_path_and_restore_is_cli_only(
+        self,
+        manager_cls: MagicMock,
+        task_backup_registry: InternalToolRegistry,
+        mock_task_manager: MagicMock,
     ) -> None:
         manager_cls.return_value.backup.return_value = 4
-        manager_cls.return_value.restore.return_value = 2
 
-        backup_result = await task_backup_registry.call("backup_tasks", {})
-        restore_result = await task_backup_registry.call("restore_tasks", {})
+        result = await task_backup_registry.call("backup_tasks", {})
 
-        assert backup_result == {"success": True, "backed_up": 4}
-        assert restore_result == {"success": True, "restored": 2}
+        assert result == {"success": True, "backed_up": 4}
+        manager_cls.assert_called_once_with(mock_task_manager)
+        schema = task_backup_registry.get_schema("backup_tasks")
+        assert schema is not None
+        assert schema["inputSchema"] == {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+        assert "restore_tasks" not in task_backup_registry
 
     @pytest.mark.asyncio
     @pytest.mark.unit

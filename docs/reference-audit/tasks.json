@@ -508,6 +508,70 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "record_test_step",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
+        "symbol": "_record_step"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; definitions granting the test step"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "record_implementation_step",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
+        "symbol": "_record_step"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; definitions granting the implementation step"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "record_review_step",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
+        "symbol": "_record_step"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; definitions granting the review step, independent of the task's work"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "record_closing_step",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
+        "symbol": "_record_step"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; definitions granting the closing step"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "transfer_task_authority",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
@@ -754,22 +818,6 @@
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/tasks/_backup.py",
         "symbol": "backup_tasks"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "restore_tasks",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_backup.py",
-        "symbol": "restore_tasks"
       },
       "verification": [
         "registered-inventory",
@@ -1190,7 +1238,7 @@
       "verification": [
         "public-cli-inventory"
       ],
-      "audience": "operator"
+      "audience": "operator-only"
     },
     {
       "surface": "cli",
@@ -1346,7 +1394,7 @@
       "id": "tdd-contract",
       "kind": "source-inspection",
       "command": "Inspect src/gobby/tasks/expansion/_contract.py, tasks/close_invariants.py and the test-driven-development skill",
-      "result": "One task per manifest entry; tdd adds the skill and label. Developer and reviewer judgment owns tests-first evidence; close enforces four invariants without a runtime TDD proof gate."
+      "result": "One task per manifest entry; tdd adds the skill and label. Developer and reviewer judgment owns tests-first evidence; close enforces five gates without a runtime TDD proof gate."
     },
     {
       "id": "installed-rules",

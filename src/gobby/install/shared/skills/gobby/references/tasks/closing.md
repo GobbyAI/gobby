@@ -59,6 +59,11 @@ configured. Implementation, review and closing records cite the latest linked
 commit; a test record may cite any linked commit. With no linked commit, records
 carry the no-work disposition. `force` never bypasses them.
 
+Each step has one writer: `record_test_step`, `record_implementation_step`,
+`record_review_step` and `record_closing_step`. A writer accepts a session only
+when its agent definition's `task_step_writes` grants that step, and a review
+approval only from a session that never claimed, implemented or edited the task.
+
 Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
 `independent_review_approval` (LAND of an exact commit) or `activation` receipt

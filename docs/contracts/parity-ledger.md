@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1104. Unclassified: 0.
+Public surfaces and evidence gates: 1107. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -982,12 +982,15 @@ Public surfaces and evidence gates: 1104. Unclassified: 0.
 | `MCP gobby-tasks:list_stages_registry` | dropped by decision #23341 | Stage dispatch and stage-review surface retired under #23341; no native replacement is required. |
 | `MCP gobby-tasks:list_tasks` | proxied | Blocked on #21560 Tasks family: port `list_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_listing.py:137`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:record_close_receipt` | proxied | Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:record_closing_step` | proxied | Blocked on #21560 Tasks family: port `record_closing_step` from Python handler `src/gobby/mcp_proxy/tools/tasks/_step_records.py:205`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:record_implementation_step` | proxied | Blocked on #21560 Tasks family: port `record_implementation_step` from Python handler `src/gobby/mcp_proxy/tools/tasks/_step_records.py:205`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:record_review_step` | proxied | Blocked on #21560 Tasks family: port `record_review_step` from Python handler `src/gobby/mcp_proxy/tools/tasks/_step_records.py:205`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:record_test_step` | proxied | Blocked on #21560 Tasks family: port `record_test_step` from Python handler `src/gobby/mcp_proxy/tools/tasks/_step_records.py:205`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:release_task_claim` | proxied | Python `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`; Rust blocker: #21560 Tasks family and #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:remove_dependency` | proxied | Blocked on #21560 Tasks family: port `remove_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:116`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:remove_label` | proxied | Blocked on #21560 Tasks family: port `remove_label` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py:64`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:reopen_task` | proxied | Blocked on #21560 Tasks family: port `reopen_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:repair_closed_candidate` | proxied | Blocked on #21560 Tasks family: port `repair_closed_candidate` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_candidate_repair.py:17`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
-| `MCP gobby-tasks:restore_tasks` | proxied | Blocked on #21560 Tasks family: port `restore_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_backup.py:45`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:search_tasks` | proxied | Blocked on #21560 Tasks family: port `search_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_search.py:29`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:submit_close_review` | dropped by decision #23341 | Automatic close-review submission retired under #23341 / #24799; independent review remains a workflow responsibility. |
 | `MCP gobby-tasks:suggest_next_task` | proxied | Blocked on #21560 Tasks family: port `suggest_next_task` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:587`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |

@@ -423,14 +423,20 @@ The canonical task data lives in Gobby's PostgreSQL hub. Gobby writes a
 deterministic JSONL backup for recovery and migration:
 
 - Default project task backup: `~/.gobby/backups/<project-uuid>/tasks.jsonl`
-- Manual backup: `gobby tasks backup`
-- Explicit non-destructive restore: `gobby tasks restore`
+- Manual backup: `gobby tasks backup`, or the `gobby-tasks:backup_tasks` MCP tool,
+  which writes only the default path
+- Explicit non-destructive restore: `gobby tasks restore`, operator-only
 - Pre-push backup: installed by `gobby install`
 
 Backups contain only current live database rows, so deleting a task shrinks the
 next backup. Restore upserts by stable ID and updated timestamp; it preserves
 database-only rows and database versions newer than the backup. Restores are
 never run automatically during daemon or session startup.
+
+Restore has no MCP tool, and agent shells are refused `gobby tasks restore`. A
+backup line can carry closed state, claims and review history, so only the
+operator restores, from their own shell. Restore still validates every step
+record before it writes anything.
 
 The human-friendly task reference is `#N` within a project. Hierarchical task
 paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,

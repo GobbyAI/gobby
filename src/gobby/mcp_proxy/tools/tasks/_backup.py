@@ -1,23 +1,23 @@
-"""Explicit task JSONL backup and restore MCP tools."""
+"""Explicit task JSONL backup MCP tool. Restore is the operator's `gobby tasks restore`."""
 
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.sync.tasks import TaskBackupError, TaskBackupManager, TaskRestoreError
+from gobby.sync.tasks import TaskBackupError, TaskBackupManager
 
 
 def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
-    """Create task backup and restore tools."""
+    """Create the task backup tool."""
     registry = InternalToolRegistry(
         name="gobby-tasks-backup",
-        description="Explicit task JSONL backup and restore operations",
+        description="Explicit task JSONL backup operations",
     )
 
-    def backup_tasks(output_path: str | None = None) -> dict[str, Any]:
-        """Write current project tasks to a deterministic JSONL backup."""
+    def backup_tasks() -> dict[str, Any]:
+        """Write current project tasks to the machine-local JSONL backup."""
         project_id = ctx.get_current_project_id()
-        manager = TaskBackupManager(ctx.task_manager, backup_path=output_path)
+        manager = TaskBackupManager(ctx.task_manager)
         try:
             count = manager.backup(project_id=project_id)
         except TaskBackupError as exc:
@@ -26,48 +26,12 @@ def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry.register(
         name="backup_tasks",
-        description="Write current live project tasks to a deterministic JSONL backup.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "output_path": {
-                    "type": "string",
-                    "description": (
-                        "Optional output path; defaults to "
-                        "~/.gobby/backups/<project-uuid>/tasks.jsonl"
-                    ),
-                }
-            },
-        },
+        description=(
+            "Write current live project tasks to the deterministic JSONL backup at "
+            "~/.gobby/backups/<project-uuid>/tasks.jsonl."
+        ),
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         func=backup_tasks,
-    )
-
-    def restore_tasks(input_path: str | None = None) -> dict[str, Any]:
-        """Non-destructively restore tasks from a JSONL backup."""
-        project_id = ctx.get_current_project_id()
-        manager = TaskBackupManager(ctx.task_manager, backup_path=input_path)
-        try:
-            count = manager.restore(project_id=project_id)
-        except TaskRestoreError as exc:
-            return {"success": False, "error": str(exc)}
-        return {"success": True, "restored": count}
-
-    registry.register(
-        name="restore_tasks",
-        description="Restore task records when backup timestamps are newer.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "input_path": {
-                    "type": "string",
-                    "description": (
-                        "Optional input path; defaults to "
-                        "~/.gobby/backups/<project-uuid>/tasks.jsonl"
-                    ),
-                }
-            },
-        },
-        func=restore_tasks,
     )
 
     return registry
