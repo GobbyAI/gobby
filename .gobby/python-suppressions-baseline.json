@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 170,
+  "site_count": 169,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -531,16 +531,6 @@
         "method-assign"
       ],
       "statement": "handler . _execute_action = AsyncMock ( )"
-    },
-    {
-      "fingerprint": "d5b44280ca99e548b83da36bc3bb83cb34bc6bdc33b63218f57c70a0f8248170",
-      "path": "tests/e2e/conftest.py",
-      "symbol": "_ValidationLLMHandler.do_POST",
-      "directive": "noqa",
-      "codes": [
-        "N802"
-      ],
-      "statement": "def do_POST ( self ) -> None :"
     },
     {
       "fingerprint": "2cc2bff1e987c33fb412a28eae4a5846cd7c7e621e34a897a70c40f7b33f30fc",

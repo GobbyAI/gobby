@@ -221,26 +221,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_doc_reviewer_definition.py::::mypy:no-any-return",
-      "issue_code": "mypy:no-any-return",
-      "line": 18,
-      "message": "Returning Any from function declared to return \"dict[Any, Any]\"",
-      "occurrences": 1,
-      "path": "tests/agents/test_doc_reviewer_definition.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_doc_reviewer_definition.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 13,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 1,
-      "path": "tests/agents/test_doc_reviewer_definition.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_idle_check_transcript_paths.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 52,
@@ -951,16 +931,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/config/test_tasks.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 630,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 11,
-      "path": "tests/config/test_tasks.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/e2e/test_autonomous_mode.py::::mypy:no-any-return",
       "issue_code": "mypy:no-any-return",
       "line": 27,
@@ -1037,46 +1007,6 @@
       "message": "Need type annotation for \"tool_calls\"",
       "occurrences": 1,
       "path": "tests/e2e/test_mcp_proxy_e2e.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/e2e/test_parallel_clones.py::::mypy:no-any-return",
-      "issue_code": "mypy:no-any-return",
-      "line": 51,
-      "message": "Returning Any from function declared to return \"dict[Any, Any]\"",
-      "occurrences": 1,
-      "path": "tests/e2e/test_parallel_clones.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/e2e/test_parallel_clones.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 48,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 1,
-      "path": "tests/e2e/test_parallel_clones.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/e2e/test_sequential_review_loop.py::::mypy:no-any-return",
-      "issue_code": "mypy:no-any-return",
-      "line": 46,
-      "message": "Returning Any from function declared to return \"dict[Any, Any]\"",
-      "occurrences": 1,
-      "path": "tests/e2e/test_sequential_review_loop.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/e2e/test_sequential_review_loop.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 43,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 2,
-      "path": "tests/e2e/test_sequential_review_loop.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2201,26 +2131,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_complete_stage.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 113,
-      "message": "Argument 1 to \"_session_id\" has incompatible type \"SimpleNamespace\"; expected \"RegistryContext\"",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/tasks/test_complete_stage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_complete_stage.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 58,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 10,
-      "path": "tests/mcp_proxy/tools/tasks/test_complete_stage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/tasks/test_escalation_coordinator.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 67,
@@ -2231,52 +2141,12 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_fail_stage.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 86,
-      "message": "Call to untyped function \"_fail_stage\" in typed context",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/tasks/test_fail_stage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_fail_stage.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 37,
-      "message": "Function is missing a type annotation",
-      "occurrences": 4,
-      "path": "tests/mcp_proxy/tools/tasks/test_fail_stage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 14,
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 1,
       "path": "tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_lifecycle_tools.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 47,
-      "message": "Argument 1 to \"create_stage_ops_registry\" has incompatible type \"SimpleNamespace\"; expected \"RegistryContext\"",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/tasks/test_lifecycle_tools.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_lifecycle_tools.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 16,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 3,
-      "path": "tests/mcp_proxy/tools/tasks/test_lifecycle_tools.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2301,52 +2171,12 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_list_tasks_current_stage_filter.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 17,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/tasks/test_list_tasks_current_stage_filter.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/tasks/test_notification_background_tasks.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 18,
       "message": "Function is missing a return type annotation",
       "occurrences": 2,
       "path": "tests/mcp_proxy/tools/tasks/test_notification_background_tasks.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 58,
-      "message": "Argument 1 to \"create_stage_ops_registry\" has incompatible type \"SimpleNamespace\"; expected \"RegistryContext\"",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 26,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 14,
-      "path": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_review_tools_server_placement.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 19,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 5,
-      "path": "tests/mcp_proxy/tools/tasks/test_review_tools_server_placement.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2427,36 +2257,6 @@
       "message": "Function is missing a type annotation",
       "occurrences": 12,
       "path": "tests/mcp_proxy/tools/test_ancestry_proximity_scoring.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_approve_review.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 41,
-      "message": "Argument \"state\" to \"StageState\" has incompatible type \"str\"; expected \"Literal['ready', 'in_progress', 'needs_review', 'review_approved', 'done']\"",
-      "occurrences": 5,
-      "path": "tests/mcp_proxy/tools/test_approve_review.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_approve_review.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 117,
-      "message": "Cannot assign to a method",
-      "occurrences": 4,
-      "path": "tests/mcp_proxy/tools/test_approve_review.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_approve_review.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 19,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 18,
-      "path": "tests/mcp_proxy/tools/test_approve_review.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2591,36 +2391,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_reject_review.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 37,
-      "message": "Argument \"state\" to \"StageState\" has incompatible type \"str\"; expected \"Literal['ready', 'in_progress', 'needs_review', 'review_approved', 'done']\"",
-      "occurrences": 4,
-      "path": "tests/mcp_proxy/tools/test_reject_review.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_reject_review.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 120,
-      "message": "Cannot assign to a method",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/test_reject_review.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_reject_review.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 16,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 12,
-      "path": "tests/mcp_proxy/tools/test_reject_review.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_rule_tools.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 56,
@@ -2657,26 +2427,6 @@
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 16,
       "path": "tests/mcp_proxy/tools/test_task_dependencies.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_expansion_new.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 48,
-      "message": "Function is missing a type annotation",
-      "occurrences": 11,
-      "path": "tests/mcp_proxy/tools/test_task_expansion_new.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_expansion_new.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 107,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/test_task_expansion_new.py",
       "severity": "high",
       "test_name": ""
     },
@@ -3831,26 +3581,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/routes/test_stage_routes.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 55,
-      "message": "\"Callable[[MutableMapping[str, Any], Callable[[], Awaitable[MutableMapping[str, Any]]], Callable[[MutableMapping[str, Any]], Awaitable[None]]], Awaitable[None]]\" has no attribute \"routes\"",
-      "occurrences": 6,
-      "path": "tests/servers/routes/test_stage_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_stage_routes.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 33,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 27,
-      "path": "tests/servers/routes/test_stage_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/routes/test_tasks_create.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 18,
@@ -4781,16 +4511,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/websocket/test_stage_broadcast.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 17,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/servers/websocket/test_stage_broadcast.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/websocket/test_tts_pipeline.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 54,
@@ -5651,36 +5371,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/tasks/test_automation_candidates_states.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 22,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 3,
-      "path": "tests/storage/tasks/test_automation_candidates_states.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_cascade_build_state.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 75,
-      "message": "Argument 3 to \"cascade_build_state_to_subtree\" has incompatible type \"**dict[str, object]\"; expected \"CheckoutMode | str\"",
-      "occurrences": 9,
-      "path": "tests/storage/tasks/test_cascade_build_state.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_cascade_build_state.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 30,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 5,
-      "path": "tests/storage/tasks/test_cascade_build_state.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/tasks/test_claim_task_errors.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 32,
@@ -5711,36 +5401,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/tasks/test_epic_workspace_bound.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 104,
-      "message": "\"object\" has no attribute \"id\"",
-      "occurrences": 30,
-      "path": "tests/storage/tasks/test_epic_workspace_bound.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_epic_workspace_bound.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 61,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 6,
-      "path": "tests/storage/tasks/test_epic_workspace_bound.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_epic_workspace_bound.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 45,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 2,
-      "path": "tests/storage/tasks/test_epic_workspace_bound.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/tasks/test_lifecycle_enums.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 47,
@@ -5757,16 +5417,6 @@
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 6,
       "path": "tests/storage/tasks/test_lifecycle_events.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_manager_exposes_stage_managers.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 16,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/storage/tasks/test_manager_exposes_stage_managers.py",
       "severity": "high",
       "test_name": ""
     },
@@ -5807,46 +5457,6 @@
       "message": "Function is missing a type annotation",
       "occurrences": 6,
       "path": "tests/storage/tasks/test_reopen_build_state.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_stage_registry.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 15,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 5,
-      "path": "tests/storage/tasks/test_stage_registry.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_stage_states.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 40,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 31,
-      "path": "tests/storage/tasks/test_stage_states.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_stage_states_concurrency.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 42,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/storage/tasks/test_stage_states_concurrency.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/tasks/test_storage_tasks_cascade.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 38,
-      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
-      "occurrences": 1,
-      "path": "tests/storage/tasks/test_storage_tasks_cascade.py",
       "severity": "high",
       "test_name": ""
     },
@@ -6077,36 +5687,6 @@
       "message": "Function is missing a type annotation",
       "occurrences": 6,
       "path": "tests/storage/test_spans.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_stage_registry_loader.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 261,
-      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
-      "occurrences": 5,
-      "path": "tests/storage/test_stage_registry_loader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_stage_registry_loader.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 40,
-      "message": "Call to untyped function \"_loader_types\" in typed context",
-      "occurrences": 9,
-      "path": "tests/storage/test_stage_registry_loader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_stage_registry_loader.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 30,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 1,
-      "path": "tests/storage/test_stage_registry_loader.py",
       "severity": "high",
       "test_name": ""
     },
@@ -6807,16 +6387,6 @@
       "message": "Argument 1 to \"start_periodic_tasks\" has incompatible type \"SimpleNamespace\"; expected \"GobbyRunner\"",
       "occurrences": 1,
       "path": "tests/test_runner_workflow_audit_maintenance.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_startup_seeds_stage_registry.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 17,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/test_startup_seeds_stage_registry.py",
       "severity": "high",
       "test_name": ""
     },

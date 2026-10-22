@@ -15,7 +15,6 @@ Test scenario:
 """
 
 import uuid
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,30 +23,20 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
-    ValidationLLMServer,
-    configure_task_close_validation,
 )
 
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture
-def e2e_pre_daemon_setup(
-    e2e_config: tuple[Path, int, int],
-    validation_llm_server: ValidationLLMServer,
-    postgres_db: Any,
-) -> None:
-    configure_task_close_validation(e2e_config, validation_llm_server, postgres_db)
-
-
-def unwrap_result(result: dict) -> dict:
+def unwrap_result(result: dict[str, Any]) -> dict[str, Any]:
     """Unwrap MCP tool call result from wrapper response."""
-    if "result" in result:
-        return result["result"]
+    nested = result.get("result")
+    if isinstance(nested, dict):
+        return nested
     return result
 
 
-def assert_task_closed(result: dict, label: str) -> None:
+def assert_task_closed(result: dict[str, Any], label: str) -> None:
     assert result.get("state", {}).get("is_closed") is True, f"{label} should be closed: {result}"
 
 
@@ -509,16 +498,16 @@ class TestSequentialReviewLoopE2E:
         assert suggested_id == task1_id, f"Expected high priority task, got: {result}"
 
 
-class TestReviewStepE2E:
+class TestNoWorkCloseE2E:
     """E2E tests for the review step in orchestration."""
 
-    def test_no_work_close_requires_review_without_named_target(
+    def test_no_work_close_does_not_require_named_target(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Unnamed obsolete work requires review; naming its replacement permits close."""
+        """An explicit no-work reason permits a clean close without naming a replacement."""
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
             project_id="00000000-0000-0000-0000-000000000e2e",
@@ -559,7 +548,7 @@ class TestReviewStepE2E:
             arguments={"task_id": task_id},
         )
 
-        # Preview unnamed no-work closure without launching a real reviewer.
+        # Preview unnamed no-work closure without changing task state.
         preview = unwrap_result(
             mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -573,18 +562,17 @@ class TestReviewStepE2E:
             )
         )
         assert preview["closed"] is False, preview
-        assert preview["error"] == "close_review_required", preview
+        assert "error" not in preview, preview
+        assert preview["can_close"] is True, preview
 
-        replacement_ref = create_replacement_task(mcp_client)
-
-        # Name the replacement so the no-work disposition can close directly.
+        # The same explicit reason closes without a replacement reference.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="close_task",
             arguments={
                 "task_id": task_id,
                 "reason": "obsolete",
-                "changes_summary": f"Task superseded by {replacement_ref}; no changes needed",
+                "changes_summary": "No changes needed; obsolete work.",
             },
         )
         result = unwrap_result(raw_result)

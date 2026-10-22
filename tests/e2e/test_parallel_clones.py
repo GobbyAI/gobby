@@ -20,7 +20,6 @@ These tests verify the infrastructure (tools, workflows, clone management) is co
 """
 
 import uuid
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,26 +28,16 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
-    ValidationLLMServer,
-    configure_task_close_validation,
 )
 
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture
-def e2e_pre_daemon_setup(
-    e2e_config: tuple[Path, int, int],
-    validation_llm_server: ValidationLLMServer,
-    postgres_db: Any,
-) -> None:
-    configure_task_close_validation(e2e_config, validation_llm_server, postgres_db)
-
-
-def unwrap_result(result: dict) -> dict:
+def unwrap_result(result: dict[str, Any]) -> dict[str, Any]:
     """Unwrap MCP tool call result from wrapper response."""
-    if "result" in result:
-        return result["result"]
+    nested = result.get("result")
+    if isinstance(nested, dict):
+        return nested
     return result
 
 
@@ -398,13 +387,13 @@ class TestSpawnAgentWithCloneIsolation:
 class TestParallelTaskProcessing:
     """Tests for parallel task processing flow."""
 
-    def test_parallel_tasks_are_ready_for_close_review(
+    def test_parallel_tasks_preview_independently(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Each worker reaches close review while retaining its own task claim."""
+        """Each worker previews a valid close while retaining its own task claim."""
         # Setup
         project_result = cli_events.register_test_project(
             project_id="00000000-0000-0000-0000-000000000e2e",
@@ -485,7 +474,7 @@ class TestParallelTaskProcessing:
             state = result.get("state", {})
             assert state.get("is_claimed") is True, f"Task {task_id} should be claimed"
 
-        # Workers finish independently; preview stops before the external reviewer.
+        # Workers preview independently without closing or releasing their claims.
         for task_id, worker_session_id in zip(subtask_ids, worker_session_ids, strict=True):
             mcp_client.session_id = worker_session_id
             raw_result = mcp_client.call_tool(
@@ -501,15 +490,13 @@ class TestParallelTaskProcessing:
             )
             result = unwrap_result(raw_result)
             assert result.get("closed") is False, result
-            assert result.get("can_close") is False, result
-            assert result.get("error") == "close_review_required", result
-            assert all(
-                gate["status"] in {"passed", "skipped"} for gate in result["checklist"][:12]
-            ), result
-            assert result["checklist"][12]["status"] == "not_run", result
+            assert result.get("can_close") is True, result
+            assert "error" not in result, result
+            assert all(gate["status"] in {"passed", "skipped"} for gate in result["gates"]), result
+            assert len(result["gates"]) == 4, result
 
         mcp_client.session_id = session_id
-        # Preview keeps every claim intact while the worker waits for review admission.
+        # Preview keeps every claim intact until the worker requests close.
         for task_id in subtask_ids:
             raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -533,7 +520,7 @@ class TestParallelTaskProcessing:
             zip(subtask_ids, worker_session_ids, strict=True)
         )
 
-        # The epic remains open until its children's reviews finish.
+        # The epic remains open while its children are open.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="get_task",
