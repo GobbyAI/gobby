@@ -1086,7 +1086,6 @@ class TestDeEscalateTask:
             f"/api/tasks/{sample_task['id']}/de-escalate",
             json={
                 "decision_context": "User approved the approach",
-                "reset_validation": True,
             },
         )
         assert response.status_code == 200
@@ -1130,7 +1129,7 @@ class TestDeEscalateTask:
         )
         assert response.status_code == 400
 
-    def test_de_escalate_without_reset_validation(
+    def test_de_escalate_rejects_retired_reset_validation_field(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
@@ -1141,8 +1140,8 @@ class TestDeEscalateTask:
                 "reset_validation": False,
             },
         )
-        assert response.status_code == 200
-        assert response.json()["state"]["is_escalated"] is False
+        assert response.status_code == 422
+        assert task_manager.get_task(sample_task["id"]).is_escalated is True
 
 
 # ---------------------------------------------------------------------------
