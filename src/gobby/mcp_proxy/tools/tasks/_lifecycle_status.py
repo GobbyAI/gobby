@@ -251,10 +251,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         task_id: str,
         reason: str,
         reset_validation: bool = False,
-        reset_stage_attempts: bool = False,
-        restore_stage_from_history: bool = False,
     ) -> dict[str, Any]:
-        """De-escalate a task while preserving its current stage.
+        """De-escalate a task and record the user's decision.
 
         Clears escalation metadata after human intervention resolves the issue.
         The claimant, task creator, or delegator can resolve escalation without
@@ -266,9 +264,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             task_id: Task reference (#N, path, or UUID)
             reason: Reason for de-escalation (required)
             reset_validation: Also reset validation fail count (default: False)
-            reset_stage_attempts: Also reset current stage work attempts (default: False)
-            restore_stage_from_history: Restore a current ready stage from prior build_stop
-                review_approved history (default: False)
 
         Returns:
             Empty dict on success, or error dict with details.
@@ -316,8 +311,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 resolved_id,
                 reason=reason,
                 reset_validation=reset_validation,
-                reset_stage_attempts=reset_stage_attempts,
-                restore_stage_from_history=restore_stage_from_history,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -366,20 +359,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "reset_validation": {
                     "type": "boolean",
                     "description": "Also reset the validation failure count (default: false)",
-                    "default": False,
-                },
-                "reset_stage_attempts": {
-                    "type": "boolean",
-                    "description": "Also reset the current stage work attempt count (default: false)",
-                    "default": False,
-                },
-                "restore_stage_from_history": {
-                    "type": "boolean",
-                    "description": (
-                        "Restore the current ready stage to review_approved when lifecycle "
-                        "history shows build_stop reset that same stage from review_approved "
-                        "to ready (default: false)"
-                    ),
                     "default": False,
                 },
             },

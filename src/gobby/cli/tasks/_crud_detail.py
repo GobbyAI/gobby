@@ -2,7 +2,6 @@
 
 import click
 
-from gobby.cli.tasks._crud_common import current_stage_display
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
@@ -17,22 +16,14 @@ def show_task_impl(services: CrudServices, task_id: str) -> None:
 
     blocker_ids = sorted(task.active_blocked_by)
     state = serialize_task_state(task)
-    if state["is_closed"]:
-        stage_display = "closed"
-    elif state["is_escalated"]:
-        stage_display = "escalated"
-    else:
-        stage_display = current_stage_display(state)
 
     click.echo(f"Task: {task.title}")
     click.echo(f"ID: {task.id}")
     if task.seq_num:
         click.echo(f"Ref: #{task.seq_num}")
-    click.echo(f"Current Stage: {stage_display}")
     click.echo(f"Owner Session: {state['owner_session_id'] or '-'}")
     click.echo(f"Blocked: {'yes' if state['is_blocked'] else 'no'}")
     click.echo(f"Escalated: {'yes' if state['is_escalated'] else 'no'}")
-    click.echo(f"Merge Ready: {'yes' if state['is_merge_ready'] else 'no'}")
     click.echo(f"Closed: {'yes' if state['is_closed'] else 'no'}")
     click.echo(f"Priority: {task.priority}")
     click.echo(f"Type: {task.task_type}")

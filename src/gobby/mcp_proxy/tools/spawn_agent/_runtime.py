@@ -109,7 +109,6 @@ async def build_spawn_context(
 
     # Build resume metadata without seeding an automatic session title.
     stage_name = effective_initial_variables.get("stage_name")
-    stage_state = effective_initial_variables.get("stage_state")
     resume_metadata = build_resume_metadata(
         provider=spawn_config.provider,
         model=requested_model_selector,
@@ -134,7 +133,6 @@ async def build_spawn_context(
         if spawn_config.task_seq_num
         else spawn_config.task_id,
         stage_name=stage_name if isinstance(stage_name, str) else None,
-        stage_state=stage_state if isinstance(stage_state, str) else None,
         agent_slug=agent_display_name,
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,

@@ -2,7 +2,6 @@
 
 import click
 
-from gobby.cli.tasks._crud_common import current_stage_display
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.tasks.state_semantics import is_task_closed, serialize_task_state
 from gobby.utils.json_helpers import json_dumps
@@ -12,8 +11,6 @@ def list_tasks_impl(
     services: CrudServices,
     active: bool,
     project_ref: str | None,
-    stage_name: str | None,
-    stage_state: str | None,
     claimed: bool,
     unclaimed: bool,
     ready: bool,
@@ -32,18 +29,14 @@ def list_tasks_impl(
         click.echo("Error: --claimed and --unclaimed are mutually exclusive.", err=True)
         return
 
-    if stage_state and not stage_name:
-        click.echo("Error: --state requires --stage.", err=True)
-        return
-
     if sum(bool(flag) for flag in (active, closed_only, escalated)) > 1:
         click.echo("Error: --active, --closed, and --escalated are mutually exclusive.", err=True)
         return
 
-    if (ready or blocked) and any((active, claimed, unclaimed, closed_only, escalated, stage_name)):
+    if (ready or blocked) and any((active, claimed, unclaimed, closed_only, escalated)):
         click.echo(
             "Error: --ready/--blocked cannot be combined with --active, --claimed, "
-            "--unclaimed, --closed, --escalated, or --stage.",
+            "--unclaimed, --closed, or --escalated.",
             err=True,
         )
         return
@@ -83,15 +76,8 @@ def list_tasks_impl(
             claimed=claimed_filter,
             closed=closed_filter,
             escalated=True if escalated else None,
-            limit=10000 if stage_name else limit,
+            limit=limit,
         )
-        tasks_list = services.filter_tasks_by_stage(
-            manager,
-            tasks_list,
-            stage_name=stage_name,
-            state=stage_state,
-            project_id=project_id,
-        )[:limit]
         if closed_filter:
             label = "closed tasks"
         elif escalated:
@@ -102,8 +88,6 @@ def list_tasks_impl(
             label = "unclaimed tasks"
         elif active:
             label = "active tasks"
-        elif stage_name:
-            label = "stage-filtered tasks"
         else:
             label = "tasks"
         empty_msg = "No tasks found."
@@ -121,7 +105,6 @@ def list_tasks_impl(
     if (
         ready
         or blocked
-        or stage_name
         or escalated
         or claimed_filter is not None
         or closed_filter is not None
@@ -136,11 +119,7 @@ def list_tasks_impl(
     if effective_group_by is None and project_id is None:
         effective_group_by = "project"
 
-    prefixes = (
-        services.compute_tree_prefixes(display_tasks, primary_ids)
-        if effective_group_by != "stage"
-        else None
-    )
+    prefixes = services.compute_tree_prefixes(display_tasks, primary_ids)
     click.echo(f"Found {len(tasks_list)} {label}:")
     rendered = services.format_task_list(
         display_tasks,
@@ -264,7 +243,6 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
 
     all_tasks = manager.list_tasks(project_id=project_id, limit=10000)
     total = len(all_tasks)
-    by_stage_state: dict[str, int] = {}
     by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     other_priority_count = 0
     by_type: dict[str, int] = {}
@@ -272,23 +250,18 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
     unclaimed_count = 0
     closed_count = 0
     escalated_count = 0
-    merge_ready_count = 0
 
     for task in all_tasks:
         state = serialize_task_state(task)
         if state["is_closed"]:
             closed_count += 1
         else:
-            stage_display = current_stage_display(state)
-            by_stage_state[stage_display] = by_stage_state.get(stage_display, 0) + 1
             if state["is_claimed"]:
                 claimed_count += 1
             else:
                 unclaimed_count += 1
             if state["is_escalated"]:
                 escalated_count += 1
-            if state["is_merge_ready"]:
-                merge_ready_count += 1
 
         if task.priority in by_priority:
             by_priority[task.priority] = by_priority.get(task.priority, 0) + 1
@@ -302,7 +275,6 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
 
     stats = {
         "total": total,
-        "by_stage_state": by_stage_state,
         "by_priority": {
             "critical": by_priority.get(0, 0),
             "high": by_priority.get(1, 0),
@@ -316,7 +288,6 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
         "unclaimed": unclaimed_count,
         "closed": closed_count,
         "escalated": escalated_count,
-        "merge_ready": merge_ready_count,
         "ready": ready_count,
         "blocked": blocked_count,
     }
@@ -327,14 +298,10 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
 
     click.echo("Task Statistics:")
     click.echo(f"  Total: {total}")
-    click.echo("  By Current Stage:")
-    for stage_state, count in sorted(by_stage_state.items()):
-        click.echo(f"    {stage_state}: {count}")
     click.echo(f"  Closed: {closed_count}")
     click.echo(f"\n  Claimed: {claimed_count}")
     click.echo(f"  Unclaimed Active: {unclaimed_count}")
     click.echo(f"  Escalated: {escalated_count}")
-    click.echo(f"  Merge Ready: {merge_ready_count}")
     click.echo(f"\n  Ready (no blockers): {ready_count}")
     click.echo(f"  Blocked: {blocked_count}")
     click.echo(f"\n  Critical Priority: {by_priority.get(0, 0)}")

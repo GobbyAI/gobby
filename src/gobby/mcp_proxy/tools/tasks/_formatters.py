@@ -75,7 +75,6 @@ def task_state_payload(task: Any) -> dict[str, Any]:
     """Return compact task state for MCP list/search/card payloads."""
     state = serialize_task_state(_task_dict(task))
     return {
-        "current_stage": state.get("current_stage"),
         "is_closed": state.get("is_closed", False),
         "closed_at": state.get("closed_at"),
         "is_claimed": state.get("is_claimed", False),
@@ -164,9 +163,6 @@ def task_summary_payload(
         "updated_at": _task_value(task, "updated_at"),
         "state": task_state_payload(task),
         "dependencies": dependencies,
-        "allow_automation": _task_value(task, "allow_automation", False),
-        "unattended": _task_value(task, "unattended", False),
-        "checkout_mode": _plain(_task_value(task, "checkout_mode")),
         "assigned_agent": _task_value(task, "assigned_agent"),
         "implementation_domain": _task_value(task, "implementation_domain"),
         "additional_skills": _task_list_value(task, "additional_skills"),

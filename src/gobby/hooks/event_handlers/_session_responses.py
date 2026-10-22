@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import ContextPart, HookResponse
 from gobby.tasks.state_semantics import (
-    ACTIVE_STAGE_STATES,
     is_task_claimed_by_session,
     serialize_task_state,
 )
@@ -48,11 +47,6 @@ def _task_state_label(task: Any) -> str:
         return "closed"
     if state["is_escalated"]:
         return "escalated"
-    current = state["current_stage"]
-    if isinstance(current, dict):
-        current_state = current.get("state")
-        if isinstance(current_state, str):
-            return current_state
     legacy_status = getattr(task, "status", None)
     if isinstance(legacy_status, str):
         return legacy_status
@@ -91,7 +85,6 @@ def get_claimed_task_info(
         try:
             db_tasks = handler._task_manager.list_tasks(
                 claimed_by_session_id=session_id,
-                current_stage_state=list(ACTIVE_STAGE_STATES),
                 project_id=project_id,
             )
             if db_tasks:

@@ -70,7 +70,7 @@ def compact_tasks(
         "escalated_at",
         "escalation_reason",
         "blocked_by",
-        "stage",
+        "state",
         "candidate_sent_at",
         "receipts",
         "latest_linked_commit",
@@ -135,7 +135,6 @@ def compact_tasks(
 
 def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     def list_tasks(
-        current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         task_type: str | None = None,
         label: str | None = None,
@@ -219,10 +218,7 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
 
-        # Handle comma-separated current-stage state strings.
-        current_stage_filter: str | list[str] | None = current_stage_state
-        if isinstance(current_stage_state, str) and "," in current_stage_state:
-            current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
+
 
         closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
         state_filters: TaskStateFilters = {}
@@ -237,7 +233,6 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
         if labels is not None:
             state_filters["labels"] = labels
         tasks = ctx.task_manager.list_tasks(
-            current_stage_state=current_stage_filter,
             priority=priority,
             task_type=task_type,
             label=label,
@@ -252,7 +247,6 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
         )
         if view == "compact":
             total = ctx.task_manager.count_tasks(
-                current_stage_state=current_stage_filter,
                 priority=priority,
                 task_type=task_type,
                 label=label,
@@ -269,7 +263,6 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
         if parent_task_id:
             result["open_count"] = ctx.task_manager.count_tasks(
-                current_stage_state=current_stage_filter,
                 priority=priority,
                 task_type=task_type,
                 label=label,
@@ -287,11 +280,6 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
         input_schema={
             "type": "object",
             "properties": {
-                "current_stage_state": {
-                    "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                    "description": "Filter by current stage state. Can be a single state, array of states, or comma-separated string.",
-                    "default": None,
-                },
                 "priority": {
                     "type": "integer",
                     "description": "Filter by priority",

@@ -1,4 +1,4 @@
-"""serialize_task_state emits the Phase 5 stage-native shape."""
+"""Task projections expose ownership, closure, escalation and assignment."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.tasks.state_semantics import (
-    current_stage,
     is_task_actively_claimed,
     serialize_task_state,
 )
@@ -20,7 +19,6 @@ def test_new_shape() -> None:
         claimed_by_session_id=None,
         closed_at=None,
         is_escalated=False,
-        current_stage=SimpleNamespace(name="development", state="ready"),
         active_blocked_by=set(),
     )
 
@@ -28,7 +26,22 @@ def test_new_shape() -> None:
 
     assert "lifecycle_stage" not in state
     assert "lifecycle" not in state
-    assert state["current_stage"] == {"name": "development", "state": "ready"}
+    assert set(state) == {
+        "owner_session_id",
+        "is_claimed",
+        "is_closed",
+        "is_escalated",
+        "is_blocked",
+        "closed_at",
+        "closed_reason",
+        "closed_in_session_id",
+        "closed_commit_sha",
+        "escalated_at",
+        "escalation_reason",
+        "assigned_agent",
+        "implementation_domain",
+        "additional_skills",
+    }
     assert state["is_escalated"] is False
 
 
@@ -42,32 +55,11 @@ def test_awaiting_human_review_label_is_reported_blocked() -> None:
     assert reviewed["is_blocked"] is False
 
 
-def test_current_stage_prefers_live_stage_rows_over_serialized_projection() -> None:
-    live_stage = SimpleNamespace(name="epic_qa", position=1, state="in_progress")
-    task = SimpleNamespace(
-        state={"current_stage": {"name": "development", "state": "ready"}},
-        current_stage={"name": "planning", "state": "needs_review"},
-        stages=(live_stage,),
-    )
-
-    assert current_stage(task) is live_stage
-
-
-def test_current_stage_treats_empty_live_stage_rows_as_authoritative() -> None:
-    task = SimpleNamespace(
-        state={"current_stage": {"name": "development", "state": "ready"}},
-        stages=(),
-    )
-
-    assert current_stage(task) is None
-
-
 def test_is_task_actively_claimed_requires_expected_owner() -> None:
     task = SimpleNamespace(
         claimed_by_session_id="owner-1",
         closed_at=None,
         is_escalated=False,
-        current_stage=SimpleNamespace(name="development", state="in_progress"),
     )
 
     assert is_task_actively_claimed(task, None) is False

@@ -124,23 +124,12 @@ def format_task_list(
     def _project_key(t: Task, _r: _RenderedRow) -> str:
         return project_name_map.get(getattr(t, "project_id", "") or "", "(no project)")
 
-    def _stage_key(t: Task, _r: _RenderedRow) -> str:
-        state = serialize_task_state(t)
-        if state["is_closed"]:
-            return "closed"
-        current_stage = state["current_stage"]
-        if not current_stage:
-            return "ready"
-        return f"{current_stage['name']}:{current_stage['state']}"
-
     def _null_key(_t: Task, _r: _RenderedRow) -> str:
         return ""
 
     group_key: Callable[[Task, _RenderedRow], str]
     if group_by == "project":
         group_key = _project_key
-    elif group_by == "stage":
-        group_key = _stage_key
     else:
         group_key = _null_key
 

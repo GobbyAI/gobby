@@ -15,7 +15,6 @@ import psycopg
 
 from gobby.sessions.handoff_identity import sessions_have_continuous_terminal_context
 from gobby.tasks.state_semantics import (
-    ACTIVE_STAGE_STATES,
     get_claimed_session_id,
     is_task_actively_claimed,
     is_task_claimed_by_session,
@@ -366,7 +365,6 @@ def reconcile_claimed_tasks(
         try:
             db_tasks = task_manager.list_tasks(
                 claimed_by_session_id=session_id,
-                current_stage_state=list(ACTIVE_STAGE_STATES),
             )
         except psycopg.Error as e:
             logger.warning("Session %s: failed to list claimed tasks: %s", session_id, e)

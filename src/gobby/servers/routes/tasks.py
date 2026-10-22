@@ -25,9 +25,6 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._queries import task_read_snapshot
-from gobby.storage.tasks._stage_types import StageState
-from gobby.storage.tasks._stage_views import stage_state_view
-from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -104,14 +101,6 @@ class TaskUpdateRequest(BaseModel):
         default_factory=list,
         description="Replacement declared file scope. An empty array clears it.",
     )
-    allow_automation: bool | None = Field(
-        default=None,
-        description="Enable or disable dispatcher automation for this task.",
-    )
-    checkout_mode: Literal["none", "worktree", "clone"] | None = Field(
-        default=None,
-        description="Automation checkout mode for future dispatch.",
-    )
 
     @field_validator("task_type")
     @classmethod
@@ -168,28 +157,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return session_ref
         return str(server.session_manager.resolve_session_reference(session_ref, project_id))
 
-    def _stage_view(stage: StageState) -> dict[str, Any]:
-        return stage_state_view(stage)
-
-    def _stage_views_for_tasks(task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        if not task_ids:
-            return {}
-        placeholders = ", ".join("%s" for _ in task_ids)
-        rows = server.task_manager.db.fetchall(
-            f"""
-            SELECT *
-              FROM task_stage_states
-             WHERE task_id IN ({placeholders})
-             ORDER BY task_id, position, stage_name
-            """,  # nosec B608 # placeholders are generated from task_ids length only.
-            tuple(task_ids),
-        )
-        grouped: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
-        for row in rows:
-            stage = server.task_manager.stage_states._state_from_row(row)
-            grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
-        return grouped
-
     def _apply_owner_ref(task_dicts: list[dict[str, Any]]) -> None:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
@@ -237,20 +204,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "source": session["source"] if session else None,
             }
 
-    def _normalize_stage_filters(values: list[str] | None) -> list[str]:
-        if not values:
-            return []
-        stage_names: list[str] = []
-        seen: set[str] = set()
-        for raw_value in values:
-            for raw_stage in raw_value.split(","):
-                stage_name = raw_stage.strip()
-                if not stage_name or stage_name in seen:
-                    continue
-                stage_names.append(stage_name)
-                seen.add(stage_name)
-        return stage_names
-
     register_task_lifecycle_routes(
         router,
         server,
@@ -267,9 +220,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     @router.get("")
     async def list_tasks(
         project_id: str | None = Query(None, description="Filter by project ID"),
-        current_stage_state: (
-            Literal["ready", "in_progress", "needs_review", "review_approved"] | None
-        ) = Query(None, description="Filter by current stage state"),
         claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
         closed: bool | None = Query(None, description="Filter by canonical closed state"),
         priority: int | None = Query(None, description="Filter by priority"),
@@ -287,22 +237,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             ),
         ),
         sort_order: str = Query("asc", description="Sort direction: asc or desc"),
-        stage: list[str] | None = Query(None, description="Filter by stage name"),
-        stage_state: (
-            Literal["ready", "in_progress", "needs_review", "review_approved", "done"] | None
-        ) = Query(None, description="Filter by stage state"),
-        include_stages: bool = Query(False, description="Include denormalized stage manifest"),
     ) -> dict[str, Any]:
         """List tasks with optional filters and state distribution stats."""
         try:
             resolved_project = await server.run_db(_resolve_project, project_id)
-            stage_filters = _normalize_stage_filters(stage)
-            if stage_state is not None and not stage_filters:
-                raise HTTPException(status_code=400, detail="stage_state requires stage")
-
             filters: dict[str, Any] = {
                 "project_id": resolved_project,
-                "current_stage_state": current_stage_state,
                 "priority": priority,
                 "task_type": task_type,
                 "claimed": claimed,
@@ -310,8 +250,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "label": label,
                 "parent_task_id": parent_task_id,
                 "title_like": search,
-                "stages": stage_filters,
-                "stage_state": stage_state,
             }
 
             def _page_and_total() -> "tuple[list[Task], int]":
@@ -336,12 +274,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             tasks, total = await server.run_db(_page_and_total)
 
             task_dicts = [t.to_brief() for t in tasks]
-            if include_stages or stage_filters or stage_state is not None:
-                stages_by_task = await server.run_db(
-                    _stage_views_for_tasks, [task.id for task in tasks]
-                )
-                for item in task_dicts:
-                    item["stages"] = stages_by_task.get(item["id"], [])
             await server.run_db(_apply_owner_ref, task_dicts)
 
             state_counts = await server.run_db(
@@ -424,16 +356,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             kwargs: dict[str, Any] = {}
             for field_name in request_data.model_fields_set:
                 kwargs[field_name] = getattr(request_data, field_name)
-            if "checkout_mode" in kwargs:
-                if kwargs["checkout_mode"] is None:
-                    kwargs.pop("checkout_mode")
-                else:
-                    kwargs["checkout_mode"] = await server.run_db(
-                        validate_task_isolation_artifacts,
-                        server.task_manager,
-                        resolved_id,
-                        cast(str, kwargs["checkout_mode"]),
-                    )
 
             if not kwargs:
                 unchanged = task.to_dict()

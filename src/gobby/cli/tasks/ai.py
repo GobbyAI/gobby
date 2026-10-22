@@ -3,7 +3,7 @@
 import click
 
 from gobby.cli.tasks._utils import get_task_manager
-from gobby.tasks.state_semantics import current_stage_state, is_task_closed
+from gobby.tasks.state_semantics import projected_task_state
 from gobby.utils.json_helpers import json_dumps
 
 
@@ -75,10 +75,7 @@ def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bo
     click.echo("Suggested next task:\n")
     click.echo(f"  {best_task.id}")
     click.echo(f"  {best_task.title}")
-    stage_state = current_stage_state(best_task) or "ready"
-    if is_task_closed(best_task):
-        stage_state = "closed"
-    click.echo(f"  Priority: {best_task.priority} | Current Stage: {stage_state}")
+    click.echo(f"  Priority: {best_task.priority} | State: {projected_task_state(best_task)}")
     if best_task.description:
         desc_preview = best_task.description[:200]
         if len(best_task.description) > 200:

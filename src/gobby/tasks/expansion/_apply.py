@@ -10,14 +10,13 @@ from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
-from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._transitions import (
     ancestor_ids_in_txn,
     clear_closure_in_txn,
     reopen_closed_ancestors_in_txn,
     withdraw_memory_reviews,
 )
-from gobby.tasks.expansion._common import _manifest_stage_names, resolve_declared_task_ref
+from gobby.tasks.expansion._common import resolve_declared_task_ref
 from gobby.tasks.expansion._deferrals import create_placeholder_deferral_tasks
 from gobby.tasks.expansion._reconcile import (
     ReconciliationPlan,
@@ -55,57 +54,11 @@ def _copy_target_branch_to_leaf(
         self.task_manager.artifacts.set_artifact(task_id, "target_branch", target_branch)
 
 
-def _inherit_build_state(
-    self: Any,
-    *,
-    parent: Task,
-    task_id: str,
-    target_branch: str | None,
-) -> None:
-    _copy_target_branch_to_leaf(self, task_id=task_id, target_branch=target_branch)
-    if parent.allow_automation:
-        self.task_manager.update_task(
-            task_id,
-            allow_automation=True,
-            unattended=parent.unattended,
-            checkout_mode=parent.checkout_mode.value,
-        )
-
-
-def _complete_dev_only_run(
-    self: Any,
-    run_id: str,
-    task: Task,
-    *,
-    suppress_parent_stage_transition: bool = False,
-) -> ExpansionRun:
-    """Complete dev-only builds without creating expansion children."""
-    if not suppress_parent_stage_transition:
-        self._complete_parent_expansion_stage_if_current(task.id, session_id=None)
-    self.run_manager.append_log(
-        run_id,
-        level="info",
-        message="Skipping expansion because dev is the only enabled stage",
-        extra={"enabled_stages": sorted(_manifest_stage_names(task))},
-    )
-    run = self.run_manager.save_apply_result(
-        run_id,
-        task_id_map={task.id: task.id},
-        created_task_ids=[],
-        checkpoints={"dev_only_skip": True},
-        completed=True,
-    )
-    if run is None:
-        raise RuntimeError(f"Expansion run {run_id} disappeared after dev-only completion")
-    return cast(ExpansionRun, run)
-
-
 def apply_run(
     self: Any,
     run_id: str,
     *,
     session_id: str | None,
-    suppress_parent_stage_transition: bool = False,
 ) -> ExpansionRun:
     """Apply a compiled expansion spec to the task tree."""
     run = self.run_manager.get(run_id)
@@ -117,16 +70,6 @@ def apply_run(
     task = self.task_manager.get_task(run.parent_task_id)
     if task is None:
         raise ValueError(f"Parent task {run.parent_task_id} not found")
-    parent_manifest = self.task_manager.stage_states.list_for_task(task.id)
-    phase_manifest_specs = derive_child_manifest_specs(
-        parent_manifest,
-        include_epic_qa=True,
-    )
-    leaf_manifest_specs = derive_child_manifest_specs(
-        parent_manifest,
-        include_epic_qa=False,
-    )
-
     spec = run.compiled_spec
     validation = self.validate_compiled_spec(spec)
     if not validation["valid"]:
@@ -239,16 +182,8 @@ def apply_run(
                     labels=[provenance_label],
                 )
                 phase_parent_map[phase["id"]] = created_id
-                if phase_manifest_specs:
-                    self.task_manager.stage_states.insert_new_task_manifest_in_transaction(
-                        conn,
-                        created_id,
-                        phase_manifest_specs,
-                        by_session_id=session_id,
-                    )
-                _inherit_build_state(
+                _copy_target_branch_to_leaf(
                     self,
-                    parent=task,
                     task_id=created_id,
                     target_branch=target_branch,
                 )
@@ -308,16 +243,8 @@ def apply_run(
                 phase_child_ids[phase_id].append(created_id)
                 if reconciliation is not None:
                     record_created(reconciliation, task_item, created_id)
-                if leaf_manifest_specs:
-                    self.task_manager.stage_states.insert_new_task_manifest_in_transaction(
-                        conn,
-                        created_id,
-                        leaf_manifest_specs,
-                        by_session_id=session_id,
-                    )
-                _inherit_build_state(
+                _copy_target_branch_to_leaf(
                     self,
-                    parent=task,
                     task_id=created_id,
                     target_branch=target_branch,
                 )
@@ -397,8 +324,6 @@ def apply_run(
             )
         )
         self.task_manager.artifacts.set_artifact(task.id, "expansion_run_id", run_id)
-        if not suppress_parent_stage_transition:
-            self._complete_parent_expansion_stage_if_current(task.id, session_id=session_id)
         run = self.run_manager.save_apply_result(
             run_id,
             task_id_map=created_task_map,

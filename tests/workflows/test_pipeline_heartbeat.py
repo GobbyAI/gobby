@@ -472,9 +472,26 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In-progress task with terminal agent run and no live agent moves back to ready."""
+    """A terminal run's stale claim is released without a stage-storage interface."""
     _seed_db(temp_db)
-    task_id = _create_in_progress_task(task_manager, max_work_attempts=1)
+    _seed_session(temp_db, DEAD_AGENT_SESSION_ID)
+    task_id = task_manager.create_task(
+        title="Stale claim without stages",
+        task_type="task",
+        project_id=PROJECT_ID,
+        validation_criteria="The stale claim is released.",
+    ).id
+    temp_db.execute(
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
+        (DEAD_AGENT_SESSION_ID, task_id),
+    )
+
+    def unavailable_stage_storage(manager: LocalTaskManager) -> None:
+        raise AttributeError("Stage storage is unavailable to heartbeat recovery")
+
+    monkeypatch.setattr(
+        LocalTaskManager, "stage_states", property(unavailable_stage_storage), raising=False
+    )
 
     # Create a terminal (error) agent run for this task
     agent_run_manager.create(
@@ -508,9 +525,6 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     assert projected_task_state(task) == "ready"
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
-    stage = task_manager.stage_states.get(task_id, "development")
-    assert stage is not None
-    assert stage.work_attempt_count == 0
 
 
 @pytest.mark.asyncio

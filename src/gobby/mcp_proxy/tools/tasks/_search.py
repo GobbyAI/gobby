@@ -28,7 +28,6 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def search_tasks(
         query: str,
-        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -41,12 +40,10 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Search tasks using keyword search.
 
         Performs keyword search on task title and description.
-        Results are ranked by relevance and can be filtered by current stage state, type, etc.
+        Results are ranked by relevance and can be filtered by task type, priority, and category.
 
         Args:
             query: Search query text (required). Natural language query.
-            current_stage_state: Filter by current stage state.
-                Can be a single state or comma-separated list.
             task_type: Filter by task type (task, bug, feature, epic)
             priority: Filter by priority (1=High, 2=Medium, 3=Low)
             parent_task_id: Filter by parent task ID (UUID, #N, or N format)
@@ -67,10 +64,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
-        # Handle comma-separated current-stage state string.
-        current_stage_filter: str | list[str] | None = current_stage_state
-        if isinstance(current_stage_state, str) and "," in current_stage_state:
-            current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
+
 
         # Resolve parent_task_id if provided (#N, N, or UUID -> UUID)
         resolved_parent_id = None
@@ -92,7 +86,6 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
             results = ctx.task_manager.search_tasks(
                 query=normalized_query,
                 project_id=project_id,
-                current_stage_state=current_stage_filter,
                 task_type=task_type,
                 priority=priority,
                 parent_task_id=resolved_parent_id,
@@ -124,14 +117,6 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "query": {
                     "type": "string",
                     "description": "Search query text. Natural language query to find matching tasks.",
-                },
-                "current_stage_state": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ],
-                    "description": "Filter by current stage state. Can be a single state or comma-separated list.",
-                    "default": None,
                 },
                 "task_type": {
                     "type": "string",

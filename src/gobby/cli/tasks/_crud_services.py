@@ -11,7 +11,6 @@ CrudCallable = Callable[..., Any]
 class CrudServices:
     get_task_manager: CrudCallable
     resolve_project_ref: CrudCallable
-    filter_tasks_by_stage: CrudCallable
     collect_ancestors: CrudCallable
     sort_tasks_for_tree: CrudCallable
     compute_tree_prefixes: CrudCallable
@@ -20,4 +19,3 @@ class CrudServices:
     parse_task_refs: CrudCallable
     resolve_task_id: CrudCallable
     get_project_context: CrudCallable
-    validate_task_isolation_artifacts: CrudCallable

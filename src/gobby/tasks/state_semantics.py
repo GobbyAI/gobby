@@ -1,4 +1,4 @@
-"""Shared task state semantics for stage-native task projections."""
+"""Shared task state semantics for task projections."""
 
 from __future__ import annotations
 
@@ -6,12 +6,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-ACTIVE_STAGE_STATES: tuple[str, ...] = (
-    "ready",
-    "in_progress",
-    "needs_review",
-    "review_approved",
-)
 AWAITING_HUMAN_REVIEW_LABEL = "awaiting-human-review"
 
 
@@ -28,40 +22,7 @@ def _has_timestamp(value: Any) -> bool:
     return isinstance(value, datetime) or (isinstance(value, str) and bool(value))
 
 
-def _stage_position(stage: Any) -> tuple[int, str]:
-    raw_position = _read_field(stage, "position")
-    try:
-        position = int(raw_position)
-    except (TypeError, ValueError):
-        position = 0
-    return position, str(_read_field(stage, "name", "stage_name") or "")
 
-
-def current_stage(task: Any) -> Any | None:
-    """Return the first incomplete stage row available on a task-like object."""
-    if task is None:
-        return None
-
-    stages = _read_field(task, "stages")
-    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
-        pending = [stage for stage in stages if _read_field(stage, "state") != "done"]
-        if not pending:
-            return None
-        return min(pending, key=_stage_position)
-
-    state_payload = _read_field(task, "state")
-    if isinstance(state_payload, dict):
-        direct_from_state = state_payload.get("current_stage")
-        if direct_from_state is not None:
-            return direct_from_state
-
-    return _read_field(task, "current_stage")
-
-
-def current_stage_state(task: Any) -> str | None:
-    stage = current_stage(task)
-    raw_state = _read_field(stage, "state")
-    return raw_state if isinstance(raw_state, str) else None
 
 
 def projected_task_state(task: Any) -> str:
@@ -70,7 +31,7 @@ def projected_task_state(task: Any) -> str:
         return "closed"
     if _task_is_escalated(task):
         return "escalated"
-    return current_stage_state(task) or "ready"
+    return "ready"
 
 
 def is_awaiting_human_review(task: Any) -> bool:
@@ -116,13 +77,6 @@ def _task_is_escalated(task: Any) -> bool:
 is_task_escalated = _task_is_escalated
 
 
-def is_task_merge_ready(task: Any) -> bool:
-    """Return whether the current stage has completed review but is not done."""
-    if task is None or is_task_closed(task) or _task_is_escalated(task):
-        return False
-    stage = current_stage(task)
-    return bool(_read_field(stage, "state") == "review_approved")
-
 
 def get_claimed_session_id(task: Any) -> str | None:
     """Return the best available owning session ID for a task-like object."""
@@ -140,17 +94,8 @@ def get_claimed_session_id(task: Any) -> str | None:
 
 
 def is_task_actionable(task: Any) -> bool:
-    """Return whether a task can still participate in stage work."""
-    if task is None or is_task_closed(task) or _task_is_escalated(task):
-        return False
-    stage_state = current_stage_state(task)
-    if stage_state in ACTIVE_STAGE_STATES:
-        return True
-
-    stages = _read_field(task, "stages")
-    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
-        return len(stages) == 0
-    return True
+    """Return whether a task exists, is open and is not escalated."""
+    return task is not None and not is_task_closed(task) and not _task_is_escalated(task)
 
 
 def is_task_reviewable(task: Any) -> bool:
@@ -163,7 +108,7 @@ def is_task_reviewable(task: Any) -> bool:
 
 
 def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
-    """Return whether a task has an owner and remains in active stage work."""
+    """Return whether a task has an owner and remains actionable."""
     if task is None or not is_task_actionable(task):
         return False
 
@@ -176,21 +121,6 @@ def is_task_claimed_by_session(task: Any, session_id: str) -> bool:
     return not is_task_closed(task) and get_claimed_session_id(task) == session_id
 
 
-def _current_stage_payload(task: Any) -> dict[str, str] | None:
-    stage = current_stage(task)
-    if stage is None:
-        return None
-    name = _read_field(stage, "name", "stage_name")
-    state = _read_field(stage, "state")
-    if not isinstance(name, str) or not isinstance(state, str):
-        return None
-    payload = {"name": name, "state": state}
-    for field_name in ("display_name", "display_label", "category"):
-        value = _read_field(stage, field_name)
-        if isinstance(value, str):
-            payload[field_name] = value
-    return payload
-
 
 def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[str, Any]:
     """Build the canonical task-state projection for external callers."""
@@ -202,21 +132,16 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
 
     return {
         "owner_session_id": owner_session_id,
-        "current_stage": _current_stage_payload(task),
         "is_claimed": bool(owner_session_id),
         "is_closed": is_task_closed(task),
         "is_escalated": is_escalated,
         "is_blocked": bool(is_blocked),
-        "is_merge_ready": is_task_merge_ready(task),
         "closed_at": _read_field(task, "closed_at"),
         "closed_reason": _read_field(task, "closed_reason"),
         "closed_in_session_id": _read_field(task, "closed_in_session_id"),
         "closed_commit_sha": _read_field(task, "closed_commit_sha"),
         "escalated_at": _read_field(task, "escalated_at"),
         "escalation_reason": _read_field(task, "escalation_reason"),
-        "allow_automation": bool(_read_field(task, "allow_automation")),
-        "unattended": bool(_read_field(task, "unattended")),
-        "checkout_mode": _read_field(task, "checkout_mode") or "worktree",
         "assigned_agent": _read_field(task, "assigned_agent"),
         "implementation_domain": _read_field(task, "implementation_domain"),
         "additional_skills": _read_field(task, "additional_skills"),

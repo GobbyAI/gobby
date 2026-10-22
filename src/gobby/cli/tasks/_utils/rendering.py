@@ -10,7 +10,7 @@ from wcwidth import wcswidth
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.state_semantics import projected_task_state, serialize_task_state
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +34,10 @@ PREFIX_W = COL_PRIORITY + COL_STAGE_LETTER + COL_FLAGS  # 6 visual cols before #
 _DIM_ANSI = "\033[2m"
 _RESET_ANSI = "\033[0m"
 
-# Current stage state -> single-letter code (O/P/R/A/C)
+# Projected task state -> single-letter code (O/E/C)
 _STAGE_STATE_LETTER: dict[str, str] = {
     "ready": "O",
-    "in_progress": "P",
-    "needs_review": "R",
-    "review_approved": "A",
+    "escalated": "E",
     "closed": "C",
 }
 
@@ -120,8 +118,7 @@ def _build_rendered_row(
     owner_session_id = state["owner_session_id"] if is_claimed else None
     if owner_session_id is None and claimed_task_owner_map is not None:
         owner_session_id = claimed_task_owner_map.get(task.id)
-    current_stage = state["current_stage"]
-    stage_state = current_stage["state"] if current_stage else "ready"
+    stage_state = projected_task_state(task)
     blocked = state["is_blocked"]
     escalated = state["is_escalated"]
     closed = state["is_closed"]

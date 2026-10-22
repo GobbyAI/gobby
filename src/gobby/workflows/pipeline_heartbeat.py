@@ -18,7 +18,6 @@ from uuid import uuid4
 from gobby.storage.sessions._constants import PROTECTED_SESSION_STATUSES
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.state_semantics import (
-    ACTIVE_STAGE_STATES,
     get_claimed_session_id,
     is_task_actively_claimed,
 )
@@ -37,35 +36,6 @@ logger = logging.getLogger(__name__)
 class StaleTaskCheckResult(NamedTuple):
     recovered: int
     candidates: int
-
-
-def _submit_current_stage_for_review(
-    task_manager: LocalTaskManager,
-    task_id: str,
-    stage_name: str,
-    preheld_mutex_run_id: str,
-) -> None:
-    task_manager.stage_states.submit_for_review(
-        task_id,
-        stage_name,
-        by_session_id=None,
-        preheld_mutex_run_id=preheld_mutex_run_id,
-    )
-
-
-def _recover_abandoned_stage(
-    task_manager: LocalTaskManager,
-    task_id: str,
-    stage_name: str,
-    preheld_mutex_run_id: str,
-) -> None:
-    task_manager.stage_states.recover_abandoned_stage(
-        task_id,
-        stage_name,
-        reason="stale_task_recovery",
-        by_session_id=None,
-        preheld_mutex_run_id=preheld_mutex_run_id,
-    )
 
 
 def _recover_stale_task(
@@ -92,28 +62,8 @@ def _recover_stale_task(
             if task is None or get_claimed_session_id(task) != owner_session_id:
                 return None
 
-            current_stage = task_manager.stage_states.current_stage(task_id)
-            has_commits = bool(getattr(task, "commits", None))
-            if current_stage and current_stage.state == "in_progress" and has_commits:
-                _submit_current_stage_for_review(
-                    task_manager,
-                    task_id,
-                    current_stage.stage_name,
-                    lease_run_id,
-                )
-                action = "review"
-            elif current_stage and current_stage.state == "in_progress":
-                _recover_abandoned_stage(
-                    task_manager,
-                    task_id,
-                    current_stage.stage_name,
-                    lease_run_id,
-                )
-                action = "retry"
-            else:
-                action = "release"
             task_manager.release_task_claim(task_id)
-        return action
+        return "release"
     finally:
         mutexes.release_mutex(task_id, lease_holder)
 
@@ -289,7 +239,7 @@ class PipelineHeartbeat:
         For each actively claimed task that has an owning session:
         1. Check if there's an active agent run (pending/running) for the task
         2. If not, check if the owning session is still alive
-        3. If neither, recover the task based on its current stage
+        3. If neither, release the stale task claim
 
         Returns:
             Recovered-task and scanned-candidate counts.
@@ -323,19 +273,7 @@ class PipelineHeartbeat:
                     task.id,
                     owner_session_id,
                 )
-                if action == "review":
-                    logger.info(
-                        "Heartbeat: submitted stale task %s (#%s) for review",
-                        task.id,
-                        task.seq_num,
-                    )
-                elif action == "retry":
-                    logger.info(
-                        "Heartbeat: recovered abandoned task %s (#%s) for retry",
-                        task.id,
-                        task.seq_num,
-                    )
-                elif action == "release":
+                if action == "release":
                     logger.info(
                         "Heartbeat: released stale claim on task %s (#%s)",
                         task.id,
@@ -366,7 +304,6 @@ class PipelineHeartbeat:
         try:
             active_claims = await self._run_db(
                 task_manager.list_tasks,
-                current_stage_state=list(ACTIVE_STAGE_STATES),
                 closed=False,
                 limit=100,
                 sort_by="updated_at",

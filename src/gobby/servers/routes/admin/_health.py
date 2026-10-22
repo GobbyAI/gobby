@@ -141,8 +141,6 @@ async def _collect_task_stats(server: "HTTPServer") -> dict[str, Any]:
                 "ready",
                 "in_progress",
                 "closed",
-                "needs_review",
-                "review_approved",
                 "escalated",
             )
         }
@@ -517,8 +515,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "ready": 0,
             "in_progress": 0,
             "closed": 0,
-            "needs_review": 0,
-            "review_approved": 0,
             "escalated": 0,
             "ready_unblocked": 0,
             "blocked": 0,

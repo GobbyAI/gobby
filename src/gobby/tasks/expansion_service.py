@@ -75,7 +75,6 @@ class ExpansionService:
     _get_verification_commands = _compile._get_verification_commands
     _build_file_context = _compile._build_file_context
 
-    _complete_dev_only_run = _apply._complete_dev_only_run
     apply_run = _apply.apply_run
     validate_applied_run = _apply.validate_applied_run
     _get_expansion_config = _apply._get_expansion_config
@@ -84,7 +83,6 @@ class ExpansionService:
     reset_expansion_output = _reset.reset_expansion_output
     find_existing_expansion_output = _reset.find_existing_expansion_output
     find_apply_blocking_expansion_output = _reset.find_apply_blocking_expansion_output
-    _complete_parent_expansion_stage_if_current = _reset.complete_parent_expansion_stage_if_current
 
 
 def compile_plan_to_spec(

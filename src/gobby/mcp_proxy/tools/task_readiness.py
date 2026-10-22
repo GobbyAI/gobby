@@ -23,7 +23,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
-    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
 
@@ -287,11 +287,7 @@ def _resolve_ready_tasks(
             }
         }
 
-    in_progress_tasks = collect_task_query_pages(
-        task_manager.list_tasks,
-        current_stage_state="in_progress",
-        project_id=project_id,
-    )
+    in_progress_tasks: list[Task] = []
     claimed_tasks = collect_task_query_pages(
         task_manager.list_tasks,
         claimed=True,
@@ -309,7 +305,7 @@ def _resolve_ready_tasks(
         active_ancestry = _get_ancestry_chain(task_manager, in_progress_tasks[0].id)
 
     # Filter out already-active work. A ready task should not be re-suggested if
-    # it is already claimed or already projected as in_progress.
+    # it is already claimed.
     ready_tasks = [
         task
         for task in ready_tasks

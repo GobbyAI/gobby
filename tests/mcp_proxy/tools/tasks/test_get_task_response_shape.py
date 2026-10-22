@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload, task_summary_payload
+from gobby.storage.tasks import Task
 
 pytestmark = pytest.mark.unit
 
 
 def test_no_legacy_fields(task_registry, mock_task_manager) -> None:
-    task = SimpleNamespace(
+    task = Task(
         id="task-1",
+        project_id="project-1",
+        title="A ready task",
+        priority=2,
+        task_type="task",
+        created_at=datetime(2026, 10, 21, tzinfo=UTC),
+        updated_at=datetime(2026, 10, 21, tzinfo=UTC),
         seq_num=1,
-        to_brief=lambda: {"id": "task-1", "state": {"current_stage": {"name": "dev"}}},
     )
     mock_task_manager.get_task.return_value = task
 
@@ -24,6 +31,16 @@ def test_no_legacy_fields(task_registry, mock_task_manager) -> None:
     assert "status" not in result
     assert "lifecycle" not in result
     assert "lifecycle_stage" not in result
+    assert result["title"] == "A ready task"
+    removed_fields = {
+        "current_stage",
+        "is_merge_ready",
+        "allow_automation",
+        "unattended",
+        "checkout_mode",
+    }
+    assert removed_fields.isdisjoint(result)
+    assert removed_fields.isdisjoint(result["state"])
 
 
 def test_task_discovery_ref_uses_seq_num_from_dict() -> None:
@@ -52,7 +69,7 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
             "category": "code",
             "priority": 1,
             "validation_criteria": "Summary payload uses to_dict fields.",
-            "allow_automation": True,
+            "assigned_agent": "developer",
         },
     )
 
@@ -62,7 +79,7 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
     assert payload["id"] == "03940009-0faa-4d80-9b96-289df7f44431"
     assert payload["title"] == "Apply summary fixes"
     assert payload["validation_criteria"] == "Summary payload uses to_dict fields."
-    assert payload["allow_automation"] is True
+    assert payload["assigned_agent"] == "developer"
     assert payload["state"]["is_closed"] is False
 
 
@@ -133,9 +150,8 @@ def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
         category="code",
         priority=1,
         closed_at="2026-07-02T00:00:00Z",
-        current_stage={"name": "done", "state": "done"},
         validation_criteria="Attribute-backed fields survive formatting.",
-        allow_automation=True,
+        assigned_agent="developer",
         to_dict=lambda: {
             "id": "03940009-0faa-4d80-9b96-289df7f44431",
             "seq_num": 17426,
@@ -148,7 +164,6 @@ def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
     assert payload["task_type"] == "bug"
     assert payload["category"] == "code"
     assert payload["validation_criteria"] == "Attribute-backed fields survive formatting."
-    assert payload["allow_automation"] is True
+    assert payload["assigned_agent"] == "developer"
     assert payload["state"]["is_closed"] is True
     assert payload["state"]["closed_at"] == "2026-07-02T00:00:00Z"
-    assert payload["state"]["current_stage"] == {"name": "done", "state": "done"}

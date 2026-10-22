@@ -24,8 +24,6 @@ from gobby.tasks.commits import extract_mentioned_files
 from gobby.tasks.expansion._common import (
     _agent_selection_fields,
     _dedupe_dependencies,
-    _dev_is_only_enabled_stage,
-    _manifest_stage_names,
     _read_text_if_exists,
     _render_template,
     _strip_frontmatter,
@@ -75,8 +73,6 @@ def _model_for_provider(candidates: Sequence[FeatureCandidateInput], provider: s
 async def compile_run(
     self: Any,
     run_id: str,
-    *,
-    suppress_parent_stage_transition: bool = False,
 ) -> ExpansionRun:
     """Compile an expansion run into a normalized compiled spec."""
     run = self.run_manager.get(run_id)
@@ -87,16 +83,6 @@ async def compile_run(
         raise ValueError(f"Parent task {run.parent_task_id} not found")
     self.run_manager.start(run_id)
     self.run_manager.append_log(run_id, level="info", message="Starting expansion compile")
-    if _dev_is_only_enabled_stage(task):
-        return cast(
-            ExpansionRun,
-            self._complete_dev_only_run(
-                run_id,
-                task,
-                suppress_parent_stage_transition=suppress_parent_stage_transition,
-            ),
-        )
-
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
 

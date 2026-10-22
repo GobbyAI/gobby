@@ -63,13 +63,10 @@ class TaskAssignmentNotifier:
 
         raw_state = task_dict.get("state")
         state = cast(dict[str, Any], raw_state) if isinstance(raw_state, dict) else {}
-        current_stage = state.get("current_stage")
         if state.get("is_closed"):
             task_status = "closed"
         elif state.get("is_escalated"):
             task_status = "escalated"
-        elif isinstance(current_stage, dict) and current_stage.get("state"):
-            task_status = str(current_stage["state"])
         else:
             task_status = "open"
 
@@ -82,7 +79,6 @@ class TaskAssignmentNotifier:
             "task_ref": task_ref,
             "task_title": task_title,
             "task_status": task_status,
-            "task_stage": current_stage,
             "assigned_session_id": target_session_id,
         }
         content = f"{task_ref} assigned: {task_title}"

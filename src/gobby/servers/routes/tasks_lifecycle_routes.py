@@ -66,14 +66,6 @@ class TaskDeEscalateRequest(BaseModel):
 
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
-    reset_stage_attempts: bool = Field(
-        default=False,
-        description="Also reset the current stage work attempt count",
-    )
-    restore_stage_from_history: bool = Field(
-        default=False,
-        description="Restore a stopped approved stage from lifecycle history",
-    )
 
 
 ResolveTask = Callable[[str], "Task"]
@@ -272,8 +264,6 @@ def register_task_lifecycle_routes(
                 resolved_id,
                 reason=request_data.decision_context,
                 reset_validation=request_data.reset_validation,
-                reset_stage_attempts=request_data.reset_stage_attempts,
-                restore_stage_from_history=request_data.restore_stage_from_history,
             )
             result = updated.to_dict()
             warnings = await broadcast_with_warning("task_de_escalated", result)

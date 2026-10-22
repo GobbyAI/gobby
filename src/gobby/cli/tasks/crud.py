@@ -4,13 +4,7 @@ from functools import partial
 
 import click
 
-from gobby.cli.tasks._crud_common import (
-    CHECKOUT_MODE_CHOICE,
-    TASK_TYPE_CHOICE,
-)
-from gobby.cli.tasks._crud_common import (
-    current_stage_display as _current_stage_display,
-)
+from gobby.cli.tasks._crud_common import TASK_TYPE_CHOICE
 from gobby.cli.tasks._crud_detail import show_task_impl, validation_history_impl
 from gobby.cli.tasks._crud_listing import (
     blocked_tasks_impl,
@@ -27,7 +21,6 @@ from gobby.cli.tasks._crud_mutations import (
     update_task_impl,
 )
 from gobby.cli.tasks._crud_services import CrudServices
-from gobby.cli.tasks._stage_filters import STAGE_STATE_CHOICE, filter_tasks_by_stage
 from gobby.cli.tasks._utils import (
     collect_ancestors,
     compute_tree_prefixes,
@@ -39,7 +32,6 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 from gobby.utils.project_context import get_project_context
 
@@ -48,7 +40,6 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
     return CrudServices(
         get_task_manager=partial(get_task_manager, apply_migrations=apply_migrations),
         resolve_project_ref=resolve_project_ref,
-        filter_tasks_by_stage=filter_tasks_by_stage,
         collect_ancestors=collect_ancestors,
         sort_tasks_for_tree=sort_tasks_for_tree,
         compute_tree_prefixes=compute_tree_prefixes,
@@ -57,7 +48,6 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
         parse_task_refs=parse_task_refs,
         resolve_task_id=resolve_task_id,
         get_project_context=get_project_context,
-        validate_task_isolation_artifacts=validate_task_isolation_artifacts,
     )
 
 
@@ -68,8 +58,6 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
     help="Show all non-closed work",
 )
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
-@click.option("--stage", "stage_name", help="Filter by exact stage name")
-@click.option("--state", "stage_state", type=STAGE_STATE_CHOICE, help="Filter by stage state")
 @click.option("--claimed", is_flag=True, help="Show only claimed tasks")
 @click.option("--unclaimed", is_flag=True, help="Show only unclaimed tasks")
 @click.option(
@@ -84,10 +72,10 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
 @click.option(
     "--group",
     "group_by",
-    type=click.Choice(["project", "stage"]),
+    type=click.Choice(["project"]),
     default=None,
     help=(
-        "Group output by project or stage. When omitted, tasks are "
+        "Group output by project. When omitted, tasks are "
         "auto-grouped by project if no project context is detected."
     ),
 )
@@ -95,8 +83,6 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
 def list_tasks(
     active: bool,
     project_ref: str | None,
-    stage_name: str | None,
-    stage_state: str | None,
     claimed: bool,
     unclaimed: bool,
     ready: bool,
@@ -112,8 +98,6 @@ def list_tasks(
         _services(apply_migrations=False),
         active,
         project_ref,
-        stage_name,
-        stage_state,
         claimed,
         unclaimed,
         ready,
@@ -233,11 +217,6 @@ def show_task(task_id: str) -> None:
     help="New task type",
 )
 @click.option(
-    "--checkout-mode",
-    type=CHECKOUT_MODE_CHOICE,
-    help="New automation checkout mode",
-)
-@click.option(
     "--affected-file",
     "affected_files",
     multiple=True,
@@ -256,7 +235,6 @@ def update_task(
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
-    checkout_mode: str | None,
     affected_files: tuple[str, ...],
     clear_affected_files: bool,
 ) -> None:
@@ -276,7 +254,6 @@ def update_task(
         priority,
         parent_task_id,
         task_type,
-        checkout_mode,
         replacement_files,
     )
 
@@ -319,7 +296,7 @@ def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", default=None, help="Reason for reopening")
 def reopen_task_cmd(task_id: str, reason: str | None) -> None:
-    """Reopen a task to active stage state.
+    """Reopen a task.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
@@ -355,20 +332,12 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", required=True, help="Reason for de-escalation")
 @click.option("--reset-validation", is_flag=True, help="Reset validation fail count")
-@click.option("--reset-stage-attempts", is_flag=True, help="Reset current stage work attempts")
-@click.option(
-    "--restore-stage-from-history",
-    is_flag=True,
-    help="Restore a current ready stage from prior build_stop review_approved history",
-)
 def de_escalate_cmd(
     task_id: str,
     reason: str,
     reset_validation: bool,
-    reset_stage_attempts: bool,
-    restore_stage_from_history: bool,
 ) -> None:
-    """Return an escalated task to its preserved current stage.
+    """Return an escalated task to ready.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
@@ -379,8 +348,6 @@ def de_escalate_cmd(
         task_id,
         reason,
         reset_validation,
-        reset_stage_attempts,
-        restore_stage_from_history,
     )
 
 
@@ -409,5 +376,4 @@ __all__ = [
     "task_stats",
     "update_task",
     "validation_history_cmd",
-    "_current_stage_display",
 ]

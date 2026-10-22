@@ -44,8 +44,7 @@ def _task_state_label(task: object) -> str:
         return "closed"
     if state["is_escalated"]:
         return "escalated"
-    current_stage = state["current_stage"]
-    return current_stage["state"] if current_stage else "ready"
+    return "ready"
 
 
 #: Hooks a CLI emits without user activity. A deferred SessionStart followed by

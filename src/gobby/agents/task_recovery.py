@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import nullcontext
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.recovery_state import daemon_resume_successor_id, is_daemon_stop_parked
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.tasks.state_semantics import (
-    current_stage,
     get_claimed_session_id,
     is_task_actively_claimed,
     projected_task_state,
@@ -74,8 +71,6 @@ class _StallClassifier(Protocol):
 
     def is_provider_error(self, error_string: str | None) -> bool: ...
 
-    def is_bootstrap_stall(self, error_string: str | None) -> bool: ...
-
 
 class _Task(Protocol):
     @property
@@ -84,28 +79,6 @@ class _Task(Protocol):
     @property
     def seq_num(self) -> int | None: ...
 
-    @property
-    def dispatch_failure_count(self) -> int | None: ...
-
-
-def _stage_name(stage: Any) -> str | None:
-    if isinstance(stage, dict):
-        raw = stage.get("stage_name") or stage.get("name")
-    else:
-        raw = getattr(stage, "stage_name", None) or getattr(stage, "name", None)
-    return raw if isinstance(raw, str) and raw else None
-
-
-def get_task_failure_threshold() -> int:
-    """Return the configured task failure escalation threshold."""
-    raw = os.environ.get("GOBBY_TASK_FAILURE_THRESHOLD", "3")
-    try:
-        threshold = int(raw)
-    except ValueError as exc:
-        raise ValueError("GOBBY_TASK_FAILURE_THRESHOLD must be a positive integer") from exc
-    if threshold < 1:
-        raise ValueError("GOBBY_TASK_FAILURE_THRESHOLD must be a positive integer")
-    return threshold
 
 
 class TaskRecoveryHandler:
@@ -116,19 +89,12 @@ class TaskRecoveryHandler:
         task_manager: LocalTaskManager | None,
         agent_run_manager: _AgentRunManager,
         stall_classifier: _StallClassifier,
-        failure_threshold: int | None = None,
         terminal_agent_killer: Callable[[_AgentRun], Awaitable[dict[str, Any]]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
-        failure_threshold = (
-            get_task_failure_threshold() if failure_threshold is None else failure_threshold
-        )
-        if failure_threshold < 1:
-            raise ValueError("failure_threshold must be a positive integer")
         self._task_manager = task_manager
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
-        self._failure_threshold = failure_threshold
         self._terminal_agent_killer = terminal_agent_killer
         self._run_db_callback = run_db
         # Terminal runs that own no task and whose stale claim variables are
@@ -278,7 +244,6 @@ class TaskRecoveryHandler:
         is_provider = self._stall_classifier.for_provider(db_run.provider).is_provider_error(
             db_run.error
         )
-        is_bootstrap_stall = self._is_bootstrap_stall(db_run.error)
         if is_provider:
             logger.info(
                 "Agent %s failed with provider error (provider=%s): %s",
@@ -287,95 +252,15 @@ class TaskRecoveryHandler:
                 db_run.error,
             )
 
-        if lifecycle_stage != "in_progress":
-            self._release_task_claim_with_mutex(task_id)
-            self._clear_claim_session_variables(db_run, task_id)
-            logger.info(
-                "Released stale ownership on task %s after agent %s failed (status=%s)",
-                task_ref,
-                db_run.id,
-                lifecycle_stage,
-            )
-            return True
-
-        failure_count = task.dispatch_failure_count or 0
-        counts_dispatch_failure = (not is_provider) or is_bootstrap_stall
-        if counts_dispatch_failure:
-            failure_count += 1
-
-        failure_reason = (
-            "bootstrap_accounting_stall"
-            if is_bootstrap_stall
-            else "provider_startup_failed"
-            if is_provider
-            else "agent_run_failed"
-        )
-        if is_provider and not is_bootstrap_stall:
-            self._fail_current_stage(
-                task_id,
-                task,
-                reason=failure_reason,
-                by_session_id=db_run.child_session_id or db_run.claimed_session_id,
-            )
-            self._release_task_claim_with_mutex(
-                task_id,
-                dispatch_failure_count=failure_count,
-            )
-            self._clear_claim_session_variables(db_run, task_id)
-            logger.info(
-                "Released stale ownership on task %s after provider startup failure",
-                task_ref,
-            )
-            return True
-
-        if counts_dispatch_failure and failure_count >= self._failure_threshold:
-            self._fail_current_stage(
-                task_id,
-                task,
-                reason=failure_reason,
-                by_session_id=db_run.child_session_id or db_run.claimed_session_id,
-            )
-            self._release_task_claim_with_mutex(
-                task_id,
-                dispatch_failure_count=0,
-                escalated_at=datetime.now(UTC).isoformat(),
-                escalation_reason=(
-                    f"Bootstrap/accounting stalled {failure_count} dispatch attempts"
-                    if is_bootstrap_stall
-                    else f"Failed {failure_count} dispatch attempts"
-                ),
-            )
-            self._clear_claim_session_variables(db_run, task_id)
-            logger.warning(
-                "Task %s escalated after %s dispatch attempts",
-                task_ref,
-                failure_count,
-            )
-            return True
-
-        self._fail_current_stage(
-            task_id,
-            task,
-            reason=failure_reason,
-            by_session_id=db_run.child_session_id or db_run.claimed_session_id,
-        )
-        self._release_task_claim_with_mutex(
-            task_id,
-            dispatch_failure_count=failure_count,
-        )
+        self._release_task_claim_with_mutex(task_id)
         self._clear_claim_session_variables(db_run, task_id)
         logger.info(
-            "Recovered task %s to open after agent %s failed",
+            "Released stale ownership on task %s after agent %s failed (status=%s)",
             task_ref,
             db_run.id,
+            lifecycle_stage,
         )
         return True
-
-    def _is_bootstrap_stall(self, error_string: str | None) -> bool:
-        checker = getattr(self._stall_classifier, "is_bootstrap_stall", None)
-        if not callable(checker):
-            return False
-        return checker(error_string) is True
 
     async def recover_tasks_from_terminal_agents(self, *, limit_per_status: int = 100) -> int:
         """Sweep terminal non-success runs whose task ownership was not recovered.
@@ -409,37 +294,6 @@ class TaskRecoveryHandler:
                     recovered += 1
         self._settled_run_ids &= swept
         return recovered
-
-    def _fail_current_stage(
-        self,
-        task_id: str,
-        task: _Task,
-        *,
-        reason: str,
-        by_session_id: str | None,
-    ) -> None:
-        """Return the active in-progress stage to ready through the stage state machine."""
-        if not self._task_manager:
-            return
-        stage_name = _stage_name(current_stage(task))
-        if stage_name is None:
-            return
-        try:
-            self._task_manager.stage_states.fail_stage(
-                task_id,
-                stage_name,
-                reason=reason,
-                by_session_id=by_session_id,
-            )
-        except Exception as exc:
-            if exc.__class__.__name__ != "IllegalStageTransitionError":
-                raise
-            fresh = self._task_manager.stage_states.get(
-                task_id,
-                stage_name,
-            )
-            if fresh is None or getattr(fresh, "state", None) != "ready":
-                raise
 
     async def _verify_agent_dead_before_recovery(self, db_run: _AgentRun, task_ref: str) -> bool:
         if not await self._run_db(self._run_owns_session, db_run):

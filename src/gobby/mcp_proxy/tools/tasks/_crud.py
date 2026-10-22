@@ -35,7 +35,6 @@ from gobby.tasks.criterion_commands import (
     criterion_command_authoring_payload,
     malformed_criterion_command_findings,
 )
-from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
@@ -542,8 +541,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         task_type: str | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
-        allow_automation: bool | None = None,
-        checkout_mode: str | None = None,
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
@@ -627,15 +624,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["start_date"] = start_date
         if due_date is not None:
             kwargs["due_date"] = due_date
-        if allow_automation is not None:
-            kwargs["allow_automation"] = allow_automation
-        if checkout_mode is not None:
-            try:
-                kwargs["checkout_mode"] = validate_task_isolation_artifacts(
-                    ctx.task_manager, resolved_id, checkout_mode
-                )
-            except ValueError as e:
-                return {"error": str(e)}
         if assigned_agent is not None:
             kwargs["assigned_agent"] = assigned_agent
         if implementation_domain is not None:
@@ -727,17 +715,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "due_date": {
                     "type": "string",
                     "description": "Expected completion date (ISO 8601, e.g. '2025-03-15'). Optional.",
-                    "default": None,
-                },
-                "allow_automation": {
-                    "type": "boolean",
-                    "description": "Enable or disable dispatcher automation for this task.",
-                    "default": None,
-                },
-                "checkout_mode": {
-                    "type": "string",
-                    "enum": ["none", "worktree", "clone"],
-                    "description": "Automation checkout mode for future dispatch.",
                     "default": None,
                 },
                 "assigned_agent": {

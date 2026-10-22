@@ -33,25 +33,6 @@ DISPATCH_MUTEX_REFRESH_TTL_SECONDS = 600
 DISPATCH_MUTEX_REFRESH_BATCH_SIZE = 100
 
 
-def has_dispatch_stage_context(run: AgentRun) -> bool:
-    """Return whether resume metadata carries dispatcher stage state."""
-    try:
-        metadata = run.resume_metadata_json
-        if not isinstance(metadata, dict):
-            return False
-        if isinstance(metadata.get("stage_name"), str) and isinstance(
-            metadata.get("stage_state"), str
-        ):
-            return True
-        initial_variables = metadata.get("initial_variables")
-        return isinstance(initial_variables, dict) and (
-            isinstance(initial_variables.get("stage_name"), str)
-            and isinstance(initial_variables.get("stage_state"), str)
-        )
-    except Exception:
-        return False
-
-
 class LifecycleReconciliation:
     """Re-drive interrupted termination and dispatch-lease state."""
 
@@ -357,9 +338,6 @@ class LifecycleReconciliation:
                         refreshed += 1
                     else:
                         skipped += 1
-                    continue
-                if not has_dispatch_stage_context(run):
-                    skipped += 1
                     continue
                 if storage.acquire_mutex(
                     run.task_id,

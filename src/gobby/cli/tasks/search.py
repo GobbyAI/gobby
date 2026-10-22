@@ -6,7 +6,7 @@ import click
 
 from gobby.cli.tasks._utils import get_task_manager
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.state_semantics import projected_task_state
 from gobby.utils.json_helpers import json_dumps
 
 
@@ -116,26 +116,18 @@ def search_tasks(
     click.echo(f"Found {len(results)} task(s) matching '{query}':\n")
 
     # Print header
-    click.echo(f"{'#':<6} {'Score':<7} {'Stage':<12} {'Pri':<4} {'Title'}")
+    click.echo(f"{'#':<6} {'Score':<7} {'State':<12} {'Pri':<4} {'Title'}")
     click.echo("-" * 70)
 
     for task, score in results:
         # Format similar to list_tasks but with score
         seq_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-        state = serialize_task_state(task)
-        if state["is_closed"]:
-            stage_display = "closed"
-        elif state["is_escalated"]:
-            stage_display = "escalated"
-        else:
-            current_stage = state["current_stage"]
-            stage_display = current_stage["state"] if current_stage else "ready"
-        stage_display = stage_display[:11]
+        state_display = projected_task_state(task)[:11]
         pri_display = str(task.priority) if task.priority else ""
         title_display = task.title[:45] if task.title else ""
 
         click.echo(
-            f"{seq_ref:<6} {score:<7.3f} {stage_display:<12} {pri_display:<4} {title_display}"
+            f"{seq_ref:<6} {score:<7.3f} {state_display:<12} {pri_display:<4} {title_display}"
         )
 
 

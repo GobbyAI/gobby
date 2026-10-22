@@ -102,7 +102,6 @@ def update_task_impl(
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
-    checkout_mode: str | None,
     affected_files: list[str] | None,
 ) -> None:
     manager = services.get_task_manager()
@@ -132,10 +131,6 @@ def update_task_impl(
         kwargs["affected_files"] = affected_files
 
     try:
-        if checkout_mode is not None:
-            kwargs["checkout_mode"] = services.validate_task_isolation_artifacts(
-                manager, resolved.id, checkout_mode
-            )
         task = manager.update_task(resolved.id, **kwargs)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -288,8 +283,6 @@ def de_escalate_impl(
     task_id: str,
     reason: str,
     reset_validation: bool,
-    reset_stage_attempts: bool,
-    restore_stage_from_history: bool,
 ) -> None:
     manager = services.get_task_manager()
     resolved = services.resolve_task_id(manager, task_id)
@@ -307,13 +300,7 @@ def de_escalate_impl(
         resolved.id,
         reason=reason,
         reset_validation=reset_validation,
-        reset_stage_attempts=reset_stage_attempts,
-        restore_stage_from_history=restore_stage_from_history,
     )
     click.echo(f"De-escalated task {resolved.id[:8]} ({reason})")
     if reset_validation:
         click.echo("  Validation fail count reset to 0")
-    if reset_stage_attempts:
-        click.echo("  Current stage work attempts reset to 0")
-    if restore_stage_from_history:
-        click.echo("  Current stage restored from lifecycle history")

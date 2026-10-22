@@ -103,7 +103,6 @@ def _task_payload(row: AttentionRosterRow) -> dict[str, object] | None:
     return {
         "id": row.task_id,
         "ref": row.task_ref,
-        "stage": row.task_stage,
         "title": row.task_title,
     }
 

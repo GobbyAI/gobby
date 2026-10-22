@@ -19,9 +19,7 @@ type DeferralStatus = Literal[
     "missing_dependency_or_cited_parent",
 ]
 
-_ACTIVE_TASK_STATES = frozenset(
-    {"ready", "in_progress", "needs_review", "review_approved", "escalated"}
-)
+_ACTIVE_TASK_STATES = frozenset({"ready", "escalated"})
 
 # Closure reasons under which the deferral target delivered the obligation it
 # was pointed at. A deferral names work another task owns, so the target
