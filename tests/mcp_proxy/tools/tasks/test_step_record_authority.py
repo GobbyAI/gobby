@@ -419,3 +419,22 @@ async def test_created_record_notifies_task_listeners(
 
     assert first["created"] is True
     listener.assert_called_once_with()
+
+
+async def test_get_task_shows_current_step_records(
+    team: dict[str, str],
+    task: Task,
+    registry: InternalToolRegistry,
+) -> None:
+    with session_context_for_test(team["tester"]):
+        await registry.call("record_test_step", _args(task.id, status="in_progress"))
+        tested = await registry.call("record_test_step", _args(task.id))
+    with session_context_for_test(team["implementer"]):
+        implemented = await registry.call("record_implementation_step", _args(task.id))
+
+    full = await registry.call("get_task", {"task_id": task.id, "brief": False})
+
+    assert full["step_records"] == {
+        "test": tested["record"],
+        "implementation": implemented["record"],
+    }

@@ -7,7 +7,11 @@ from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
-from gobby.sync.task_review_serialization import deserialize_task_review, serialize_task_review
+from gobby.sync.task_review_serialization import (
+    deserialize_task_review,
+    deserialize_task_step_records,
+    serialize_task_review,
+)
 from gobby.tasks.criteria_text import require_validation_criteria
 from gobby.tasks.state_semantics import (
     serialize_task_state,
@@ -15,6 +19,7 @@ from gobby.tasks.state_semantics import (
     validate_task_hold_state,
     validate_task_state,
 )
+from gobby.tasks.step_records import restore_task_step_records, step_records_by_task
 from gobby.utils.json_helpers import json_dumps
 
 TASK_BACKUP_PAGE_SIZE = 100_000
@@ -315,6 +320,7 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
 
         try:
             deserialize_task_review(data.get("review"))
+            deserialize_task_step_records(data.get("review"), task_id=task_id)
         except ValueError as exc:
             raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
@@ -366,6 +372,7 @@ class TaskBackupManager:
                 offset += len(page)
 
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
+            step_history = step_records_by_task(self.db)
 
             deps_map: dict[str, list[str]] = {}
             for row in deps_rows:
@@ -398,13 +405,14 @@ class TaskBackupManager:
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
-                    "commits": sorted(set(task.commits)) if task.commits else [],
+                    # Link order is meaningful: the last commit is the tip step records bind.
+                    "commits": list(dict.fromkeys(task.commits)) if task.commits else [],
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
                     "labels": task.labels if task.labels else None,
-                    "review": serialize_task_review(task),
+                    "review": serialize_task_review(task, step_history.get(task.id, [])),
                     # Expansion fields
                     "category": task.category,
                     # External integrations
@@ -732,6 +740,17 @@ class TaskBackupManager:
                             ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
                             """,
                             (task_id, depends_on, datetime.now(UTC)),
+                        )
+
+                # Phase 4: Append step record history each stored task lacks.
+                for data in records:
+                    history = deserialize_task_step_records(data.get("review"), task_id=data["id"])
+                    if data["id"] in existing_tasks and not restore_task_step_records(
+                        conn, data["id"], history
+                    ):
+                        logger.warning(
+                            "Task %s: kept the stored diverged step record history",
+                            data["id"],
                         )
 
             logger.info(

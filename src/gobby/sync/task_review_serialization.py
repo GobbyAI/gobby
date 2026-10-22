@@ -1,8 +1,11 @@
 """The independent-review portion of a task backup."""
 
+from collections.abc import Sequence
 from typing import Literal, TypedDict, cast
+from uuid import UUID
 
 from gobby.storage.tasks import Task
+from gobby.tasks.step_records import TaskStepRecord
 
 ReviewStatus = Literal["pending", "valid", "invalid", "error"]
 
@@ -16,8 +19,8 @@ class RestoredTaskReview(TypedDict):
     validation_override_reason: str | None
 
 
-def serialize_task_review(task: Task) -> dict[str, object]:
-    """Preserve the current review epoch and criteria in the backup contract."""
+def serialize_task_review(task: Task, history: Sequence[TaskStepRecord]) -> dict[str, object]:
+    """Preserve the review summary, criteria and the task's step record history."""
     return {
         "status": task.review_status or "pending",
         "feedback": task.review_feedback,
@@ -25,7 +28,38 @@ def serialize_task_review(task: Task) -> dict[str, object]:
         "epoch": task.review_epoch,
         "criteria": task.validation_criteria,
         "override_reason": task.validation_override_reason,
+        "step_records": [record.model_dump(mode="json") for record in history],
     }
+
+
+def deserialize_task_step_records(value: object, *, task_id: str) -> list[TaskStepRecord]:
+    """Validate backed-up step history, the only restore input that can carry approval.
+
+    Call after ``deserialize_task_review`` has validated the review object and epoch.
+    """
+    review = value if isinstance(value, dict) else {}
+    entries = review.get("step_records", [])
+    if not isinstance(entries, list):
+        raise ValueError("review.step_records must be a list")
+    epoch = review.get("epoch", 1)
+    history: list[TaskStepRecord] = []
+    for index, entry in enumerate(entries):
+        try:
+            record = TaskStepRecord.model_validate(entry)
+            UUID(record.id)
+            UUID(record.session_id)
+        except ValueError as exc:
+            raise ValueError(f"review.step_records[{index}] is not a step record: {exc}") from exc
+        if record.task_id != task_id:
+            raise ValueError(f"review.step_records[{index}] belongs to another task")
+        if record.epoch > epoch:
+            raise ValueError(f"review.step_records[{index}] is from a later epoch than the task")
+        if history and record.sequence <= history[-1].sequence:
+            raise ValueError("review.step_records sequences must strictly increase")
+        history.append(record)
+    if len({record.id for record in history}) != len(history):
+        raise ValueError("review.step_records has duplicate record ids")
+    return history
 
 
 def deserialize_task_review(value: object) -> RestoredTaskReview:

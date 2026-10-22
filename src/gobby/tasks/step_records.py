@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -86,22 +87,69 @@ class TaskStepRecord(StepSubmission):
     updated_at: datetime
 
 
+def _stored_record(row: Mapping[str, Any]) -> TaskStepRecord:
+    record = TaskStepRecord.model_validate_json(row["body"])
+    if (record.id, record.task_id, record.session_id) != (
+        str(row["id"]),
+        str(row["task_id"]),
+        row["author"],
+    ):
+        raise StepRecordError("step record identity does not match its stored provenance")
+    return record
+
+
 def _records(conn: Transaction, task_id: str) -> list[TaskStepRecord]:
     rows = conn.execute(
-        "SELECT id, author, body FROM task_comments WHERE task_id = %s AND author_type = %s",
+        "SELECT id, task_id, author, body FROM task_comments "
+        "WHERE task_id = %s AND author_type = %s",
         (task_id, STEP_RECORD_AUTHOR_TYPE),
     ).fetchall()
-    records: list[TaskStepRecord] = []
-    for row in rows:
-        record = TaskStepRecord.model_validate_json(row["body"])
-        if (record.id, record.task_id, record.session_id) != (
-            str(row["id"]),
-            task_id,
-            row["author"],
-        ):
-            raise StepRecordError("step record identity does not match its stored provenance")
-        records.append(record)
-    return sorted(records, key=lambda record: record.sequence)
+    return sorted(map(_stored_record, rows), key=lambda record: record.sequence)
+
+
+def step_records_by_task(db: HubDatabase) -> dict[str, list[TaskStepRecord]]:
+    """Every task's step history in sequence order, read in one query for backups."""
+    rows = db.fetchall(
+        "SELECT id, task_id, author, body FROM task_comments WHERE author_type = %s",
+        (STEP_RECORD_AUTHOR_TYPE,),
+    )
+    history: dict[str, list[TaskStepRecord]] = {}
+    for record in sorted(map(_stored_record, rows), key=lambda record: record.sequence):
+        history.setdefault(record.task_id, []).append(record)
+    return history
+
+
+def restore_task_step_records(
+    conn: Transaction, task_id: str, history: Sequence[TaskStepRecord]
+) -> bool:
+    """Append backed-up history the task lacks; refuse history that diverges from storage.
+
+    The reserved author type is written here, never read from the backup, so restored
+    comments cannot become step records. Returns False, writing nothing, on divergence.
+    """
+    conn.execute("SELECT 1 FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
+    stored = _records(conn, task_id)
+    shared = min(len(stored), len(history))
+    if [(r.id, r.sequence) for r in stored[:shared]] != [
+        (r.id, r.sequence) for r in history[:shared]
+    ]:
+        return False
+    for record in history[len(stored) :]:
+        conn.execute(
+            "INSERT INTO task_comments "
+            "(id, task_id, author, author_type, body, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                record.id,
+                task_id,
+                record.session_id,
+                STEP_RECORD_AUTHOR_TYPE,
+                record.model_dump_json(),
+                record.updated_at,
+                record.updated_at,
+            ),
+        )
+    return True
 
 
 def list_task_step_records(db: HubDatabase, task_id: str) -> list[TaskStepRecord]:

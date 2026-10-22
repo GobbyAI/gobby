@@ -35,8 +35,9 @@ def test_review_contract_has_no_legacy_fields(
         assert (
             not {"validation_status", "validation_feedback", "validation_fail_count"} & shape.keys()
         )
-    backup = serialize_task_review(persisted)
+    backup = serialize_task_review(persisted, [])
     assert backup["status"] == status
+    assert backup["step_records"] == []
     assert backup["feedback"] == "Full reviewer feedback"
     assert backup["fail_count"] == 2
     assert backup["epoch"] == 1
