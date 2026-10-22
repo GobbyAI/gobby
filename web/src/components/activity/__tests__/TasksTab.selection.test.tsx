@@ -70,7 +70,7 @@ it("keeps a row clicked before the first-row default selection is applied", asyn
   const row = (title: string) =>
     screen.getByText(title).closest('[role="treeitem"]');
   expect(row("Open task 2")).toHaveAttribute("aria-selected", "true");
-  expect(row("Review approved task")).toHaveAttribute("aria-selected", "false");
+  expect(row("Ready task")).toHaveAttribute("aria-selected", "false");
 });
 
 it("selects the task a focus ref resolves to, then reports it handled", async () => {
@@ -93,7 +93,7 @@ it("selects the task a focus ref resolves to, then reports it handled", async ()
   await vi.waitFor(() => {
     expect(row("Open task 3")).toHaveAttribute("aria-selected", "true");
   });
-  expect(row("Review approved task")).toHaveAttribute("aria-selected", "false");
+  expect(row("Ready task")).toHaveAttribute("aria-selected", "false");
   expect(onFocusHandled).toHaveBeenCalledOnce();
 });
 
@@ -113,7 +113,7 @@ it("keeps a focused task the default filters hide, showing its detail", async ()
   await act(async () => {});
   expect(screen.getByDisplayValue("Closed task")).toBeInTheDocument();
   expect(
-    screen.getByText("Review approved task").closest('[role="treeitem"]'),
+    screen.getByText("Ready task").closest('[role="treeitem"]'),
   ).toHaveAttribute("aria-selected", "false");
 });
 
