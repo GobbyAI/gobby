@@ -93,7 +93,6 @@ class TestDeEscalateCommand:
         mock_manager.de_escalate_task.assert_called_once_with(
             "gt-test123",
             reason="Fixed manually",
-            reset_validation=False,
         )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -126,13 +125,13 @@ class TestDeEscalateCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_de_escalate_with_reset_validation_flag(
+    def test_de_escalate_rejects_retired_reset_validation_flag(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test de-escalate with --reset-validation flag."""
+        """De-escalation cannot erase historical validation state."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
         mock_task.is_escalated = True
@@ -147,16 +146,10 @@ class TestDeEscalateCommand:
             ["tasks", "de-escalate", "gt-test123", "--reason", "Fixed", "--reset-validation"],
         )
 
-        # With valid args and an escalated task, command should succeed
-        assert result.exit_code == 0, (
-            f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
-        )
-        assert result.exception is None
-        mock_manager.de_escalate_task.assert_called_once_with(
-            "gt-test123",
-            reason="Fixed",
-            reset_validation=True,
-        )
+        assert result.exit_code == 2
+        assert "No such option" in result.output
+        assert "--reset-validation" in result.output
+        mock_manager.de_escalate_task.assert_not_called()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -236,20 +229,21 @@ class TestValidationHistoryCommand:
         assert result.exit_code == 0
         assert result.exception is None
 
-    def test_validation_history_clear_flag_exists(self, runner: CliRunner) -> None:
-        """Test that validation-history --clear flag exists."""
+    def test_validation_history_help_is_read_only(self, runner: CliRunner) -> None:
+        """History help exposes no destructive clear operation."""
         result = runner.invoke(cli, ["tasks", "validation-history", "--help"])
-        assert "--clear" in result.output
+        assert result.exit_code == 0
+        assert "--clear" not in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_validation_history_clear_removes_history(
+    def test_validation_history_rejects_retired_clear_flag(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test validation-history --clear removes history."""
+        """The retired clear flag is rejected before resolving stored history."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
         mock_resolve.return_value = mock_task
@@ -262,8 +256,11 @@ class TestValidationHistoryCommand:
             ["tasks", "validation-history", "gt-test123", "--clear"],
         )
 
-        assert result.exit_code == 0
-        assert "cleared" in result.output.lower()
+        assert result.exit_code == 2
+        assert "No such option" in result.output
+        assert "--clear" in result.output
+        mock_resolve.assert_not_called()
+        mock_get_manager.assert_not_called()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")

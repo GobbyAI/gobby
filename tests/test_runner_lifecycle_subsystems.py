@@ -70,7 +70,7 @@ def _minimal_init_runner() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_periodic_agent_reconciliation_rotates_credentials_before_runs_and_reviews(
+async def test_periodic_agent_reconciliation_rotates_credentials_before_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -89,30 +89,19 @@ async def test_periodic_agent_reconciliation_rotates_credentials_before_runs_and
         calls.append("runs")
         return 2
 
-    async def review_reconcile(received: GobbyRunner) -> int:
-        assert received is runner
-        calls.append("reviews")
-        return 3
-
     monkeypatch.setattr(
         lifecycle_subsystems,
         "_reclassify_reconciliation_pending_runs",
         agent_reconcile,
     )
-    monkeypatch.setattr(
-        lifecycle_subsystems,
-        "_reconcile_task_close_reviews",
-        review_reconcile,
-    )
-
     reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
 
-    assert reconciled == 7
-    assert calls == ["credentials", "runs", "reviews"]
+    assert reconciled == 4
+    assert calls == ["credentials", "runs"]
 
 
 @pytest.mark.asyncio
-async def test_failed_credential_rotation_does_not_stop_run_and_review_reconciliation(
+async def test_failed_credential_rotation_does_not_stop_run_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -128,16 +117,10 @@ async def test_failed_credential_rotation_does_not_stop_run_and_review_reconcili
         "_reclassify_reconciliation_pending_runs",
         AsyncMock(return_value=2),
     )
-    monkeypatch.setattr(
-        lifecycle_subsystems,
-        "_reconcile_task_close_reviews",
-        AsyncMock(return_value=3),
-    )
-
     with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
         reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
 
-    assert reconciled == 5
+    assert reconciled == 2
     assert "Managed credential rotation failed" in caplog.text
 
 
