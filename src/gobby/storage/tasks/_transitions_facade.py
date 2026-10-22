@@ -122,6 +122,7 @@ class TaskTransitionsMixin:
         )
         self._notify_listeners()
         return task
+
     def claim_task_for_agent(
         self,
         task_id: str,
