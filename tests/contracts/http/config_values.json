@@ -534,8 +534,6 @@
             ]
           },
           "validation": {
-            "auto_generate_on_create": true,
-            "auto_generate_on_expand": true,
             "candidates": [
               {
                 "candidate": "codex/gpt-6-luna",
@@ -546,21 +544,9 @@
                 "reasoning_effort": null
               }
             ],
-            "close_review_max_concurrency_per_project": 3,
-            "close_review_min_severity": "low",
-            "close_review_prompt_max_chars": 256000,
-            "close_review_total_timeout_seconds": 120.0,
-            "close_review_validator_timeout_seconds": 1200.0,
-            "close_validation_escalation_threshold": 5,
-            "criteria_prompt_path": null,
-            "criteria_system_prompt": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
+            "confirmation_timeout_seconds": 8.0,
             "enabled": false,
-            "escalation_enabled": true,
-            "escalation_notify": "none",
-            "escalation_webhook_url": null,
-            "max_iterations": 10,
-            "profile": "feature_mid",
-            "require_clean_attributed_paths_on_close": true
+            "profile": "feature_mid"
           }
         },
         "hooks": {
@@ -1627,8 +1613,6 @@
             ]
           },
           "validation": {
-            "auto_generate_on_create": true,
-            "auto_generate_on_expand": true,
             "candidates": [
               {
                 "candidate": "codex/gpt-6-luna",
@@ -1639,21 +1623,9 @@
                 "reasoning_effort": null
               }
             ],
-            "close_review_max_concurrency_per_project": 3,
-            "close_review_min_severity": "low",
-            "close_review_prompt_max_chars": 256000,
-            "close_review_total_timeout_seconds": 120.0,
-            "close_review_validator_timeout_seconds": 1200.0,
-            "close_validation_escalation_threshold": 5,
-            "criteria_prompt_path": null,
-            "criteria_system_prompt": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
+            "confirmation_timeout_seconds": 8.0,
             "enabled": false,
-            "escalation_enabled": true,
-            "escalation_notify": "none",
-            "escalation_webhook_url": null,
-            "max_iterations": 10,
-            "profile": "feature_mid",
-            "require_clean_attributed_paths_on_close": true
+            "profile": "feature_mid"
           }
         },
         "hooks": {

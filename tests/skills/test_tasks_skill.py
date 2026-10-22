@@ -41,7 +41,7 @@ OWNERSHIP_SCENARIO_PATH = (
 )
 
 
-def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
+def test_validation_guidance_is_provider_neutral_and_reviewable() -> None:
     implementation = (SKILL_DIR / "implementation.md").read_text()
     closing = SKILL_PATH.read_text()
     for expected in (
@@ -51,25 +51,15 @@ def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
         "prior evidence stale; committing",
     ):
         assert expected in implementation
-    # The credit rule lives in the close reference; it mirrors _wrapper_reason in
-    # src/gobby/tasks/transcript_outcomes.py, including whole-call voiding.
     for expected in (
-        "Credit is judged per shell call",
-        "environment prefixes",
-        "`cd <dir> &&`",
-        "chains (each segment)",
-        "`| tail`",
-        "`;` command sequences",
-        "trailing output",
-        "fallbacks",
-        "backgrounding",
-        "subshells",
-        "voids every check in that call",
-        "direct rerun of each validation",
+        "exact commands and results",
+        "test-types and test-quality audits",
+        "suppression ratchet",
+        "independent reviewers",
+        "acceptance criteria",
     ):
         assert expected in closing
-    assert "claiming, closing, and worked-on sessions" in closing
-    assert "link windows" in closing
+    assert "does not score transcripts" in closing
     for provider in ("Claude Code", "Droid", "Grok", "Codex"):
         assert provider not in implementation + closing
 
@@ -78,30 +68,41 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     content = SKILL_PATH.read_text()
     assert len(content) < 15_000
     steps = (
-        "1. Finish all edits; resolve every owned finding",
+        "1. Finish the task",
         "2. Run focused validation after the final edit",
-        "3. Stage only task paths and commit",
-        "4. Call `close_task` with",
-        "5. Repair every deterministic blocker",
-        "6. After `closed=true` or a closure notification",
+        "3. Commit only task-owned paths",
+        "4. Call `close_task(",
+        "5. Repair every failed gate",
+        "6. After closing",
     )
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
-    assert "exact validation commands and results" in content
-    assert "`preview=true` is a deterministic-only readiness check" in content
-    assert "repeat the same close with\n   `preview=false`" in content
+    assert "exact commands and results" in content
+    assert "Preview leaves task state and commit links unchanged" in content
+    assert "`preview=false`" in content
     assert "review_task_memories" in content[positions[-1] :]
     overview = (SKILL_DIR / "overview.md").read_text()
     for topic in ("creation", "implementation", "closing"):
         assert topic in overview
 
 
-def test_agentic_close_review_waits_once_and_parks_the_caller() -> None:
+def test_close_guidance_names_only_the_four_invariants() -> None:
     content = SKILL_PATH.read_text()
-    assert "`close_review_required`, register\n   `wait_for_agent` once" in content
-    assert "`reviewer_run_id`" in content
-    assert "and yield" in content
-    assert "Do not poll or\n   repeatedly call close while review is queued or running" in content
+    gate_rows = [line for line in content.splitlines() if line.startswith("| `")]
+    assert [line.split("`")[1] for line in gate_rows] == [
+        "children_closed",
+        "linked_commits",
+        "uncommitted_task_edits",
+        "integration_ancestry",
+    ]
+    assert "Both leaves and epics" in content
+    for retired in (
+        "close_review_required",
+        "reviewer_run_id",
+        "submit_close_review",
+        "wait_for_agent",
+    ):
+        assert retired not in content
 
 
 def test_creation_guidance_uses_structured_named_test_references() -> None:
@@ -211,10 +212,9 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
     ):
         assert expected in agents
     closing = SKILL_PATH.read_text()
-    assert "register\n   `wait_for_agent` once" in closing
-    assert "and yield" in closing
-    assert "Do not poll or" in closing
-    assert "repeatedly call close" in closing
+    assert "does not score transcripts" in closing
+    assert "spawn a reviewer" in closing
+    assert "`closed=true`" in closing
 
 
 def test_guides_document_deterministic_preview_then_real_close() -> None:
@@ -222,13 +222,14 @@ def test_guides_document_deterministic_preview_then_real_close() -> None:
         content = path.read_text()
         assert "preview=true" in content
         assert "preview=false" in content
-        assert "never closes" in content
-        assert "close_review_required" in content
-        assert "reviewer_run_id" in content
+        assert "closed=true" in content
+        assert "integration_ancestry" in content
+        assert "close_review_required" not in content
+        assert "reviewer_run_id" not in content
         assert "review_task_memories" in content
 
 
-def test_lifecycle_scenario_previews_then_runs_close_review() -> None:
+def test_lifecycle_scenario_reviews_and_integrates_before_close() -> None:
     result = run_recorded_skill_scenario(LIFECYCLE_SCENARIO_PATH)
 
     assert result.loaded.action_names == (
@@ -236,13 +237,14 @@ def test_lifecycle_scenario_previews_then_runs_close_review() -> None:
         "edit",
         "run_validation",
         "commit",
+        "independent_review",
+        "integrate_commit",
         "preview_close",
         "close_task",
-        "wait_for_agent",
         "review_memory",
         "respond",
     )
-    assert "close-reviewed" in result.loaded.combined_text
+    assert "independently reviewed, integrated, closed" in result.loaded.combined_text
 
 
 def test_ownership_and_handoff_pressure_scenario_stays_inside_one_task() -> None:

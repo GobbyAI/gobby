@@ -2098,26 +2098,6 @@
           "default": false,
           "description": "Show full task result on create_task (False = minimal output with just id)"
         },
-        "gobby-tasks.validation.auto_generate_on_create": {
-          "type": "boolean",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Auto-generate validation criteria when creating tasks via create_task"
-        },
-        "gobby-tasks.validation.auto_generate_on_expand": {
-          "type": "boolean",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Auto-generate validation criteria when expanding tasks via expand_task"
-        },
         "gobby-tasks.validation.candidates": {
           "type": [
             "string"
@@ -2139,88 +2119,15 @@
           ],
           "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}]."
         },
-        "gobby-tasks.validation.close_review_max_concurrency_per_project": {
-          "type": "integer",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 3,
-          "description": "Maximum active close reviewers per project. Other tasks' reviews count against it at admission and promotion; a task never runs two reviews at once."
-        },
-        "gobby-tasks.validation.close_review_min_severity": {
-          "type": "string",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "low",
-          "description": "Minimum close-review code-finding severity that blocks closure. Criterion gaps always block regardless of this setting."
-        },
-        "gobby-tasks.validation.close_review_prompt_max_chars": {
-          "type": "integer",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 256000,
-          "description": "Maximum rendered character count for the task-close criteria-review prompt."
-        },
-        "gobby-tasks.validation.close_review_total_timeout_seconds": {
+        "gobby-tasks.validation.confirmation_timeout_seconds": {
           "type": "number",
           "namespace": "gobby-tasks",
           "secrecy": "none",
           "visibility": "public",
           "activation": "live",
           "machineExport": false,
-          "default": 120.0,
-          "description": "Wall-clock bound on the whole task-close criteria-review provider chain, including fallbacks. Expiry fails closed into validation backoff."
-        },
-        "gobby-tasks.validation.close_review_validator_timeout_seconds": {
-          "type": "number",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 1200.0,
-          "description": "Wall-clock bound on a spawned task-close reviewer and its durable review deadline."
-        },
-        "gobby-tasks.validation.close_validation_escalation_threshold": {
-          "type": "integer",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 5,
-          "description": "Invalid or pending close verdicts before atomic task escalation."
-        },
-        "gobby-tasks.validation.criteria_prompt_path": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Path to custom criteria generation prompt template (e.g., 'validation/criteria')"
-        },
-        "gobby-tasks.validation.criteria_system_prompt": {
-          "type": "string",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
-          "description": "System prompt for generating validation criteria"
+          "default": 8.0,
+          "description": "Wall-clock bound for found-work confirmation, including provider fallbacks."
         },
         "gobby-tasks.validation.enabled": {
           "type": "boolean",
@@ -2230,50 +2137,7 @@
           "activation": "live",
           "machineExport": false,
           "default": true,
-          "description": "Enable automated task validation"
-        },
-        "gobby-tasks.validation.escalation_enabled": {
-          "type": "boolean",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Enable task escalation on repeated validation failures"
-        },
-        "gobby-tasks.validation.escalation_notify": {
-          "type": "string",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "none",
-          "description": "Notification method when task is escalated"
-        },
-        "gobby-tasks.validation.escalation_webhook_url": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Webhook URL for escalation notifications"
-        },
-        "gobby-tasks.validation.max_iterations": {
-          "type": "integer",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 10,
-          "description": "Maximum validation attempts before escalation"
+          "description": "Enable found-work confirmation"
         },
         "gobby-tasks.validation.profile": {
           "type": "string",
@@ -2283,17 +2147,7 @@
           "activation": "live",
           "machineExport": false,
           "default": "feature_mid",
-          "description": "Capability profile for task validation."
-        },
-        "gobby-tasks.validation.require_clean_attributed_paths_on_close": {
-          "type": "boolean",
-          "namespace": "gobby-tasks",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Require a path-scoped Git status proof that task-attributed paths are clean before final close."
+          "description": "Capability profile for found-work confirmation."
         },
         "hook_extensions.webhooks.async_dispatch": {
           "type": "boolean",

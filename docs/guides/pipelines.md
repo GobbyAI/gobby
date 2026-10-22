@@ -117,7 +117,7 @@ description: Spawn a reviewer and wait for completion
 
 inputs:
   task_id: null
-  reviewer_agent: "task-close-reviewer"
+  reviewer_agent: "security-reviewer"
 
 steps:
   - id: spawn_reviewer

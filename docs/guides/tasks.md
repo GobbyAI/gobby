@@ -111,8 +111,8 @@ Select their owning task or finish it, and split commits by task. A later task
 may edit a committed path; those later edits do not block linking or closing the
 earlier commit when their live attribution began after that path's commit.
 Git records whole seconds, so same-second ordering is treated as unproven.
-Close uses validation runs started while its task was selected; edits to that
-task's owned paths always count and stale earlier green evidence.
+Close checks the task's attributed paths in every recorded checkout. Run
+validation again after changes and provide the results for independent review.
 
 ### Recover a handed-off task after a developer relaunch
 
@@ -123,80 +123,56 @@ handed off", repeat `escalate_task` on the reclaimed task with the original
 `Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated
 task and records its handoff in the current workflow. Then call
 `de_escalate_task` and `close_task(preview=true)` through the ordinary developer
-path. The preview still enforces the close checklist and independent review.
+path. The preview checks the four close invariants. Independent review remains part
+of the developer workflow.
 This recovery requires no workflow-variable writes.
 
 ### Close
 
-Leaf task closure requires a change summary. If the session edited in-repo files,
-the work must be committed and linked before close.
+Finish the task's validation and independent review, commit its files, and
+integrate every task commit. Then preview the close:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
-    "changes_summary": "Refreshed the task guide for the MCP-first task flow.",
+    "changes_summary": "Refreshed the guide; focused checks pass.",
     "preview": True,
 })
 ```
 
-The `preview=true` call evaluates deterministic gates 1–12: task/session/repository context,
-closed children, criteria and summary, prospective linked commits, clean
-task-attributed files, and transcript-visible validation. It returns the whole
-checklist, resolved commit SHAs, and a transcript evidence summary. Gate 13,
-`close_review`, is `not_run` when the deterministic gates pass. A `preview=true`
-call never closes the task; it also never links a commit or launches a reviewer.
+After checking task/session/repository authorization, both leaf and epic closes
+evaluate the same four invariants:
 
-After a clean preview, repeat the close with `preview=false`:
+| Gate | Requirement |
+| :--- | :--- |
+| `children_closed` | All child tasks are closed. |
+| `linked_commits` | Linked or prospective commits exist, or a canonical no-work reason is supplied. |
+| `uncommitted_task_edits` | Task-attributed paths are clean in every recorded checkout, with complete attribution. |
+| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
 
-```python
-call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
-    "task_id": "#14390",
-    "commit_sha": "abc1234",
-    "changes_summary": "Refreshed the task guide for the MCP-first task flow.",
-    "preview": False,
-})
-```
+Preview returns `gates`, `can_close`, `closed=false`, and resolved commit
+identities. It does not modify task state or commit links. Fix failed gates,
+then repeat the call with `preview=false`. Close rechecks current state and
+atomically links the explicit candidate with closure. A successful result has
+`closed=true`. A concurrent state change can require a retry.
 
-The real close rechecks gates 1–12, persists a taskless close-review intent, and
-returns `close_review_required` with `review_id`, `reviewer_run_id`, and a
-`queued` or `running` review status. Register `gobby-agents:wait_for_agent` once
-with that `reviewer_run_id`, then yield. The daemon applies the verdict and
-notifies the session; do not poll or repeat `close_task` while the review is
-active. After successful closure, call `gobby-memory:review_task_memories` with
-the task and the same summary.
+The close tool does not launch a reviewer or require transcript-derived test or
+TDD proof. Developers and independent reviewers assess the task's acceptance
+criteria and validation. Follow the task's review, landing, and activation
+workflow before closing; preserve exact commands and results in completion
+notes. After closing, call `gobby-memory:review_task_memories` with the task and
+summary.
 
-Close reviews persist across daemon restarts. A project runs up to
-`gobby-tasks.validation.close_review_max_concurrency_per_project` active close
-reviews (three by default; live-editable, and operators lower it under host load).
-When other tasks' reviews fill that capacity, `close_task` returns
-`close_review_busy` without queuing a reviewer; retry after one finishes. A task
-never runs two reviews at once. Preview also reports this busy condition, while
-real close enforces it atomically. Queued reviews promote FIFO within the same
-capacity, and the execution deadline starts only when a queued review is
-promoted. The public
-`gobby-tasks.validation.close_review_validator_timeout_seconds` setting controls
-that reviewer deadline (1200 seconds by default). Review fingerprints include
-structured task, net-patch, test-body, deterministic gate-fact, and review-policy
-evidence. Evidence or policy drift makes an active verdict stale and requires a
-fresh real-close attempt after the drift is resolved; there is no memoized
-one-shot criteria-review path.
-Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
-`already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
-no-work or out-of-repo closes; they still require a useful `changes_summary`.
+The canonical no-work reasons are `duplicate`, `already_implemented`, `wont_fix`,
+`obsolete`, and `out_of_repo`. They allow a commitless close but do not waive
+child closure, attributed-file cleanliness, or ancestry checks for existing
+commit links. An epic does not receive a separate commit exemption.
 
 Human operators may disposition an unneeded leaf directly with
-`gobby tasks close #14390 --reason already_implemented`. The CLI accepts only
+`gobby tasks close '#14390' --reason already_implemented`. The CLI accepts only
 the five canonical no-work reasons for direct leaf closure and still refuses a
-task with open children. Completed and custom-reason leaf closures use the MCP
-contract above.
-
-An escalated task returns an actionable `task_escalated` blocker instead of
-running another bounded review. Either use `de_escalate_task`/`reopen_task`, or
-provide a non-empty `override_justification` to close it deliberately. A
-deliberate close skips only the criteria review: gates 1-9 still apply, the
-justification is stored as `validation_override_reason`, and closure clears
-escalation metadata and resets the validation failure count.
+task with open children. Agent lifecycle work uses MCP.
 
 ## Dependencies and Ready Work
 
@@ -318,7 +294,6 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "preview": True,
 })
 # Repair deterministic blockers, then repeat with preview=False.
-# Wait once on reviewer_run_id when the real close queues or starts a review.
 ```
 
 Related MCP tools:
@@ -341,19 +316,13 @@ gobby tasks diff '#14390'
 gobby tasks validation-history '#14390'
 ```
 
-`close_task` validates leaf tasks with `validation_criteria` against the linked
-or current diff. Validation commands come from the transcripts of the claiming and
-closing sessions and of every earlier session that claimed or worked the task,
-each within its own link window (a session that no longer exists or has no
-readable transcript is skipped). Runs a session made while it worked another
-claimed task, including the owner's after a hand-off, are excluded. The owner's
-edits to the task's files are never excluded. A task-attributed edit after a
-clean run makes that run stale; a commit does not. Code, refactor, and test tasks require a clean test-category
-run, config tasks accept any clean validation command, and documentation,
-planning, research, manual, and no-edit tasks skip that checklist item. Parent
-tasks that own no work can close when all children are closed. Closing the last
-child auto-closes eligible ancestors. A claimed parent or one with linked
-commits retains its own work gates, even if its type is `epic`.
+Run focused checks appropriate to the change and retain their commands and
+results for independent review. Acceptance criteria are authored task data;
+the close tool enforces the four invariants described above. Historical
+validation records remain readable through `validation-history`.
+
+Closing the last child may auto-close eligible organizational ancestors.
+An explicit close on a claimed parent or epic uses the same gates as a leaf.
 
 A closed task takes no new children. `create_task` and
 `update_task(parent_task_id=...)` refuse a closed parent, naming it and
@@ -369,17 +338,10 @@ Carry `snapshot_hash` and `view_hash` on every subsequent page and restart on a
 stale snapshot/view error. Do not treat a complete diff-text page as a complete
 commit list or file manifest.
 
-The close-review launch prompt is capped by
-`gobby-tasks.validation.close_review_prompt_max_chars` (default 256,000
-characters). The taskless reviewer reads Gobby's authoritative linked-commit net
-patch through `get_task_diff`, follows every diff, commit, and manifest page,
-and runs OCR against the manifest paths to select per-file rules. OCR selects
-rules only; it never selects the commit range. The reviewer uses the code-review
-fallback checklist for files OCR does not support and must cover every manifest
-entry. Passed gate 1–12 facts remain authoritative even when the reviewer's
-sandbox cannot reproduce a credited command. Criterion gaps always block; code
-findings block at or above `close_review_min_severity` and remain visible below
-it.
+Independent reviewers use the linked diff and complete commit/file manifests.
+Follow every `get_task_diff` page, inspect all changed paths, and run relevant
+checks. Review and activation receipts record those workflow decisions; they
+are separate from the close tool's four-invariant evaluator.
 
 ## CLI Reference
 

@@ -147,8 +147,8 @@ src/gobby/
 │                                       #   token_events.py, spans.py, cron.py, ...
 ├── sync/                               # Task/memory JSONL backup/restore and issue import
 ├── tasks/                              # Task system: expansion/ + expansion_service.py
-│                                       #   (ExpansionService), validation.py
-│                                       #   (TaskValidator), state_semantics.py, prompts/
+│                                       #   (ExpansionService), close_invariants.py,
+│                                       #   state_semantics.py, acceptance_references.py
 ├── telemetry/                          # Logging/telemetry configuration
 ├── test_quality/                       # Test quality analysis
 ├── utils/                              # Utilities: git.py, daemon_client.py, sql.py,

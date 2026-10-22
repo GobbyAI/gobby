@@ -17,7 +17,7 @@ work and complete that decomposition within this task; do not defer it.
 
 For TDD-required tasks, load standalone `test-driven-development` before edits.
 Preserve red, minimal green, refactor/final-green, exact command, and applicable
-test-audit evidence. A test-write nudge is not proof that TDD was completed.
+test-audit evidence. The reviewer judges the sequence and the tests themselves.
 For development obligations use `$gobby development`.
 
 Every encountered defect, warning, or failed check becomes work in this session:
@@ -37,7 +37,7 @@ Every encountered defect, warning, or failed check becomes work in this session:
    delegator have both ended, or a self-claimed task has no live delegator,
    `transfer_task_authority(task_id, reason)` takes over activation-receipt
    authority; it refuses while a creator that is not the claimant, or a delegator,
-   is live, and refuses the task's claimant and task-close reviewers. A paused
+   is live, and refuses the task's claimant. A paused
    holder counts as ended once every agent run linked to it ended or its recorded
    process exited on this machine; a lost terminal or wake binding alone does not.
 3. Only a genuine decision, necessary planning pass, or broad clean window permits
@@ -48,11 +48,11 @@ Restarts and rebuilds are coordination within the fix, not deferral reasons.
 Enhancement ideas without broken behavior may be recorded as ideas normally.
 
 Run final validation after every final edit and formatting change. Follow an
-ongoing command to definitive exit. Which commands earn close credit is in
-[closing](closing.md). A later edit makes prior evidence stale; committing
-does not.
+ongoing command to definitive exit. Record the commands and results for independent
+review; the [close invariants](closing.md) are checked separately. A later edit makes
+prior evidence stale; committing does not.
 
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
-[TDD Enforcement](../../../../../../../../docs/guides/tdd-enforcement.md).
+[Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
 _Last verified: 2026-09-23_

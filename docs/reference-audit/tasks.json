@@ -38,13 +38,12 @@
         "developer-skills",
         "review-gates",
         "planning-rules",
-        "runtime-nudges",
+        "runtime-guidance",
         "verification-checklist",
         "see-also"
       ],
       "evidence": [
         "tdd-contract",
-        "installed-rules",
         "tdd-runtime-tests"
       ]
     },
@@ -1346,8 +1345,8 @@
     {
       "id": "tdd-contract",
       "kind": "source-inspection",
-      "command": "gcode symbol-at src/gobby/tasks/expansion/_contract.py:255; inspect bundled developer/reviewer skill/rule definitions",
-      "result": "One per-entry task; tdd flag adds required skill/label. Runtime test-write gate is distinct from transcript-backed red/green evidence."
+      "command": "Inspect src/gobby/tasks/expansion/_contract.py, tasks/close_invariants.py and the test-driven-development skill",
+      "result": "One task per manifest entry; tdd adds the skill and label. Developer and reviewer judgment owns tests-first evidence; close enforces four invariants without a runtime TDD proof gate."
     },
     {
       "id": "installed-rules",
@@ -1397,8 +1396,8 @@
     {
       "id": "tdd-runtime-tests",
       "kind": "isolated-tests",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_tdd_enforcement_rules.py -q",
-      "result": "33 passed."
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/skills/test_tasks_skill.py tests/workflows/test_tdd_gate_retirement.py -q",
+      "result": "19 passed; four-gate close guidance and retired TDD runtime gate verified."
     },
     {
       "id": "public-cli-inventory",

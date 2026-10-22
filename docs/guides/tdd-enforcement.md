@@ -1,7 +1,7 @@
-# TDD Enforcement
+# Tests-first Development
 
-Gobby enforces TDD through expansion metadata, native developer skills, review
-criteria, and lightweight runtime nudges.
+Gobby expresses tests-first requirements through task metadata, developer skills,
+and independent review. Developers run the tests; reviewers judge the evidence.
 
 ## Expansion Shape
 
@@ -56,15 +56,10 @@ validation.
 
 ## Review Gates
 
-Leaf close review (`task-close-reviewer`) checks TDD-required leaves before approval. Missing red evidence,
-green evidence, refactor/final-green evidence, exact test command, or
-supported-language test-quality audit output is a rejection. Outside Gobby, an
-unsupported-language warning plus focused repo-native validation satisfies the
-audit-attempt evidence.
-
-`epic-reviewer` checks the aggregate subtree. If a descendant task was
-TDD-required, epic QA verifies that QA and completion evidence covered the
-same TDD and test-quality requirements.
+Independent reviewers inspect the tests-first commit sequence, the expected
+failing behavior, final passing results, and test quality. Missing evidence is a
+review finding for the developer to address. The close tool does not validate
+RED/GREEN receipts or start an automatic review.
 
 ## Planning Rules
 
@@ -82,46 +77,13 @@ Standalone `category: test` remains valid for test infrastructure,
 characterization, parity, or regression suites with their own acceptance
 criteria.
 
-## Runtime Nudges
+## Runtime Guidance
 
-Workflow rules provide an edit-time test-first gate for interactive developer
-sessions:
-
-| Rule | Event | Path |
-|------|-------|------|
-| `enforce-tdd-block` | `before_tool` | `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-block.yaml` |
-| `enforce-tdd-track-tests` | `after_tool` | `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml` |
-
-The gate activates when `enforce_tdd` is true or a claimed task requires TDD
-through its label, additional skill, validation criteria, or session policy.
-It covers every hand-maintained source extension used by the monolith guard:
-Python, TypeScript/JavaScript, CSS, Rust, and shell. Test-convention paths in any
-language are recognized by one shared classifier. For Rust, that includes
-`src/<module>/tests.rs` and `src/**/*_tests.rs` module-test files.
-
-A Rust Edit or Write is also test writing when it touches only `#[cfg(test)]`
-code: the gate compares the file before and after the change with every
-cfg(test) item cut out, so introducing a cfg(test) item and editing inside an
-existing one both count, while a change that also rewrites production text
-stays a production write. The comparison reads the file from an absolute path;
-a relative path or a patch-text payload carries no readable before/after pair,
-so those changes stay production writes.
-
-Claim refresh derives `claimed_task_requires_tdd` and the ordered,
-deduplicated `claimed_task_acceptance_test_paths` from current task metadata.
-When acceptance criteria name tests, writing any named path records its
-canonical repository-relative path in `tdd_tests_written` and opens the source
-write gate. Without named acceptance tests, any test-convention file under the
-task's targets opens it. Retrying the same production write does not bypass the
-gate, and the rule never rewrites task validation criteria.
-
-These rules are supporting guardrails; task metadata and transcript-backed
-completion evidence remain authoritative at close.
-
-The rule files are bundled templates, not evidence of active enforcement.
-Inspect installed rows with `gobby-workflows:get_rule` before diagnosing a live
-session. The audit on 2026-09-12 found both named rules installed and enabled;
-their conditions still determine whether a particular task activates them.
+Task metadata selects the `test-driven-development` skill. Production edits are
+not gated by test-write flags or daemon-issued TDD proof. The skill describes
+how to reach a meaningful failing assertion, implement the behavior, and rerun
+focused checks. Commit history and independently repeatable tests provide the
+review evidence.
 
 ## Verification Checklist
 
@@ -134,10 +96,8 @@ When auditing this guide, verify:
   command, and supported test-quality audit or unsupported-language fallback
   evidence.
 - Developer agents load `gobby:references/development/obligations.md`.
-- QA and epic QA agent definitions mention TDD evidence and test-quality
-  audit requirements.
-- Runtime rule paths still live under
-  `src/gobby/install/shared/workflows/rules/tdd-enforcement/`.
+- Independent review checks the sequence and test quality.
+- Close exposes only its four task/commit/attribution/ancestry invariants.
 
 ## See Also
 
@@ -147,4 +107,4 @@ When auditing this guide, verify:
 - [Variables](./variables.md)
 - [Orchestration](./orchestration.md)
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-22_

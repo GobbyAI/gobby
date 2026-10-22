@@ -1,92 +1,55 @@
 # Close verified work
 
 Load before any task close, including no-work dispositions. Discover `close_task`
-on `gobby-tasks`, `wait_for_agent` on `gobby-agents`, and post-close
-`review_task_memories` on `gobby-memory`. Tool schemas own parameters.
+on `gobby-tasks` and post-close `review_task_memories` on `gobby-memory`.
+Tool schemas own parameters.
 
 Finish in this order:
 
-1. Finish all edits; resolve every owned finding and verify applicable criteria.
-2. Run focused validation after the final edit and follow it to definitive exit.
-   Credit is judged per shell call. Direct commands, environment prefixes,
-   leading `cd <dir> &&`, and `<check-a> && <check-b>` chains (each segment) are
-   credited. Pipelines such as `| tail`, `;` command sequences, trailing output
-   such as `echo`, fallbacks, backgrounding, subshells, and obscuring wrappers
-   are not; one of them anywhere voids every check in that call. Recover with a
-   direct rerun of each validation as its own call. Pytest and `vitest related`
-   targets resolve from the recorded working directory, any leading `cd`, and
-   `uv --directory`; a pytest target in another tree is credited only when that
-   tree holds the close candidate commit's exact bytes (the close checkout's
-   without a candidate) for the test and every changed path. Changed Python tests also
-   require a clean `gobby test-types audit` against the test-types baseline with
-   `--fail-on-new`, credited from one invocation whose explicit targets lexically
-   cover every changed test: a file target covers itself, a directory target covers
-   its descendants, `tests/` is the whole-tree fallback, a rename needs source and
-   destination, and a deleted test is covered by auditing its parent directory.
-   Coverage is judged per invocation and never unioned across runs, so one file per
-   call never adds up. Beyond that baseline and `--fail-on-new`, only the
-   output-only flags `--format`, `--output` and `--min-severity` keep credit.
-   AGENTS.md rule 4 rung 2 also permits strict per-path confinement credit for
-   pytest runs. A non-zero run keeps its failed outcome. Its complete, untruncated
-   final summary must enumerate every failure in paths attributed to another
-   currently active, claimed task in this project. A durable direct message from
-   the failing session to each owner must name the failing command, paths and
-   failure. A later clean scoped pytest rerun must avoid the failed paths. Both
-   runs must match the named close candidate's bytes for the credited tests and
-   every changed path, including when running in the close checkout. Only the
-   other covered test paths earn credit; failed paths never do. The close audit
-   records the failed command and exit, paths, owners, handoff IDs, rerun and
-   candidate. Owned/unowned failures, missing handoffs, truncated/incomplete
-   summaries, filtered or fail-fast runs, and mismatched bytes grant no credit.
-   This does not satisfy an explicit criterion requiring the failed command to
-   pass, or waive the covering test-type audit or other validation requirements.
-3. Stage only task paths and commit with a task reference. Use
-   `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
-4. Call `close_task` with `task_id`, `commit_sha`, `changes_summary`, and
-   `preview=true`. Include exact validation commands and results in the summary.
-   Preview evaluates deterministic gates 1–12 only; it never mutates task state,
-   launches a reviewer, or closes the task, and reports gate 13 as `not_run` when
-   ready.
-5. Repair every deterministic blocker, then repeat the same close with
-   `preview=false`. If the response is `close_review_required`, register
-   `wait_for_agent` once with `reviewer_run_id` and yield. Do not poll or
-   repeatedly call close while review is queued or running. A headless run
-   refuses that wait; follow the refusal's `retry_guidance` instead.
-6. After `closed=true` or a closure notification, call `review_task_memories`
-   with the task and summary; change memory only for valuable durable knowledge.
+1. Finish the task, resolve owned findings, and check its acceptance criteria.
+2. Run focused validation after the final edit and follow every command to its
+   definitive exit. Record exact commands and results for the reviewer. For
+   changed Python tests, run the repository's test-types and test-quality audits
+   over all affected tests; keep the suppression ratchet clean.
+3. Commit only task-owned paths with a task reference. Preserve foreign work.
+4. Call `close_task(task_id=..., commit_sha=..., changes_summary=..., preview=true)`.
+   Include validation results in the summary so completion evidence is reviewable.
+5. Repair every failed gate, then call the same close with `preview=false`.
+   A successful close returns `closed=true` and atomically links an explicit
+   candidate commit. Preview leaves task state and commit links unchanged.
+6. After closing, call `review_task_memories` with the task and summary. Record
+   only valuable durable knowledge.
 
-A blocked call reports the whole checklist at once. Fix every gate reported
-`failed` before retrying; a gate reported `skipped` names the gate that blocked it
-and is unevaluated, never satisfied.
+## Four close gates
 
-`preview=true` is a deterministic-only readiness check and never closes. The
-checklist requires criteria and summary, prospective linked commits for
-attributed edits, no uncommitted attributed files, and category-appropriate
-transcript validation. The real close persists a taskless reviewer and returns
-its queued or running status. Evidence or review-policy drift makes an active
-verdict stale; there is no memoized one-shot close-review path.
-When `unlinked_tagged_commits` names additional commits, link those belonging to
-the task before retrying. Otherwise use `link_commit` only to keep a task open.
-On `task_scope_mismatch`, retry with a specific `scope_justification` explaining
-why paths outside the declared Targets belong to the task.
+Both leaves and epics use these invariants, in order:
 
-Validation is drawn from claiming, closing, and worked-on sessions within their
-link windows. Code/refactor/test require a clean test-category run; config
-requires a clean validation command. Docs/planning/research/manual/no-edit closes
-skip that command gate, but still owe their acceptance criteria and review.
+| Gate | Required state |
+| --- | --- |
+| `children_closed` | Every child is closed. |
+| `linked_commits` | At least one linked or prospective commit, or an explicit no-work reason. |
+| `uncommitted_task_edits` | Every task-attributed path is clean in its recorded checkout; attribution must be complete. |
+| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
 
-Organizational parents can close after children finish; closing the last child
-auto-closes eligible ancestors. A claimed parent or parent with linked commits
-keeps its own work gates. Never report the epic complete while children remain.
-Land and remove owned isolation workspaces, or explicitly hand them off through
-workspace tools, before calling the task finished.
+The response exposes `gates`, `can_close`, `closed`, and resolved commit identities.
+Task, caller, machine, and repository authorization are checked before the gates.
+The final close re-evaluates current state before writing. A concurrent change
+can require another preview or retry.
 
 No-work reasons are `duplicate`, `already_implemented`, `wont_fix`, `obsolete`,
-and `out_of_repo`. Explain the disposition; no commit is needed only when there
-were no attributed edits. A deliberately closed escalated task requires a
-meaningful `override_justification`; it skips only close review, not the other
-gates. Do not escalate merely to get a close exception. `submit_close_review` is
-reviewer-only and is never a shortcut for the implementing session.
+and `out_of_repo`. Explain the disposition. They permit a commitless close;
+they do not waive child closure, attributed-file cleanliness, or ancestry checks
+for commits already linked to the task.
+
+Developers and independent reviewers remain responsible for acceptance criteria,
+test quality, and validation results. The close tool does not score transcripts,
+validate TDD proof, or spawn a reviewer. Follow the task's review, landing, and
+activation workflow before requesting its final close.
+
+Use `link_commit` to attach work while keeping the task open. Include every commit
+that belongs to the task, and integrate those commits before closing. Closing the
+last child may close eligible organizational ancestors; an explicit epic close
+uses the same four gates. Never report an epic complete while children remain.
 
 Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
@@ -98,7 +61,7 @@ both have ended, or the live creator is the task's claimant and no delegator is
 live, a live session in the task's project takes over that authority with
 `transfer_task_authority(task_id, reason)`. It becomes the delegator, the
 delegation receiver is kept, and the reason is appended to the delegation reason.
-It refuses a closed task, the claimant, a task-close reviewer, and any caller
+It refuses a closed task, the claimant, and any caller
 while a creator that is not the claimant, or a delegator, is still live. A paused
 holder counts as ended once every agent run linked to it ended or its recorded
 process exited on this machine; a lost terminal or wake binding alone does not.
@@ -117,4 +80,4 @@ a lifecycle event.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
-_Last verified: 2026-09-19_
+_Last verified: 2026-10-22_

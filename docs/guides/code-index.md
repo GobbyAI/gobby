@@ -22,10 +22,10 @@ Use indexed navigation before opening large files:
 
 ```bash
 gcode grep -F "spawn_ui_server(" src -m 50
-gcode search "task validation"
-gcode search-symbol "TaskValidator" --kind class
+gcode search "task close invariants"
+gcode search-symbol "CloseChecklist" --kind class
 gcode search-content "code_index_available" "src/**/*.py"
-gcode outline src/gobby/tasks/validation.py
+gcode outline src/gobby/tasks/close_invariants.py
 gcode symbol <symbol-id>
 ```
 
@@ -34,9 +34,9 @@ Graph commands require the Gobby daemon. `callers`, `usages`, `imports`, and
 projection sync, lifecycle commands, and the read API used by the daemon shim:
 
 ```bash
-gcode callers validate_task
-gcode imports src/gobby/tasks/validation.py
-gcode blast-radius validate_task --depth 3
+gcode callers evaluate_close_invariants
+gcode imports src/gobby/tasks/close_invariants.py
+gcode blast-radius evaluate_close_invariants --depth 3
 gcode graph sync-file --file src/gobby/runner.py
 gcode graph rebuild
 ```
