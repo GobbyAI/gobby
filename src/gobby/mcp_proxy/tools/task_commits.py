@@ -278,16 +278,15 @@ def create_commit_registry(
         name="record_close_receipt",
         description=(
             "Record a daemon-attested close receipt for another session's task: an "
-            "independent_review_approval (LAND) of an exact commit, or an activation of a "
-            "landed commit by the task's creator or delegator. A landing_approval comes only "
-            "from the creator or delegator and requires a comma-separated reason fact naming "
-            "restart, freeze, or overlap. Optional batch labels go in a separate facts.batch "
-            "field, not in facts.reason. landing is written only by "
-            "land_commit. The calling session is the "
-            "author; the task's claimant and task-close reviewers are refused, and a session "
-            "that has ever claimed the task cannot record its independent_review_approval. "
-            "Idempotent per author, kind, and commit; landing_approval also matches the "
-            "reason set, so changed reasons append a new receipt."
+            "activation of a landed commit by the task's creator or delegator. A "
+            "landing_approval comes only from the creator or delegator and requires a "
+            "comma-separated reason fact naming restart, freeze, or overlap. Optional batch "
+            "labels go in a separate facts.batch field, not in facts.reason. landing is "
+            "written only by land_commit. A review LAND is record_review_step, not a "
+            "receipt. The calling session is the author; the task's claimant and task-close "
+            "reviewers are refused. Idempotent per author, kind, and commit; "
+            "landing_approval also matches the reason set, so changed reasons append a new "
+            "receipt."
         ),
         input_schema={
             "type": "object",

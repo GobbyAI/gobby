@@ -27,10 +27,11 @@ from gobby.storage.project_checkouts import (
 )
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._transitions import release_task_claim
 from gobby.storage.tasks._updates import update_task
+from gobby.tasks.lifecycle_access import CrossProjectTaskForbidden, resolve_lifecycle_task
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -176,6 +177,32 @@ def approved_task_step(
     return record if any(record.commit_sha.startswith(sha) for sha in evidence) else None
 
 
+def landing_review_approval(
+    task: Task, records: list[TaskStepRecord], commit_sha: str, reviewer_session_id: str
+) -> TaskStepRecord | None:
+    """The reviewer's own approval of exactly the commit the current review approves.
+
+    Every reviewer that approved that commit in the current epoch may land it, so a
+    second approver can replay or recover the first one's landing.
+    """
+    sha = commit_sha.strip().lower()
+    current = approved_task_step(task, records, "review")
+    if current is None or current.commit_sha != sha:
+        return None
+    return next(
+        (
+            record
+            for record in records
+            if record.step == "review"
+            and record.status == "approved"
+            and record.epoch == task.review_epoch
+            and record.commit_sha == sha
+            and record.session_id == reviewer_session_id
+        ),
+        None,
+    )
+
+
 @dataclass(frozen=True)
 class StepRequirements:
     """Steps project policy requires for a close, and those not yet approved."""
@@ -224,9 +251,22 @@ def task_step_requirements(db: HubDatabase, task: Task) -> StepRequirements:
 def _writer(
     db: HubDatabase, task: Task, session_id: str, step: TaskStep
 ) -> tuple[AgentDefinitionBody, str]:
-    session = SessionManager(db).get(session_id)
-    if session is None or session.project_id != task.project_id:
-        raise StepRecordError("step writer must be a registered session in the task project")
+    sessions = SessionManager(db)
+    session = sessions.get(session_id)
+    if session is None or session.project_id is None:
+        raise StepRecordError("step writer must be a registered session")
+    if session.project_id != task.project_id:
+        # The same lineage or operator authority that resolves a foreign task ref.
+        try:
+            resolve_lifecycle_task(
+                LocalTaskManager(db),
+                task.id,
+                project_id=session.project_id,
+                caller_session_id=session_id,
+                sessions=sessions,
+            )
+        except (CrossProjectTaskForbidden, TaskNotFoundError) as exc:
+            raise StepRecordError("step writer has no authority over the task's project") from exc
     agent_name = (
         SessionVariableManager(db)
         .get_variable_subset(session_id, ("_agent_type",))

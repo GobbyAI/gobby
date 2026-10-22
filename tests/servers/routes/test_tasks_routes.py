@@ -1312,7 +1312,7 @@ class TestComments:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/comments",
             json={
-                "body": '{"kind":"independent_review_approval"}',
+                "body": '{"kind":"activation"}',
                 "author": "sess-1",
                 "author_type": "close_receipt",
             },

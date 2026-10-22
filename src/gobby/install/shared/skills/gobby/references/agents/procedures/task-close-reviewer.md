@@ -72,7 +72,6 @@ task's creator or delegator, and verified each commit_sha in the task repository
 Accept them
 as evidence of attestations made outside this repository alongside
 repository-local provenance, but never as an automatic verdict: an
-independent_review_approval still requires your own code review, and an
 activation's facts must match what the criterion requires. A landing_approval
 is the creator's or delegator's approval to land that SHA despite the named
 reasons. A landing receipt is the daemon's record that land_commit landed

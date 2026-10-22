@@ -16,7 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
+from gobby.tasks.close_receipts import LANDING, record_close_receipt
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -281,7 +281,7 @@ async def test_compact_receipt_facts_preserve_summaries_and_full_fetch(
             temp_db,
             task=oversized,
             author_session_id=seat.id,
-            kind=INDEPENDENT_REVIEW_APPROVAL,
+            kind=LANDING,
             commit_sha=f"{number:040x}",
             facts=facts,
         )[0]

@@ -461,7 +461,7 @@ def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link
     replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
     assert "Read the stored incoming replacement CANDIDATE" in replacement
     assert "same-task replacement resets verdict state" in replacement
-    assert "fresh independent_review_approval for its full SHA" in replacement
+    assert "fresh approved review step record for its full SHA" in replacement
     assert "Finish the active unit before reading a different queued task" in replacement
     resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
     assert "Restore the reviewing assignment before landing." in resume
@@ -660,15 +660,15 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
         "gobby-agents:send_message",
         "gobby-agents:get_inter_session_message",
         "gobby-tasks:get_task",
-        "gobby-tasks:record_close_receipt",
+        "gobby-tasks:record_review_step",
         "gobby-tasks:link_task_to_session",
         "gobby-tasks-ops:land_commit",
         "gobby-agents:wait_for_coordination",
     }
     assert "Bash" in _allowed_tools(verdict)
     assert "mcp__gobby__set_variable" not in _allowed_tools(verdict)
-    receipt = prompt.index('kind="independent_review_approval"')
-    assert receipt < prompt.index("gobby-tasks-ops:land_commit(task_id")
+    approval = prompt.index('gobby-tasks:record_review_step(task_id, status="approved"')
+    assert approval < prompt.index("gobby-tasks-ops:land_commit(task_id")
     assert "`retest_required`" in prompt
     assert "EVENT=LAND_PENDING TASK=#NNNNN" in prompt
     assert "until a `receipt_id` returns" in prompt
@@ -705,9 +705,9 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "including when a stronger activation class is reported" in prompt
     assert "If the field is absent, report unknown." in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
-    # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
+    # land_commit refuses a new SHA with review_approval_missing until it has its own record.
     new_sha = prompt.index("- Replacement SHA.")
-    assert "fresh independent_review_approval for its full SHA" in prompt[new_sha:]
+    assert "fresh approved review step record for its full SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
 
 

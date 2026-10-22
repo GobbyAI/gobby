@@ -24,6 +24,8 @@ blocked_tools:
   - "write_file"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+# A LAND is this seat's approved review step record; land_commit requires it.
+task_step_writes: [review]
 
 prompts:
   agent: &seat |
@@ -182,8 +184,12 @@ step_workflow:
         this task regardless of its reference alias.
         Review against the current project integration head with
         gcode and git diff, citing code claims through gcode evidence. A
-        LAND needs your stored independent_review_approval for the exact SHA.
-        Record that receipt, then send the LAND verdict. land_commit separately
+        LAND needs your approved review step record for the exact SHA: call
+        gobby-tasks:record_review_step(task_id=candidate_task, status="approved",
+        commit_sha=<full SHA>, epoch=<review_epoch>,
+        round_number=<review_fail_count + 1>, feedback=<your evidence>), reading
+        both counts from get_task(brief=false). Record it, then send the LAND
+        verdict. land_commit separately
         enforces operator landing_approval for freeze, restart or cutover class,
         and overlaps; request missing approvals from your coordinator and wait.
         Send a matching durable BOUNCE or PARK event to finish or park review.
@@ -204,7 +210,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-tasks:get_task"
-        - "gobby-tasks:record_close_receipt"
+        - "gobby-tasks:record_review_step"
         - "gobby-tasks:get_task_diff"
         - "gobby-tasks:link_task_to_session"
         - "gobby-results:get_tool_result"
@@ -222,7 +228,7 @@ step_workflow:
           tool: get_task
           action: advance_seat
         - server: gobby-tasks
-          tool: record_close_receipt
+          tool: record_review_step
           action: advance_seat
       transitions:
         - to: await
@@ -235,7 +241,7 @@ step_workflow:
       description: "Send the verdict and land a LAND"
       status_message: |
         On BOUNCE, send the CANDIDATE_VERDICT line. For a LAND requiring landing, record the
-        independent_review_approval receipt, send the LAND verdict, then call
+        approved review step, send the LAND verdict, then call
         land_commit on the same SHA and follow its response: when
         retest_required, report RETEST=UNAVAILABLE pending the closing seat's
         own landed retest, without running it yourself or delaying LANDED.
@@ -280,7 +286,7 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:get_inter_session_message"
         - "gobby-tasks:get_task"
-        - "gobby-tasks:record_close_receipt"
+        - "gobby-tasks:record_review_step"
         - "gobby-tasks:link_task_to_session"
         - "gobby-tasks-ops:land_commit"
         - "gobby-agents:wait_for_coordination"
@@ -292,7 +298,7 @@ step_workflow:
             not candidate_landing_approved(
               session_id, vars.get('candidate_task'), vars.get('candidate_sha'),
               tool_input.get('task_id'), tool_input.get('commit_sha'))
-          reason: "Land only the exact intake task/SHA with your stored independent_review_approval."
+          reason: "Land only the exact intake task/SHA with your approved review step record."
       # A message whose first line is the candidate's EVENT=LANDED or
       # EVENT=ALREADY_LANDED line, or its
       # CANDIDATE_VERDICT line with VERDICT=BOUNCE as the field after SHA=, ends
@@ -316,7 +322,7 @@ step_workflow:
           tool: get_task
           action: advance_seat
         - server: gobby-tasks
-          tool: record_close_receipt
+          tool: record_review_step
           action: advance_seat
       transitions:
         - to: review

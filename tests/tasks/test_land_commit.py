@@ -26,7 +26,6 @@ from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import land_commit
 from gobby.tasks.close_receipts import (
-    INDEPENDENT_REVIEW_APPROVAL,
     LANDING,
     LANDING_APPROVAL,
     list_close_receipts,
@@ -35,9 +34,11 @@ from gobby.tasks.close_receipts import (
 from gobby.tasks.commits import extract_task_ids_from_message
 from gobby.tasks.land_commit import LandingResult, land_candidate
 from gobby.tasks.landing_policy import write_freeze
+from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.review_approvals import approve_review, grant_review_writes
 
 pytestmark = pytest.mark.unit
 
@@ -98,13 +99,9 @@ class LandingCase:
         self.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
 
     def approve(self, task: Task, sha: str, author: str | None = None) -> None:
-        record_close_receipt(
-            self.db,
-            task=task,
-            author_session_id=author or self.reviewer,
-            kind=INDEPENDENT_REVIEW_APPROVAL,
-            commit_sha=sha,
-        )
+        reviewer = author or self.reviewer
+        grant_review_writes(self.db, reviewer, self.project_id)
+        approve_review(self.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
 
     def reviewed(self, sha: str, title: str = "Reviewed candidate") -> Task:
         task = self.task(title)
@@ -204,7 +201,7 @@ async def test_refuses_without_callers_land_receipt(case: LandingCase) -> None:
     case.link(task, sha)
     case.approve(task, sha, author=case.creator)
     missing = await case.land(task, sha)
-    assert missing["error"] == "review_receipt_missing"
+    assert missing["error"] == "review_approval_missing"
     assert case.git("rev-parse", "trunk") == case.base
     case.approve(task, sha)
     case.db.execute(
@@ -214,6 +211,55 @@ async def test_refuses_without_callers_land_receipt(case: LandingCase) -> None:
     assert claimant["error"] == "caller_is_claimant"
     assert case.git("rev-parse", "trunk") == case.base
     assert all(receipt.kind != LANDING for receipt in list_close_receipts(case.db, task.id))
+
+
+async def test_stored_legacy_review_receipt_grants_no_landing(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "legacy receipt"})
+    task = case.task()
+    case.link(task, sha)
+    # A receipt stored before review receipts retired is unreadable history, not approval.
+    legacy = {"commit_sha": sha, "facts": {}, "kind": "independent_review_approval"}
+    case.db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, %s, 'close_receipt', %s)",
+        (str(uuid4()), task.id, case.reviewer, json.dumps({**legacy, "verdict": "LAND"})),
+    )
+    refused = await case.land(task, sha)
+    assert refused["error"] == "review_approval_missing"
+    assert list_close_receipts(case.db, task.id) == []
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert landed["landed_tip"] == sha
+    assert case.git("rev-parse", "trunk") == sha
+
+
+@pytest.mark.parametrize("staleness", ["superseded_tip", "prior_epoch"])
+async def test_stale_review_record_refuses_landing(case: LandingCase, staleness: str) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "first"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    if staleness == "superseded_tip":
+        newer = case.candidate("lane-2", {"docs/change.md": "second"}, base=sha)
+        case.db.execute(
+            "UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha, newer]), task.id)
+        )
+    else:
+        # The audited reset (de-escalation) starts a new epoch; earlier records are history.
+        case.db.execute(
+            "UPDATE tasks SET review_epoch = review_epoch + 1 WHERE id = %s", (task.id,)
+        )
+    refused = await case.land(task, sha)
+    assert refused["error"] == "review_approval_missing"
+    assert case.git("rev-parse", "trunk") == case.base
 
 
 @pytest.mark.parametrize("release", ["escalation", "transfer"])
@@ -343,8 +389,7 @@ async def test_reports_every_missing_approval_at_once(case: LandingCase) -> None
     task = case.task()
     case.link(task, sha)
     case.approve(task, sha)
-    other_task = case.task("Other in-flight candidate")
-    case.approve(other_task, other)
+    other_task = case.reviewed(other, "Other in-flight candidate")
     write_freeze(case.repo / ".git", on=True, reason="release hold", session_id=case.creator)
     refused = await case.land(task, sha)
     assert refused["landed"] is False
@@ -382,10 +427,12 @@ async def test_stacked_and_landed_candidates_never_overlap(case: LandingCase) ->
         ("Descendant", descendant),
         ("Already landed", case.base),
     ):
-        case.approve(case.task(name), candidate)
-    closed_task = case.task("Closed candidate")
-    case.approve(closed_task, closed)
-    case.db.execute("UPDATE tasks SET closed_at = now() WHERE id = %s", (closed_task.id,))
+        case.reviewed(candidate, name)
+    closed_task = case.reviewed(closed, "Closed candidate")
+    case.db.execute(
+        "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s",
+        (closed_task.id,),
+    )
     result = await case.land(task, sha)
     assert result["landed"] is True
     assert result["activation_class"] == "none"
@@ -405,17 +452,16 @@ async def test_unavailable_foreign_candidate_does_not_block_landing(case: Landin
     assert result["landed"] is True
     assert result["mode"] == "ff"
     assert case.git("rev-parse", "trunk") == sha
-    [foreign_receipt] = list_close_receipts(case.db, foreign_task.id)
-    assert foreign_receipt.commit_sha == unavailable
+    [foreign_review] = list_task_step_records(case.db, foreign_task.id)
+    assert foreign_review.commit_sha == unavailable
 
 
 async def test_refuses_unlinked_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "linked later"})
-    task = case.task()
-    case.approve(task, sha)
+    task = case.reviewed(sha)
     case.link(task, case.base)
     refused = await case.land(task, sha)
-    assert refused["error"] == "candidate_not_linked"
+    assert "candidate_not_linked" in refused["blockers"]
     assert case.git("rev-parse", "trunk") == case.base
     # Stored short links are resolved through Git, not compared as SHA prefixes.
     case.link(task, sha[:12])
@@ -600,7 +646,9 @@ async def test_already_landed_candidate_records_landing_once(
     if scenario == "foreign_writer":
         action = "foreign update"
     if scenario == "closed":
-        case.db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+        case.db.execute(
+            "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+        )
     case.git("merge", "--ff-only", target, env={"GIT_REFLOG_ACTION": action})
     log = case.repo / ".git/logs/refs/heads/trunk"
     if scenario == "expired":

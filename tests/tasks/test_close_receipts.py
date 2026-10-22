@@ -17,7 +17,6 @@ from gobby.tasks.close_receipts import (
     ACTIVATION,
     CALLER_RECEIPT_KINDS,
     CLOSE_RECEIPT_AUTHOR_TYPE,
-    INDEPENDENT_REVIEW_APPROVAL,
     LANDING,
     LANDING_APPROVAL,
     CloseReceipt,
@@ -112,7 +111,7 @@ def _record(
     task: Task,
     author: str,
     *,
-    kind: str = INDEPENDENT_REVIEW_APPROVAL,
+    kind: str = LANDING,
     sha: str = _TIP,
     facts: object = None,
 ) -> tuple[CloseReceipt, bool]:
@@ -127,7 +126,7 @@ def _seq_ref(db: HubDatabase, session_id: str) -> str:
     return f"#{row['seq_num']}"
 
 
-def test_independent_approval_is_recorded_once_per_author_kind_and_commit(
+def test_receipt_is_stored_once_as_a_reserved_comment(
     temp_db: HubDatabase, task: Task, roles: dict[str, str]
 ) -> None:
     first, created = _record(temp_db, task, roles["reviewer"], sha=_TIP.upper())
@@ -141,12 +140,7 @@ def test_independent_approval_is_recorded_once_per_author_kind_and_commit(
     row = temp_db.fetchone("SELECT author_type, body FROM task_comments WHERE id = %s", (first.id,))
     assert row is not None
     assert row["author_type"] == CLOSE_RECEIPT_AUTHOR_TYPE
-    assert json.loads(row["body"]) == {
-        "kind": INDEPENDENT_REVIEW_APPROVAL,
-        "commit_sha": _TIP,
-        "facts": {},
-        "verdict": "LAND",
-    }
+    assert json.loads(row["body"]) == {"kind": LANDING, "commit_sha": _TIP, "facts": {}}
     assert [receipt.id for receipt in list_close_receipts(temp_db, task.id)] == [first.id]
 
 
@@ -156,25 +150,6 @@ def test_claimant_cannot_attest_its_own_close(
     with pytest.raises(CloseReceiptError, match="claimant"):
         _record(temp_db, task, roles["claimant"])
     assert list_close_receipts(temp_db, task.id) == []
-
-
-@pytest.mark.parametrize("release", ["escalation", "force-claim", "hand-off"])
-def test_former_claimant_cannot_approve_its_own_task(
-    temp_db: HubDatabase, task: Task, roles: dict[str, str], release: str
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    if release == "escalation":
-        manager.escalate_task(task.id, "Handed off: review pending")
-    elif release == "hand-off":
-        manager.claim_task(task.id, roles["bystander"], expected_owner=roles["claimant"])
-    else:
-        manager.claim_task(task.id, roles["bystander"], force=True)
-    with pytest.raises(CloseReceiptError, match="former claimant"):
-        _record(temp_db, task, roles["claimant"])
-    assert list_close_receipts(temp_db, task.id) == []
-    receipt, created = _record(temp_db, task, roles["reviewer"])
-    assert created
-    assert receipt.author_session_id == roles["reviewer"]
 
 
 def test_every_claim_writer_records_the_claimant(
@@ -371,14 +346,15 @@ def test_activation_comes_only_from_task_creator_or_delegator(
     ("kind", "sha", "facts", "message"),
     [
         ("self_approval", _TIP, None, "kind must be one of"),
-        (INDEPENDENT_REVIEW_APPROVAL, "871d706", None, "full 40-character"),
-        (INDEPENDENT_REVIEW_APPROVAL, "g" * 40, None, "full 40-character"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, ["pid"], "facts must be an object"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, {f"k{i}": i for i in range(17)}, "at most 16"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, {"k" * 65: 1}, "fact key"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, {"pid": 1.5}, "string, integer, or boolean"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, {"log": {"nested": 1}}, "string, integer"),
-        (INDEPENDENT_REVIEW_APPROVAL, _TIP, {"log": "x" * 301}, "exceeds 300"),
+        ("independent_review_approval", _TIP, None, "kind must be one of"),
+        (LANDING, "871d706", None, "full 40-character"),
+        (LANDING, "g" * 40, None, "full 40-character"),
+        (LANDING, _TIP, ["pid"], "facts must be an object"),
+        (LANDING, _TIP, {f"k{i}": i for i in range(17)}, "at most 16"),
+        (LANDING, _TIP, {"k" * 65: 1}, "fact key"),
+        (LANDING, _TIP, {"pid": 1.5}, "string, integer, or boolean"),
+        (LANDING, _TIP, {"log": {"nested": 1}}, "string, integer"),
+        (LANDING, _TIP, {"log": "x" * 301}, "exceeds 300"),
     ],
 )
 def test_malformed_receipts_are_refused(
@@ -407,13 +383,12 @@ def test_launch_facts_render_author_role_and_linked_commit_match(
         {key: value for key, value in fact.items() if key != "recorded_at"} for fact in facts
     ] == [
         {
-            "kind": INDEPENDENT_REVIEW_APPROVAL,
+            "kind": LANDING,
             "commit_sha": _TIP,
             "matches_linked_commit": False,
             "author_session": _seq_ref(temp_db, roles["reviewer"]),
             "author_role": "independent_session",
             "facts": {},
-            "verdict": "LAND",
         },
         {
             "kind": ACTIVATION,
@@ -524,10 +499,8 @@ async def test_tool_refuses_claimant_unknown_commit_and_missing_session(
 ) -> None:
     with session_context_for_test(roles["claimant"]):
         claimant = await receipt_tool(task_id=task.id, kind=ACTIVATION, commit_sha=_LANDED)
-    with session_context_for_test(roles["reviewer"]):
-        unknown = await receipt_tool(
-            task_id=task.id, kind=INDEPENDENT_REVIEW_APPROVAL, commit_sha=_TIP
-        )
+    with session_context_for_test(roles["creator"]):
+        unknown = await receipt_tool(task_id=task.id, kind=ACTIVATION, commit_sha=_TIP)
     anonymous = await receipt_tool(task_id=task.id, kind=ACTIVATION, commit_sha=_LANDED)
 
     assert "claimant" in claimant["error"]
@@ -551,12 +524,10 @@ async def test_tool_refuses_author_who_claims_the_task_during_commit_check(
 ) -> None:
     claim = "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s"
     with (
-        session_context_for_test(roles["reviewer"]),
-        _mutate_during_commit_check(temp_db, claim, (roles["reviewer"], task.id)),
+        session_context_for_test(roles["creator"]),
+        _mutate_during_commit_check(temp_db, claim, (roles["creator"], task.id)),
     ):
-        result = await receipt_tool(
-            task_id=task.id, kind=INDEPENDENT_REVIEW_APPROVAL, commit_sha=_LANDED
-        )
+        result = await receipt_tool(task_id=task.id, kind=ACTIVATION, commit_sha=_LANDED)
 
     assert "claimant" in result["error"]
     assert list_close_receipts(temp_db, task.id) == []

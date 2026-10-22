@@ -66,10 +66,11 @@ approval only from a session that never claimed, implemented or edited the task.
 
 Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
-`independent_review_approval` (LAND of an exact commit) or `activation` receipt
-on another session's task, authorized against the locked task row.
-A session that has ever claimed the task can neither approve nor land it.
-An `activation` receipt comes only from the task's creator or delegator. When
+`activation` or `landing_approval` receipt on another session's task, authorized
+against the locked task row. A review LAND is the reviewer's approved
+`record_review_step` record for the exact commit, and `land_commit` lands only
+for a session holding its own such record for the commit the current review
+approves. An `activation` receipt comes only from the task's creator or delegator. When
 both have ended, or the live creator is the task's claimant and no delegator is
 live, a live session in the task's project takes over that authority with
 `transfer_task_authority(task_id, reason)`. It becomes the delegator, the

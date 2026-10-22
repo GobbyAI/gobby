@@ -19,11 +19,11 @@ from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, HOOK_TEMPLATES, insta
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
 from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import is_direct_commit_path
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.review_approvals import approve_review, grant_review_writes
 
 pytestmark = pytest.mark.unit
 
@@ -379,13 +379,8 @@ async def test_land_commit_passes_installed_guard(
     )
     temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
     task = LocalTaskManager(temp_db).get_task(task.id)
-    record_close_receipt(
-        temp_db,
-        task=task,
-        author_session_id=reviewer.id,
-        kind=INDEPENDENT_REVIEW_APPROVAL,
-        commit_sha=sha,
-    )
+    grant_review_writes(temp_db, reviewer.id, isolated.project.id)
+    approve_review(temp_db, task_id=task.id, reviewer_session_id=reviewer.id, commit_sha=sha)
 
     with session_context_for_test(reviewer.id):
         landed = await land_candidate(

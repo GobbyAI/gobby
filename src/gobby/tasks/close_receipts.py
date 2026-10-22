@@ -1,10 +1,11 @@
 """Daemon-attested close receipts that a task-close review may cite.
 
-A close criterion can name evidence that lives in another session: an
-independent reviewer's exact-tip approval, or the coordinator's activation of a
-landed commit. The close reviewer reads neither session, so each attesting
+A close criterion can name evidence that lives in another session: the
+coordinator's activation or landing approval of an exact commit, or the landing
+itself. The close reviewer reads none of those sessions, so each attesting
 session records a receipt here. The daemon sets the author from the caller's
-session identity, so a session can only attest for itself.
+session identity, so a session can only attest for itself. Review approval is
+the review step record (``step_records``), not a receipt.
 
 Receipts are ``task_comments`` rows under a reserved ``author_type``. The
 comment HTTP routes refuse to create or delete that type, so no client can
@@ -29,7 +30,6 @@ __all__ = [
     "CALLER_RECEIPT_KINDS",
     "CLOSE_RECEIPT_AUTHOR_TYPE",
     "CLOSE_RECEIPT_KINDS",
-    "INDEPENDENT_REVIEW_APPROVAL",
     "LANDING",
     "LANDING_APPROVAL",
     "LANDING_APPROVAL_REASONS",
@@ -41,17 +41,14 @@ __all__ = [
 ]
 
 CLOSE_RECEIPT_AUTHOR_TYPE = "close_receipt"
-INDEPENDENT_REVIEW_APPROVAL = "independent_review_approval"
 ACTIVATION = "activation"
 LANDING_APPROVAL = "landing_approval"
 LANDING = "landing"
-CLOSE_RECEIPT_KINDS = frozenset(
-    {INDEPENDENT_REVIEW_APPROVAL, ACTIVATION, LANDING_APPROVAL, LANDING}
-)
+# Stored rows of a retired kind (independent_review_approval) read as nothing.
+CLOSE_RECEIPT_KINDS = frozenset({ACTIVATION, LANDING_APPROVAL, LANDING})
 CALLER_RECEIPT_KINDS = CLOSE_RECEIPT_KINDS - {LANDING}
 LANDING_APPROVAL_REASONS = frozenset({"restart", "freeze", "overlap"})
 
-_APPROVAL_VERDICT = "LAND"
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _MAX_FACTS = 16
 _MAX_FACT_KEY_CHARS = 64
@@ -100,8 +97,6 @@ def record_close_receipt(
         _landing_approval_reasons(bounded_facts) if kind == LANDING_APPROVAL else None
     )
     body: dict[str, Any] = {"kind": kind, "commit_sha": sha, "facts": bounded_facts}
-    if kind == INDEPENDENT_REVIEW_APPROVAL:
-        body["verdict"] = _APPROVAL_VERDICT
 
     with db.transaction() as conn:
         # Authorize against the locked row, never the caller's snapshot: the claim or
@@ -120,12 +115,6 @@ def record_close_receipt(
             raise CloseReceiptError(f"task {task.id} no longer exists")
         if author_session_id == authority["claimed_by_session_id"]:
             raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
-        from gobby.storage.session_tasks import claimant_sessions
-
-        if kind == INDEPENDENT_REVIEW_APPROVAL and author_session_id in claimant_sessions(
-            conn, task.id
-        ):
-            raise CloseReceiptError("a former claimant cannot approve its own task")
         if kind in {ACTIVATION, LANDING_APPROVAL} and author_session_id not in {
             authority["created_in_session_id"],
             authority["delegated_by_session_id"],
@@ -210,8 +199,6 @@ def close_receipt_facts(
             "facts": receipt.facts,
             "recorded_at": receipt.recorded_at,
         }
-        if receipt.kind == INDEPENDENT_REVIEW_APPROVAL:
-            rendered["verdict"] = _APPROVAL_VERDICT
         facts.append(rendered)
     return facts
 

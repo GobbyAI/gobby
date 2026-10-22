@@ -18,8 +18,6 @@ from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import (
-    CLOSE_RECEIPT_AUTHOR_TYPE,
-    INDEPENDENT_REVIEW_APPROVAL,
     LANDING,
     LANDING_APPROVAL,
     CloseReceipt,
@@ -32,6 +30,11 @@ from gobby.tasks.landing_policy import (
     missing_schema_carriers,
     read_freeze,
     requires_project_sync,
+)
+from gobby.tasks.step_records import (
+    STEP_RECORD_AUTHOR_TYPE,
+    landing_review_approval,
+    list_task_step_records,
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
@@ -181,14 +184,15 @@ async def _overlaps(
           AND c.author_type = %s
         ORDER BY t.seq_num
         """,
-        (task.project_id, task.id, CLOSE_RECEIPT_AUTHOR_TYPE),
+        (task.project_id, task.id, STEP_RECORD_AUTHOR_TYPE),
     )
     overlaps: list[Overlap] = []
     for row in rows:
+        # Approvals from every epoch count: a superseded candidate can still be in flight.
         candidates = {
-            receipt.commit_sha
-            for receipt in list_close_receipts(db, row["id"])
-            if receipt.kind == INDEPENDENT_REVIEW_APPROVAL
+            record.commit_sha
+            for record in list_task_step_records(db, row["id"])
+            if record.step == "review" and record.status == "approved" and record.commit_sha
         }
         for other in sorted(candidates):
             if await _resolve(main, other) is None:
@@ -414,6 +418,7 @@ async def land_candidate(
                 # Every attempt re-reads the tip, so a candidate already landed counts.
                 tip = await _tip(main, branch)
                 receipts = list_close_receipts(db, task.id)
+                records = list_task_step_records(db, task.id)
                 with db.transaction() as conn:
                     claimants = claimant_sessions(conn, task.id)
                 blockers: list[str] = []
@@ -421,13 +426,8 @@ async def land_candidate(
                     blockers.append("caller_is_claimant")
                 elif caller_session_id in claimants:
                     blockers.append("caller_was_claimant")
-                if not any(
-                    receipt.kind == INDEPENDENT_REVIEW_APPROVAL
-                    and receipt.author_session_id == caller_session_id
-                    and receipt.commit_sha == sha
-                    for receipt in receipts
-                ):
-                    blockers.append("review_receipt_missing")
+                if landing_review_approval(current_task, records, sha, caller_session_id) is None:
+                    blockers.append("review_approval_missing")
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):
