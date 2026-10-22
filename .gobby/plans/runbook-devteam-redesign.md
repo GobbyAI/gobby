@@ -443,7 +443,7 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/metrics-monitor.yaml::*` — operation: delete — scope-reason: retire the complete unused runbook role
 - `src/gobby/install/shared/workflows/agents/recovery-steward.yaml::*` — operation: delete — scope-reason: retire the complete unused runbook role
 - `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — operation: delete — scope-reason: retire the complete automatic close review role
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md::*` — operation: delete — scope-reason: rename and rewrite the complete procedure as dev-manager.md
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/triage.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
