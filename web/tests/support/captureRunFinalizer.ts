@@ -110,7 +110,6 @@ const TAB_PLAN_SECTIONS: Record<string, string> = {
   tasks: "4.7",
   mcp: "4.8",
   agents: "4.2",
-  stages: "4.8",
   skills: "4.8",
   memory: "4.8",
   integrations: "4.8",
@@ -129,7 +128,6 @@ const STATE_BEARING_TABS = new Set([
   "tasks",
   "pipelines",
   "agents",
-  "stages",
   "cron",
 ]);
 

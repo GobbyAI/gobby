@@ -242,8 +242,8 @@
   --status-bar-control-height: 1.75rem;
 
   /* Activity-panel list-row height — single source of truth for every activity
-     top-list row (Sessions, Tasks, Rules, MCP, Agents, Memory, Stages,
-     Profiles, Skills, Pipelines, Integrations). Mirrors the content-driven
+     top-list row (Sessions, Tasks, Rules, MCP, Agents, Memory, Skills,
+     Pipelines, Integrations). Mirrors the content-driven
      Sessions row so every tab's list reads at one height. Rows are single-line;
      secondary detail belongs in the detail pane, not a stacked second line. */
   --activity-panel-row-height: 2.25rem;
