@@ -1,4 +1,4 @@
-"""Keep seat task bindings aligned with live claims and landing receipts."""
+"""Keep seat task bindings aligned with live claims."""
 
 from __future__ import annotations
 
@@ -8,11 +8,9 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
-from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -21,51 +19,6 @@ from gobby.workflows.step_instances import (
 from gobby.workflows.task_claim_state import active_task_id_for_edit, resolve_target_task_id
 
 BOUND_TASK_VARIABLE = "assigned_task_id"
-
-
-def release_completed_review(db: HubDatabase, instance: AgentStepInstance) -> AgentStepInstance:
-    """Recover an interrupted verdict only from this reviewer's exact landing."""
-    if instance.agent_name != "code-reviewer" or instance.current_step != "verdict":
-        return instance
-    state = instance.variables
-    task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
-    if (
-        not state.get("candidate_received")
-        or not isinstance(task_id, str)
-        or not isinstance(sha, str)
-        or instance.workflow.get_step("await") is None
-    ):
-        return instance
-    if not any(
-        receipt.kind == LANDING
-        and receipt.commit_sha == sha
-        and receipt.author_session_id == instance.session_id
-        for receipt in list_close_receipts(db, task_id)
-    ):
-        return instance
-
-    recovered = instance.model_copy(deep=True)
-    defaults = {
-        key: copy.deepcopy(instance.workflow.variables.get(key))
-        for key in (
-            "candidate_received",
-            "verdict_ready",
-            "candidate_task",
-            "candidate_sha",
-            "candidate_owner",
-            "candidate_received_at",
-        )
-    }
-    recovered.variables.update(defaults)
-    recovered.current_step = "await"
-    recovered.step_action_count = 0
-    recovered.step_entered_at = datetime.now(UTC)
-    try:
-        AgentStepInstanceManager(db).save(recovered, if_match=(instance.id, instance.updated_at))
-    except StaleStepInstanceWriteError:
-        return instance
-    SessionVariableManager(db).merge_variables(instance.session_id, defaults)
-    return recovered
 
 
 def _binding_step_index(snapshot: AgentStepWorkflowBody) -> int | None:

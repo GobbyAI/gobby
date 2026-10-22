@@ -685,10 +685,10 @@ step_workflow:
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
-        Once the reviewer has sent EVENT=LANDED and only activation or the
+        Once the lander has sent EVENT=LANDED and only activation or the
         closing seat's landed retest remains,
         escalate_task is the supported release. A `Landed #N` notice alone keeps
-        you at submit: wait for the reviewer's EVENT=LANDED
+        you at submit: wait for the lander's EVENT=LANDED
         before escalating. A successful call resets task
         state and returns you to claim for the next task. The reason must start
         exactly with "Handed off: reviewer LAND", for example:
@@ -700,12 +700,12 @@ step_workflow:
         To resume implementation or a directed retest after landing, use that
         handoff reason, then de_escalate_task and claim_task on the same task.
         Claiming routes skills and returns you to implement with shell access.
-        The reviewer sends LANDED immediately with RETEST=UNAVAILABLE when you
+        The lander sends LANDED immediately with RETEST=UNAVAILABLE when you
         own the landed retest. After reclaiming, test in your own worktree at
         a clean HEAD with candidate <= HEAD <= integration tip, including the
         landed merge SHA, under a fresh Release Manager GO. Report the landed
         merge SHA, the same test set, commands, results and tested HEAD in your
-        later EVENT=PROOF_RESULT to the reviewer and Lane Manager. Pending or
+        later EVENT=PROOF_RESULT to the lander and Lane Manager. Pending or
         failing proof holds close release; a failure goes to the Orchestrator
         to reopen the task. Activation and close release gates still apply.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
@@ -717,7 +717,7 @@ step_workflow:
         Lane Manager only, never the reviewer, so candidate_sent re-arms, then send
         EVENT=PROOF_RESULT TASK=#NNNNN SHA= RETEST=PASS|FAIL|UNAVAILABLE NOTE=
         to the requesting reviewer and your Lane Manager. For landed work,
-        after the reviewer's EVENT=LANDED, use the handoff, de-escalate and
+        after the lander's EVENT=LANDED, use the handoff, de-escalate and
         reclaim sequence above. Never write flags.
       allowed_tools:
         - mcp__gobby__call_tool

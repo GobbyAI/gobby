@@ -80,8 +80,7 @@ It preserves edit attribution and unrelated task bindings.
 
 Use this for parked claims outside the holder's current assigned task. Releasing
 the assigned task is also accepted, but does not clear `assigned_task_id` or
-advance its workflow step; coordinate the holder's recovery separately. This
-call does not transfer activation-receipt authority.
+advance its workflow step; coordinate the holder's recovery separately.
 
 Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
 

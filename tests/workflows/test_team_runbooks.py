@@ -97,7 +97,7 @@ async def test_team_lane_requires_code_review_before_seat_work(
     # Every other bootstrap load must leave review/implementation unavailable.
     await run.load(*(entry for entry in run.vars["required_skills"] if entry != "code-review"))
     assert run.step == "load_skills"
-    assert not await run.admits("gobby-tasks", "record_close_receipt")
+    assert not await run.admits("gobby-tasks", "record_review_step")
 
     await run.load("code-review")
     assert run.step == ready_step
@@ -108,7 +108,7 @@ async def test_team_lane_requires_code_review_before_seat_work(
         assert run.step == "review"
         await run.approve(task)
         assert run.step == "verdict"
-        assert await run.admits("gobby-tasks", "record_close_receipt")
+        assert await run.admits("gobby-tasks", "record_review_step")
 
 
 def _render_context(definition: PipelineDefinition, inputs: dict[str, Any]) -> dict[str, Any]:

@@ -1,11 +1,9 @@
-"""Daemon-attested close receipts that a task-close review may cite.
+"""Daemon-attested landing receipts that a task-close review may cite.
 
-A close criterion can name evidence that lives in another session: the
-coordinator's activation or landing approval of an exact commit, or the landing
-itself. The close reviewer reads none of those sessions, so each attesting
-session records a receipt here. The daemon sets the author from the caller's
-session identity, so a session can only attest for itself. Review approval is
-the review step record (``step_records``), not a receipt.
+A close criterion can name the landing of an exact commit, which happens in
+the lander's session. The close reviewer reads none of that session, so
+land_commit records a receipt here with the lander as its author. Review
+approval is the review step record (``step_records``), not a receipt.
 
 Receipts are ``task_comments`` rows under a reserved ``author_type``. The
 comment HTTP routes refuse to create or delete that type, so no client can
@@ -17,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -26,28 +24,18 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import Task
 
 __all__ = [
-    "ACTIVATION",
-    "CALLER_RECEIPT_KINDS",
     "CLOSE_RECEIPT_AUTHOR_TYPE",
-    "CLOSE_RECEIPT_KINDS",
     "LANDING",
-    "LANDING_APPROVAL",
-    "LANDING_APPROVAL_REASONS",
     "CloseReceipt",
     "CloseReceiptError",
-    "close_receipt_facts",
     "list_close_receipts",
     "record_close_receipt",
 ]
 
 CLOSE_RECEIPT_AUTHOR_TYPE = "close_receipt"
-ACTIVATION = "activation"
-LANDING_APPROVAL = "landing_approval"
+# Stored rows of a retired kind (activation, landing_approval,
+# independent_review_approval) read as nothing.
 LANDING = "landing"
-# Stored rows of a retired kind (independent_review_approval) read as nothing.
-CLOSE_RECEIPT_KINDS = frozenset({ACTIVATION, LANDING_APPROVAL, LANDING})
-CALLER_RECEIPT_KINDS = CLOSE_RECEIPT_KINDS - {LANDING}
-LANDING_APPROVAL_REASONS = frozenset({"restart", "freeze", "overlap"})
 
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _MAX_FACTS = 16
@@ -75,38 +63,27 @@ def record_close_receipt(
     *,
     task: Task,
     author_session_id: str,
-    kind: str,
     commit_sha: str,
     facts: object = None,
 ) -> tuple[CloseReceipt, bool]:
-    """Record a receipt, returning a replay with the same author, kind and commit.
-
-    Landing approvals also match the reason set; changed reasons append a receipt.
+    """Record a landing receipt, returning a replay with the same author and commit.
 
     The caller has already verified that ``commit_sha`` names a commit in the
     task's repository. Authority comes from the task row as locked here, so
     ``task`` contributes only its id.
     """
-    if kind not in CLOSE_RECEIPT_KINDS:
-        raise CloseReceiptError(f"kind must be one of {sorted(CLOSE_RECEIPT_KINDS)}")
     sha = commit_sha.strip().lower()
     if not _FULL_SHA_RE.fullmatch(sha):
         raise CloseReceiptError("commit_sha must be a full 40-character commit SHA")
-    bounded_facts = _bounded_facts(facts)
-    approval_reasons = (
-        _landing_approval_reasons(bounded_facts) if kind == LANDING_APPROVAL else None
-    )
-    body: dict[str, Any] = {"kind": kind, "commit_sha": sha, "facts": bounded_facts}
+    body: dict[str, Any] = {"kind": LANDING, "commit_sha": sha, "facts": _bounded_facts(facts)}
 
     with db.transaction() as conn:
-        # Authorize against the locked row, never the caller's snapshot: the claim or
-        # delegation can change while the caller awaits commit verification. The lock
-        # also serializes receipts per task so a replay cannot insert a duplicate.
+        # Authorize against the locked row, never the caller's snapshot: the claim
+        # can change while the caller awaits commit verification. The lock also
+        # serializes receipts per task so a replay cannot insert a duplicate.
         authority = conn.execute(
             """
-            SELECT claimed_by_session_id::text AS claimed_by_session_id,
-                   created_in_session_id::text AS created_in_session_id,
-                   delegated_by_session_id::text AS delegated_by_session_id
+            SELECT claimed_by_session_id::text AS claimed_by_session_id
             FROM tasks WHERE id = %s FOR UPDATE
             """,
             (task.id,),
@@ -115,13 +92,6 @@ def record_close_receipt(
             raise CloseReceiptError(f"task {task.id} no longer exists")
         if author_session_id == authority["claimed_by_session_id"]:
             raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
-        if kind in {ACTIVATION, LANDING_APPROVAL} and author_session_id not in {
-            authority["created_in_session_id"],
-            authority["delegated_by_session_id"],
-        }:
-            raise CloseReceiptError(
-                f"{kind} receipts come only from the task's creator or delegator"
-            )
         rows = conn.execute(
             """
             SELECT id, task_id, author, body, created_at FROM task_comments
@@ -132,11 +102,7 @@ def record_close_receipt(
         ).fetchall()
         for row in rows:
             existing = _receipt_from_row(row)
-            if existing is not None and (existing.kind, existing.commit_sha) == (kind, sha):
-                if kind == LANDING_APPROVAL and (
-                    _landing_approval_reasons(existing.facts) != approval_reasons
-                ):
-                    continue
+            if existing is not None and existing.commit_sha == sha:
                 return existing, False
         inserted = conn.execute(
             """
@@ -168,60 +134,6 @@ def list_close_receipts(db: HubDatabase, task_id: str) -> list[CloseReceipt]:
         (task_id, CLOSE_RECEIPT_AUTHOR_TYPE),
     )
     return [receipt for row in rows if (receipt := _receipt_from_row(row)) is not None]
-
-
-def close_receipt_facts(
-    db: HubDatabase,
-    task: Task,
-    linked_commit_shas: Sequence[str],
-) -> list[dict[str, object]]:
-    """Render a task's receipts as close-review launch facts."""
-    receipts = list_close_receipts(db, task.id)
-    if not receipts:
-        return []
-    author_ids = sorted({receipt.author_session_id for receipt in receipts})
-    refs = {
-        str(row["id"]): f"#{row['seq_num']}"
-        for row in db.fetchall(
-            "SELECT id, seq_num FROM sessions WHERE id = ANY(%s::uuid[]) AND seq_num IS NOT NULL",
-            (author_ids,),
-        )
-    }
-    linked = [sha.lower() for sha in linked_commit_shas if sha]
-    facts: list[dict[str, object]] = []
-    for receipt in receipts:
-        rendered: dict[str, object] = {
-            "kind": receipt.kind,
-            "commit_sha": receipt.commit_sha,
-            "matches_linked_commit": any(receipt.commit_sha.startswith(sha) for sha in linked),
-            "author_session": refs.get(receipt.author_session_id, receipt.author_session_id),
-            "author_role": _author_role(task, receipt.author_session_id),
-            "facts": receipt.facts,
-            "recorded_at": receipt.recorded_at,
-        }
-        facts.append(rendered)
-    return facts
-
-
-def _author_role(task: Task, author_session_id: str) -> str:
-    if author_session_id == task.created_in_session_id:
-        return "task_creator"
-    if author_session_id == task.delegated_by_session_id:
-        return "task_delegator"
-    return "independent_session"
-
-
-def _landing_approval_reasons(facts: Mapping[str, str | int | bool]) -> frozenset[str]:
-    reason = facts.get("reason")
-    if not isinstance(reason, str):
-        raise CloseReceiptError("landing_approval requires a string reason fact")
-    reasons = frozenset(part.strip() for part in reason.split(","))
-    if not reasons or not reasons <= LANDING_APPROVAL_REASONS:
-        raise CloseReceiptError(
-            "landing_approval reason must name a non-empty subset of "
-            f"{sorted(LANDING_APPROVAL_REASONS)}"
-        )
-    return reasons
 
 
 def _bounded_facts(facts: object) -> dict[str, str | int | bool]:
@@ -258,7 +170,7 @@ def _receipt_from_row(row: Mapping[str, Any] | None) -> CloseReceipt | None:
     kind = body.get("kind")
     sha = body.get("commit_sha")
     facts = body.get("facts")
-    if kind not in CLOSE_RECEIPT_KINDS or not isinstance(sha, str) or not isinstance(facts, dict):
+    if kind != LANDING or not isinstance(sha, str) or not isinstance(facts, dict):
         return None
     created_at = row["created_at"]
     return CloseReceipt(

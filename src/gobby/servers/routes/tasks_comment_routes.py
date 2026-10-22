@@ -77,7 +77,7 @@ def register_task_comment_routes(
         if request_data.author_type == CLOSE_RECEIPT_AUTHOR_TYPE:
             raise HTTPException(
                 status_code=403,
-                detail="Close receipts are recorded only through record_close_receipt",
+                detail="Close receipts cannot be created here; only land_commit records them",
             )
         if request_data.author_type == STEP_RECORD_AUTHOR_TYPE:
             raise HTTPException(

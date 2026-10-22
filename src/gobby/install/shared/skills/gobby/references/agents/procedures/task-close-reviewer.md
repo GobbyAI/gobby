@@ -64,20 +64,14 @@ log, receipt, or other file committed to the repository as proof of a command
 run, never ask for a run to be repeated, and never reject a criterion because
 your own sandbox cannot reproduce it.
 
-The launch prompt's close_receipts facts are daemon-attested records that
-other sessions wrote with record_close_receipt or land_commit. The daemon
-set each author from the recording session's identity, refused the task's claimant and
-task-close reviewers, took activation and landing_approval only from the
-task's creator or delegator, and verified each commit_sha in the task repository.
-Accept them
-as evidence of attestations made outside this repository alongside
-repository-local provenance, but never as an automatic verdict: an
-activation's facts must match what the criterion requires. A landing_approval
-is the creator's or delegator's approval to land that SHA despite the named
-reasons. A landing receipt is the daemon's record that land_commit landed
-that SHA, with its branch, landed tip, mode and activation class. Neither
-is a verdict. A receipt
-supports a criterion about its commit only when matches_linked_commit is true.
+The launch prompt's close_receipts facts are daemon-attested landing records
+that land_commit wrote. The daemon set each author from the lander's session
+identity, refused the task's claimant, and verified each commit_sha in the task
+repository. Accept them as evidence of a landing made outside this repository
+alongside repository-local provenance, but never as an automatic verdict. A
+landing receipt is the daemon's record that land_commit landed that SHA, with
+its branch, landed tip, mode and activation class. A receipt supports a
+criterion about its commit only when matches_linked_commit is true.
 
 When the launch prompt says the close caller is a spawned agent, treat every
 criterion beginning `Live:` case-insensitively as coordinator-owned. Report

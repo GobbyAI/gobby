@@ -328,18 +328,8 @@ def session_condition_helpers(
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
-    from gobby.workflows.engine.seat_transitions import candidate_landing_approved
 
     return {
-        "candidate_landing_approved": lambda caller_id,
-        task_id,
-        sha,
-        requested_task,
-        requested_sha: (
-            candidate_landing_approved(
-                session_manager, caller_id, task_id, sha, requested_task, requested_sha
-            )
-        ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output
         ),

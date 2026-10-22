@@ -48,21 +48,6 @@ def _requested_task(tasks: LocalTaskManager, bound_id: Any, requested_ref: Any) 
     return None
 
 
-def candidate_landing_approved(
-    sessions: SessionManager | None,
-    reviewer_session_id: str,
-    task_id: Any,
-    sha: Any,
-    requested_task: Any,
-    requested_sha: Any,
-) -> bool:
-    """The landing call must name the approved intake unit, including its full SHA."""
-    if sessions is None or not isinstance(sha, str) or requested_sha != sha:
-        return False
-    task = _requested_task(LocalTaskManager(sessions.db), task_id, requested_task)
-    return task is not None and _approved(sessions.db, reviewer_session_id, task, sha)
-
-
 def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
     if not isinstance(ref, str):
         return False
@@ -209,7 +194,6 @@ def _reviewer_message(
         and _same_task(db, session_variables.get("candidate_task"), event)
         and event.sha == session_variables.get("candidate_sha")
     )
-    parked = list(variables.get("parked_candidates") or [])
     if incoming and kind == "CANDIDATE":
         if _candidate_rejection(db, variables, event) is not None:
             return {}
@@ -223,70 +207,24 @@ def _reviewer_message(
             "candidate_sha": event.sha,
             "candidate_owner": event.message.from_session,
             "candidate_received_at": received_at,
-            "parked_candidates": [
-                record for record in parked if not _same_task(db, record.get("task"), event)
-            ],
         }
-    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(
-        db, event, session_id, parked_candidates=parked
-    ):
-        changes = _clear_candidate() if same_unit or stale_session_unit else {}
-        remaining = [
-            record
-            for record in parked
-            if not (_same_task(db, record.get("task"), event) and record.get("sha") == event.sha)
-        ]
-        if remaining != parked:
-            changes["parked_candidates"] = remaining
-        return changes
-    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(
-        db, event, session_id, parked_candidates=parked
-    ):
-        matching = [
-            record
-            for record in parked
-            if _same_task(db, record.get("task"), event) and record.get("sha") == event.sha
-        ]
-        if variables.get("candidate_received") or not matching:
-            return {}
-        return {
-            "candidate_received": True,
-            "verdict_ready": _approved(db, session_id, event.task, event.sha),
-            "candidate_task": event.task.id,
-            "candidate_sha": event.sha,
-            "candidate_owner": event.task.claimed_by_session_id,
-            "candidate_received_at": event.message.sent_at.isoformat(),
-            "parked_candidates": [record for record in parked if record not in matching],
-        }
-    if (
-        stale_session_unit
-        and event.message.from_session == session_id
-        and kind in {"LANDED", "ALREADY_LANDED"}
-        and _approved(db, session_id, event.task, event.sha)
-    ):
-        return _clear_candidate()
+    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
+        return _clear_candidate() if same_unit or stale_session_unit else {}
     if not same_unit:
         return {}
     if incoming and not is_task_reviewer(db, event):
         return {}
-    if kind == "CANDIDATE_PARKED" and fields.get("REASON") in {
-        "approval",
-        "base_update",
-        "review_only",
-    }:
-        return {
-            **_clear_candidate(),
-            "parked_candidates": parked + [{"task": event.task.id, "sha": event.sha}],
-        }
-    if kind == "CANDIDATE_VERDICT" and fields.get("VERDICT") == "BOUNCE":
+    if kind != "CANDIDATE_VERDICT":
+        return {}
+    if fields.get("VERDICT") == "BOUNCE":
         return _clear_candidate()
-    if not incoming and kind in {"LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"}:
-        if kind == "REVIEW_COMPLETE" and (
-            fields.get("VERDICT") != "LAND" or fields.get("LANDING") != "NOT_REQUIRED"
-        ):
-            return {}
-        if _approved(db, session_id, event.task, event.sha):
-            return _clear_candidate()
+    # The Orchestrator lands an approved LAND, so the reviewer's unit ends at the verdict.
+    if (
+        not incoming
+        and fields.get("VERDICT") == "LAND"
+        and _approved(db, session_id, event.task, event.sha)
+    ):
+        return _clear_candidate()
     return {}
 
 
@@ -352,7 +290,7 @@ def advance_seat(
             )
         elif role == "plan-adversary" and message.from_session == session_id:
             match = re.match(
-                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?: |$)", message.content
+                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)", message.content
             )
             if match and step == "review" and match[1] == "CONSENSUS":
                 changes = {"consensus": True, "consensus_sha": match[2], "bounced": False}

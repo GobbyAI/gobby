@@ -24,8 +24,6 @@ _ENVELOPE_FIELDS = {
     "COMMIT",
     "SHA",
     "VERDICT",
-    "REASON",
-    "LANDING",
     "BRANCH",
     "RECEIPT",
     "MODE",
@@ -158,7 +156,7 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     task_ref = fields.get("TASK")
     sha = fields.get("COMMIT") if is_candidate else fields.get("SHA") or fields.get("COMMIT")
     if not task_ref or not sha or not _SHA.fullmatch(sha):
-        if fields.get("EVENT") in {"CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"}:
+        if fields.get("EVENT") == "CANDIDATE_WITHDRAWN":
             raise CandidateMessageError(_CANDIDATE_GRAMMAR)
         return None
     caller = SessionManager(db).get(message.to_session)
@@ -179,8 +177,6 @@ def is_task_coordinator(
     db: HubDatabase,
     event: CandidateEvent,
     reviewer_session_id: str,
-    *,
-    parked_candidates: list[dict[str, Any]],
 ) -> bool:
     """Only the unit's reviewer, root Orchestrator or owning LM controls its state."""
     from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
@@ -199,10 +195,7 @@ def is_task_coordinator(
     ):
         return False
     if caller.id == reviewer.id:
-        return is_task_reviewer(db, event) or any(
-            record.get("task") == event.task.id and record.get("sha") == event.sha
-            for record in parked_candidates
-        )
+        return is_task_reviewer(db, event)
     # Reuse the claim-release rule, including the enabled definition, root
     # Orchestrator and bound running LM run with the reviewer's recorded lane.
     return _can_release(RegistryContext(task_manager=LocalTaskManager(db)), caller, reviewer)

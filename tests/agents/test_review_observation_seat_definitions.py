@@ -4,8 +4,8 @@ The code-reviewer, archivist, log-monitor and researcher seats are bundled
 definitions whose prompt is the role text of record (agent-definition-profiles
 P3, section 3.3). They share the seat shape and differ in their tool
 restrictions, step workflows and message contracts. The lane-manager relay of
-the reviewer's landing lines ships here too, because sender and relay are one
-protocol.
+the lander's landing lines ships here too, because the reviewer's LAND verdict
+starts that protocol.
 """
 
 from __future__ import annotations
@@ -455,7 +455,7 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
     assert _variables(name)["required_skills_loaded"] is False
 
 
-def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link() -> None:
+def test_code_reviewer_requires_fresh_intake_for_replacement_sha() -> None:
     prompt = _prompt("code-reviewer")
     steps = _steps("code-reviewer")
     replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
@@ -463,10 +463,9 @@ def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link
     assert "same-task replacement resets verdict state" in replacement
     assert "fresh approved review step record for its full SHA" in replacement
     assert "Finish the active unit before reading a different queued task" in replacement
-    resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
-    assert "Restore the reviewing assignment before landing." in resume
+    assert "- Resume." not in prompt
     assert 'action="reviewing"' in prompt.split("- Review.", 1)[1].split("\n    - ", 1)[0]
-    assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["verdict"])
+    assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["review"])
     status = steps["verdict"].status_message
     assert status is not None
     assert "supersede the current SHA and return to fresh review" in status
@@ -488,6 +487,7 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
         "verdict_ready": False,
     }
     assert variables["candidate_task"] is None
+    assert "parked_candidates" not in variables
     assert list(steps) == ["load_skills", "await", "review", "verdict"]
     assert _transitions(steps["load_skills"]) == [("await", LOAD_SKILLS_WHEN)]
     assert _transitions(steps["await"]) == [
@@ -528,7 +528,7 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
         ("EVENT=CANDIDATE_WITHDRAWN TASK=#24236 NOTE=Lane Manager reassignment", True),
         ("EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate", False),
         ("Prose EVENT=CANDIDATE_WITHDRAWN TASK=#24164", False),
-        ("EVENT=LAND_PENDING TASK=#24164 NOTE=EVENT=CANDIDATE_WITHDRAWN", False),
+        ("EVENT=PROOF_REQUEST TASK=#24164 NOTE=EVENT=CANDIDATE_WITHDRAWN", False),
     ],
 )
 async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_receipt(
@@ -595,64 +595,24 @@ def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
     assert transition == expected
 
 
-@pytest.mark.parametrize(
-    ("content", "resets"),
-    [
-        (
-            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'a' * 40} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=mapping",
-            True,
-        ),
-        ("EVENT=REVIEW_COMPLETE TASK=#43 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=REQUIRED", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 NOTE=VERDICT=LAND LANDING=NOT_REQUIRED", False),
-        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA= VERDICT=LAND LANDING=NOT_REQUIRED", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=def VERDICT=LAND LANDING=NOT_REQUIRED", False),
-        (
-            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'b' * 40} VERDICT=LAND LANDING=NOT_REQUIRED",
-            False,
-        ),
-    ],
-)
-async def test_review_only_land_requires_explicit_matching_completion(
-    temp_db: PostgresHubDatabase, content: str, resets: bool
-) -> None:
-    run, task = await _reviewer_run(temp_db)
-    before = run.vars
-    await run.send(content.replace("TASK=#42", f"TASK={task.id}"))
-    assert run.step == ("await" if resets else "verdict")
-    if resets:
-        assert run.vars["candidate_task"] is None
-        assert run.vars["candidate_sha"] is None
-    else:
-        assert run.vars == before
-
-
-def test_code_reviewer_requests_review_only_confirmation_for_unmarked_no_change_land() -> None:
-    prompt = _prompt("code-reviewer")
-    assert "EVENT=REVIEW_ONLY_REQUIRED" in prompt
-    assert "REASON=review_only" in prompt
-
-
 @pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
-async def test_review_only_land_rejects_malformed_bound_sha(
+async def test_land_verdict_rejects_malformed_bound_sha(
     temp_db: PostgresHubDatabase, candidate_sha: str | None
 ) -> None:
     run, task = await _reviewer_run(temp_db)
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
-    # A corrupt recovered snapshot must never authorize completion.
+    # A corrupt recovered snapshot must never complete the unit.
     instance.variables["candidate_sha"] = candidate_sha
     run.instances.save(instance)
-    content = f"EVENT=REVIEW_COMPLETE TASK={task.id} SHA={candidate_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+    content = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={candidate_sha} VERDICT=LAND"
     before = run.vars
     await run.send(content)
     assert run.step == "verdict"
     assert run.vars == before
 
 
-def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
+def test_code_reviewer_hands_each_land_verdict_to_the_orchestrator() -> None:
     verdict = _steps("code-reviewer")["verdict"]
     prompt = _prompt("code-reviewer")
 
@@ -661,51 +621,31 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
         "gobby-agents:get_inter_session_message",
         "gobby-tasks:get_task",
         "gobby-tasks:record_review_step",
-        "gobby-tasks:link_task_to_session",
-        "gobby-tasks-ops:land_commit",
         "gobby-agents:wait_for_coordination",
     }
+    assert not verdict.on_mcp_before
     assert "Bash" in _allowed_tools(verdict)
     assert "mcp__gobby__set_variable" not in _allowed_tools(verdict)
     approval = prompt.index('gobby-tasks:record_review_step(task_id, status="approved"')
-    assert approval < prompt.index("gobby-tasks-ops:land_commit(task_id")
-    assert "`retest_required`" in prompt
-    assert "EVENT=LAND_PENDING TASK=#NNNNN" in prompt
-    assert "until a `receipt_id` returns" in prompt
-    assert "When `already_landed: true`, a `receipt_id` returns" in prompt
-    assert "`landed_by_session_id` names another session" in prompt
-    assert "neither your current session ID nor `unknown`" in prompt
-    assert (
-        "EVENT=ALREADY_LANDED TASK=#NNNNN SHA= TASK_TITLE= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
-    ) in prompt
-    assert "original `receipt_id` and original `landed_by_session_id`" in prompt
-    assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
-    assert "`landed_by_session_id` equals your current session ID" in prompt
-    assert "equals your current session ID or is `unknown`, send" in prompt
-    assert "Report an unknown lander as unknown." not in prompt
-    assert "Send EVENT=LANDED immediately" in prompt
-    assert "report `RETEST=UNAVAILABLE` while the closing seat's retest is pending" in prompt
-    status = str(verdict.status_message)
-    assert "send EVENT=ALREADY_LANDED" in status
-    assert "otherwise send EVENT=LANDED" in status
-    assert "landed_by_session_id names another session" in status
-    assert "current session ID nor unknown" in status
-    assert "your own landing or an unknown lander" in status
-    assert "full field set immediately" in status
-    assert "RETEST=UNAVAILABLE" in status
-    assert "wait for its" not in status
-    assert "`notification_pending`" in prompt
-    assert "`Landed #N ...` line" in prompt
-    assert (
-        "EVENT=LANDED TASK=#NNNNN SHA= TASK_TITLE= BRANCH= RECEIPT= MODE= LANDED_TIP= "
-        "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= "
-        "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
-    ) in prompt
-    assert "project workflow sync is also required" in prompt
-    assert "including when a stronger activation class is reported" in prompt
-    assert "If the field is absent, report unknown." in prompt
-    assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
-    # land_commit refuses a new SHA with review_approval_missing until it has its own record.
+    assert approval < prompt.index("send the LAND verdict to the Orchestrator and the author lane")
+    assert "The Orchestrator lands the approved SHA" in prompt
+    assert "starts with that line, after your approved review step record" in prompt
+    definition = str(_raw("code-reviewer"))
+    for retired in (
+        "land_commit",
+        "LAND_PENDING",
+        "LAND_BLOCKED",
+        "ALREADY_LANDED",
+        "CANDIDATE_PARKED",
+        "CANDIDATE_RESUMED",
+        "REVIEW_ONLY_REQUIRED",
+        "REVIEW_COMPLETE",
+        "landing_approval",
+        "parked",
+    ):
+        assert retired not in prompt
+        assert retired not in definition
+    # A new SHA needs its own approval before the Orchestrator can land it.
     new_sha = prompt.index("- Replacement SHA.")
     assert "fresh approved review step record for its full SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
@@ -715,30 +655,28 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     ("content", "resets"),
     [
         ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=BOUNCE NOTE=HIGH", True),
-        ("EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=PASS", True),
-        ("EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1 LANDED_BY_SESSION_ID=original", True),
-        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
-        ("EVENT=LAND_PENDING TASK=#42 SHA=abc NOTE=receipt_pending", False),
-        ("EVENT=LAND_BLOCKED TASK=#42 SHA=abc NOTE=merge_conflict", False),
-        ("EVENT=LANDED TASK=#43 SHA=abc RECEIPT=r1", False),
-        ("EVENT=ALREADY_LANDED TASK=#43 SHA=abc RECEIPT=r1", False),
-        ("Prose EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1", False),
-        ("EVENT=LAND_PENDING TASK=#42 NOTE=EVENT=ALREADY_LANDED", False),
+        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND NOTE=approved", True),
+        ("EVENT=CANDIDATE_VERDICT TASK=#43 SHA=abc VERDICT=LAND", False),
+        (f"EVENT=CANDIDATE_VERDICT TASK=#42 SHA={'b' * 40} VERDICT=LAND", False),
+        ("EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=NOT_REQUIRED", False),
+        ("EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1 LANDED_BY_SESSION_ID=original", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        ("Prose EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
+        ("EVENT=PROOF_REQUEST TASK=#42 SHA=abc NOTE=EVENT=CANDIDATE_VERDICT VERDICT=LAND", False),
     ],
     ids=[
         "bounce",
+        "land-verdict",
+        "other-task",
+        "other-sha",
         "landed",
         "already-landed",
-        "land-verdict",
-        "land-pending",
-        "land-blocked",
-        "other-task",
-        "replay-other-task",
-        "replay-prose",
-        "replay-note",
+        "review-complete",
+        "prose",
+        "note",
     ],
 )
-async def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
+async def test_code_reviewer_resets_only_on_its_own_verdict_for_its_candidate(
     temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
     run, task = await _reviewer_run(temp_db)
@@ -861,12 +799,15 @@ def test_researcher_is_a_research_only_serving_seat() -> None:
     assert "Ask the Orchestrator before killing processes" in prompt
 
 
-def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> None:
+def test_lane_manager_relays_orchestrator_landings_and_gates_the_close_release() -> None:
     body = _load("lane-manager")
     prompt = _prompt("lane-manager")
 
     assert body.step_workflow is None
     assert "Merge Manager" not in prompt
+    assert "The Orchestrator lands each approved LAND" in prompt
+    assert "Code Reviewer lands" not in prompt
+    assert "landing_approval" not in prompt
     event_list = prompt.split("reports ", 1)[1].split(" to you;", 1)[0]
     for event in (
         "EVENT=LANDED",
@@ -883,9 +824,8 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
     assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
     assert "`EVENT=LANDED` line that carries a `RECEIPT` value" in prompt
     assert "git merge-base --is-ancestor <LANDED_TIP> <BRANCH>" in prompt
-    assert (
-        "a `MODE=merge` landing needs the closing seat's `EVENT=PROOF_RESULT` with `RETEST=PASS`"
-    ) in prompt
+    assert "MODE=merge" not in prompt
+    assert "The lander's `EVENT=LANDED` may carry `RETEST=UNAVAILABLE`" in prompt
     assert "A pending, unavailable or failed author retest withholds the release" in prompt
     assert "landed merge SHA and the same test set" in prompt
     assert "A failing `EVENT=PROOF_RESULT` reopens the task" in prompt

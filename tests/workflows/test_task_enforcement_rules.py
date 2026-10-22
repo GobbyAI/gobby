@@ -38,8 +38,13 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 pytestmark = pytest.mark.unit
 
 
-def test_retired_path_tools_absent_from_enforcement_lists() -> None:
-    retired = {"release_task_paths", "inspect_task_path_ownership"}
+def test_retired_tools_absent_from_enforcement_lists() -> None:
+    retired = {
+        "release_task_paths",
+        "inspect_task_path_ownership",
+        "record_close_receipt",
+        "transfer_task_authority",
+    }
     assert retired.isdisjoint(TASK_MUTATION_TOOLS_BY_SERVER["gobby-tasks"])
     assert retired.isdisjoint(INTERACTIVE_TASK_MUTATIONS)
     assert retired.isdisjoint(READ_ONLY_TASK_TOOLS)
@@ -66,7 +71,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "escalate_task",
     "link_commit",
     "link_task_to_session",
-    "record_close_receipt",
     "record_closing_step",
     "record_implementation_step",
     "record_review_step",
@@ -76,7 +80,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "remove_label",
     "reopen_task",
     "repair_closed_candidate",
-    "transfer_task_authority",
     "unlink_commit",
     "update_observed_files",
     "update_task",

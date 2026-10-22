@@ -369,8 +369,8 @@ commit list or file manifest.
 
 Independent reviewers use the linked diff and complete commit/file manifests.
 Follow every `get_task_diff` page, inspect all changed paths, and run relevant
-checks. Review and activation receipts record those workflow decisions; they
-are separate from the close tool's gate evaluator.
+checks. Review step records and landing receipts record those workflow
+decisions; they are separate from the close tool's gate evaluator.
 
 ## CLI Reference
 

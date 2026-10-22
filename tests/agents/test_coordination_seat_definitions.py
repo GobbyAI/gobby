@@ -231,6 +231,27 @@ def test_orchestrator_writes_every_step_record_only_as_a_last_resort() -> None:
         assert _load(name).task_step_writes == [], name
 
 
+def test_orchestrator_lands_each_reviewer_land_and_reports_the_landing() -> None:
+    prompt = _prompt("orchestrator")
+
+    assert "landing_approval" not in prompt
+    assert "the reviewer calls" not in prompt
+    assert "Land each approved LAND yourself with `gobby-tasks-ops:land_commit`" in prompt
+    assert (
+        "Landing reports. Send the Lane Manager and the author lane "
+        "`EVENT=LANDED TASK=#NNNNN SHA= TASK_TITLE= BRANCH= RECEIPT= MODE= LANDED_TIP= "
+        "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= RETEST=NOT_REQUIRED NOTE=`"
+    ) in prompt
+    assert "`EVENT=ALREADY_LANDED TASK=#NNNNN SHA= TASK_TITLE= RECEIPT= LANDED_BY_SESSION_ID=" in (
+        prompt
+    )
+    assert "With `receipt_pending: true`, send `EVENT=LAND_PENDING" in prompt
+    assert "until a `receipt_id` returns" in prompt
+    assert "each session listed in `notification_pending`" in prompt
+    assert "`EVENT=LAND_BLOCKED TASK=#NNNNN SHA= TASK_TITLE= NOTE=`" in prompt
+    assert "An escalated refusal has already moved the task to Triage" in prompt
+
+
 def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubDatabase) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     row = RuleDefinitionManager(temp_db).get_by_name("inject-seat-common")
@@ -314,23 +335,11 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "the project's operating policy" in prompt
 
 
-def test_lane_manager_routes_parked_candidates_without_releasing_close() -> None:
+def test_lane_manager_has_no_parked_candidate_protocol() -> None:
     prompt = _prompt("lane-manager")
-    parked = prompt.split("- Parked candidates.", 1)[1].split("\n    - ", 1)[0]
-    assert "EVENT=CANDIDATE_PARKED" in parked
-    assert "exact TASK, SHA, REASON, blocker, coordinator and prior approval receipt" in parked
-    assert "relay them through the Inbox Manager" in parked
-    assert "responsible seat" in parked
-    assert "EVENT=REVIEW_ONLY_REQUIRED or REASON=review_only" in parked
-    assert "explicit Orchestrator or Lane Manager marking" in parked
-    assert "exact task/SHA is review-only with nothing to land" in parked
-    assert "waiting alone never clears this blocker" in parked
-    assert "available for other routed candidates" in parked
-    assert "EVENT=CANDIDATE_RESUMED" in parked
-    assert "restore its reviewing link" in parked
-    assert "changed SHA is a fresh CANDIDATE" in parked
-    assert "needs fresh review and approval" in parked
-    assert "never supplies a landing receipt or releases a close" in parked
+    assert "- Parked candidates." not in prompt
+    for retired in ("CANDIDATE_PARKED", "CANDIDATE_RESUMED", "REVIEW_ONLY_REQUIRED"):
+        assert retired not in prompt
 
 
 def test_lane_manager_recovers_stalled_seats_only_without_a_recovery_steward() -> None:
@@ -351,7 +360,7 @@ def test_release_manager_loads_as_the_landing_and_activation_ledger() -> None:
     for heading in ("Landing ledger.", "Close queue.", "Activation.", "Heavy-run slots."):
         assert heading in prompt, heading
     assert "`promote_workspace_binary_set`" in prompt
-    assert "`record_close_receipt`" in prompt
+    assert "record_close_receipt" not in prompt
     assert "Restarts and cutovers belong to the Orchestrator" in prompt
 
 
@@ -542,5 +551,7 @@ def test_inbox_manager_waits_for_confirmed_missing_landed_retest() -> None:
 
     assert "RETEST=FAIL" in landing_relay
     assert "RETEST=UNAVAILABLE" not in landing_relay
+    assert "The lander's initial `EVENT=LANDED RETEST=UNAVAILABLE`" in prompt
+    assert "reviewer LAND" not in prompt
     assert "Forward `RETEST=UNAVAILABLE` only after the Lane Manager confirms" in prompt
     assert "closing seat's `EVENT=PROOF_RESULT` is absent" in prompt

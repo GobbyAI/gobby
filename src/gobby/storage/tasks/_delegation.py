@@ -2,39 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from types import SimpleNamespace
-from typing import Any
-
-from gobby.storage.agents._constants import TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES, TERMINAL_SESSION_STATUSES
 from gobby.storage.tasks._models import Task
-from gobby.terminal_ownership import recorded_process_exited
-from gobby.utils.machine_id import get_machine_id
-
-
-def _session_ref(seq_num: int | None, session_id: str) -> str:
-    """Audit name for a session: its #seq, or its stored UUID when it has no seq."""
-    return f"#{seq_num}" if seq_num is not None else session_id
-
-
-def _holds_authority(row: Mapping[str, Any], slot: str) -> bool:
-    """Whether the task's creator or delegator (*slot*) can still use its authority."""
-    status = row[f"{slot}_status"]
-    if status not in LIVE_SESSION_STATUSES:
-        return False
-    if status != "paused":
-        return True
-    # A paused session can lose its terminal and keep working, so only positive evidence
-    # that it is gone releases its authority (#23885): every agent run linked to it ended,
-    # or the provider process it recorded on this machine exited.
-    if row[f"{slot}_run_ended"]:
-        return False
-    context = Session.parse_terminal_context(row[f"{slot}_terminal_context"])
-    recorded = SimpleNamespace(terminal_context=context)
-    return not (row[f"{slot}_machine_id"] == get_machine_id() and recorded_process_exited(recorded))
 
 
 def delegate_task(
@@ -101,124 +71,6 @@ def delegate_task(
             RETURNING *
             """,
             (delegated_to_session_id, delegated_by_session_id, reason, task_id),
-        ).fetchone()
-        if updated is None:
-            raise ValueError("Task not found")
-        return Task.from_row(updated)
-
-
-def transfer_task_authority(
-    db: HubDatabase,
-    task_id: str,
-    *,
-    caller_session_id: str,
-    reason: str,
-) -> Task:
-    """Take over activation-receipt authority no live session can use (#23157, #23624).
-
-    A coordinator that filed or delegated a task can expire before the task
-    closes, leaving no live session able to record the activation receipt the
-    close reviewer needs. A creator that claimed its own task is in the same
-    position while it lives, because the claimant cannot record receipts. This
-    is the one supported recovery: a live session in the task's project takes
-    the delegator slot the recorded authority held, so the existing
-    creator-or-delegator check accepts it without a receipt-rule change. The
-    task's claimant and its close reviewers stay excluded.
-    """
-
-    reason = reason.strip()
-    if not reason:
-        raise ValueError("Authority transfer reason is required")
-
-    with db.transaction() as conn:
-        row = conn.execute(
-            """
-            SELECT t.created_in_session_id::text AS created_in_session_id,
-                   t.delegated_by_session_id::text AS delegated_by_session_id,
-                   t.claimed_by_session_id::text AS claimed_by_session_id,
-                   t.closed_at, t.delegation_reason, t.project_id,
-                   creator.status AS creator_status, creator.seq_num AS creator_seq,
-                   creator.machine_id::text AS creator_machine_id,
-                   creator.terminal_context AS creator_terminal_context,
-                   (SELECT bool_and(r.status::text = ANY(%s)) FROM agent_runs r
-                    WHERE r.child_session_id = creator.id OR r.id = creator.agent_run_id)
-                       AS creator_run_ended,
-                   delegator.status AS delegator_status, delegator.seq_num AS delegator_seq,
-                   delegator.machine_id::text AS delegator_machine_id,
-                   delegator.terminal_context AS delegator_terminal_context,
-                   (SELECT bool_and(r.status::text = ANY(%s)) FROM agent_runs r
-                    WHERE r.child_session_id = delegator.id OR r.id = delegator.agent_run_id)
-                       AS delegator_run_ended,
-                   actor.status AS actor_status, actor.project_id AS actor_project_id,
-                   actor.seq_num AS actor_seq
-            FROM tasks t
-            LEFT JOIN sessions creator ON creator.id = t.created_in_session_id
-            LEFT JOIN sessions delegator ON delegator.id = t.delegated_by_session_id
-            LEFT JOIN sessions actor ON actor.id = %s
-            WHERE t.id = %s
-            FOR UPDATE OF t
-            """,
-            (
-                list(TERMINAL_AGENT_RUN_STATUSES),
-                list(TERMINAL_AGENT_RUN_STATUSES),
-                caller_session_id,
-                task_id,
-            ),
-        ).fetchone()
-        if row is None:
-            raise ValueError("Task not found")
-        if row["closed_at"] is not None:
-            raise ValueError("A closed task's authority cannot be transferred")
-        if str(row["claimed_by_session_id"]) == caller_session_id:
-            raise ValueError("the task's claimant cannot take over receipt authority")
-        if (
-            row["actor_status"] not in LIVE_SESSION_STATUSES
-            or row["actor_project_id"] != row["project_id"]
-        ):
-            raise ValueError("only a live session in the task's project may take over authority")
-
-        if str(row["delegated_by_session_id"]) == caller_session_id:
-            existing = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
-            if existing is None:
-                raise ValueError("Task not found")
-            return Task.from_row(existing)
-
-        # A creator that claimed its own task cannot record receipts for it (the claimant
-        # is refused), so it has no authority to keep (#23624).
-        creator_holds = (
-            _holds_authority(row, "creator")
-            and row["created_in_session_id"] != row["claimed_by_session_id"]
-        )
-        if creator_holds or _holds_authority(row, "delegator"):
-            raise ValueError(
-                "the task's creator or delegator is still live and keeps its authority"
-            )
-
-        slot = "delegator" if row["delegated_by_session_id"] is not None else "creator"
-        holder_id = row["delegated_by_session_id"] or row["created_in_session_id"]
-        if holder_id is None:
-            holder = "no recorded session"
-        else:
-            claimant = ", claimant" if holder_id == row["claimed_by_session_id"] else ""
-            holder = (
-                f"{_session_ref(row[f'{slot}_seq'], holder_id)} "
-                f"(status={row[f'{slot}_status']}{claimant})"
-            )
-        transfer_note = (
-            f"authority transferred from {holder} "
-            f"to {_session_ref(row['actor_seq'], caller_session_id)}: {reason}"
-        )
-        prior_reason = row["delegation_reason"]
-        combined_reason = f"{prior_reason} | {transfer_note}" if prior_reason else transfer_note
-
-        updated = conn.execute(
-            """
-            UPDATE tasks
-            SET delegated_by_session_id = %s, delegation_reason = %s, updated_at = now()
-            WHERE id = %s
-            RETURNING *
-            """,
-            (caller_session_id, combined_reason, task_id),
         ).fetchone()
         if updated is None:
             raise ValueError("Task not found")

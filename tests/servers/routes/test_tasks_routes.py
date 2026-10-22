@@ -1312,14 +1312,14 @@ class TestComments:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/comments",
             json={
-                "body": '{"kind":"activation"}',
+                "body": '{"kind":"landing"}',
                 "author": "sess-1",
                 "author_type": "close_receipt",
             },
         )
 
         assert response.status_code == 403
-        assert "record_close_receipt" in response.json()["detail"]
+        assert "only land_commit" in response.json()["detail"]
         assert client.get(f"/api/tasks/{sample_task['id']}/comments").json()["total"] == 0
 
     def test_delete_comment_refuses_close_receipt(

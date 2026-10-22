@@ -283,7 +283,7 @@ async def _record_and_notify(
 ) -> LandingResult:
     try:
         receipt, created = record_close_receipt(
-            db, task=task, author_session_id=caller, kind=LANDING, commit_sha=sha, facts=facts
+            db, task=task, author_session_id=caller, commit_sha=sha, facts=facts
         )
     except (psycopg.Error, IndeterminateCommitError):
         # The ref already moved; a later call replays the receipt or records it from the reflog.

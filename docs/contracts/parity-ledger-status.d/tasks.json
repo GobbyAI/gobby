@@ -535,10 +535,6 @@
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `list_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_listing.py:137`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
   },
-  "MCP gobby-tasks:record_close_receipt": {
-    "status": "proxied",
-    "note": "Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
-  },
   "MCP gobby-tasks:record_closing_step": {
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `record_closing_step` from Python handler `src/gobby/mcp_proxy/tools/tasks/_step_records.py:205`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
@@ -586,10 +582,6 @@
   "MCP gobby-tasks:suggest_next_task": {
     "status": "proxied",
     "note": "Blocked on #21560 Tasks family: port `suggest_next_task` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:587`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
-  },
-  "MCP gobby-tasks:transfer_task_authority": {
-    "status": "proxied",
-    "note": "Blocked on #21560 Tasks family: port `transfer_task_authority` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:81`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust."
   },
   "MCP gobby-tasks:unlink_commit": {
     "status": "proxied",

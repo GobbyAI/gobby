@@ -64,22 +64,11 @@ Each step has one writer: `record_test_step`, `record_implementation_step`,
 when its agent definition's `task_step_writes` grants that step, and a review
 approval only from a session that never claimed, implemented or edited the task.
 
-Peer evidence a close depends on is recorded by the peer, not the closer:
-`record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
-`activation` or `landing_approval` receipt on another session's task, authorized
-against the locked task row. A review LAND is the reviewer's approved
-`record_review_step` record for the exact commit, and `land_commit` lands only
-for a session holding its own such record for the commit the current review
-approves. An `activation` receipt comes only from the task's creator or delegator. When
-both have ended, or the live creator is the task's claimant and no delegator is
-live, a live session in the task's project takes over that authority with
-`transfer_task_authority(task_id, reason)`. It becomes the delegator, the
-delegation receiver is kept, and the reason is appended to the delegation reason.
-It refuses a closed task, the claimant, and any caller
-while a creator that is not the claimant, or a delegator, is still live. A paused
-holder counts as ended once every agent run linked to it ended or its recorded
-process exited on this machine; a lost terminal or wake binding alone does not.
-Re-running it is a no-op for the session already holding authority.
+Peer evidence a close depends on is recorded by the peer, not the closer. A
+review LAND is the reviewer's approved `record_review_step` record for the exact
+commit. `land_commit` lands that commit only for the task's Dev Manager or the
+root Orchestrator, never for the reviewer, and records a daemon-attested landing
+receipt on the task. Nothing else records a close receipt.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

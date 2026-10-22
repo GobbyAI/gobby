@@ -3,7 +3,6 @@ Task commit linking MCP tools module.
 
 Provides tools for linking git commits to tasks:
 - link_commit: Link a git commit to a task
-- record_close_receipt: Attest another session's close evidence for a task
 - unlink_commit: Unlink a git commit from a task
 - auto_link_commits: Auto-detect and link commits mentioning task IDs
 - get_task_diff: Page a task's commit and working-tree diff
@@ -11,7 +10,6 @@ Provides tools for linking git commits to tasks:
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
-import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -24,7 +22,6 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
-from gobby.tasks import close_receipts
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
@@ -36,7 +33,6 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
-from gobby.tasks.lifecycle_access import CrossProjectTaskForbidden, resolve_lifecycle_task
 from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -94,8 +90,7 @@ def create_commit_registry(
         auto_link_commits_fn: Function for auto-linking commits (injectable for testing)
         get_task_diff_page_fn: Function for paging task diffs (injectable for testing)
         git_timeout_seconds: Server-owned deadline for each git subprocess
-        session_manager: Resolves the calling session's machine for repo-path lookup and,
-            in record_close_receipt, its project and cross-project lineage authority
+        session_manager: Resolves the calling session's machine for repo-path lookup
 
     Returns:
         InternalToolRegistry with commit linking tools registered
@@ -209,122 +204,6 @@ def create_commit_registry(
             "required": ["task_id", "commit_sha"],
         },
         func=link_commit,
-    )
-
-    # --- record_close_receipt ---
-
-    async def record_close_receipt(
-        task_id: str,
-        kind: str,
-        commit_sha: str,
-        facts: dict[str, Any] | None = None,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Attest another session's close evidence as the calling session."""
-        if kind not in close_receipts.CALLER_RECEIPT_KINDS:
-            return {
-                "error": f"kind must be one of {sorted(close_receipts.CALLER_RECEIPT_KINDS)}; "
-                "landing is written only by land_commit"
-            }
-        author_session_id = get_current_session_id()
-        if not author_session_id:
-            return {"error": "No session context available; a receipt needs a calling session."}
-        try:
-            caller = session_manager.get(author_session_id) if session_manager is not None else None
-            caller_project_id = (
-                caller.project_id if caller is not None else get_current_project_id()
-            )
-            if caller_project_id is None:
-                return {"error": "No project context available."}
-            current_task = await asyncio.to_thread(
-                resolve_lifecycle_task,
-                task_manager,
-                task_id,
-                project_id=caller_project_id,
-                caller_session_id=author_session_id,
-                sessions=session_manager,
-            )
-        except CrossProjectTaskForbidden as e:
-            return {"error": str(e)}
-        except (TaskNotFoundError, ValueError) as e:
-            return {"error": f"Invalid task_id: {e}"}
-        task_and_repo_path = _get_task_and_repo_path(current_task.id, task_id, project_path)
-        if isinstance(task_and_repo_path, dict):
-            return task_and_repo_path
-        current_task, repo_path = task_and_repo_path
-        if await normalize_commit_sha(commit_sha, cwd=repo_path) is None:
-            return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
-        try:
-            receipt, created = close_receipts.record_close_receipt(
-                task_manager.db,
-                task=current_task,
-                author_session_id=author_session_id,
-                kind=kind,
-                commit_sha=commit_sha,
-                facts=facts,
-            )
-        except close_receipts.CloseReceiptError as e:
-            return {"error": str(e)}
-        return {
-            "receipt_id": receipt.id,
-            "created": created,
-            "task_id": current_task.id,
-            "kind": receipt.kind,
-            "commit_sha": receipt.commit_sha,
-            "facts": receipt.facts,
-        }
-
-    registry.register(
-        name="record_close_receipt",
-        description=(
-            "Record a daemon-attested close receipt for another session's task: an "
-            "activation of a landed commit by the task's creator or delegator. A "
-            "landing_approval comes only from the creator or delegator and requires a "
-            "comma-separated reason fact naming restart, freeze, or overlap. Optional batch "
-            "labels go in a separate facts.batch field, not in facts.reason. landing is "
-            "written only by land_commit. A review LAND is record_review_step, not a "
-            "receipt. The calling session is the author; the task's claimant and task-close "
-            "reviewers are refused. Idempotent per author, kind, and commit; "
-            "landing_approval also matches the reason set, so changed reasons append a new "
-            "receipt."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": (
-                        "Task reference: #N, N, path, <project>#N, or UUID; "
-                        "foreign tasks require coordinator authority"
-                    ),
-                },
-                "kind": {
-                    "type": "string",
-                    "enum": sorted(close_receipts.CALLER_RECEIPT_KINDS),
-                },
-                "commit_sha": {
-                    "type": "string",
-                    "description": "Full 40-character SHA of the approved or activated commit",
-                },
-                "facts": {
-                    "type": "object",
-                    "description": (
-                        "Up to 16 string, integer, or boolean facts the close reviewer judges "
-                        "against live state, e.g. daemon_pid, health, schema_version, or a "
-                        "promoted binary's version, sha256, inode, and signature."
-                    ),
-                },
-                "project_path": {
-                    "type": "string",
-                    "description": (
-                        "Repository path that contains the commit. Optional; defaults to the "
-                        "current task project repository."
-                    ),
-                },
-            },
-            "required": ["task_id", "kind", "commit_sha"],
-        },
-        func=record_close_receipt,
     )
 
     # --- unlink_commit ---
