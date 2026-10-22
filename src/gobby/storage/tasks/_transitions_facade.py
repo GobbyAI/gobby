@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -17,18 +16,6 @@ from gobby.storage.tasks._lifecycle import (
 )
 from gobby.storage.tasks._lifecycle import repair_closed_candidate as _repair_closed_candidate
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
-from gobby.storage.tasks._plan_enhancement import (
-    record_plan_enhancement as _record_plan_enhancement,
-)
-from gobby.storage.tasks._review_transitions import (
-    approve_review as _approve_review,
-)
-from gobby.storage.tasks._review_transitions import (
-    reject_review as _reject_review,
-)
-from gobby.storage.tasks._review_transitions import (
-    submit_for_review as _submit_for_review,
-)
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
@@ -164,7 +151,6 @@ class TaskTransitionsMixin:
         *,
         description: MaybeUnset[str | None] = UNSET,
         validation_fail_count: MaybeUnset[int | None] = UNSET,
-        dispatch_failure_count: MaybeUnset[int | None] = UNSET,
         escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
     ) -> Task:
@@ -174,7 +160,6 @@ class TaskTransitionsMixin:
             task_id=task_id,
             description=description,
             validation_fail_count=validation_fail_count,
-            dispatch_failure_count=dispatch_failure_count,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,
         )
@@ -301,17 +286,13 @@ class TaskTransitionsMixin:
         task_id: str,
         reason: str,
         reset_validation: bool = False,
-        reset_stage_attempts: bool = False,
-        restore_stage_from_history: bool = False,
     ) -> Task:
-        """Clear escalation state without mutating the task's current stage."""
+        """Clear escalation state and optionally reset validation failures."""
         task = _de_escalate_task(
             self.db,
             task_id=task_id,
             reason=reason,
             reset_validation=reset_validation,
-            reset_stage_attempts=reset_stage_attempts,
-            restore_stage_from_history=restore_stage_from_history,
         )
         self._notify_listeners()
         return task
@@ -338,113 +319,3 @@ class TaskTransitionsMixin:
         )
         self._notify_listeners()
         return result
-
-    def submit_for_review(
-        self,
-        task_id: str,
-        stage_name: str | None = None,
-        review_notes: str | None = None,
-        *,
-        by_session_id: str | None = None,
-        dispatch_run_id: str | None = None,
-    ) -> Task:
-        """Submit a stage for review and release ownership."""
-        task = _submit_for_review(
-            self.db,
-            task_id=task_id,
-            stage_name=stage_name,
-            review_notes=review_notes,
-            by_session_id=by_session_id,
-            dispatch_run_id=dispatch_run_id,
-        )
-        self._notify_listeners()
-        return task
-
-    def approve_review(
-        self,
-        task_id: str,
-        stage_name: str | None = None,
-        approval_notes: str | None = None,
-        *,
-        round_number: int | None = None,
-        findings: list[dict[str, object]] | None = None,
-        manifest_entries: list[dict[str, object]] | None = None,
-        routing_decisions: dict[str, object] | None = None,
-        coverage_attestation: dict[str, object] | None = None,
-        evidence_id: str | None = None,
-        by_session_id: str | None = None,
-        dispatch_run_id: str | None = None,
-    ) -> Task:
-        """Approve review on a stage and release ownership."""
-        task = _approve_review(
-            self.db,
-            task_id=task_id,
-            stage_name=stage_name,
-            approval_notes=approval_notes,
-            round_number=round_number,
-            findings=findings,
-            manifest_entries=manifest_entries,
-            routing_decisions=routing_decisions,
-            coverage_attestation=coverage_attestation,
-            evidence_id=evidence_id,
-            by_session_id=by_session_id,
-            dispatch_run_id=dispatch_run_id,
-        )
-        self._notify_listeners()
-        return task
-
-    def reject_review(
-        self,
-        task_id: str,
-        stage_name: str | None = None,
-        rejection_notes: str | None = None,
-        round_number: int | None = None,
-        findings: list[dict[str, object]] | None = None,
-        coverage_attestation: dict[str, object] | None = None,
-        evidence_id: str | None = None,
-        *,
-        by_session_id: str | None = None,
-        dispatch_run_id: str | None = None,
-    ) -> Task:
-        """Reject review on a stage and return it to ready."""
-        task = _reject_review(
-            self.db,
-            task_id=task_id,
-            stage_name=stage_name,
-            rejection_notes=rejection_notes,
-            round_number=round_number,
-            findings=findings,
-            coverage_attestation=coverage_attestation,
-            evidence_id=evidence_id,
-            by_session_id=by_session_id,
-            dispatch_run_id=dispatch_run_id,
-        )
-        self._notify_listeners()
-        return task
-
-    def record_plan_enhancement(
-        self,
-        task_id: str,
-        *,
-        round_number: int,
-        converged: bool,
-        suggestions: Sequence[str] | None = None,
-        signoff_summary: str | None = None,
-        by_session_id: str | None = None,
-    ) -> Task:
-        """Record an enhancement round and route the plan back to the planner.
-
-        Suggestions return the planning stage to ready without consuming the
-        adversary review budget; convergence leaves it in needs_review.
-        """
-        task = _record_plan_enhancement(
-            self.db,
-            task_id,
-            round_number=round_number,
-            converged=converged,
-            suggestions=suggestions,
-            signoff_summary=signoff_summary,
-            by_session_id=by_session_id,
-        )
-        self._notify_listeners()
-        return task

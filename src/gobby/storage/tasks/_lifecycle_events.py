@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -10,12 +10,6 @@ from typing import Any
 from gobby.failure_categories import FailureCategory
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model
-
-# Reason recorded by the retired build lifecycle, retained for stored audit history.
-# This is the durable, append-only signal that automation was ever started for a
-# task; stopping a build clears ``allow_automation`` but never removes this row,
-# so it remains the source of truth for "has this task ever been built".
-BUILD_EVENT_REASON = "gobby build"
 
 
 @normalize_datetime_model(required=("created_at",))
@@ -138,47 +132,6 @@ class TaskLifecycleEventManager:
             limit=limit,
             newest_first=newest_first,
         )
-
-    def has_build_event(self, task_id: str) -> bool:
-        """Return True if ``gobby build`` was ever started for this task.
-
-        Durable, append-only signal: a stopped build keeps this row, so it
-        distinguishes a never-built task from a paused one.
-        """
-        return bool(
-            self.db.fetchone(
-                """
-                SELECT 1
-                  FROM task_lifecycle_events
-                 WHERE task_id = %s
-                   AND reason = %s
-                 LIMIT 1
-                """,
-                (task_id, BUILD_EVENT_REASON),
-            )
-        )
-
-    def tasks_with_build_event(self, task_ids: Sequence[str]) -> set[str]:
-        """Batched form of :meth:`has_build_event` for list serialization."""
-        ids = list(task_ids)
-        if not ids:
-            return set()
-        placeholders = ", ".join("%s" for _ in ids)
-        query = (
-            """
-            SELECT DISTINCT task_id
-              FROM task_lifecycle_events
-             WHERE reason = %s
-               AND task_id IN (
-            """
-            + placeholders
-            + ")"
-        )
-        rows = self.db.fetchall(
-            query,
-            (BUILD_EVENT_REASON, *ids),
-        )
-        return {row["task_id"] for row in rows}
 
 
 def record_lifecycle_event(

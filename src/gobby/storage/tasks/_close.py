@@ -1,9 +1,8 @@
-"""Shared helpers for task stage-state transitions."""
+"""Atomic task closure and eligible ancestor propagation."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
@@ -16,10 +15,6 @@ _LEGACY_VALIDATION_CRITERIA = (
     "Legacy task: validation criteria were not recorded before they became required."
 )
 _TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
-
-
-def _now() -> datetime:
-    return utc_now()
 
 
 def _session_exists(
@@ -42,7 +37,6 @@ def _close_task_in_txn(
     closed_at: datetime | str | None = None,
     closed_in_session_id: str | None = None,
     force: bool = False,
-    cascade_descendants: bool = False,
     close_ancestors: bool = True,
     closed_ancestors: list[str] | None = None,
     validation_override_reason: str | None = None,
@@ -53,7 +47,7 @@ def _close_task_in_txn(
 ) -> None:
     """Close a task inside the caller's already-open transaction."""
 
-    if not force and not cascade_descendants:
+    if not force:
         # Hold this row before counting children. Creation takes the same lock on
         # the parent it is attaching to, so the two serialize here; without it the
         # count runs before the UPDATE acquires any lock, and a child inserted in
@@ -70,16 +64,9 @@ def _close_task_in_txn(
                 listed.append(f"and {len(open_children) - 3} more")
             raise TaskHasOpenChildrenError(task_id, listed)
 
-    now = closed_at or _now()
+    now = closed_at or utc_now()
     persisted_session_id = (
         closed_in_session_id if _session_exists(conn, closed_in_session_id) else None
-    )
-    _complete_terminal_delivery_stage_for_close(
-        conn,
-        task_id,
-        now=now,
-        completed_by_session_id=persisted_session_id,
-        commit_sha=commit_sha,
     )
     # No is_escalated predicate here: every escalation bumps updated_at, so the
     # freshness guard already rejects closes racing a concurrent escalation.
@@ -139,8 +126,6 @@ def _close_task_in_txn(
         if current["closed_at"] is not None:
             return
         raise TaskStaleStateError(task_id)
-    if cascade_descendants:
-        _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)
     if close_ancestors:
         _close_eligible_ancestors(
             conn,
@@ -237,24 +222,6 @@ def close_eligible_parent_chain(
         ).fetchone()
         if open_child is not None:
             return
-        unfinished_stage = conn.execute(
-            """
-            SELECT 1
-              FROM task_stage_states
-             WHERE task_id = %s
-               AND state != 'done'
-             LIMIT 1
-            """,
-            (parent_id,),
-        ).fetchone()
-        if unfinished_stage is not None:
-            # A stage manifest is work this parent still owes. Closing it on its
-            # last child would ship the epic with its epic_qa, pr, and merge
-            # stages never run, and strand those rows on a closed task — which
-            # also makes it invisible to dispatch, since candidates require
-            # closed_at IS NULL. Such a parent closes through its merge stage.
-            # A parent with no manifest rows is unaffected.
-            return
         _close_task_in_txn(
             conn,
             parent_id,
@@ -309,104 +276,3 @@ def _schedule_ancestor_epic_archive(
         )
 
     conn.after_commit(_archive)
-
-
-def _complete_terminal_delivery_stage_for_close(
-    conn: Transaction,
-    task_id: str,
-    *,
-    now: datetime | str,
-    completed_by_session_id: str | None,
-    commit_sha: str | None,
-) -> None:
-    row = conn.execute(
-        """
-        SELECT s.stage_name, s.state, r.category, r.is_terminal
-          FROM task_stage_states s
-          LEFT JOIN task_stages_registry r ON r.name = s.stage_name
-         WHERE s.task_id = %s
-           AND s.state != 'done'
-         ORDER BY s.position, s.stage_name
-         LIMIT 1
-        """,
-        (task_id,),
-    ).fetchone()
-    if row is None or row["state"] != "in_progress":
-        return
-    if not _is_terminal_delivery_stage(row):
-        return
-
-    conn.execute(
-        """
-        UPDATE task_stage_states
-           SET state = 'done',
-               completed_at = COALESCE(completed_at, %s),
-               completed_by_session_id = COALESCE(completed_by_session_id, %s),
-               completed_by_actor = COALESCE(completed_by_actor, %s),
-               completed_commit_sha = COALESCE(completed_commit_sha, %s),
-               updated_at = %s
-         WHERE task_id = %s
-           AND stage_name = %s
-           AND state = 'in_progress'
-        """,
-        (
-            now,
-            completed_by_session_id,
-            "session" if completed_by_session_id else "system",
-            commit_sha,
-            now,
-            task_id,
-            row["stage_name"],
-        ),
-    )
-
-
-def _is_terminal_delivery_stage(row: Any) -> bool:
-    return bool(row["is_terminal"]) and row["category"] == "delivery"
-
-
-def _cascade_close_descendants(
-    conn: Transaction,
-    task_id: str,
-    closed_at: datetime | str,
-    closed_in_session_id: str | None,
-    commit_sha: str | None,
-) -> None:
-    conn.execute(
-        """
-        WITH RECURSIVE subtree(id, depth, path) AS (
-            SELECT id, 1, ARRAY[parent_task_id, id]
-              FROM tasks
-             WHERE parent_task_id = %s
-            UNION ALL
-            SELECT tasks.id, subtree.depth + 1, subtree.path || tasks.id
-              FROM tasks
-              JOIN subtree ON tasks.parent_task_id = subtree.id
-             WHERE subtree.depth < 100
-               AND NOT tasks.id = ANY(subtree.path)
-        )
-        UPDATE tasks
-           SET closed_at = %s,
-               closed_reason = 'merged',
-               closed_in_session_id = %s,
-               closed_commit_sha = %s,
-               claimed_by_session_id = NULL,
-               validation_criteria = CASE
-                   WHEN task_type = 'epic'
-                        OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
-                   THEN validation_criteria
-                   ELSE %s
-               END,
-               updated_at = %s
-         WHERE id IN (SELECT id FROM subtree)
-           AND closed_at IS NULL
-        """,
-        (
-            task_id,
-            closed_at,
-            closed_in_session_id,
-            commit_sha,
-            _LEGACY_VALIDATION_CRITERIA,
-            closed_at,
-        ),
-    )

@@ -50,7 +50,6 @@ class AttemptAuthorizer(Protocol):
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
-        run_id: str | None = None,
         caller_session_id: str | None = None,
         allow_rejection_replay: bool = False,
         allow_approval_replay: bool = False,
@@ -191,7 +190,6 @@ class ReviewManifestService:
         round_result: Mapping[str, object],
         *,
         plan_path: str | Path,
-        run_id: str | None,
         caller_session_id: str | None,
         resolve_round_result: RoundResultResolver,
         authorize_attempt: AttemptAuthorizer,
@@ -213,7 +211,6 @@ class ReviewManifestService:
             session_id=evidence.session_id,
             task_id=evidence.task_id,
             stage=evidence.stage,
-            run_id=run_id,
             caller_session_id=caller_session_id,
         )
         routing = payload.get("routing_decisions")

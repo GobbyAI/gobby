@@ -27,47 +27,14 @@ def test_create_task_is_metadata_only(
         validation_criteria="Test task completion is observable.",
     )
 
-    assert manager.stage_states.list_for_task(task.id) == []
-    assert manager.stage_states.current_stage(task.id) is None
-
-
-def test_initialize_task_manifest_supports_stage_override_with_caps(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(
-        project_id=sample_project["id"],
-        title="Override stages",
-        task_type="task",
-        validation_criteria="Test task completion is observable.",
-    )
-
-    manager.initialize_task_manifest(
-        task.id,
-        stage_names=["development", "pr", "merge"],
-        stage_caps=[{"stage_name": "development", "max_review_rounds": 2}],
-    )
-
-    rows = manager.stage_states.list_for_task(task.id)
-    assert [row.stage_name for row in rows] == ["development", "pr", "merge"]
-    assert rows[0].max_review_rounds == 2
-
-
-def test_initialize_task_manifest_rejects_unknown_stage_override(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(
-        project_id=sample_project["id"],
-        title="Bad stages",
-        task_type="task",
-        validation_criteria="Test task completion is observable.",
-    )
-
-    with pytest.raises(ValueError, match="Unknown stage 'missing'"):
-        manager.initialize_task_manifest(task.id, stage_names=["development", "missing"])
+    persisted = manager.get_task(task.id)
+    assert persisted.title == "Metadata-only task"
+    assert persisted.to_dict()["state"]["is_claimed"] is False
+    for payload in (persisted.to_dict(), persisted.to_brief()):
+        assert (
+            not {"allow_automation", "unattended", "checkout_mode", "dispatch_failure_count"}
+            & payload.keys()
+        )
 
 
 def test_update_task_persists_normalized_validation_criteria(
@@ -88,6 +55,10 @@ def test_update_task_persists_normalized_validation_criteria(
     )
 
     assert updated.validation_criteria == "Updated observable criterion."
+    assert (
+        not {"allow_automation", "unattended", "checkout_mode", "dispatch_failure_count"}
+        & updated.to_dict().keys()
+    )
 
 
 def test_update_task_changes_only_escalation_reason(

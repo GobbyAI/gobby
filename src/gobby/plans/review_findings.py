@@ -1,17 +1,15 @@
-"""Validation and rendering for structured plan-review rejection findings."""
+"""Validation for structured plan-review findings."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
 
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     ReviewEvidenceError,
-    canonical_json_bytes,
     canonical_json_object,
 )
-from gobby.plans.review_repairs import REPAIR_SCHEMA, validate_finding_repairs
+from gobby.plans.review_repairs import validate_finding_repairs
 
 FINDING_SEVERITIES = frozenset({"blocking", "nit"})
 FINDING_CATEGORIES = frozenset(
@@ -47,31 +45,6 @@ _ALLOWED_FIELDS = frozenset(
         "repairs",
     }
 )
-_STRING_SCHEMA = {"type": "string"}
-_SECTION_SET_SCHEMA = {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
-FINDING_ITEM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "finding_id": _STRING_SCHEMA,
-        "section_id": _STRING_SCHEMA,
-        "check_key": _STRING_SCHEMA,
-        "severity": {"type": "string", "enum": sorted(FINDING_SEVERITIES)},
-        "category": {"type": "string", "enum": sorted(FINDING_CATEGORIES)},
-        "location": _STRING_SCHEMA,
-        "description": _STRING_SCHEMA,
-        "fix": _STRING_SCHEMA,
-        "prevention": _STRING_SCHEMA,
-        "principle": _STRING_SCHEMA,
-        "root_cause": _STRING_SCHEMA,
-        "introduced_in_round": {"type": "integer", "minimum": 1},
-        "causal_finding_id": _STRING_SCHEMA,
-        "participating_section_ids": _SECTION_SET_SCHEMA,
-        "causal_section_ids": _SECTION_SET_SCHEMA,
-        "repairs": REPAIR_SCHEMA,
-    },
-    "required": list(_REQUIRED_STRING_FIELDS),
-    "additionalProperties": False,
-}
 
 
 def validate_plan_review_findings(
@@ -100,51 +73,6 @@ def validate_plan_review_findings(
         finding_ids.add(finding_id)
         findings.append(finding)
     return findings
-
-
-def render_rejection_section(
-    *,
-    round_number: int,
-    findings: Sequence[Mapping[str, object]],
-    evidence: PlanReviewEvidence,
-) -> str:
-    """Render the human projection plus canonical server-owned JSON fence."""
-    lines = [f"## Adversary Findings — Round {round_number}", ""]
-    for finding in findings:
-        lines.extend(
-            [
-                (
-                    f"### {finding['finding_id']} — {finding['severity']} — "
-                    f"{finding['category']} — {finding['location']}"
-                ),
-                "",
-                str(finding["description"]),
-                "",
-                f"**Fix:** {finding['fix']}",
-                "",
-                f"**Prevention:** {finding['prevention']}",
-                "",
-            ]
-        )
-        repairs = finding.get("repairs")
-        if isinstance(repairs, list) and repairs:
-            lines.append("**Repairs:**")
-            lines.extend(_render_repair(repair) for repair in repairs)
-            lines.append("")
-    envelope = {
-        "evidence_id": evidence.evidence_id,
-        "findings": list(findings),
-        "plan_hash": evidence.plan_hash,
-        "section_manifest": [section.to_dict() for section in evidence.section_manifest],
-    }
-    lines.extend(
-        [
-            "```json",
-            canonical_json_bytes(envelope).decode("utf-8"),
-            "```",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def _validate_finding(
@@ -197,28 +125,6 @@ def _validate_finding(
         if not isinstance(introduced, int) or isinstance(introduced, bool) or introduced < 1:
             raise _invalid(f"{prefix}.introduced_in_round must be a positive integer")
     return raw
-
-
-def _render_repair(repair: object) -> str:
-    if not isinstance(repair, Mapping):
-        return f"- {repair}"
-    kind = repair.get("kind")
-    section_id = repair.get("section_id")
-    if kind == "add_acceptance":
-        items = repair.get("items")
-        rendered = (
-            "; ".join(
-                f"{item.get('prose')}. {item.get('artifact')}"
-                for item in items
-                if isinstance(item, Mapping)
-            )
-            if isinstance(items, list)
-            else ""
-        )
-    else:
-        payload = repair.get("entries" if kind == "add_targets" else "on")
-        rendered = ", ".join(str(value) for value in payload) if isinstance(payload, list) else ""
-    return f"- {kind} {section_id}: {rendered}"
 
 
 def _validate_section_set(

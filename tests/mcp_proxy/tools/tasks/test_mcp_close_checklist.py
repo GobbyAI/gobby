@@ -81,7 +81,6 @@ def _task(
         ),
         validation_fail_count=0,
         labels=["tdd:required"] if tdd_required else [],
-        stages=({"stage_name": "development", "position": 0, "state": "in_progress"},),
     )
     if not escalated:
         return task

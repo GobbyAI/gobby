@@ -4,7 +4,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import Task, TaskNotFoundError
-from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 
@@ -48,7 +47,6 @@ def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Ta
             raise ValueError(f"Task {task_id} not found in project")
         raise ValueError(f"Task {task_id} not found")
     task = Task.from_row(row)
-    hydrate_task_stage_state(db, [task])
     hydrate_task_blocking_state(db, [task])
     return task
 
@@ -63,7 +61,6 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
         row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (prefix,))
         if row:
             task = Task.from_row(row)
-            hydrate_task_stage_state(db, [task])
             hydrate_task_blocking_state(db, [task])
             return task
 
@@ -73,7 +70,6 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
     )
     if len(rows) == 1:
         task = Task.from_row(rows[0])
-        hydrate_task_stage_state(db, [task])
         hydrate_task_blocking_state(db, [task])
         return task
     return None
@@ -90,6 +86,5 @@ def find_tasks_by_prefix(db: HubDatabase, prefix: str) -> list[Task]:
         (f"{_escape_like_pattern(prefix)}%",),
     )
     tasks = [Task.from_row(row) for row in rows]
-    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return tasks

@@ -100,7 +100,6 @@ def _task(
     *,
     task_id: str,
     title: str,
-    stage_state: str = "ready",
     claimed_by_session_id: str | None = None,
     description: str | None = None,
     labels: list[str] | None = None,
@@ -116,13 +115,6 @@ def _task(
         description=description,
         labels=labels or [],
         claimed_by_session_id=claimed_by_session_id,
-        stages=(
-            {
-                "stage_name": "development",
-                "position": 0,
-                "state": stage_state,
-            },
-        ),
     )
 
 
@@ -143,7 +135,6 @@ def claimed_task() -> Task:
     return _task(
         task_id="550e8400-e29b-41d4-a716-446655440001",
         title="Claimed Task",
-        stage_state="in_progress",
         description="Already claimed",
         claimed_by_session_id="other-session-id",  # Claimed by another session
     )
@@ -155,7 +146,6 @@ def parent_owned_task() -> Task:
     return _task(
         task_id="550e8400-e29b-41d4-a716-446655440010",
         title="Parent Owned Task",
-        stage_state="in_progress",
         description="Delegated to child",
         claimed_by_session_id="parent-session-id",
     )
@@ -468,7 +458,6 @@ class TestClaimTaskTool:
         third_party_owned_task = _task(
             task_id=parent_owned_task.id,
             title=parent_owned_task.title,
-            stage_state="in_progress",
             description=parent_owned_task.description,
             labels=parent_owned_task.labels,
             claimed_by_session_id="third-party-session-id",
@@ -524,7 +513,6 @@ class TestClaimTaskTool:
         task_claimed_by_self = _task(
             task_id="550e8400-e29b-41d4-a716-446655440002",
             title="My Task",
-            stage_state="in_progress",
             claimed_by_session_id="my-session-id",  # Same session
         )
 

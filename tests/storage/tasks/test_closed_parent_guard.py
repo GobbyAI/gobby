@@ -22,8 +22,8 @@ from gobby.storage.tasks import (
     TaskClosedError,
     TaskHasOpenChildrenError,
 )
+from gobby.storage.tasks._close import _close_task_in_txn
 from gobby.storage.tasks._creation import _create_task_in_transaction
-from gobby.storage.tasks._stage_utils import _close_task_in_txn
 
 pytestmark = pytest.mark.unit
 

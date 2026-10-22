@@ -10,17 +10,15 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
-    StageManifestSpec,
     Task,
     TaskAlreadyEscalatedError,
     _lifecycle,
-    _review_transitions,
     _transitions,
     _updates,
 )
+from gobby.storage.tasks._read import get_task
 
 pytestmark = pytest.mark.unit
 
@@ -90,7 +88,7 @@ def test_concurrent_add_label_preserves_both_labels(
     monkeypatch.setattr(
         _lifecycle,
         "get_task",
-        _synchronize_first_two_reads(_lifecycle.get_task),
+        _synchronize_first_two_reads(get_task),
     )
 
     errors = _run_concurrently(
@@ -116,7 +114,7 @@ def test_concurrent_link_commit_preserves_both_commits(
     monkeypatch.setattr(
         _lifecycle,
         "get_task",
-        _synchronize_first_two_reads(_lifecycle.get_task),
+        _synchronize_first_two_reads(get_task),
     )
 
     with patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha):
@@ -147,7 +145,7 @@ def test_concurrent_unlink_commit_removes_both_commits(
         monkeypatch.setattr(
             _lifecycle,
             "get_task",
-            _synchronize_first_two_reads(_lifecycle.get_task),
+            _synchronize_first_two_reads(get_task),
         )
 
         errors = _run_concurrently(
@@ -173,7 +171,7 @@ def test_concurrent_escalate_has_exactly_one_winner(
     monkeypatch.setattr(
         _transitions,
         "get_task",
-        _synchronize_first_two_reads(_transitions.get_task),
+        _synchronize_first_two_reads(get_task),
     )
 
     errors = _run_concurrently(
@@ -186,54 +184,6 @@ def test_concurrent_escalate_has_exactly_one_winner(
     escalated = manager.get_task(task.id)
     assert escalated.is_escalated is True
     assert escalated.escalation_reason in {"first", "second"}
-
-
-def test_submit_for_review_preserves_label_added_during_transition(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    session = SessionManager(temp_db).register(
-        external_id="atomic-review",
-        machine_id="21000000-0000-4000-8000-000000000002",
-        source="codex",
-        project_id=sample_project["id"],
-    )
-    task = manager.create_task(
-        sample_project["id"],
-        "Concurrent review labels",
-        validation_criteria="Test task completion is observable.",
-    )
-    manager.stage_states.initialize_manifest(
-        task.id,
-        [StageManifestSpec("development", 0)],
-        by_session_id=session.id,
-    )
-    manager.stage_states.start_stage(task.id, "development", by_session_id=session.id)
-    manager.claim_task(task.id, session.id)
-    manager.add_label(task.id, "planning-current-verdict:rejected")
-    original_update_task = _review_transitions.update_task
-
-    def _update_after_concurrent_label(
-        db: HubDatabase,
-        task_id: str,
-        *args: Any,
-        **kwargs: Any,
-    ) -> bool:
-        _lifecycle.add_label(db, task_id, "covers:concurrent")
-        return original_update_task(db, task_id, *args, **kwargs)
-
-    monkeypatch.setattr(_review_transitions, "update_task", _update_after_concurrent_label)
-
-    reviewed = manager.submit_for_review(
-        task.id,
-        "development",
-        by_session_id=session.id,
-    )
-
-    assert "covers:concurrent" in (reviewed.labels or [])
-    assert "planning-current-verdict:rejected" not in (reviewed.labels or [])
 
 
 def test_concurrent_de_escalation_does_not_resurrect_reason(

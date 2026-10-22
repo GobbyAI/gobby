@@ -319,7 +319,7 @@ def test_manual_escalation_reopen_resets_validation_fail_count(
     assert reopened.is_escalated is False
 
 
-def test_repeated_close_preserves_terminal_timestamps_and_stage_metadata(
+def test_repeated_close_preserves_terminal_timestamps(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -329,19 +329,9 @@ def test_repeated_close_preserves_terminal_timestamps_and_stage_metadata(
         "Idempotent close",
         validation_criteria="Test task completion is observable.",
     )
-    manager.initialize_task_manifest(task.id)
-
     first = manager.close_task(task.id, reason="finished")
-    first_stage = first.stages[-1]
     second = manager.close_task(task.id, reason="ignored retry")
-    second_stage = second.stages[-1]
 
     assert second.closed_at == first.closed_at
     assert second.updated_at == first.updated_at
     assert second.closed_reason == first.closed_reason == "finished"
-    assert second_stage.stage_name == first_stage.stage_name
-    assert second_stage.state == first_stage.state
-    assert second_stage.completed_at == first_stage.completed_at
-    assert second_stage.completed_by_session_id == first_stage.completed_by_session_id
-    assert second_stage.completed_commit_sha == first_stage.completed_commit_sha
-    assert second_stage.updated_at == first_stage.updated_at

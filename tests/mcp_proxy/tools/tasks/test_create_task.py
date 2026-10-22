@@ -149,7 +149,6 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(
         )
 
     assert "error" not in result
-    assert manager.stage_states.list_for_task(result["id"]) == []
 
 
 @pytest.mark.asyncio

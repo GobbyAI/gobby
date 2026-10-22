@@ -11,7 +11,6 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from enum import StrEnum
 from typing import Any, Literal
 
 from gobby.tasks import task_types as _task_types
@@ -50,12 +49,6 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "manual",  # Manual functional testing (observe output)
     }
 )
-
-
-class CheckoutMode(StrEnum):
-    none = "none"
-    worktree = "worktree"
-    clone = "clone"
 
 
 class UnsetType:
@@ -265,7 +258,6 @@ class Task:
     category: str | None = None
     validation_criteria: str | None = None
     validation_fail_count: int = 0
-    dispatch_failure_count: int = 0
     validation_override_reason: str | None = None  # Validation or task-scope override audit
     merge_in_progress: bool = False
     blocked_by_merge: bool = False
@@ -281,23 +273,17 @@ class Task:
     # Scheduling fields (Gantt chart)
     start_date: str | None = None
     due_date: str | None = None
-    # Automation dispatch fields
-    allow_automation: bool = False
-    unattended: bool = False
-    checkout_mode: CheckoutMode = CheckoutMode.worktree
+    # Implementation metadata
     assigned_agent: str | None = None
     implementation_domain: str | None = None
     additional_skills: list[str] | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
     active_blocked_by: set[str] = field(default_factory=set)
-    # Stage manifest rows (populated on demand, not stored in tasks table)
-    stages: tuple[Any, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Normalize enum-backed fields for manually constructed tasks."""
         self.task_type = validate_task_type(self.task_type)
-        self.checkout_mode = CheckoutMode(self.checkout_mode)
         self.implementation_domain = validate_implementation_domain(self.implementation_domain)
         if self.escalated_at and not self.closed_at:
             self.is_escalated = True
@@ -358,9 +344,6 @@ class Task:
             validation_fail_count=(
                 row["validation_fail_count"] if "validation_fail_count" in keys else 0
             ),
-            dispatch_failure_count=(
-                row["dispatch_failure_count"] if "dispatch_failure_count" in keys else 0
-            ),
             validation_override_reason=(
                 row["validation_override_reason"] if "validation_override_reason" in keys else None
             ),
@@ -378,13 +361,6 @@ class Task:
             path_cache=row["path_cache"] if "path_cache" in keys else None,
             start_date=_normalize_date(row["start_date"] if "start_date" in keys else None),
             due_date=_normalize_date(row["due_date"] if "due_date" in keys else None),
-            allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
-            unattended=bool(row["unattended"]) if "unattended" in keys else False,
-            checkout_mode=(
-                CheckoutMode(row["checkout_mode"])
-                if "checkout_mode" in keys and row["checkout_mode"] is not None
-                else CheckoutMode.worktree
-            ),
             assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
             implementation_domain=(
                 row["implementation_domain"] if "implementation_domain" in keys else None
@@ -426,7 +402,6 @@ class Task:
             "category": self.category,
             "validation_criteria": self.validation_criteria,
             "validation_fail_count": self.validation_fail_count,
-            "dispatch_failure_count": self.dispatch_failure_count,
             "validation_override_reason": self.validation_override_reason,
             "merge_in_progress": self.merge_in_progress,
             "blocked_by_merge": self.blocked_by_merge,
@@ -438,9 +413,6 @@ class Task:
             "path_cache": self.path_cache,
             "start_date": self.start_date,
             "due_date": self.due_date,
-            "allow_automation": self.allow_automation,
-            "unattended": self.unattended,
-            "checkout_mode": self.checkout_mode,
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
@@ -474,16 +446,12 @@ class Task:
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,
             "validation_fail_count": self.validation_fail_count,
-            "dispatch_failure_count": self.dispatch_failure_count,
             "merge_in_progress": self.merge_in_progress,
             "blocked_by_merge": self.blocked_by_merge,
             "escalated_at": self.escalated_at,
             "is_escalated": self.is_escalated,
             "start_date": self.start_date,
             "due_date": self.due_date,
-            "allow_automation": self.allow_automation,
-            "unattended": self.unattended,
-            "checkout_mode": self.checkout_mode,
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,

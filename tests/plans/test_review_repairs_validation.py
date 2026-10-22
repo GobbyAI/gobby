@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from jsonschema.validators import validator_for
 
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -14,8 +13,6 @@ from gobby.plans.review_evidence_models import (
 )
 from gobby.plans.review_findings import (
     FINDING_CATEGORIES,
-    FINDING_ITEM_SCHEMA,
-    render_rejection_section,
     validate_plan_review_findings,
 )
 from gobby.plans.review_repairs import (
@@ -57,7 +54,6 @@ def _evidence() -> PlanReviewEvidence:
         session_id="session-1",
         task_id=None,
         stage=None,
-        dispatch_run_id="run-1",
         lease_expires_at=None,
         finalized_at=None,
         expired_at=None,
@@ -278,42 +274,3 @@ def test_finding_canonicalizes_repairs() -> None:
 
     plain = validate_plan_review_findings([_finding()], evidence=evidence)
     assert "repairs" not in plain[0]
-
-
-def test_finding_item_schema_accepts_repairs() -> None:
-    validator = validator_for(FINDING_ITEM_SCHEMA)(FINDING_ITEM_SCHEMA)
-    assert "repairs" in FINDING_ITEM_SCHEMA["properties"]
-    assert FINDING_ITEM_SCHEMA["additionalProperties"] is False
-    assert set(FINDING_ITEM_SCHEMA["properties"]["category"]["enum"]) == FINDING_CATEGORIES
-    validator.validate(_finding(repairs=[dict(repair) for repair in _REPAIR_BY_KIND.values()]))
-    assert not validator.is_valid(
-        _finding(repairs=[{"kind": "rename", "section_id": "1.1", "entries": ["a.py"]}])
-    )
-    assert not validator.is_valid(_finding(repairs=[]))
-
-
-def test_rejection_section_projects_repairs() -> None:
-    evidence = _evidence()
-    findings = validate_plan_review_findings(
-        [
-            _finding(
-                repairs=[
-                    {"kind": "add_targets", "section_id": "1.1", "entries": ["`src/a.py::x`"]},
-                    {
-                        "kind": "add_acceptance",
-                        "section_id": "1.2",
-                        "items": [
-                            {"prose": "Rollback covered", "artifact": "file: `src/a.py`"},
-                        ],
-                    },
-                ]
-            ),
-            _finding(finding_id="F2", category="unhandled-edge"),
-        ],
-        evidence=evidence,
-    )
-    rendered = render_rejection_section(round_number=1, findings=findings, evidence=evidence)
-    assert rendered.count("**Repairs:**") == 1
-    assert "- add_targets 1.1: `src/a.py::x`" in rendered
-    assert "- add_acceptance 1.2: Rollback covered. file: `src/a.py`" in rendered
-    assert rendered.index("**Repairs:**") < rendered.index("### F2")

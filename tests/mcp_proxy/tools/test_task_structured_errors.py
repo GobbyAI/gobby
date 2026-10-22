@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -21,31 +22,19 @@ def _make_task(
     status: str = "open",
     claimed_by_session_id: str | None = None,
 ) -> Task:
-    stage_state = {
-        "open": "ready",
-        "closed": "done",
-        "escalated": "ready",
-    }.get(status, status)
     return Task(
         id=task_id,
         project_id="11111111-1111-4111-8111-111111110001",
         title="Test Task",
         priority=2,
         task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
-        closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        closed_at=datetime(2024, 1, 2, tzinfo=UTC) if status == "closed" else None,
         claimed_by_session_id=claimed_by_session_id,
-        escalated_at="2024-01-02T00:00:00Z" if status == "escalated" else None,
+        escalated_at=datetime(2024, 1, 2, tzinfo=UTC) if status == "escalated" else None,
         is_escalated=status == "escalated",
         seq_num=42,
-        stages=(
-            {
-                "stage_name": "development",
-                "position": 0,
-                "state": stage_state,
-            },
-        ),
     )
 
 

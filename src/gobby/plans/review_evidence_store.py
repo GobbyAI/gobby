@@ -176,41 +176,6 @@ class PlanReviewEvidenceStore:
         ).fetchone()
         return PlanReviewEvidence.from_row(row) if row is not None else None
 
-    def bind_run(
-        self,
-        *,
-        transaction: Transaction,
-        evidence_id: str,
-        run_id: str,
-    ) -> PlanReviewEvidence:
-        row = transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET dispatch_run_id = %s, lease_expires_at = NULL
-            WHERE evidence_id = %s
-              AND finalized_at IS NULL
-              AND expired_at IS NULL
-              AND dispatch_run_id IS NULL
-              AND static_writer_session_id IS NULL
-            RETURNING *
-            """,
-            (run_id, evidence_id),
-        ).fetchone()
-        if row is not None:
-            return PlanReviewEvidence.from_row(row)
-        current = self.require(evidence_id, transaction=transaction, for_update=True)
-        if current.dispatch_run_id == run_id:
-            return current
-        if not current.is_live:
-            raise ReviewEvidenceError(
-                "evidence_replay",
-                f"evidence row is no longer live: {evidence_id}",
-            )
-        raise ReviewEvidenceError(
-            "evidence_already_bound",
-            f"evidence {evidence_id} is already bound to another run",
-        )
-
     def bind_static_seats(
         self,
         *,
@@ -230,7 +195,6 @@ class PlanReviewEvidenceStore:
             WHERE evidence_id = %s
               AND finalized_at IS NULL
               AND expired_at IS NULL
-              AND dispatch_run_id IS NULL
               AND static_writer_session_id IS NULL
               AND static_coordinator_session_id IS NULL
             RETURNING *

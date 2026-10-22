@@ -8,7 +8,6 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.tasks._stage_utils import _close_task_in_txn
 
 pytestmark = pytest.mark.unit
 
@@ -85,45 +84,6 @@ def test_close_preserves_existing_validation_criteria(
     closed = manager.close_task(task.id, reason="obsolete")
 
     assert closed.validation_criteria == "Original validation criteria."
-
-
-def test_forced_cascade_closes_legacy_descendants(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = _manager(temp_db)
-    epic = manager.create_task(
-        sample_project["id"],
-        title="Legacy epic",
-        task_type="epic",
-    )
-    legacy_child = _create(
-        manager,
-        sample_project["id"],
-        "Legacy child",
-        parent_task_id=epic.id,
-    )
-    _make_legacy(temp_db, legacy_child.id, validation_criteria="   ")
-
-    with temp_db.transaction() as conn:
-        _close_task_in_txn(
-            conn,
-            epic.id,
-            db=temp_db,
-            reason="merged",
-            force=True,
-            cascade_descendants=True,
-        )
-
-    closed_epic = manager.get_task(epic.id)
-    closed_child = manager.get_task(legacy_child.id)
-    assert closed_epic is not None
-    assert closed_epic.closed_at is not None
-    assert closed_epic.validation_criteria is None
-    assert closed_child is not None
-    assert closed_child.closed_at is not None
-    assert closed_child.closed_reason == "merged"
-    assert closed_child.validation_criteria == LEGACY_VALIDATION_CRITERIA
 
 
 def test_legacy_non_epic_ancestor_auto_closes(

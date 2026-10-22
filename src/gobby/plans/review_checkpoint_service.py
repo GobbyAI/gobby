@@ -131,6 +131,10 @@ class ReviewCheckpointService:
                 "status must be minted, failed, or none",
             )
         evidence = self.store.require(evidence_id)
+        if not evidence.is_static_bound:
+            raise ReviewEvidenceError(
+                "binding_pending", "evidence static seat binding is pending", retryable=True
+            )
         if (
             (evidence.session_id is None and evidence.task_id is None)
             or evidence.finalized_at is None
@@ -147,7 +151,11 @@ class ReviewCheckpointService:
         )
         with self.db.transaction_immediate(mutation) as transaction:
             current = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if current.is_static_bound and caller_session_id != current.session_id:
+            if not current.is_static_bound:
+                raise ReviewEvidenceError(
+                    "binding_pending", "evidence static seat binding is pending", retryable=True
+                )
+            if caller_session_id is None or caller_session_id != current.session_id:
                 raise ReviewEvidenceError("unauthorized_seat", "reviewer seat required")
             return self.store.checkpoint_mint(
                 transaction=transaction,

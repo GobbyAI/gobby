@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._queries import list_blocked_tasks, list_ready_tasks
 
@@ -31,7 +32,9 @@ SNAPSHOT_SQL = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
 LISTINGS: list[Callable[..., list[Any]]] = [list_ready_tasks, list_blocked_tasks]
 
 
-def test_list_tasks_orders_hierarchy_before_applying_pagination(temp_db, sample_project) -> None:
+def test_list_tasks_orders_hierarchy_before_applying_pagination(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     project_id = sample_project["id"]
     parent = task_manager.create_task(
@@ -129,7 +132,6 @@ def _page(listing: Callable[..., list[Any]], db: MagicMock, **kwargs: Any) -> li
             "gobby.storage.tasks._queries.Task.from_row",
             side_effect=lambda row: SimpleNamespace(id=row["id"]),
         ),
-        patch("gobby.storage.tasks._queries.hydrate_task_stage_state"),
         patch("gobby.storage.tasks._queries.hydrate_task_blocking_state"),
     ):
         return listing(db, project_id="project", **kwargs)
@@ -147,14 +149,12 @@ def test_listing_hydrates_only_the_page_not_the_matching_set(
             "gobby.storage.tasks._queries.Task.from_row",
             side_effect=lambda row: SimpleNamespace(id=row["id"]),
         ) as from_row,
-        patch("gobby.storage.tasks._queries.hydrate_task_stage_state") as hydrate_stages,
         patch("gobby.storage.tasks._queries.hydrate_task_blocking_state") as hydrate_blocking,
     ):
         result = listing(db, project_id="project", limit=20)
 
     assert len(result) == 20
     assert from_row.call_count == 20, "once per returned task, not once per matching row"
-    assert hydrate_stages.call_args.args[1] == result
     assert hydrate_blocking.call_args.args[1] == result
 
     issued = [call.args[0] for call in db.fetchall.call_args_list]
@@ -235,10 +235,6 @@ def test_listing_is_read_from_one_snapshot(listing: Callable[..., list[Any]]) ->
             side_effect=lambda row: SimpleNamespace(id=row["id"]),
         ),
         patch(
-            "gobby.storage.tasks._queries.hydrate_task_stage_state",
-            side_effect=lambda *_: depths.append(db.snapshot_depth),
-        ),
-        patch(
             "gobby.storage.tasks._queries.hydrate_task_blocking_state",
             side_effect=lambda *_: depths.append(db.snapshot_depth),
         ),
@@ -246,7 +242,7 @@ def test_listing_is_read_from_one_snapshot(listing: Callable[..., list[Any]]) ->
         listing(db, project_id="project", limit=3)
 
     assert db.reads_outside_snapshot == []
-    assert depths == [1, 1], "both hydration passes belong to the page's snapshot"
+    assert depths == [1], "blocking hydration belongs to the page's snapshot"
     assert db.transaction.call_count == 1, "one snapshot, not one per read"
     statements = [call.args[0] for call in db.txn.execute.call_args_list]
     assert statements[:1] == [SNAPSHOT_SQL], "the snapshot must be declared before any read"

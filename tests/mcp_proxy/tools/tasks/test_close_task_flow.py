@@ -99,7 +99,6 @@ def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
         claimed_by_session_id="00000000-0000-4000-8000-000000000301",
         validation_criteria=criteria,
         validation_fail_count=0,
-        stages=({"stage_name": "development", "position": 0, "state": "in_progress"},),
     )
 
 

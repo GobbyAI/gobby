@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, cast
 
@@ -22,12 +22,7 @@ from gobby.storage.tasks._aggregates import (
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._build_cascade import (
-    CascadeBuildResult,
-)
-from gobby.storage.tasks._build_cascade import (
-    cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
-)
+from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._creation import (
     create_task as _create_task,
 )
@@ -58,7 +53,6 @@ from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
-    CheckoutMode,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -93,11 +87,6 @@ from gobby.storage.tasks._read import (
     get_task as _get_task,
 )
 from gobby.storage.tasks._search import TaskSearchBackend
-from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
-from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
-from gobby.storage.tasks._stage_registry import StageRegistryManager
-from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_utils import close_eligible_parent_chain
 from gobby.storage.tasks._transitions_facade import TaskTransitionsMixin
 from gobby.storage.tasks._updates import (
     update_task_metadata as _update_task_metadata,
@@ -133,8 +122,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         self._searcher: TaskSearchBackend | None = None
         self._artifact_manager: TaskArtifactManager | None = None
         self._lifecycle_event_manager: TaskLifecycleEventManager | None = None
-        self._stage_registry_manager: StageRegistryManager | None = None
-        self._stage_states_manager: StageStatesManager | None = None
 
     @property
     def artifacts(self) -> TaskArtifactManager:
@@ -147,18 +134,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         if self._lifecycle_event_manager is None:
             self._lifecycle_event_manager = TaskLifecycleEventManager(self.db)
         return self._lifecycle_event_manager
-
-    @property
-    def stages_registry(self) -> StageRegistryManager:
-        if self._stage_registry_manager is None:
-            self._stage_registry_manager = StageRegistryManager(self.db)
-        return self._stage_registry_manager
-
-    @property
-    def stage_states(self) -> StageStatesManager:
-        if self._stage_states_manager is None:
-            self._stage_states_manager = StageStatesManager(self.db, self.lifecycle_events)
-        return self._stage_states_manager
 
     def add_change_listener(self, listener: Callable[[], Any]) -> None:
         """Add a listener to be called when tasks change."""
@@ -269,29 +244,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         self._notify_listeners()
         return self.get_task(task_id)
 
-    def initialize_task_manifest(
-        self,
-        task_id: str,
-        *,
-        task_type: str | None = None,
-        stage_names: Sequence[str] | None = None,
-        stage_caps: Sequence[Mapping[str, object]] | None = None,
-        by_session_id: str | None = None,
-    ) -> list[Any]:
-        """Explicitly initialize a task lifecycle manifest."""
-        resolved_type = task_type or self.get_task(task_id).task_type
-        rows = initialize_task_manifest_for_task(
-            self.stages_registry,
-            self.stage_states,
-            task_id,
-            task_type=resolved_type,
-            stage_names=stage_names,
-            stage_caps=stage_caps,
-            by_session_id=by_session_id,
-        )
-        self._notify_listeners()
-        return rows
-
     def get_task(self, task_id: str, project_id: str | None = None) -> Task:
         """Get a task by ID or reference.
 
@@ -360,16 +312,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         category: MaybeUnset[str | None] = UNSET,
         validation_criteria: MaybeUnset[str | None] = UNSET,
         validation_fail_count: MaybeUnset[int | None] = UNSET,
-        dispatch_failure_count: MaybeUnset[int | None] = UNSET,
         merge_in_progress: MaybeUnset[bool] = UNSET,
         blocked_by_merge: MaybeUnset[bool] = UNSET,
         escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
         validation_override_reason: MaybeUnset[str | None] = UNSET,
-        allow_automation: MaybeUnset[bool] = UNSET,
-        unattended: MaybeUnset[bool] = UNSET,
-        yolo: MaybeUnset[bool] = UNSET,
-        checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
         assigned_agent: MaybeUnset[str | None] = UNSET,
         implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -380,7 +327,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     ) -> Task:
         """Update metadata fields and optionally replace declared file scope.
 
-        Stage and task/session ownership mutations must go through the dedicated task
+        Task/session ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
         if task_type is not UNSET or validation_criteria is not UNSET:
@@ -430,16 +377,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
                 category=category,
                 validation_criteria=validation_criteria,
                 validation_fail_count=validation_fail_count,
-                dispatch_failure_count=dispatch_failure_count,
                 merge_in_progress=merge_in_progress,
                 blocked_by_merge=blocked_by_merge,
                 escalated_at=escalated_at,
                 escalation_reason=escalation_reason,
                 validation_override_reason=validation_override_reason,
-                allow_automation=allow_automation,
-                unattended=unattended,
-                yolo=yolo,
-                checkout_mode=checkout_mode,
                 assigned_agent=assigned_agent,
                 implementation_domain=implementation_domain,
                 additional_skills=additional_skills,
@@ -498,34 +440,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         )
         self._notify_listeners()
         return self.get_task(task_id)
-
-    def cascade_build_state_to_subtree(
-        self,
-        epic_id: str,
-        checkout_mode: CheckoutMode | str,
-        unattended: bool | None,
-        allow_automation: bool,
-        *,
-        skip_stages: Iterable[str] = (),
-        yolo: bool | None = None,
-        parent_manifest_specs: Iterable[Any] | None = None,
-        include_merge_stage: bool = False,
-    ) -> CascadeBuildResult:
-        """Apply build dispatch state to an epic and every descendant task."""
-        if unattended is None:
-            unattended = bool(yolo)
-        result = _cascade_build_state_to_subtree(
-            self.db,
-            epic_id=epic_id,
-            checkout_mode=checkout_mode,
-            unattended=unattended,
-            allow_automation=allow_automation,
-            skip_stages=skip_stages,
-            parent_manifest_specs=parent_manifest_specs,
-            include_merge_stage=include_merge_stage,
-        )
-        self._notify_listeners()
-        return result
 
     def add_label(self, task_id: str, label: str) -> Task:
         """Add a label to a task if not present."""
@@ -611,7 +525,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     def list_tasks(
         self,
         project_id: str | None = None,
-        current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         claimed_by_session_id: str | None = None,
         claimed: bool | None = None,
@@ -622,8 +535,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         labels: list[str] | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
-        stages: list[str] | None = None,
-        stage_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
         sort_by: str | None = None,
@@ -634,7 +545,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         """List tasks with filtering.
 
         Args:
-            current_stage_state: Filter by current stage state. Can be a single
                 state string, a list of states, or None to include all stage states.
             sort_by: None lists closed tasks (``closed=True``) newest closure
                 first and everything else hierarchically.
@@ -645,7 +555,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         return _list_tasks(
             self.db,
             project_id=project_id,
-            current_stage_state=current_stage_state,
             priority=priority,
             claimed_by_session_id=claimed_by_session_id,
             claimed=claimed,
@@ -656,8 +565,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             labels=labels,
             parent_task_id=parent_task_id,
             title_like=title_like,
-            stages=stages,
-            stage_state=stage_state,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
@@ -729,7 +636,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     def count_tasks(
         self,
         project_id: str | None = None,
-        current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         claimed_by_session_id: str | None = None,
         claimed: bool | None = None,
@@ -740,8 +646,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         labels: list[str] | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
-        stages: list[str] | None = None,
-        stage_state: str | None = None,
         updated_since: datetime | None = None,
         candidate: bool | None = None,
     ) -> int:
@@ -749,7 +653,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
 
         Args:
             project_id: Filter by project
-            current_stage_state: Filter by current stage state
 
         Returns:
             Count of matching tasks
@@ -757,7 +660,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         return _count_tasks(
             self.db,
             project_id=project_id,
-            current_stage_state=current_stage_state,
             priority=priority,
             claimed_by_session_id=claimed_by_session_id,
             claimed=claimed,
@@ -768,8 +670,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             labels=labels,
             parent_task_id=parent_task_id,
             title_like=title_like,
-            stages=stages,
-            stage_state=stage_state,
             updated_since=updated_since,
             candidate=candidate,
         )
@@ -830,7 +730,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         self,
         query: str,
         project_id: str | None = None,
-        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -846,7 +745,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Args:
             query: Search query text
             project_id: Filter by project
-            current_stage_state: Filter by current stage state (string or list of strings)
             task_type: Filter by task type
             priority: Filter by priority
             parent_task_id: Filter by parent task ID (UUID)
@@ -863,7 +761,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             query,
             top_k=limit,
             project_id=project_id,
-            current_stage_state=current_stage_state,
             task_type=task_type,
             priority=priority,
             parent_task_id=parent_task_id,
@@ -877,7 +774,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         task_ids = [task_id for task_id, _ in search_results]
         rows = self.db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (task_ids,))
         tasks = [Task.from_row(row) for row in rows]
-        hydrate_task_stage_state(self.db, tasks)
         hydrate_task_blocking_state(self.db, tasks)
         task_by_id = {task.id: task for task in tasks}
         return [

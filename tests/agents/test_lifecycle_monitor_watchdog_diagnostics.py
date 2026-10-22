@@ -227,9 +227,6 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         task_type="bug",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.initialize_task_manifest(task.id)
-    task_manager.stage_states.start_stage(task.id, "development", by_session_id="worker")
-    task_manager.submit_for_review(task.id, "development", by_session_id="worker")
 
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(

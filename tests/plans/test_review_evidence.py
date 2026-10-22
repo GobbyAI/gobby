@@ -24,13 +24,13 @@ from gobby.plans.review_evidence_io import (
     render_checkpoint,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.plans.review_evidence_helpers import (
     ROUND_PROSE,
     bind_interactive_review,
+    bind_review_seats,
     needs_review_result,
     repair_reviewed_section,
 )
@@ -120,12 +120,7 @@ def test_prepare_finalized_interactive_round_returns_canonical_evidence(
         round_number=2,
         session_id=session_id,
     )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+    bind_review_seats(service, prepared.evidence_id, session_id)
     round_result = {
         "verdict": "needs_review",
         "findings": [],
@@ -139,7 +134,9 @@ def test_prepare_finalized_interactive_round_returns_canonical_evidence(
         + b"\n"
         + service.render_plan_changelog_round(prepared.evidence_id, round_result)
     )
-    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    service.finalize_plan_review_evidence(
+        prepared.evidence_id, round_result, caller_session_id=session_id
+    )
 
     replay = service.prepare_plan_review_round(
         project_id=project_id,
@@ -161,12 +158,7 @@ def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
         round_number=2,
         session_id=session_id,
     )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+    bind_review_seats(service, prepared.evidence_id, session_id)
     round_result = {
         "verdict": "needs_review",
         "findings": [],
@@ -179,7 +171,9 @@ def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
         plan_path,
         service.render_plan_changelog_round(prepared.evidence_id, round_result),
     )
-    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    service.finalize_plan_review_evidence(
+        prepared.evidence_id, round_result, caller_session_id=session_id
+    )
 
     successor = SessionManager(service.db).register(
         external_id="review-evidence-successor",
@@ -211,12 +205,7 @@ def _finalize_round_two(
         round_number=2,
         session_id=session_id,
     )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+    bind_review_seats(service, prepared.evidence_id, session_id)
     round_result = {
         "verdict": "needs_review",
         "findings": [],
@@ -229,7 +218,9 @@ def _finalize_round_two(
         plan_path,
         service.render_plan_changelog_round(prepared.evidence_id, round_result),
     )
-    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    service.finalize_plan_review_evidence(
+        prepared.evidence_id, round_result, caller_session_id=session_id
+    )
     return prepared.evidence_id, prepared.plan_hash
 
 
@@ -445,14 +436,11 @@ def test_stale_write_guard_and_lifecycle(
         round_number=1,
         session_id=session_id,
     )
-    manager = LocalAgentRunManager(service.db)
-    dead_run = manager.create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="dead review",
-    )
-    service.bind_evidence_run(dead.evidence_id, dead_run.id)
-    manager.cancel(dead_run.id)
+    with service.db.transaction() as conn:
+        conn.execute(
+            "UPDATE plan_review_evidence SET lease_expires_at = NULL WHERE evidence_id = %s",
+            (dead.evidence_id,),
+        )
     replacement = service.prepare_plan_review_round(
         project_id=project_id,
         plan_path=dead_path,
@@ -470,12 +458,7 @@ def test_stale_write_guard_and_lifecycle(
         round_number=1,
         session_id=session_id,
     )
-    live_run = manager.create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="live review",
-    )
-    service.bind_evidence_run(live.evidence_id, live_run.id)
+    assert service.get_evidence(live.evidence_id).lease_expires_at is not None
     with pytest.raises(ReviewEvidenceError) as still_live:
         service.prepare_plan_review_round(
             project_id=project_id,
@@ -535,45 +518,20 @@ def test_path_boundary_and_binding_validation(
     assert pending.value.code == "binding_pending"
     assert pending.value.retryable
 
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-        task_id=task.id,
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
-    current = service.authorize_current_attempt(
-        prepared.evidence_id,
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=1,
-        task_id=task.id,
-        stage="review",
-        run_id=run.id,
-    )
-    assert current.evidence_id == prepared.evidence_id
-    finalized = service.finalize_plan_review_evidence(
-        prepared.evidence_id,
-        {
-            "verdict": "needs_review",
-            "findings": [],
-            "coverage_attestation": coverage_attestation(
-                evidence_id=prepared.evidence_id,
-                shadow_valid=False,
-            ),
-        },
-    )
-    replay = service.authorize_current_attempt(
-        prepared.evidence_id,
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=1,
-        task_id=task.id,
-        stage="review",
-        run_id=run.id,
-        allow_rejection_replay=True,
-    )
-    assert replay.round_result == finalized.round_result
+    result = needs_review_result(prepared.evidence_id)
+    with pytest.raises(ReviewEvidenceError) as unbound:
+        service.finalize_plan_review_evidence(
+            prepared.evidence_id, result, caller_session_id=session_id
+        )
+    assert unbound.value.code == "binding_pending"
+    # A historical staged result stays readable without public mutation authority.
+    with service.db.transaction() as transaction:
+        service.store.finalize(
+            transaction=transaction,
+            evidence_id=prepared.evidence_id,
+            round_result=result,
+            approval=False,
+        )
     assert (
         service.resolve_historical_proof(
             prepared.evidence_id,
@@ -596,12 +554,7 @@ def test_manifest_compare_and_apply(
         round_number=1,
         session_id=session_id,
     )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+    _, coordinator_id = bind_review_seats(service, prepared.evidence_id, session_id)
 
     def canonical_approval(evidence_id: str) -> dict[str, object]:
         derived = service.derive_plan_review_manifest(
@@ -641,7 +594,7 @@ def test_manifest_compare_and_apply(
             prepared.evidence_id,
             tampered,
             plan_path=plan_path,
-            run_id=run.id,
+            caller_session_id=coordinator_id,
         )
     assert noncanonical.value.code == "noncanonical_manifest"
     assert plan_path.read_bytes() == original_bytes
@@ -659,7 +612,7 @@ def test_manifest_compare_and_apply(
             prepared.evidence_id,
             approval,
             plan_path=plan_path,
-            run_id=run.id,
+            caller_session_id=coordinator_id,
         )
     pending = service.get_evidence(prepared.evidence_id)
     assert pending.manifest_state is None
@@ -674,7 +627,7 @@ def test_manifest_compare_and_apply(
         prepared.evidence_id,
         approval,
         plan_path=plan_path,
-        run_id=run.id,
+        caller_session_id=coordinator_id,
     )
     row = service.get_evidence(prepared.evidence_id)
     assert row.manifest_state == "applied"
@@ -686,7 +639,7 @@ def test_manifest_compare_and_apply(
             prepared.evidence_id,
             approval,
             plan_path=plan_path,
-            run_id=run.id,
+            caller_session_id=coordinator_id,
         )
         == applied
     )
@@ -714,7 +667,7 @@ def test_manifest_compare_and_apply(
             prepared.evidence_id,
             changed,
             plan_path=plan_path,
-            run_id=run.id,
+            caller_session_id=coordinator_id,
         )
 
     landed_path = plan_path.with_name("review-evidence-landed.md")
@@ -725,12 +678,7 @@ def test_manifest_compare_and_apply(
         round_number=1,
         session_id=session_id,
     )
-    landed_run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review landed",
-    )
-    service.bind_evidence_run(landed_prepared.evidence_id, landed_run.id)
+    _, landed_coordinator_id = bind_review_seats(service, landed_prepared.evidence_id, session_id)
     landed_approval = canonical_approval(landed_prepared.evidence_id)
     complete_manifest_apply = service.store.complete_manifest_apply
 
@@ -749,7 +697,7 @@ def test_manifest_compare_and_apply(
             landed_prepared.evidence_id,
             landed_approval,
             plan_path=landed_path,
-            run_id=landed_run.id,
+            caller_session_id=landed_coordinator_id,
         )
     landed_bytes = landed_path.read_bytes()
     assert landed_bytes != original_bytes
@@ -763,7 +711,7 @@ def test_manifest_compare_and_apply(
         landed_prepared.evidence_id,
         landed_approval,
         plan_path=landed_path,
-        run_id=landed_run.id,
+        caller_session_id=landed_coordinator_id,
     )
     assert landed_path.read_bytes() == landed_bytes
     assert service.get_evidence(landed_prepared.evidence_id).manifest_state == "applied"
@@ -776,12 +724,7 @@ def test_manifest_compare_and_apply(
         round_number=1,
         session_id=session_id,
     )
-    drift_run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review drift",
-    )
-    service.bind_evidence_run(drift_prepared.evidence_id, drift_run.id)
+    _, drift_coordinator_id = bind_review_seats(service, drift_prepared.evidence_id, session_id)
     drift_approval = canonical_approval(drift_prepared.evidence_id)
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
@@ -792,7 +735,7 @@ def test_manifest_compare_and_apply(
             drift_prepared.evidence_id,
             drift_approval,
             plan_path=drift_path,
-            run_id=drift_run.id,
+            caller_session_id=drift_coordinator_id,
         )
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
@@ -807,7 +750,7 @@ def test_manifest_compare_and_apply(
             drift_prepared.evidence_id,
             drift_approval,
             plan_path=drift_path,
-            run_id=drift_run.id,
+            caller_session_id=drift_coordinator_id,
         )
     revoked = service.get_evidence(drift_prepared.evidence_id)
     assert revoked.manifest_state is None
@@ -819,9 +762,10 @@ def test_manifest_compare_and_apply(
             drift_prepared.evidence_id,
             drift_approval,
             plan_path=drift_path,
-            run_id=drift_run.id,
+            caller_session_id=drift_coordinator_id,
         )
-    LocalAgentRunManager(service.db).cancel(drift_run.id)
+    SessionManager(service.db).update_status(drift_coordinator_id, "expired")
+    service.expire_plan_review_evidence(drift_prepared.evidence_id, caller_session_id=session_id)
     rereview = service.prepare_plan_review_round(
         project_id=project_id,
         plan_path=drift_path,
@@ -907,69 +851,6 @@ async def test_validate_plan_review_coverage_accepts_exact_manifest_tool_result(
     assert rejected["error"] == "shadow_manifest_mismatch"
 
 
-def test_two_phase_run_binding(
-    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
-) -> None:
-    service, project_id, session_id, plan_path = review_setup
-    prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=1,
-        session_id=session_id,
-    )
-    manager = LocalAgentRunManager(service.db)
-    run = manager.create(parent_session_id=session_id, provider="codex", prompt="review")
-    bound = service.bind_evidence_run(prepared.evidence_id, run.id)
-    assert bound.dispatch_run_id == run.id
-    assert bound.lease_expires_at is None
-    assert service.bind_evidence_run(prepared.evidence_id, run.id).dispatch_run_id == run.id
-
-    other = manager.create(parent_session_id=session_id, provider="codex", prompt="other")
-    with pytest.raises(ReviewEvidenceError, match="already bound"):
-        service.bind_evidence_run(prepared.evidence_id, other.id)
-    manager.cancel(run.id)
-    expired = service.expire_plan_review_evidence(prepared.evidence_id)
-    assert expired.expired_at is not None
-
-    spawn_failed = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=2,
-        session_id=session_id,
-    )
-    assert (
-        service.expire_plan_review_evidence(
-            spawn_failed.evidence_id,
-            spawn_failed=True,
-        ).expired_at
-        is not None
-    )
-
-    bind_failed = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=3,
-        session_id=session_id,
-    )
-    other_session = SessionManager(service.db).register(
-        external_id="other-review-parent",
-        machine_id=None,
-        source="codex",
-        project_id=project_id,
-    )
-    wrong_run = manager.create(
-        parent_session_id=other_session.id,
-        provider="codex",
-        prompt="wrong lineage",
-    )
-    with pytest.raises(ReviewEvidenceError, match="does not belong"):
-        service.bind_evidence_run(bind_failed.evidence_id, wrong_run.id)
-    assert service.get_evidence(bind_failed.evidence_id).expired_at is not None
-    cancelled = manager.get(wrong_run.id)
-    assert cancelled is not None
-    assert cancelled.status == "cancelled"
-
-
 def test_interactive_mint_status_lifecycle(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
@@ -996,21 +877,24 @@ def test_interactive_mint_status_lifecycle(
             manifest_entries=manifest_entries,
         ),
     }
+    writer_id, coordinator_id = bind_review_seats(service, prepared.evidence_id, session_id)
     with pytest.raises(ReviewEvidenceError, match="V1 checkpoint"):
-        service.finalize_plan_review_evidence(prepared.evidence_id, approval)
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="approve",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+        service.finalize_plan_review_evidence(
+            prepared.evidence_id, approval, caller_session_id=session_id
+        )
     service.apply_plan_review_manifest(
         prepared.evidence_id,
         approval,
         plan_path=plan_path,
-        run_id=run.id,
+        caller_session_id=coordinator_id,
     )
     checkpoint = service.render_plan_changelog_round(prepared.evidence_id)
+    service.append_plan_changelog_round(
+        prepared.evidence_id, "**Round 1**", approval, caller_session_id=writer_id
+    )
+    service.finalize_plan_review_evidence(
+        prepared.evidence_id, approval, caller_session_id=session_id
+    )
 
     with pytest.raises(ReviewEvidenceError) as pending:
         service.prepare_plan_review_round(
@@ -1034,6 +918,7 @@ def test_interactive_mint_status_lifecycle(
         prepared.evidence_id,
         status="minted",
         detail={"lesson_ids": ["lesson-1"]},
+        caller_session_id=session_id,
     )
     assert minted.lesson_mint_status == "minted"
     assert (
@@ -1041,6 +926,7 @@ def test_interactive_mint_status_lifecycle(
             prepared.evidence_id,
             status="minted",
             detail={"lesson_ids": ["lesson-1"]},
+            caller_session_id=session_id,
         ).lesson_mint_status
         == "minted"
     )
@@ -1206,12 +1092,7 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
         round_number=2,
         session_id=session_id,
     )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
+    writer_id, _ = bind_review_seats(service, prepared.evidence_id, session_id)
     round_result = {
         "verdict": "needs_review",
         "findings": [],
@@ -1225,6 +1106,7 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
         prepared.evidence_id,
         ROUND_PROSE,
         round_result,
+        caller_session_id=writer_id,
     )
 
     assert result["applied"] is True
@@ -1236,13 +1118,16 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
     assert text.index("## V1 Plan Changelog") < prose_index < fence_index
     assert fence_index < text.index("## M1 Task Manifest")
 
-    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    service.finalize_plan_review_evidence(
+        prepared.evidence_id, round_result, caller_session_id=session_id
+    )
     assert service.get_evidence(prepared.evidence_id).finalized_at is not None
 
     replay = service.append_plan_changelog_round(
         prepared.evidence_id,
         ROUND_PROSE,
         round_result,
+        caller_session_id=writer_id,
     )
     assert replay["applied"] is False
     assert plan_path.read_text(encoding="utf-8") == text
@@ -1252,13 +1137,14 @@ def test_append_plan_changelog_round_writes_normalized_payload(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id, writer_id, _ = bind_interactive_review(service, project_id, session_id, plan_path)
     round_result = needs_review_result(evidence_id)
 
     result = service.append_plan_changelog_round(
         evidence_id,
         ROUND_PROSE,
         round_result,
+        caller_session_id=writer_id,
     )
 
     assert result["applied"] is True
@@ -1273,21 +1159,23 @@ def test_append_plan_changelog_round_after_needs_review_repairs(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id, writer_id, _ = bind_interactive_review(service, project_id, session_id, plan_path)
     repair_reviewed_section(plan_path)
     with pytest.raises(ReviewEvidenceError) as stale:
         service.verify_plan_unchanged(evidence_id, plan_path)
     assert stale.value.code == "stale_plan_evidence"
 
     round_result = needs_review_result(evidence_id)
-    result = service.append_plan_changelog_round(evidence_id, ROUND_PROSE, round_result)
+    result = service.append_plan_changelog_round(
+        evidence_id, ROUND_PROSE, round_result, caller_session_id=writer_id
+    )
 
     assert result["applied"] is True
     rendered = service.render_plan_changelog_round(evidence_id, round_result)
     text = plan_path.read_text(encoding="utf-8")
     assert "Repaired behavior exists." in text
     assert text.index(ROUND_PROSE) < text.index(rendered.decode("utf-8"))
-    service.finalize_plan_review_evidence(evidence_id, round_result)
+    service.finalize_plan_review_evidence(evidence_id, round_result, caller_session_id=session_id)
     assert service.get_evidence(evidence_id).finalized_at is not None
 
 
@@ -1321,15 +1209,9 @@ def test_append_plan_changelog_round_rejects_expired_evidence(
         round_number=2,
         session_id=session_id,
     )
-    manager = LocalAgentRunManager(service.db)
-    run = manager.create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
-    manager.cancel(run.id)
-    service.expire_plan_review_evidence(prepared.evidence_id)
+    writer_id, _ = bind_review_seats(service, prepared.evidence_id, session_id)
+    SessionManager(service.db).update_status(writer_id, "expired")
+    service.expire_plan_review_evidence(prepared.evidence_id, caller_session_id=session_id)
 
     with pytest.raises(ReviewEvidenceError) as expired:
         service.append_plan_changelog_round(
@@ -1344,7 +1226,7 @@ def test_append_plan_changelog_round_rejects_wrong_plan_path(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id, writer_id, _ = bind_interactive_review(service, project_id, session_id, plan_path)
     other = plan_path.with_name("other-plan.md")
     other.write_bytes(plan_path.read_bytes())
 
@@ -1354,6 +1236,7 @@ def test_append_plan_changelog_round_rejects_wrong_plan_path(
             ROUND_PROSE,
             needs_review_result(evidence_id),
             plan_path=other,
+            caller_session_id=writer_id,
         )
     assert wrong.value.code == "wrong_plan"
 
@@ -1362,7 +1245,7 @@ def test_append_plan_changelog_round_approved_still_requires_identity(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id, writer_id, _ = bind_interactive_review(service, project_id, session_id, plan_path)
     repair_reviewed_section(plan_path)
     derived = service.derive_plan_review_manifest(evidence_id, routing_decisions={})
     manifest_entries = derived["manifest_entries"]
@@ -1379,7 +1262,9 @@ def test_append_plan_changelog_round_approved_still_requires_identity(
     }
 
     with pytest.raises(ReviewEvidenceError) as stale:
-        service.append_plan_changelog_round(evidence_id, ROUND_PROSE, approved)
+        service.append_plan_changelog_round(
+            evidence_id, ROUND_PROSE, approved, caller_session_id=writer_id
+        )
     assert stale.value.code == "stale_plan_evidence"
 
 

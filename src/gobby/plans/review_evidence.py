@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg
@@ -13,6 +11,7 @@ import psycopg
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.parser import PlanDocument
 from gobby.plans.plan_roots import resolve_plan_root
+from gobby.plans.review_attempt_service import ReviewAttemptService
 from gobby.plans.review_checkpoint_service import ReviewCheckpointService
 from gobby.plans.review_coverage import (
     review_complexity,
@@ -35,13 +34,11 @@ from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
 from gobby.plans.review_repairs import apply_repairs, select_accepted_repairs
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
     PlanReviewEvidenceMutation,
 )
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.workflows.state_manager import SessionVariableManager
 
 EVIDENCE_LEASE_SECONDS = 7_200
@@ -60,13 +57,13 @@ class PlanReviewEvidenceService:
         self.projects = LocalProjectManager(db)
         self.tasks = LocalTaskManager(db)
         self.session_variables = SessionVariableManager(db)
-        self.agent_runs = LocalAgentRunManager(db)
         self.checkpoints = ReviewCheckpointService(db=db, store=self.store)
         self.manifests = ReviewManifestService(
             db=db,
             store=self.store,
             projects=self.projects,
         )
+        self.attempts = ReviewAttemptService(db=db, store=self.store, manifests=self.manifests)
 
     def prepare_plan_review_round(
         self,
@@ -165,7 +162,7 @@ class PlanReviewEvidenceService:
                         snapshot=snapshot,
                     ):
                         prepared = active.prepared_result()
-                    elif self._attempt_is_dead(active):
+                    elif self.attempts.attempt_is_dead(active):
                         self.store.expire(
                             transaction=transaction,
                             evidence_id=active.evidence_id,
@@ -360,58 +357,6 @@ class PlanReviewEvidenceService:
                 details={"changed_sections": changed},
             )
 
-    def bind_evidence_run(self, evidence_id: str, run_id: str) -> PlanReviewEvidence:
-        evidence = self.get_evidence(evidence_id)
-        run = self.agent_runs.get(run_id)
-        if run is None:
-            raise ReviewEvidenceError("run_not_found", f"agent run not found: {run_id}")
-        if evidence.is_interactive:
-            valid_lineage = run.parent_session_id == evidence.session_id and run.task_id is None
-        else:
-            valid_lineage = run.task_id == evidence.task_id
-        if not valid_lineage:
-            if (
-                evidence.dispatch_run_id is None
-                and not evidence.is_static_bound
-                and evidence.is_live
-            ):
-                self.expire_plan_review_evidence(evidence_id, spawn_failed=True)
-                if run.status in {"pending", "running"}:
-                    self.agent_runs.cancel(
-                        run.id,
-                        result="plan review evidence bind failed",
-                    )
-            raise ReviewEvidenceError(
-                "run_lineage_mismatch",
-                "agent run does not belong to the evidence attempt",
-            )
-        if run.status not in {"pending", "running"}:
-            raise ReviewEvidenceError(
-                "run_not_active",
-                f"agent run is already terminal: {run_id}",
-            )
-        mutation = PlanReviewEvidenceMutation(
-            project_id=evidence.project_id,
-            plan_path=evidence.plan_path,
-        )
-        try:
-            with self.db.transaction_immediate(mutation) as transaction:
-                return self.store.bind_run(
-                    transaction=transaction,
-                    evidence_id=evidence_id,
-                    run_id=run_id,
-                )
-        except ReviewEvidenceError:
-            current = self.get_evidence(evidence_id)
-            if run.status in {"pending", "running"}:
-                self.agent_runs.cancel(
-                    run.id,
-                    result="plan review evidence bind failed",
-                )
-            if current.dispatch_run_id is None and not current.is_static_bound and current.is_live:
-                self.expire_plan_review_evidence(evidence_id, spawn_failed=True)
-            raise
-
     def bind_static_review_seats(
         self,
         evidence_id: str,
@@ -421,82 +366,13 @@ class PlanReviewEvidenceService:
         caller_session_id: str | None,
         plan_path: str | Path | None = None,
     ) -> PlanReviewEvidence:
-        """Bind one live interactive attempt to three exact, persisted session seats."""
-        evidence = self.get_evidence(evidence_id)
-        if caller_session_id is None or caller_session_id != evidence.session_id:
-            raise ReviewEvidenceError("unauthorized_seat", "only the evidence owner may bind seats")
-        if not evidence.is_interactive:
-            raise ReviewEvidenceError(
-                "not_interactive_evidence", "static seats require an interactive round"
-            )
-        try:
-            writer_session_id = str(uuid.UUID(writer_session_id))
-            coordinator_session_id = str(uuid.UUID(coordinator_session_id))
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise ReviewEvidenceError(
-                "invalid_seats", "review seats require session UUIDs"
-            ) from exc
-        mutation = PlanReviewEvidenceMutation(
-            project_id=evidence.project_id,
-            plan_path=evidence.plan_path,
+        return self.attempts.bind_static_review_seats(
+            evidence_id,
+            writer_session_id=writer_session_id,
+            coordinator_session_id=coordinator_session_id,
+            caller_session_id=caller_session_id,
+            plan_path=plan_path,
         )
-        with self.db.transaction_immediate(mutation) as transaction:
-            locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if not locked.is_live:
-                raise ReviewEvidenceError("evidence_replay", "evidence row is no longer live")
-            if locked.is_static_bound:
-                if (
-                    locked.static_writer_session_id == writer_session_id
-                    and locked.static_coordinator_session_id == coordinator_session_id
-                ):
-                    return locked
-                raise ReviewEvidenceError("evidence_already_bound", "static seats are immutable")
-            if locked.dispatch_run_id is not None:
-                raise ReviewEvidenceError("evidence_already_bound", "evidence has a run binding")
-            active = self.store.active_for_path(
-                project_id=locked.project_id,
-                plan_path=locked.plan_path,
-                transaction=transaction,
-            )
-            if active is None or active.evidence_id != evidence_id:
-                raise ReviewEvidenceError(
-                    "wrong_attempt", "evidence is not the current review attempt"
-                )
-            seats = {caller_session_id, writer_session_id, coordinator_session_id}
-            if len(seats) != 3:
-                raise ReviewEvidenceError("invalid_seats", "review seats must be distinct sessions")
-            rows = transaction.execute(
-                "SELECT id, project_id, status FROM sessions "
-                "WHERE id IN (%s, %s, %s) ORDER BY id FOR UPDATE",
-                (caller_session_id, writer_session_id, coordinator_session_id),
-            ).fetchall()
-            if len(rows) != 3 or any(
-                str(row["project_id"]) != locked.project_id
-                or row["status"] not in LIVE_SESSION_STATUSES
-                for row in rows
-            ):
-                raise ReviewEvidenceError(
-                    "invalid_seats", "review seats must be live sessions in the project"
-                )
-            source_path = plan_path or locked.source_plan_path
-            if source_path is None or (
-                locked.source_plan_path is None and not Path(source_path).is_absolute()
-            ):
-                raise ReviewEvidenceError(
-                    "invalid_plan_path", "legacy evidence requires an absolute plan_path"
-                )
-            resolved = self.manifests.resolve_evidence_path(locked, source_path)
-            if resolved.read_bytes() != locked.snapshot:
-                raise ReviewEvidenceError(
-                    "stale_snapshot", "plan bytes differ from reviewed evidence"
-                )
-            return self.store.bind_static_seats(
-                transaction=transaction,
-                evidence_id=evidence_id,
-                writer_session_id=writer_session_id,
-                coordinator_session_id=coordinator_session_id,
-                source_plan_path=str(resolved),
-            )
 
     def expire_plan_review_evidence(
         self,
@@ -505,72 +381,11 @@ class PlanReviewEvidenceService:
         spawn_failed: bool = False,
         caller_session_id: str | None = None,
     ) -> PlanReviewEvidence:
-        evidence = self.get_evidence(evidence_id)
-        mutation = PlanReviewEvidenceMutation(
-            project_id=evidence.project_id,
-            plan_path=evidence.plan_path,
+        return self.attempts.expire_plan_review_evidence(
+            evidence_id,
+            spawn_failed=spawn_failed,
+            caller_session_id=caller_session_id,
         )
-        with self.db.transaction_immediate(mutation) as transaction:
-            locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if locked.is_static_bound:
-                try:
-                    caller_session_id = str(uuid.UUID(caller_session_id or ""))
-                except (TypeError, ValueError) as exc:
-                    raise ReviewEvidenceError(
-                        "unauthorized_seat", "live project session required"
-                    ) from exc
-                seats = {
-                    locked.session_id,
-                    locked.static_writer_session_id,
-                    locked.static_coordinator_session_id,
-                }
-                rows = transaction.execute(
-                    "SELECT id, project_id, status FROM sessions "
-                    "WHERE id IN (%s, %s, %s, %s) ORDER BY id FOR UPDATE",
-                    (*seats, caller_session_id),
-                ).fetchall()
-                sessions = {str(row["id"]): row for row in rows}
-                caller = sessions.get(caller_session_id) if caller_session_id is not None else None
-                if (
-                    caller is None
-                    or str(caller["project_id"]) != locked.project_id
-                    or caller["status"] not in LIVE_SESSION_STATUSES
-                ):
-                    raise ReviewEvidenceError("unauthorized_seat", "live project session required")
-                abandoned = {
-                    seat
-                    for seat in seats
-                    if seat is not None
-                    and (
-                        seat not in sessions
-                        or sessions[seat]["status"] not in LIVE_SESSION_STATUSES
-                    )
-                }
-                if not abandoned:
-                    raise ReviewEvidenceError(
-                        "attempt_still_live", "all static review seats are live", retryable=True
-                    )
-                if caller_session_id not in seats and abandoned != seats:
-                    raise ReviewEvidenceError("unauthorized_seat", "bound seat required")
-                # The successor round snapshots the current plan bytes; retain this
-                # abandoned row and its checkpoint or manifest intent for audit.
-            else:
-                if locked.round_result is not None and locked.manifest_state != "revoked":
-                    raise ReviewEvidenceError(
-                        "durable_result_present",
-                        "evidence with a durable round result must be reconciled",
-                    )
-                explicit_prebind_failure = spawn_failed and locked.dispatch_run_id is None
-                if not explicit_prebind_failure and not self._attempt_is_dead(locked):
-                    raise ReviewEvidenceError(
-                        "attempt_still_live",
-                        "evidence attempt is still live",
-                        retryable=True,
-                    )
-            return self.store.expire(
-                transaction=transaction,
-                evidence_id=evidence_id,
-            )
 
     def authorize_current_attempt(
         self,
@@ -582,71 +397,22 @@ class PlanReviewEvidenceService:
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
-        run_id: str | None = None,
         caller_session_id: str | None = None,
         allow_rejection_replay: bool = False,
         allow_approval_replay: bool = False,
     ) -> PlanReviewEvidence:
-        evidence = self.get_evidence(evidence_id)
-        resolved, relative_path = self._resolve_plan_path(project_id, plan_path)
-        token_matches = (
-            evidence.project_id == project_id
-            and evidence.plan_path == relative_path
-            and (evidence.source_plan_path is None or str(resolved) == evidence.source_plan_path)
-            and evidence.round_number == round_number
-            and evidence.session_id == session_id
-            and evidence.task_id == task_id
-            and evidence.stage == stage
+        return self.attempts.authorize_current_attempt(
+            evidence_id,
+            project_id=project_id,
+            plan_path=plan_path,
+            round_number=round_number,
+            session_id=session_id,
+            task_id=task_id,
+            stage=stage,
+            caller_session_id=caller_session_id,
+            allow_rejection_replay=allow_rejection_replay,
+            allow_approval_replay=allow_approval_replay,
         )
-        run_matches = evidence.dispatch_run_id == run_id and run_id is not None
-        static_matches = (
-            evidence.is_static_bound
-            and run_id is None
-            and caller_session_id is not None
-            and caller_session_id == evidence.static_coordinator_session_id
-        )
-        binding_matches = run_matches or static_matches
-        if (
-            allow_rejection_replay
-            and evidence.finalized_at is not None
-            and evidence.round_result is not None
-            and evidence.round_result.get("verdict") == "needs_review"
-            and token_matches
-            and binding_matches
-        ):
-            return evidence
-        if (
-            allow_approval_replay
-            and evidence.finalized_at is not None
-            and evidence.approval_result is not None
-            and evidence.approval_result.get("verdict") == "approved"
-            and token_matches
-            and binding_matches
-        ):
-            return evidence
-        if not token_matches:
-            raise ReviewEvidenceError(
-                "wrong_attempt",
-                "evidence does not belong to the current review attempt",
-            )
-        if not evidence.is_live:
-            raise ReviewEvidenceError("evidence_replay", "evidence row is no longer live")
-        if evidence.is_static_bound:
-            if not static_matches:
-                raise ReviewEvidenceError("unauthorized_seat", "coordinator seat required")
-            return evidence
-        if evidence.dispatch_run_id is None:
-            raise ReviewEvidenceError(
-                "binding_pending",
-                "evidence run binding is pending",
-                retryable=True,
-            )
-        if not run_matches:
-            raise ReviewEvidenceError(
-                "wrong_attempt",
-                "caller run does not own this evidence row",
-            )
-        return evidence
 
     def resolve_historical_proof(
         self,
@@ -720,10 +486,10 @@ class PlanReviewEvidenceService:
                     or caller_session_id != locked.static_writer_session_id
                 ):
                     raise ReviewEvidenceError("unauthorized_seat", "writer seat required")
-            elif locked.dispatch_run_id is None:
+            else:
                 raise ReviewEvidenceError(
                     "binding_pending",
-                    "evidence run binding is pending",
+                    "evidence static seat binding is pending",
                     retryable=True,
                 )
             payload = locked.round_result
@@ -753,9 +519,11 @@ class PlanReviewEvidenceService:
         caller_session_id: str | None = None,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
-        if evidence.is_static_bound and (
-            caller_session_id is None or caller_session_id != evidence.session_id
-        ):
+        if not evidence.is_static_bound:
+            raise ReviewEvidenceError(
+                "binding_pending", "evidence static seat binding is pending", retryable=True
+            )
+        if caller_session_id is None or caller_session_id != evidence.session_id:
             raise ReviewEvidenceError("unauthorized_seat", "reviewer seat required")
         payload = self._round_result_for_evidence(evidence_id, round_result)
         if evidence.round_result is not None and evidence.round_result != payload:
@@ -775,7 +543,11 @@ class PlanReviewEvidenceService:
         )
         with self.db.transaction_immediate(mutation) as transaction:
             current = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if current.is_static_bound and caller_session_id != current.session_id:
+            if not current.is_static_bound:
+                raise ReviewEvidenceError(
+                    "binding_pending", "evidence static seat binding is pending", retryable=True
+                )
+            if caller_session_id != current.session_id:
                 raise ReviewEvidenceError("unauthorized_seat", "reviewer seat required")
             if current.is_interactive:
                 self.checkpoints.require_durable_checkpoint(
@@ -795,14 +567,12 @@ class PlanReviewEvidenceService:
         round_result: Mapping[str, object],
         *,
         plan_path: str | Path,
-        run_id: str | None,
         caller_session_id: str | None = None,
     ) -> dict[str, object]:
         return self.manifests.apply_plan_review_manifest(
             evidence_id,
             round_result,
             plan_path=plan_path,
-            run_id=run_id,
             caller_session_id=caller_session_id,
             resolve_round_result=self._round_result_for_evidence,
             authorize_attempt=self.authorize_current_attempt,
@@ -819,6 +589,10 @@ class PlanReviewEvidenceService:
     ) -> dict[str, object]:
         """Apply the accepted findings' typed repairs to the plan under the evidence lock."""
         evidence = self.get_evidence(evidence_id)
+        if not evidence.is_static_bound:
+            raise ReviewEvidenceError(
+                "binding_pending", "evidence static seat binding is pending", retryable=True
+            )
         if plan_path is None:
             resolved = self._evidence_path(evidence)
         else:
@@ -834,9 +608,11 @@ class PlanReviewEvidenceService:
         )
         with self.db.transaction_immediate(mutation) as transaction:
             locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if locked.is_static_bound and (
-                caller_session_id is None or caller_session_id != locked.static_writer_session_id
-            ):
+            if not locked.is_static_bound:
+                raise ReviewEvidenceError(
+                    "binding_pending", "evidence static seat binding is pending", retryable=True
+                )
+            if caller_session_id is None or caller_session_id != locked.static_writer_session_id:
                 raise ReviewEvidenceError("unauthorized_seat", "writer seat required")
             if locked.finalized_at is None:
                 raise ReviewEvidenceError(
@@ -949,17 +725,6 @@ class PlanReviewEvidenceService:
 
     def _evidence_path(self, evidence: PlanReviewEvidence) -> Path:
         return self.manifests.evidence_path(evidence)
-
-    def _attempt_is_dead(self, evidence: PlanReviewEvidence) -> bool:
-        if not evidence.is_live:
-            return False
-        if evidence.is_static_bound:
-            return False
-        if evidence.dispatch_run_id is None:
-            expires = evidence.lease_expires_at
-            return expires is not None and expires <= datetime.now(UTC)
-        run = self.agent_runs.get(evidence.dispatch_run_id)
-        return run is None or run.status not in {"pending", "running"}
 
     @staticmethod
     def _validate_attempt_binding(

@@ -11,12 +11,12 @@ import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+from tests.plans.review_evidence_helpers import bind_review_seats
 from tests.review_coverage_helpers import coverage_attestation
 
 PLAN_TEXT = "\n".join(
@@ -132,32 +132,32 @@ def _rejection(evidence_id: str) -> dict[str, object]:
     }
 
 
-def _bind(setup: RepairSetup, *, round_number: int = 1) -> tuple[str, str]:
+def _bind(setup: RepairSetup, *, round_number: int = 1) -> tuple[str, str, str]:
     prepared = setup.service.prepare_plan_review_round(
         project_id=setup.project_id,
         plan_path=setup.plan_path,
         round_number=round_number,
         session_id=setup.session_id,
     )
-    run = LocalAgentRunManager(setup.service.db).create(
-        parent_session_id=setup.session_id,
-        provider="codex",
-        prompt="review",
+    writer_id, coordinator_id = bind_review_seats(
+        setup.service, prepared.evidence_id, setup.session_id
     )
-    setup.service.bind_evidence_run(prepared.evidence_id, run.id)
-    return prepared.evidence_id, run.id
+    return prepared.evidence_id, writer_id, coordinator_id
 
 
-def _finalized_rejection(setup: RepairSetup) -> str:
-    evidence_id, _run_id = _bind(setup)
+def _finalized_rejection(setup: RepairSetup) -> tuple[str, str]:
+    evidence_id, writer_id, _ = _bind(setup)
     payload = _rejection(evidence_id)
     setup.service.append_plan_changelog_round(
         evidence_id,
         "**Round 1** `kind: verification`\n\n- verdict: needs_review",
         payload,
+        caller_session_id=writer_id,
     )
-    setup.service.finalize_plan_review_evidence(evidence_id, payload)
-    return evidence_id
+    setup.service.finalize_plan_review_evidence(
+        evidence_id, payload, caller_session_id=setup.session_id
+    )
+    return evidence_id, writer_id
 
 
 def _fences(text: str) -> list[str]:
@@ -169,12 +169,14 @@ def _sha256(content: bytes) -> str:
 
 
 def test_apply_then_reapply_is_noop(repair_setup: RepairSetup) -> None:
-    evidence_id = _finalized_rejection(repair_setup)
+    evidence_id, writer_id = _finalized_rejection(repair_setup)
     before = repair_setup.plan_path.read_bytes()
     fences_before = _fences(before.decode())
     assert len(fences_before) == 1
 
-    result = repair_setup.service.apply_plan_review_repairs(evidence_id, ["F1", "F2", "F3"])
+    result = repair_setup.service.apply_plan_review_repairs(
+        evidence_id, ["F1", "F2", "F3"], caller_session_id=writer_id
+    )
 
     after = repair_setup.plan_path.read_bytes()
     assert result["ok"] is True
@@ -206,7 +208,9 @@ def test_apply_then_reapply_is_noop(repair_setup: RepairSetup) -> None:
     assert "### 1.2 Follow-up (depends: 1.1)\n" in text
     assert _fences(text) == fences_before
 
-    again = repair_setup.service.apply_plan_review_repairs(evidence_id, ["F1", "F2", "F3"])
+    again = repair_setup.service.apply_plan_review_repairs(
+        evidence_id, ["F1", "F2", "F3"], caller_session_id=writer_id
+    )
 
     assert again["changed"] is False
     assert again["applied"] == []
@@ -219,10 +223,12 @@ def test_apply_then_reapply_is_noop(repair_setup: RepairSetup) -> None:
 
 
 def test_empty_accepted_ids_is_a_noop(repair_setup: RepairSetup) -> None:
-    evidence_id = _finalized_rejection(repair_setup)
+    evidence_id, writer_id = _finalized_rejection(repair_setup)
     before = repair_setup.plan_path.read_bytes()
 
-    result = repair_setup.service.apply_plan_review_repairs(evidence_id, [])
+    result = repair_setup.service.apply_plan_review_repairs(
+        evidence_id, [], caller_session_id=writer_id
+    )
 
     assert result["ok"] is True
     assert result["changed"] is False
@@ -237,15 +243,17 @@ def test_gate_order(repair_setup: RepairSetup) -> None:
         service.apply_plan_review_repairs("00000000-0000-4000-8000-000000000000", ["F1"])
     assert not_found.value.code == "evidence_not_found"
 
-    evidence_id, _run_id = _bind(repair_setup)
+    evidence_id, writer_id, _ = _bind(repair_setup)
     other_plan = repair_setup.plan_path.with_name("other.md")
     other_plan.write_text(PLAN_TEXT, encoding="utf-8")
     with pytest.raises(ReviewEvidenceError) as wrong_plan:
-        service.apply_plan_review_repairs(evidence_id, ["F1"], plan_path=other_plan)
+        service.apply_plan_review_repairs(
+            evidence_id, ["F1"], plan_path=other_plan, caller_session_id=writer_id
+        )
     assert wrong_plan.value.code == "wrong_plan"
 
     with pytest.raises(ReviewEvidenceError) as unfinalized:
-        service.apply_plan_review_repairs(evidence_id, ["F1"])
+        service.apply_plan_review_repairs(evidence_id, ["F1"], caller_session_id=writer_id)
     assert unfinalized.value.code == "evidence_not_finalized"
 
     payload = _rejection(evidence_id)
@@ -253,10 +261,13 @@ def test_gate_order(repair_setup: RepairSetup) -> None:
         evidence_id,
         "**Round 1** `kind: verification`\n\n- verdict: needs_review",
         payload,
+        caller_session_id=writer_id,
     )
-    service.finalize_plan_review_evidence(evidence_id, payload)
+    service.finalize_plan_review_evidence(
+        evidence_id, payload, caller_session_id=repair_setup.session_id
+    )
     with pytest.raises(ReviewEvidenceError) as unknown:
-        service.apply_plan_review_repairs(evidence_id, ["F1", "NOPE"])
+        service.apply_plan_review_repairs(evidence_id, ["F1", "NOPE"], caller_session_id=writer_id)
     assert unknown.value.code == "unknown_finding_id"
     assert unknown.value.details["unknown_finding_ids"] == ["NOPE"]
 
@@ -277,12 +288,12 @@ def test_staged_evidence_is_rejected(repair_setup: RepairSetup) -> None:
     )
     with pytest.raises(ReviewEvidenceError) as excinfo:
         service.apply_plan_review_repairs(prepared.evidence_id, ["F1"])
-    assert excinfo.value.code == "not_interactive_evidence"
+    assert excinfo.value.code == "binding_pending"
 
 
 def test_approved_round_is_rejected(repair_setup: RepairSetup) -> None:
     service = repair_setup.service
-    evidence_id, run_id = _bind(repair_setup)
+    evidence_id, writer_id, coordinator_id = _bind(repair_setup)
     derived = service.derive_plan_review_manifest(evidence_id, routing_decisions={})
     manifest_entries = derived["manifest_entries"]
     assert isinstance(manifest_entries, list)
@@ -300,17 +311,20 @@ def test_approved_round_is_rejected(repair_setup: RepairSetup) -> None:
         evidence_id,
         approval,
         plan_path=repair_setup.plan_path,
-        run_id=run_id,
+        caller_session_id=coordinator_id,
     )
     service.append_plan_changelog_round(
         evidence_id,
         "**Round 1** `kind: verification`\n\n- verdict: approved",
         approval,
+        caller_session_id=writer_id,
     )
-    service.finalize_plan_review_evidence(evidence_id, approval)
+    service.finalize_plan_review_evidence(
+        evidence_id, approval, caller_session_id=repair_setup.session_id
+    )
 
     with pytest.raises(ReviewEvidenceError) as excinfo:
-        service.apply_plan_review_repairs(evidence_id, ["F1"])
+        service.apply_plan_review_repairs(evidence_id, ["F1"], caller_session_id=writer_id)
     assert excinfo.value.code == "not_rejection_round"
 
 
@@ -318,7 +332,7 @@ def test_write_failure_leaves_plan_untouched(
     repair_setup: RepairSetup,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    evidence_id = _finalized_rejection(repair_setup)
+    evidence_id, writer_id = _finalized_rejection(repair_setup)
     before = repair_setup.plan_path.read_bytes()
 
     def failing_write(path: Path, content: bytes) -> None:
@@ -326,5 +340,7 @@ def test_write_failure_leaves_plan_untouched(
 
     monkeypatch.setattr("gobby.plans.review_evidence.atomic_write_bytes", failing_write)
     with pytest.raises(OSError, match="disk full"):
-        repair_setup.service.apply_plan_review_repairs(evidence_id, ["F1"])
+        repair_setup.service.apply_plan_review_repairs(
+            evidence_id, ["F1"], caller_session_id=writer_id
+        )
     assert repair_setup.plan_path.read_bytes() == before

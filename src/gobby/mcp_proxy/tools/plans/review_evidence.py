@@ -414,14 +414,12 @@ def register_review_evidence_tools(
         evidence_id: str,
         plan_path: str,
         round_result: Mapping[str, object],
-        run_id: str | None = None,
     ) -> dict[str, object]:
         try:
             result = service.apply_plan_review_manifest(
                 evidence_id,
                 round_result,
                 plan_path=plan_path,
-                run_id=run_id,
                 caller_session_id=get_current_session_id(),
             )
         except (ReviewEvidenceError, OSError) as exc:
@@ -439,7 +437,6 @@ def register_review_evidence_tools(
             "properties": {
                 "evidence_id": {"type": "string"},
                 "plan_path": {"type": "string"},
-                "run_id": {"type": "string"},
                 "round_result": {"type": "object"},
             },
             "required": ["evidence_id", "plan_path", "round_result"],

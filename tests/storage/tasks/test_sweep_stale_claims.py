@@ -42,20 +42,14 @@ from gobby.storage.sessions._contested_expiry import (
     record_contested_terminal_expiry,
 )
 from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
-from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
+from gobby.storage.tasks._automation import sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
-from gobby.storage.tasks._models import CheckoutMode, Task
+from gobby.storage.tasks._models import Task
 from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.storage.tasks._stage_test_helpers import (
-    create_task,
-    initialize_manifest,
-    set_stage_state,
-    spec,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -144,24 +138,17 @@ def _claimed_task(
     sample_project: dict[str, Any],
     *,
     claimed_by: str,
-    stage_state: str = "ready",
-    allow_automation: bool = True,
 ) -> Task:
-    task = cast(
-        Task,
-        create_task(
-            temp_db,
-            sample_project,
-            title=f"Claimed by {claimed_by}",
-            category="test",
-            task_type="task",
-        ),
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        title=f"Claimed by {claimed_by}",
+        category="test",
+        task_type="task",
+        validation_criteria="Task completion is observable.",
     )
-    initialize_manifest(temp_db, task.id, [spec("planning", 0)])
-    set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = %s, checkout_mode = %s, claimed_by_session_id = %s WHERE id = %s",
-        (allow_automation, CheckoutMode.none.value, claimed_by, task.id),
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
+        (claimed_by, task.id),
     )
     return task
 
@@ -193,13 +180,9 @@ def test_sweep_reclaims_task_claimed_by_unrevivable_terminal_session(
 
     assert reclaimed >= 1
     assert _claim(temp_db, task.id) is None
-    candidate_ids = {
-        t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
-    }
-    assert task.id in candidate_ids
 
 
-def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
+def test_sweep_reclaims_task_claimed_by_inactive_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -214,17 +197,12 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
         temp_db,
         sample_project,
         claimed_by=SESS_DEAD,
-        allow_automation=False,
     )
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
     assert reclaimed >= 1
     assert _claim(temp_db, task.id) is None
-    candidate_ids = {
-        t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
-    }
-    assert task.id not in candidate_ids
 
 
 @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
@@ -240,10 +218,6 @@ def test_sweep_keeps_task_claimed_by_live_session(
     sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
     assert _claim(temp_db, task.id) == session_id
-    candidate_ids = {
-        t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
-    }
-    assert task.id not in candidate_ids
 
 
 @pytest.mark.parametrize("replayed", [False, True], ids=["live", "restart-replay"])
@@ -288,10 +262,6 @@ def test_shared_host_session_end_keeps_the_live_seats_claim(
     assert session.status == "active"
     assert session.terminal_context == context
     assert _claim(temp_db, task.id) == session_id
-    assert task.id not in {
-        candidate.id
-        for candidate in list_automation_candidates(temp_db, project_id=sample_project["id"])
-    }
 
 
 def _backdate_compact_marker(temp_db: HubDatabase, session_id: str, seconds: int) -> None:

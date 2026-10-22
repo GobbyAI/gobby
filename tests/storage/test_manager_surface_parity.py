@@ -3,8 +3,7 @@ from __future__ import annotations
 import ast
 import re
 import urllib.parse
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -17,10 +16,8 @@ from gobby.storage.hub.protocol import (
     SessionRecoveryByProject,
     SessionRegistration,
     SystemSessionBootstrap,
-    TaskSubtreeCascade,
     WebChatSessionBootstrap,
 )
-from gobby.storage.tasks._build_cascade import cascade_build_state_to_subtree
 
 pytestmark = pytest.mark.unit
 
@@ -152,92 +149,6 @@ def test_ambient_transaction_isolated_per_adapter(
     finally:
         primary_db.close()
         other_db.close()
-
-
-def test_subtree_cascade_serializes_overlapping_subtrees(
-    monkeypatch: pytest.MonkeyPatch,
-    postgres_db_factory: Callable[[], PostgresHubDatabase],
-) -> None:
-    db = postgres_db_factory()
-    seen_locks: list[object] = []
-    original_transaction_immediate = db.transaction_immediate
-
-    class FakeStageStatesManager:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def list_for_task(self, _task_id: str) -> list[object]:
-            return []
-
-        def initialize_manifest(
-            self,
-            _task_id: str,
-            _specs: list[object],
-            *,
-            by_session_id: str | None,
-        ) -> None:
-            pass
-
-    monkeypatch.setattr(
-        "gobby.storage.tasks._build_cascade.StageStatesManager",
-        FakeStageStatesManager,
-    )
-
-    @contextmanager
-    def recording_transaction(lock: object) -> Iterator[object]:
-        seen_locks.append(lock)
-        with original_transaction_immediate(lock) as txn:
-            yield txn
-
-    db.transaction_immediate = recording_transaction  # type: ignore[method-assign]
-    # projects.id and tasks.id/project_id/parent_task_id are native uuid columns.
-    project_id = "adadadad-0000-4000-8000-000000000001"
-    root_task_id = "adadadad-0000-4000-8000-000000000002"
-    child_task_id = "adadadad-0000-4000-8000-000000000003"
-    try:
-        db.execute(
-            """
-                INSERT INTO projects (id, name, created_at, updated_at)
-                VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT (id) DO NOTHING
-                """,
-            (project_id, "Project 1"),
-        )
-        db.executemany(
-            """
-            INSERT INTO tasks (
-                id, project_id, parent_task_id, title, task_type, validation_criteria,
-                closed_at, created_at, updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            [
-                (root_task_id, project_id, None, "Root", "epic", None),
-                (
-                    child_task_id,
-                    project_id,
-                    root_task_id,
-                    "Child",
-                    "task",
-                    "Storage fixture task; behavior asserted by the test.",
-                ),
-            ],
-        )
-
-        updated = cascade_build_state_to_subtree(
-            db,
-            root_task_id,
-            "worktree",
-            unattended=False,
-            allow_automation=False,
-            parent_manifest_specs=[],
-        )
-
-        assert updated.updated_count == 2
-        assert isinstance(seen_locks[0], TaskSubtreeCascade)
-        assert seen_locks[0].project_id == project_id
-    finally:
-        db.close()
 
 
 def test_nested_lock_target_acquires_both_lookup_branch(

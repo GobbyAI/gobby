@@ -2,7 +2,7 @@
 
 This module provides operations for managing task lifecycle:
 - close_task: Close a task
-- reopen_task: Reopen a closed/review task
+- reopen_task: Reopen a task
 - add_label, remove_label: Manage task labels
 - link_commit, unlink_commit: Manage task-commit associations
 - delete_task: Delete a task

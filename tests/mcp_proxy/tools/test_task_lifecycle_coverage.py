@@ -19,8 +19,6 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
 from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
-from gobby.storage.tasks._stage_states import StageState
-from gobby.storage.tasks._stage_types import StageState5
 from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
@@ -71,11 +69,6 @@ def _make_task(
 ) -> Task:
     created_at = datetime(2024, 1, 1, tzinfo=UTC)
     terminal_at = datetime(2024, 1, 2, tzinfo=UTC)
-    stage_state = {
-        "open": "ready",
-        "escalated": "ready",
-        "closed": "done",
-    }.get(status, status)
     return Task(
         id=id,
         project_id=project_id,
@@ -93,41 +86,6 @@ def _make_task(
         description=description,
         escalated_at=terminal_at if status == "escalated" else None,
         is_escalated=status == "escalated",
-        stages=(
-            {
-                "stage_name": "development",
-                "position": 0,
-                "state": stage_state,
-            },
-        ),
-    )
-
-
-def _make_stage_state(
-    *,
-    task_id: str = "550e8400-e29b-41d4-a716-446655440000",
-    stage_name: str = "planning",
-    state: StageState5 = "needs_review",
-) -> StageState:
-    return StageState(
-        task_id=task_id,
-        stage_name=stage_name,
-        position=0,
-        state=state,
-        review_policy="required",
-        reviewer_agent="plan-adversary",
-        entered_at=None,
-        entered_by_session_id=None,
-        completed_at=None,
-        completed_by_session_id=None,
-        completed_commit_sha=None,
-        work_attempt_count=1,
-        review_round_count=0,
-        max_work_attempts=None,
-        max_review_rounds=None,
-        artifact_refs=None,
-        notes=None,
-        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
@@ -194,8 +152,6 @@ def mock_task_manager() -> MagicMock:
     mgr.db.transaction.return_value.__enter__.return_value = _backoff_conn
     mgr.db.transaction.return_value.__exit__.return_value = False
     mgr.increment_validation_failure.return_value = (1, False)
-    mgr.stage_states = MagicMock()
-    mgr.stage_states.get.return_value = _make_stage_state()
     return mgr
 
 

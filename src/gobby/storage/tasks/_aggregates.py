@@ -14,42 +14,6 @@ from gobby.storage.tasks._queries import (
 from gobby.storage.tasks._read import _escape_like_pattern
 
 
-def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
-    return f"""
-    {join_type} task_stage_states current_stage
-      ON current_stage.task_id = {task_alias}.id
-     AND current_stage.state != 'done'
-     AND current_stage.position = (
-         SELECT MIN(stage_scan.position)
-           FROM task_stage_states stage_scan
-          WHERE stage_scan.task_id = {task_alias}.id
-            AND stage_scan.state != 'done'
-     )
-    """
-
-
-def _stage_state_filter_clause(
-    current_stage_state: str | list[str] | None,
-) -> tuple[str | None, list[Any]]:
-    if not current_stage_state:
-        return None, []
-    states = (
-        [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
-    )
-    normalized = [str(state).strip().lower().replace("-", "_") for state in states]
-    placeholders = ", ".join("%s" for _ in normalized)
-    clauses = [f"current_stage.state IN ({placeholders})"]
-    if "ready" in normalized:
-        clauses.append(
-            """
-            NOT EXISTS (
-                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-            )
-            """
-        )
-    return f"({' OR '.join(clauses)})", normalized
-
-
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
@@ -93,7 +57,6 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 def count_tasks(
     db: HubDatabase,
     project_id: str | None = None,
-    current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
     claimed_by_session_id: str | None = None,
     claimed: bool | None = None,
@@ -104,8 +67,6 @@ def count_tasks(
     labels: list[str] | None = None,
     parent_task_id: str | None = None,
     title_like: str | None = None,
-    stages: list[str] | None = None,
-    stage_state: str | None = None,
     updated_since: datetime | None = None,
     candidate: bool | None = None,
 ) -> int:
@@ -114,15 +75,13 @@ def count_tasks(
     Args:
         db: Database protocol instance
         project_id: Filter by project
-        current_stage_state: Filter by current stage state
 
     Returns:
         Count of matching tasks
     """
-    query = f"""
+    query = """
     SELECT COUNT(*) as count
       FROM tasks t
-      {_current_stage_join_sql("t")}
      WHERE 1=1
     """
     params: list[Any] = []
@@ -139,13 +98,6 @@ def count_tasks(
             WHERE events.project_id = t.project_id
               AND events.seq_text = t.seq_num::text
         )"""
-    if current_stage_state:
-        clause, clause_params = _stage_state_filter_clause(current_stage_state)
-        if clause:
-            query += f" AND {clause}"
-            params.extend(clause_params)
-            if closed is None:
-                query += " AND t.closed_at IS NULL"
     if priority is not None:
         query += " AND t.priority = %s"
         params.append(priority)
@@ -182,20 +134,6 @@ def count_tasks(
     if title_like:
         query += " AND t.title LIKE %s ESCAPE '\\'"
         params.append(f"%{_escape_like_pattern(title_like)}%")
-    if stages:
-        placeholders = ", ".join("%s" for _ in stages)
-        query += f"""
-        AND EXISTS (
-            SELECT 1
-              FROM task_stage_states stage_filter
-             WHERE stage_filter.task_id = t.id
-               AND stage_filter.stage_name IN ({placeholders})
-        """
-        params.extend(stages)
-        if stage_state is not None:
-            query += " AND stage_filter.state = %s"
-            params.append(stage_state)
-        query += ")"
 
     result = db.fetchone(query, tuple(params))
     return result["count"] if result else 0

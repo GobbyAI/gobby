@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, cast
 from uuid import uuid4
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.utils.datetime import parse_stored_datetime
 
 DISPATCH_TTL_SECONDS = 600
-
-CandidateLoader = Callable[[str], object | None]
-RuntimeStageSnapshotState = Literal["ready", "in_progress", "needs_review", "review_approved"]
-
-_ACTIONABLE_STAGE_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved"})
 
 
 class RuntimeDispatchMutexError(RuntimeError):
@@ -25,10 +18,6 @@ class RuntimeDispatchMutexError(RuntimeError):
 
 class DispatchMutexUnavailableError(RuntimeDispatchMutexError):
     """Raised when another holder already owns the task dispatch lease."""
-
-
-class DispatchCandidateChangedError(RuntimeDispatchMutexError):
-    """Raised when a task changes state after the lease is acquired."""
 
 
 @dataclass(slots=True)
@@ -45,10 +34,6 @@ class RuntimeDispatchMutex:
     action_kind: str
     ttl_seconds: int
     now: datetime | str | None = None
-    expected_stage_name: str | None = None
-    expected_stage_state: RuntimeStageSnapshotState | None = None
-    expected_stage_updated_at: datetime | None = None
-    candidate_loader: CandidateLoader | None = None
     borrowed_run_id: str | None = None
     _acquired: bool = field(default=False, init=False)
     _released: bool = field(default=False, init=False)
@@ -98,11 +83,6 @@ class RuntimeDispatchMutex:
                 raise DispatchMutexUnavailableError(msg)
 
         self._acquired = True
-        if not self._candidate_stage_snapshot_still_matches():
-            self.release()
-            msg = f"task {self.task_id!r} changed current-stage snapshot after dispatch lease"
-            raise DispatchCandidateChangedError(msg)
-
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -153,50 +133,6 @@ class RuntimeDispatchMutex:
         self._released = True
         return released
 
-    def _candidate_stage_snapshot_still_matches(self) -> bool:
-        if self.candidate_loader is None:
-            return True
-        candidate = self.candidate_loader(self.task_id)
-        stage_name, stage_state, stage_updated_at = _read_candidate_stage_snapshot(candidate)
-        return self.candidate_stage_snapshot_matches(stage_name, stage_state, stage_updated_at)
-
-    def candidate_stage_snapshot_matches(
-        self,
-        current_stage_name: str | None = None,
-        current_stage_state: str | None = None,
-        current_stage_updated_at: datetime | str | None = None,
-    ) -> bool:
-        """True iff current-stage values still match this mutex's snapshot."""
-        return _stage_snapshot_matches(
-            expected_stage_name=self.expected_stage_name,
-            expected_stage_state=self.expected_stage_state,
-            expected_stage_updated_at=self.expected_stage_updated_at,
-            current_stage_name=current_stage_name,
-            current_stage_state=current_stage_state,
-            current_stage_updated_at=current_stage_updated_at,
-        )
-
-    @staticmethod
-    def candidate_snapshot_matches(
-        candidate: object | None,
-        *,
-        stage_name: str | None,
-        stage_state: str | None,
-        stage_updated_at: datetime | str | None,
-    ) -> bool:
-        """True iff a candidate object still matches a captured stage snapshot."""
-        current_stage_name, current_stage_state, current_stage_updated_at = (
-            _read_candidate_stage_snapshot(candidate)
-        )
-        return _stage_snapshot_matches(
-            expected_stage_name=stage_name,
-            expected_stage_state=_coerce_actionable_stage_state(stage_state),
-            expected_stage_updated_at=parse_stored_datetime(stage_updated_at),
-            current_stage_name=current_stage_name,
-            current_stage_state=current_stage_state,
-            current_stage_updated_at=current_stage_updated_at,
-        )
-
     @staticmethod
     def force_release_for_run(storage: TaskDispatchMutexManager, run_id: str) -> int:
         """Release leases attached to a terminal agent or expansion run."""
@@ -208,110 +144,9 @@ class RuntimeDispatchMutex:
         return storage.force_release(task_id)
 
 
-def _stage_snapshot_matches(
-    *,
-    expected_stage_name: str | None,
-    expected_stage_state: str | None,
-    expected_stage_updated_at: datetime | None,
-    current_stage_name: str | None,
-    current_stage_state: str | None,
-    current_stage_updated_at: datetime | str | None,
-) -> bool:
-    if (
-        expected_stage_name is None
-        or expected_stage_state is None
-        or expected_stage_updated_at is None
-        or current_stage_name is None
-        or current_stage_state is None
-        or current_stage_updated_at is None
-    ):
-        return False
-    current_updated_at = parse_stored_datetime(current_stage_updated_at)
-    if current_updated_at is None:
-        return False
-    return (
-        current_stage_name == expected_stage_name
-        and current_stage_state == expected_stage_state
-        and current_updated_at == expected_stage_updated_at
-    )
-
-
-def _read_candidate_stage_snapshot(
-    candidate: object | None,
-) -> tuple[str | None, str | None, datetime | None]:
-    stage = _read_candidate_current_stage(candidate)
-    return _read_stage_name(stage), _read_stage_state(stage), _read_stage_updated_at(stage)
-
-
-def _read_candidate_current_stage(candidate: object | None) -> object | None:
-    if candidate is None:
-        return None
-    current_stage = _read_field(candidate, "current_stage")
-    if current_stage is not None:
-        return current_stage
-    stages = _read_field(candidate, "stages")
-    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
-        pending = [stage for stage in stages if _read_stage_state(stage) != "done"]
-        return min(pending, key=_read_stage_position) if pending else None
-    if _read_stage_name(candidate) is not None or _read_stage_state(candidate) is not None:
-        return candidate
-    return None
-
-
-def _read_stage_name(stage: object | None) -> str | None:
-    value = _read_field(stage, "stage_name", _read_field(stage, "name"))
-    return value if isinstance(value, str) else None
-
-
-def _read_stage_state(stage: object | None) -> str | None:
-    value = _read_field(stage, "state")
-    return value if isinstance(value, str) else None
-
-
-def _read_stage_updated_at(stage: object | None) -> datetime | None:
-    value = _read_field(stage, "updated_at")
-    if isinstance(value, datetime | str):
-        return parse_stored_datetime(value)
-    return None
-
-
-def _read_stage_position(stage: object) -> int:
-    value = _read_field(stage, "position", 0)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return 0
-    return 0
-
-
-def _read_field(
-    obj: object | None,
-    name: str,
-    default: object | None = None,
-) -> object | None:
-    if obj is None:
-        return default
-    if isinstance(obj, Mapping):
-        return cast(Mapping[str, object | None], obj).get(name, default)
-    return getattr(obj, name, default)
-
-
-def _coerce_actionable_stage_state(
-    value: object | None,
-) -> RuntimeStageSnapshotState | None:
-    if isinstance(value, str) and value in _ACTIONABLE_STAGE_STATES:
-        return cast(RuntimeStageSnapshotState, value)
-    return None
-
-
 __all__ = [
     "DISPATCH_TTL_SECONDS",
-    "DispatchCandidateChangedError",
     "DispatchMutexUnavailableError",
     "RuntimeDispatchMutex",
     "RuntimeDispatchMutexError",
-    "RuntimeStageSnapshotState",
 ]

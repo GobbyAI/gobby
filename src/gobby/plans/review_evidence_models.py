@@ -91,7 +91,6 @@ class PlanReviewEvidence:
     session_id: str | None
     task_id: str | None
     stage: str | None
-    dispatch_run_id: str | None
     lease_expires_at: datetime | None
     finalized_at: datetime | None
     expired_at: datetime | None
@@ -144,7 +143,6 @@ class PlanReviewEvidence:
             session_id=_optional_string(row["session_id"]),
             task_id=_optional_string(row["task_id"]),
             stage=_optional_string(row["stage"]),
-            dispatch_run_id=_optional_string(row["dispatch_run_id"]),
             lease_expires_at=cast(datetime | None, row["lease_expires_at"]),
             finalized_at=cast(datetime | None, row["finalized_at"]),
             expired_at=cast(datetime | None, row["expired_at"]),

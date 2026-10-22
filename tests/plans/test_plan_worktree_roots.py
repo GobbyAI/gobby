@@ -272,7 +272,6 @@ def test_static_review_keeps_prepared_worktree_path_through_manifest_and_finaliz
             evidence_id,
             result,
             plan_path=review.primary_plan,
-            run_id=None,
             caller_session_id=coordinator_id,
         )
     assert wrong_manifest_path.value.code == "wrong_plan"
@@ -280,7 +279,6 @@ def test_static_review_keeps_prepared_worktree_path_through_manifest_and_finaliz
         evidence_id,
         result,
         plan_path=review.worktree_plan,
-        run_id=None,
         caller_session_id=coordinator_id,
     )
     assert applied["applied"] is True
@@ -370,7 +368,6 @@ async def test_preserved_worktree_evidence_rebinds_to_live_successor_coordinator
     assert bound.evidence_id == evidence_id
     assert bound.source_plan_path == str(review.worktree_plan)
     assert bound.static_coordinator_session_id == successor_coordinator_id
-    assert bound.dispatch_run_id is None
     result = needs_review_result(evidence_id)
     primary_bytes = review.primary_plan.read_bytes()
     assert (

@@ -9,10 +9,8 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
-    CheckoutMode,
     LocalTaskManager,
     _path_cache,
-    cascade_build_state_to_subtree,
 )
 
 pytestmark = pytest.mark.unit
@@ -122,36 +120,3 @@ def test_ready_and_blocked_readers_terminate_on_blocker_parent_cycle(
 
     assert blocked.id not in ready_ids
     assert blocked_ids == {blocked.id}
-
-
-def test_build_state_cascade_bounds_cycles(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    root = manager.create_task(
-        sample_project["id"],
-        "Build root",
-        task_type="epic",
-        validation_criteria="Test task completion is observable.",
-    )
-    child = manager.create_task(
-        sample_project["id"],
-        "Build child",
-        parent_task_id=root.id,
-        validation_criteria="Test task completion is observable.",
-    )
-    manager.initialize_task_manifest(root.id, stage_names=["development"])
-    temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
-
-    updated = cascade_build_state_to_subtree(
-        temp_db,
-        root.id,
-        CheckoutMode.none,
-        unattended=False,
-        allow_automation=True,
-    )
-
-    assert updated.updated_count == 2
-    assert manager.get_task(root.id).allow_automation is True
-    assert manager.get_task(child.id).allow_automation is True

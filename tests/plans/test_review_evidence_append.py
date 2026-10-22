@@ -19,12 +19,12 @@ def test_append_without_round_result_reports_missing_payload_before_byte_check(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id, writer_id, _ = bind_interactive_review(service, project_id, session_id, plan_path)
     repair_reviewed_section(plan_path)
     before = plan_path.read_bytes()
 
     with pytest.raises(ReviewEvidenceError) as missing:
-        service.append_plan_changelog_round(evidence_id, ROUND_PROSE)
+        service.append_plan_changelog_round(evidence_id, ROUND_PROSE, caller_session_id=writer_id)
 
     assert missing.value.code == "missing_round_result"
     assert plan_path.read_bytes() == before

@@ -1,4 +1,4 @@
-"""Reopen behavior for inactive build-controlled tasks."""
+"""Reopen behavior for task claims, dispatch leases, and active agent runs."""
 
 from __future__ import annotations
 
@@ -12,17 +12,9 @@ import pytest
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.storage.tasks._stage_test_helpers import (
-    initialize_manifest,
-    lifecycle_events,
-    make_task_with_manifest,
-    set_stage_state,
-    spec,
-    stage_row,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -35,55 +27,22 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _task(temp_db, sample_project):
+def _task(temp_db: HubDatabase, sample_project: dict[str, Any]) -> tuple[LocalTaskManager, Task]:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
-        title="Reopen build state",
+        title="Reopen task",
         category="code",
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    initialize_manifest(temp_db, task.id, [spec("development", 0)])
     return manager, task
 
 
-def test_reopen_resets_inactive_open_non_ready_stage(temp_db, sample_project) -> None:
-    manager, task = _task(temp_db, sample_project)
-    set_stage_state(temp_db, task.id, "development", "in_progress", work_attempt_count=1)
-    manager.update_task(task.id, validation_fail_count=2, dispatch_failure_count=3)
-
-    reopened = manager.reopen_task(task.id, reason="manual recovery")
-
-    row = stage_row(temp_db, task.id, "development")
-    assert row["state"] == "ready"
-    assert row["work_attempt_count"] == 1
-    assert reopened.claimed_by_session_id is None
-    assert reopened.validation_fail_count == 0
-    assert reopened.dispatch_failure_count == 0
-    assert lifecycle_events(temp_db, task.id)[-1]["reason"] == "reopen_task"
-
-
-def test_reopen_blocks_allow_automation_with_build_stop_instruction(
-    temp_db,
-    sample_project,
+def test_reopen_blocks_active_dispatch_mutex(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager, task = _task(temp_db, sample_project)
-    manager.update_task(task.id, allow_automation=True)
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            rf"Task #{task.seq_num} is controlled by active build automation\. "
-            rf"Run gobby build stop #{task.seq_num} before reopening it\."
-        ),
-    ):
-        manager.reopen_task(task.id)
-
-
-def test_reopen_blocks_active_dispatch_mutex(temp_db, sample_project) -> None:
-    manager, task = _task(temp_db, sample_project)
-    set_stage_state(temp_db, task.id, "development", "in_progress")
     TaskDispatchMutexManager(temp_db).acquire_mutex(
         task.id,
         holder="dispatcher",
@@ -91,7 +50,7 @@ def test_reopen_blocks_active_dispatch_mutex(temp_db, sample_project) -> None:
         ttl_seconds=300,
     )
 
-    with pytest.raises(ValueError, match="controlled by active build automation"):
+    with pytest.raises(ValueError, match="has an active agent run or dispatch lease; stop it"):
         manager.reopen_task(task.id)
 
 
@@ -166,25 +125,11 @@ def test_withdraw_inside_a_transaction_waits_for_its_commit(
     assert _pending(temp_db, session_id) == []
 
 
-def test_move_to_stage_withdraws_a_closed_task_memory_review(
+def test_reopen_ignores_expired_dispatch_mutex(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    task, stages = make_task_with_manifest(
-        temp_db, sample_project, [spec("development", 0), spec("pr", 1)]
-    )
-    session_id = _review_session(temp_db, sample_project["id"], "withdraw-stage")
-    LocalTaskManager(temp_db).close_task(task.id, reason="completed", force=True)
-    _queue_closure(temp_db, session_id, task.id)
-
-    stages.move_to_stage(task.id, "pr", by_session_id="operator")
-
-    assert LocalTaskManager(temp_db).get_task(task.id).closed_at is None
-    assert _pending(temp_db, session_id) == []
-
-
-def test_reopen_ignores_expired_dispatch_mutex(temp_db, sample_project) -> None:
     manager, task = _task(temp_db, sample_project)
-    set_stage_state(temp_db, task.id, "development", "in_progress")
+    manager.close_task(task.id)
     expired = datetime.now(UTC) - timedelta(seconds=60)
     TaskDispatchMutexManager(temp_db).acquire_mutex(
         task.id,
@@ -194,14 +139,16 @@ def test_reopen_ignores_expired_dispatch_mutex(temp_db, sample_project) -> None:
         now=expired,
     )
 
-    manager.reopen_task(task.id)
+    reopened = manager.reopen_task(task.id)
 
-    assert stage_row(temp_db, task.id, "development")["state"] == "ready"
+    assert reopened.closed_at is None
+    assert reopened.claimed_by_session_id is None
 
 
-def test_reopen_blocks_active_agent_run(temp_db, sample_project) -> None:
+def test_reopen_blocks_active_agent_run(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager, task = _task(temp_db, sample_project)
-    set_stage_state(temp_db, task.id, "development", "in_progress")
     parent = SessionManager(temp_db).register(
         external_id="reopen-parent",
         machine_id="21000000-0000-4000-8000-000000000003",
@@ -216,5 +163,5 @@ def test_reopen_blocks_active_agent_run(temp_db, sample_project) -> None:
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd20",
     )
 
-    with pytest.raises(ValueError, match="controlled by active build automation"):
+    with pytest.raises(ValueError, match="has an active agent run or dispatch lease; stop it"):
         manager.reopen_task(task.id)

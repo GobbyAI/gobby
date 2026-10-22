@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
 
 import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -101,7 +98,6 @@ def test_static_bind_adopts_only_current_unchanged_evidence(
     bound = service.get_evidence(evidence_id)
     assert bound.static_writer_session_id == writer_id
     assert bound.static_coordinator_session_id == coordinator_id
-    assert bound.dispatch_run_id is None
     assert bound.lease_expires_at is None
     _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
     with pytest.raises(ReviewEvidenceError) as still_live:
@@ -113,12 +109,6 @@ def test_static_bind_adopts_only_current_unchanged_evidence(
         _bind(service, evidence_id, reviewer_id, coordinator_id, writer_id)
     assert changed.value.code == "evidence_already_bound"
 
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=reviewer_id, provider="codex", prompt="competing run"
-    )
-    with pytest.raises(ReviewEvidenceError) as competing:
-        service.bind_evidence_run(evidence_id, run.id)
-    assert competing.value.code == "evidence_already_bound"
     assert service.get_evidence(evidence_id).expired_at is None
 
 
@@ -292,41 +282,48 @@ def test_static_bind_rejects_expired_and_superseded_attempts(
     assert expired.value.code == "evidence_replay"
 
 
-def test_static_and_run_bind_have_one_winner(
+@pytest.mark.parametrize(
+    ("operation", "finalized"),
+    [("finalize", False), ("finalize", True), ("repairs", True), ("mint", True)],
+)
+def test_unbound_review_mutations_require_static_seats(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    operation: str,
+    finalized: bool,
 ) -> None:
     service, project_id, reviewer_id, plan_path = review_setup
-    writer_id, coordinator_id = _seats(service.db, project_id, reviewer_id)
     evidence_id = _prepare(service, project_id, reviewer_id, plan_path)
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=reviewer_id, provider="codex", prompt="competing bind"
-    )
-    barrier = Barrier(2)
+    result = needs_review_result(evidence_id)
+    if operation == "mint":
+        result["verdict"] = "approved"
+    if finalized:
+        # Preserve a historical row without reviving its retired run authority.
+        with service.db.transaction() as transaction:
+            service.store.finalize(
+                transaction=transaction,
+                evidence_id=evidence_id,
+                round_result=result,
+                approval=operation == "mint",
+            )
+    before = service.get_evidence(evidence_id)
+    plan_before = plan_path.read_bytes()
 
-    def static_bind() -> str:
-        barrier.wait()
-        try:
-            _bind(service, evidence_id, reviewer_id, writer_id, coordinator_id)
-        except ReviewEvidenceError as exc:
-            return exc.code
-        return "static"
+    with pytest.raises(ReviewEvidenceError) as unbound:
+        if operation == "finalize":
+            service.finalize_plan_review_evidence(
+                evidence_id, result, caller_session_id=reviewer_id
+            )
+        elif operation == "repairs":
+            service.apply_plan_review_repairs(evidence_id, [], caller_session_id=reviewer_id)
+        else:
+            service.checkpoint_plan_review_lesson_mint(
+                evidence_id, status="none", detail={}, caller_session_id=reviewer_id
+            )
 
-    def run_bind() -> str:
-        barrier.wait()
-        try:
-            service.bind_evidence_run(evidence_id, run.id)
-        except ReviewEvidenceError as exc:
-            return exc.code
-        return "run"
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        static_result = executor.submit(static_bind)
-        run_result = executor.submit(run_bind)
-        outcomes = {static_result.result(), run_result.result()}
-    assert outcomes in ({"static", "evidence_already_bound"}, {"run", "evidence_already_bound"})
-    bound = service.get_evidence(evidence_id)
-    assert (bound.dispatch_run_id is None) != (bound.static_writer_session_id is None)
-    assert bound.expired_at is None
+    assert unbound.value.code == "binding_pending"
+    assert unbound.value.retryable
+    assert service.get_evidence(evidence_id) == before
+    assert plan_path.read_bytes() == plan_before
 
 
 def test_static_bind_rejects_session_from_another_project(
@@ -424,24 +421,13 @@ def test_static_approval_applies_manifest_before_checkpoint_and_finalize(
                 evidence_id,
                 result,
                 plan_path=plan_path,
-                run_id=None,
                 caller_session_id=caller,
             )
         assert unauthorized.value.code == "unauthorized_seat"
-    with pytest.raises(ReviewEvidenceError) as fake_run:
-        service.apply_plan_review_manifest(
-            evidence_id,
-            result,
-            plan_path=plan_path,
-            run_id=str(uuid.uuid4()),
-            caller_session_id=coordinator_id,
-        )
-    assert fake_run.value.code == "unauthorized_seat"
     applied = service.apply_plan_review_manifest(
         evidence_id,
         result,
         plan_path=plan_path,
-        run_id=None,
         caller_session_id=coordinator_id,
     )
     assert applied["applied"] is True

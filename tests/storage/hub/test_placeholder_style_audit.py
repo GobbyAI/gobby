@@ -130,13 +130,46 @@ def _has_unescaped_percent(sql: str) -> bool:
     return RAW_PERCENT_RE.search(_scrub_comments_and_dollar_quotes(sql)) is not None
 
 
+def test_sqlite_contexts_do_not_hide_postgres_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "queries.py").write_text(
+        "with sqlite3.connect('recall.db') as connection:\n"
+        "    connection.execute('SELECT ?')\n"
+        "with closing(sqlite3.connect('recall.db')) as connection:\n"
+        "    connection.execute('SELECT ?')\n"
+        "    with psycopg.connect('hub') as connection:\n"
+        "        connection.execute('SELECT %s')\n"
+        "    def unrelated(connection):\n"
+        "        connection.execute('SELECT $1')\n"
+        "with sqlite3.connect('recall.db') as connection:\n"
+        "    connection = psycopg.connect('hub')\n"
+        "    connection.execute('SELECT %s')\n"
+        "connection.execute('SELECT ?')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(f"{__name__}.SCAN_ROOTS", (tmp_path,))
+
+    assert [sql for _, _, sql in _db_call_sql_literals()] == [
+        "SELECT ?",
+        "SELECT %s",
+        "SELECT %s",
+        "SELECT $1",
+    ]
+
+
 def _db_call_sql_literals() -> list[tuple[Path, int, str]]:
     literals: list[tuple[Path, int, str]] = []
     for root in SCAN_ROOTS:
         for path in sorted(root.rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            parents = {
+                child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+            }
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if _is_sqlite_call(node, parents):
                     continue
                 sql_arg_index = _sql_arg_index(node)
                 if sql_arg_index is None or sql_arg_index >= len(node.args):
@@ -147,7 +180,54 @@ def _db_call_sql_literals() -> list[tuple[Path, int, str]]:
     return literals
 
 
+def _is_sqlite_call(node: ast.Call, parents: dict[ast.AST, ast.AST]) -> bool:
+    """Recognize an explicit SQLite context without exempting a reused receiver name."""
+    if not isinstance(node.func, ast.Attribute) or not isinstance(node.func.value, ast.Name):
+        return False
+    receiver = node.func.value.id
+    ancestor = parents.get(node)
+    while ancestor is not None:
+        if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            return False
+        if isinstance(ancestor, ast.With):
+            for item in reversed(ancestor.items):
+                binding = item.optional_vars
+                if not isinstance(binding, ast.Name) or binding.id != receiver:
+                    continue
+                # An intervening assignment makes this proof insufficient: keep auditing.
+                if any(
+                    isinstance(child, ast.Name)
+                    and isinstance(child.ctx, ast.Store)
+                    and child.id == receiver
+                    and child is not binding
+                    and (binding.lineno, binding.col_offset)
+                    < (child.lineno, child.col_offset)
+                    < (node.lineno, node.col_offset)
+                    for child in ast.walk(ancestor)
+                ):
+                    return False
+                context = item.context_expr
+                if (
+                    isinstance(context, ast.Call)
+                    and isinstance(context.func, ast.Name)
+                    and context.func.id == "closing"
+                    and len(context.args) == 1
+                ):
+                    context = context.args[0]
+                return (
+                    isinstance(context, ast.Call)
+                    and isinstance(context.func, ast.Attribute)
+                    and isinstance(context.func.value, ast.Name)
+                    and context.func.value.id == "sqlite3"
+                    and context.func.attr == "connect"
+                )
+        ancestor = parents.get(ancestor)
+    return False
+
+
 def _sql_arg_index(node: ast.Call) -> int | None:
+    if not isinstance(node.func, ast.Attribute):
+        return None
     if node.func.attr in DB_SQL_METHODS:
         return 0
     if node.func.attr == "safe_update" and len(node.args) >= 3:

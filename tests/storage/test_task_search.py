@@ -1,20 +1,22 @@
 """Tests for task search functionality."""
 
+from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock
 
-import psycopg
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
-from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db_with_tasks(isolated_checkout_factory: IsolatedCheckoutFactory, hub_db, tmp_path):
+def db_with_tasks(
+    isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase, tmp_path: Path
+) -> tuple[HubDatabase, LocalTaskManager, str]:
     """Create PostgreSQL-backed tasks for task-search testing."""
     project = isolated_checkout_factory(hub_db, "task-search-test-project", root=tmp_path).project
     project_id = project.id
@@ -77,7 +79,9 @@ def db_with_tasks(isolated_checkout_factory: IsolatedCheckoutFactory, hub_db, tm
 class TestTaskSearch:
     """Tests for LocalTaskManager.search_tasks method."""
 
-    def test_search_returns_relevant_results(self, db_with_tasks) -> None:
+    def test_search_returns_relevant_results(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test that search returns tasks matching the query."""
         db, manager, project_id = db_with_tasks
 
@@ -88,104 +92,9 @@ class TestTaskSearch:
         titles = [task.title for task, score in results]
         assert any("authentication" in t.lower() for t in titles)
 
-    def test_search_with_current_stage_state_filter(self, db_with_tasks) -> None:
-        """Test search with current stage state filter."""
-        db, manager, project_id = db_with_tasks
-
-        # All default task manifests start with development ready.
-        results = manager.search_tasks(
-            "authentication",
-            project_id=project_id,
-            current_stage_state="ready",
-        )
-        assert len(results) > 0
-
-        # No tasks are review-approved until their current stage is advanced.
-        results = manager.search_tasks(
-            "authentication",
-            project_id=project_id,
-            current_stage_state="review_approved",
-        )
-        assert len(results) == 0
-
-    def test_search_current_stage_state_filter_uses_stage_manifest(self, db_with_tasks) -> None:
-        """Stage-state filtering should follow the current stage manifest row."""
-        db, manager, project_id = db_with_tasks
-
-        task = manager.create_task(
-            project_id=project_id,
-            title="Authentication review gate",
-            description="Authentication task waiting on approval",
-            validation_criteria="Test task completion is observable.",
-        )
-        set_stage_state(db, task.id, "development", "review_approved")
-
-        approved = manager.search_tasks(
-            "Authentication review gate",
-            project_id=project_id,
-            current_stage_state="review_approved",
-        )
-        ready_results = manager.search_tasks(
-            "Authentication review gate",
-            project_id=project_id,
-            current_stage_state="ready",
-        )
-
-        assert any(found.id == task.id for found, _ in approved)
-        assert all(found.id != task.id for found, _ in ready_results)
-
-    def test_search_current_stage_state_filter_excludes_stale_closed_task(
-        self, db_with_tasks
+    def test_search_with_task_type_filter(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
     ) -> None:
-        """FTS current-stage filtering should not return closed tasks by stale stage row."""
-        db, manager, project_id = db_with_tasks
-
-        open_task = manager.create_task(
-            project_id=project_id,
-            title="Authentication review active",
-            description="Authentication review shared marker",
-            validation_criteria="Test task completion is observable.",
-        )
-        set_stage_state(db, open_task.id, "development", "needs_review")
-        closed_task = manager.create_task(
-            project_id=project_id,
-            title="Authentication review closed",
-            description="Authentication review shared marker",
-            validation_criteria="Test task completion is observable.",
-        )
-        set_stage_state(db, closed_task.id, "development", "needs_review")
-        db.execute(
-            """
-            UPDATE tasks
-               SET closed_at = %s,
-                   closed_reason = %s
-             WHERE id = %s
-            """,
-            ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", closed_task.id),
-        )
-
-        results = manager.search_tasks(
-            "Authentication review shared marker",
-            project_id=project_id,
-            current_stage_state="needs_review",
-        )
-        result_ids = {task.id for task, _score in results}
-
-        assert open_task.id in result_ids
-        assert closed_task.id not in result_ids
-
-    def test_search_with_current_stage_state_list(self, db_with_tasks) -> None:
-        """Test search with list of current stage states."""
-        db, manager, project_id = db_with_tasks
-
-        results = manager.search_tasks(
-            "user",
-            project_id=project_id,
-            current_stage_state=["ready", "in_progress"],
-        )
-        assert len(results) > 0
-
-    def test_search_with_task_type_filter(self, db_with_tasks) -> None:
         """Test search with task type filter."""
         db, manager, project_id = db_with_tasks
 
@@ -199,7 +108,9 @@ class TestTaskSearch:
         for task, _score in results:
             assert task.task_type == "bug"
 
-    def test_search_with_priority_filter(self, db_with_tasks) -> None:
+    def test_search_with_priority_filter(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test search with priority filter."""
         db, manager, project_id = db_with_tasks
 
@@ -212,7 +123,9 @@ class TestTaskSearch:
         for task, _score in results:
             assert task.priority == 2
 
-    def test_search_with_min_score(self, db_with_tasks) -> None:
+    def test_search_with_min_score(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test search with minimum score threshold."""
         db, manager, project_id = db_with_tasks
 
@@ -237,7 +150,9 @@ class TestTaskSearch:
         for _task, score in filtered_results:
             assert score >= 0.1
 
-    def test_search_with_limit(self, db_with_tasks) -> None:
+    def test_search_with_limit(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test search with limit parameter."""
         db, manager, project_id = db_with_tasks
 
@@ -249,14 +164,18 @@ class TestTaskSearch:
 
         assert len(results) <= 2
 
-    def test_search_empty_query_returns_empty(self, db_with_tasks) -> None:
+    def test_search_empty_query_returns_empty(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test that empty query returns empty results."""
         db, manager, project_id = db_with_tasks
 
         results = manager.search_tasks("", project_id=project_id)
         assert len(results) == 0
 
-    def test_search_results_include_scores(self, db_with_tasks) -> None:
+    def test_search_results_include_scores(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test that search results include similarity scores."""
         db, manager, project_id = db_with_tasks
 
@@ -266,7 +185,9 @@ class TestTaskSearch:
             assert isinstance(score, float)
             assert 0.0 <= score <= 1.0
 
-    def test_search_results_sorted_by_score(self, db_with_tasks) -> None:
+    def test_search_results_sorted_by_score(
+        self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]
+    ) -> None:
         """Test that results are sorted by score descending."""
         db, manager, project_id = db_with_tasks
 
@@ -275,7 +196,7 @@ class TestTaskSearch:
         scores = [score for _, score in results]
         assert scores == sorted(scores, reverse=True)
 
-    def test_reindex_search(self, db_with_tasks: tuple[Any, LocalTaskManager, str]) -> None:
+    def test_reindex_search(self, db_with_tasks: tuple[HubDatabase, LocalTaskManager, str]) -> None:
         """Test reindex_search rebuilds the index."""
         db, manager, project_id = db_with_tasks
 
@@ -296,34 +217,6 @@ class TestTaskSearch:
 
 class TestTaskSearchBackend:
     """Tests for the Postgres task search backend."""
-
-    def test_postgres_stage_state_search_uses_live_rows(self) -> None:
-        """Postgres stage-state search normalizes fetched pg_search scores."""
-        from gobby.storage.tasks._search import TaskSearchBackend
-
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def __init__(self) -> None:
-                self.sql = ""
-                self.params: tuple[Any, ...] = ()
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                self.sql = sql
-                self.params = params
-                return [{"id": "task-a", "score": 4.0}, {"id": "task-b", "score": 2.0}]
-
-        db = FakePostgresDB()
-        results = TaskSearchBackend(db).search(
-            "alpha!!",
-            top_k=2,
-            current_stage_state=["ready", "in-progress"],
-        )
-
-        assert results == [("task-a", 1.0), ("task-b", 0.5)]
-        assert "pdb.score(t.id)" in db.sql
-        assert "(t.title @@@ %s OR t.description @@@ %s)" in db.sql
-        assert db.params == ("alpha", "alpha", "ready", "in_progress", 2)
 
     def test_pg_search_query_sanitization_matches_rust(self) -> None:
         """Keep Python's pg_search terms aligned with gcore's sanitizer."""
@@ -404,14 +297,11 @@ class TestTaskSearchBackend:
         from gobby.search.keyword import SearchQuerySyntaxError
         from gobby.storage.tasks._search import TaskSearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise RuntimeError("could not parse query string: `content:(-)`")
+        database = MagicMock(spec=HubDatabase, dialect="postgres")
+        database.fetchall.side_effect = RuntimeError("could not parse query string: `content:(-)`")
 
         with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
-            TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5)
+            TaskSearchBackend(database).search("alpha", top_k=5)
 
         assert exc_info.value.query == "alpha"
         assert isinstance(exc_info.value.__cause__, RuntimeError)
@@ -420,26 +310,20 @@ class TestTaskSearchBackend:
         """A successful pg_search query with no rows is not a syntax failure."""
         from gobby.storage.tasks._search import TaskSearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
+        database = MagicMock(spec=HubDatabase, dialect="postgres")
+        database.fetchall.return_value = []
 
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                return []
-
-        assert TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5) == []
+        assert TaskSearchBackend(database).search("alpha", top_k=5) == []
 
     def test_postgres_keyword_infrastructure_error_propagates(self) -> None:
         """Non-parser database failures remain visible to callers."""
         from gobby.storage.tasks._search import TaskSearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise RuntimeError("database connection lost")
+        database = MagicMock(spec=HubDatabase, dialect="postgres")
+        database.fetchall.side_effect = RuntimeError("database connection lost")
 
         with pytest.raises(RuntimeError, match="connection lost"):
-            TaskSearchBackend(FakePostgresDB()).search("alpha", top_k=5)
+            TaskSearchBackend(database).search("alpha", top_k=5)
 
     def test_memory_keyword_search_excludes_soft_deleted(self) -> None:
         """Memory BM25 search appends an explicit ``deleted_at IS NULL`` active clause.
@@ -492,72 +376,3 @@ class TestTaskSearchBackend:
         BM25SearchBackend(db, "tasks").search("alpha", 5)
 
         assert "deleted_at" not in db.sql
-
-    def test_postgres_stage_state_parse_error_raises_typed_error(self) -> None:
-        """Task stage-state search exposes the same typed syntax failure."""
-        from gobby.search.keyword import SearchQuerySyntaxError
-        from gobby.storage.tasks._search import TaskSearchBackend
-
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise psycopg.DatabaseError("could not parse query string: `title:(-)`")
-
-        with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
-            TaskSearchBackend(FakePostgresDB()).search(
-                "alpha",
-                current_stage_state="ready",
-            )
-
-        assert exc_info.value.query == "alpha"
-        assert isinstance(exc_info.value.__cause__, psycopg.DatabaseError)
-
-    def test_postgres_stage_state_non_database_error_propagates(self) -> None:
-        """Message matching alone does not classify unrelated exceptions as parser failures."""
-        from gobby.storage.tasks._search import TaskSearchBackend
-
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise RuntimeError("could not parse query string: unrelated application failure")
-
-        with pytest.raises(RuntimeError, match="unrelated application failure"):
-            TaskSearchBackend(FakePostgresDB()).search(
-                "alpha",
-                current_stage_state="ready",
-            )
-
-    def test_postgres_stage_state_zero_rows_returns_empty(self) -> None:
-        """A successful stage-state query with no rows remains an empty result."""
-        from gobby.storage.tasks._search import TaskSearchBackend
-
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                return []
-
-        results = TaskSearchBackend(FakePostgresDB()).search(
-            "alpha",
-            current_stage_state="ready",
-        )
-
-        assert results == []
-
-    def test_postgres_stage_state_infrastructure_error_propagates(self) -> None:
-        """Stage-state search does not convert infrastructure failures to no matches."""
-        from gobby.storage.tasks._search import TaskSearchBackend
-
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                raise RuntimeError("database connection lost")
-
-        with pytest.raises(RuntimeError, match="connection lost"):
-            TaskSearchBackend(FakePostgresDB()).search(
-                "alpha",
-                current_stage_state="ready",
-            )

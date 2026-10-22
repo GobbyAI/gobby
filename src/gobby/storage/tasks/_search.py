@@ -9,21 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import psycopg
-
 from gobby.search.keyword import (
     BM25SearchBackend,
     KeywordSearchBackend,
     SearchHit,
     SearchMode,
-    SearchQuerySyntaxError,
-    fetch_all,
-    is_pg_search_parse_error,
-    normalize_positive_scores,
     pick_search_backend,
-    placeholder,
-    row_value,
-    sanitize_pg_search_query,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +37,6 @@ def search_tasks(
     *,
     top_k: int = 20,
     project_id: str | None = None,
-    current_stage_state: str | list[str] | None = None,
     task_type: str | None = None,
     priority: int | None = None,
     parent_task_id: str | None = None,
@@ -58,7 +48,6 @@ def search_tasks(
         query,
         top_k=top_k,
         project_id=project_id,
-        current_stage_state=current_stage_state,
         task_type=task_type,
         priority=priority,
         parent_task_id=parent_task_id,
@@ -70,7 +59,6 @@ def search_tasks(
 @dataclass(frozen=True)
 class _TaskSearchFilters:
     project_id: str | None = None
-    current_stage_state: str | list[str] | None = None
     task_type: str | None = None
     priority: int | None = None
     parent_task_id: str | None = None
@@ -87,12 +75,7 @@ class _TaskSearchFilters:
 
 
 class TaskSearchBackend:
-    """Keyword search for tasks.
-
-    Uses the shared keyword backend for normal filters. Stage-state filtering
-    needs a task-specific query because the current stage is derived from
-    `task_stage_states`.
-    """
+    """Keyword search for tasks through the shared backend."""
 
     def __init__(self, db: HubDatabase) -> None:
         self._db = db
@@ -103,7 +86,6 @@ class TaskSearchBackend:
         query: str,
         top_k: int = 20,
         project_id: str | None = None,
-        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -116,7 +98,6 @@ class TaskSearchBackend:
             query: Search query text
             top_k: Maximum number of results
             project_id: Filter by project
-            current_stage_state: Filter by current stage state (string or list)
             task_type: Filter by task type
             priority: Filter by priority
             parent_task_id: Filter by parent task ID (UUID)
@@ -129,20 +110,12 @@ class TaskSearchBackend:
         fetch_limit = top_k * 3 if min_score > 0 else top_k
         filters = _TaskSearchFilters(
             project_id=project_id,
-            current_stage_state=current_stage_state,
             task_type=task_type,
             priority=priority,
             parent_task_id=parent_task_id,
             category=category,
         )
-        if filters.current_stage_state:
-            hits = self._search_with_stage_state(
-                query=query,
-                limit=fetch_limit,
-                filters=filters,
-            )
-        else:
-            hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
+        hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
 
         results: list[tuple[str, float]] = []
         for hit in hits:
@@ -152,142 +125,6 @@ class TaskSearchBackend:
             if len(results) >= top_k:
                 break
         return results
-
-    def _search_with_stage_state(
-        self,
-        *,
-        query: str,
-        limit: int,
-        filters: _TaskSearchFilters,
-    ) -> list[SearchHit]:
-        stage_state = filters.current_stage_state
-        if stage_state is None:
-            return []
-        return self._search_postgres_with_stage_state(
-            query=query,
-            limit=limit,
-            filters=filters,
-            current_stage_state=stage_state,
-        )
-
-    def _search_postgres_with_stage_state(
-        self,
-        *,
-        query: str,
-        limit: int,
-        filters: _TaskSearchFilters,
-        current_stage_state: str | list[str],
-    ) -> list[SearchHit]:
-        bm25_query = sanitize_pg_search_query(query)
-        if not bm25_query:
-            return []
-
-        params: list[Any] = []
-        title_query_placeholder = self._add_param(params, bm25_query)
-        description_query_placeholder = self._add_param(params, bm25_query)
-        conditions = [
-            f"(t.title @@@ {title_query_placeholder} "
-            f"OR t.description @@@ {description_query_placeholder})"
-        ]
-        self._append_common_filters(
-            params=params,
-            conditions=conditions,
-            filters=filters,
-        )
-        self._append_stage_filter(params, conditions, current_stage_state)
-        limit_placeholder = self._add_param(params, limit)
-
-        sql = f"""
-            SELECT t.id AS id, pdb.score(t.id) AS score
-              FROM tasks t
-             WHERE {" AND ".join(conditions)}
-             ORDER BY score DESC, id ASC
-             LIMIT {limit_placeholder}
-        """
-        try:
-            rows = fetch_all(self._db, sql, params)
-        except psycopg.Error as exc:
-            if is_pg_search_parse_error(exc):
-                raise SearchQuerySyntaxError(query) from exc
-            raise
-        scores = normalize_positive_scores([float(row_value(row, "score")) for row in rows])
-        return [
-            SearchHit(id=str(row_value(row, "id")), score=score)
-            for row, score in zip(rows, scores, strict=False)
-        ]
-
-    def _append_common_filters(
-        self,
-        *,
-        params: list[Any],
-        conditions: list[str],
-        filters: _TaskSearchFilters,
-    ) -> None:
-        if filters.project_id:
-            conditions.append(f"t.project_id = {self._add_param(params, filters.project_id)}")
-        if filters.task_type:
-            conditions.append(f"t.task_type = {self._add_param(params, filters.task_type)}")
-        if filters.priority is not None:
-            conditions.append(f"t.priority = {self._add_param(params, filters.priority)}")
-        if filters.parent_task_id:
-            conditions.append(
-                f"t.parent_task_id = {self._add_param(params, filters.parent_task_id)}"
-            )
-        if filters.category:
-            conditions.append(f"t.category = {self._add_param(params, filters.category)}")
-
-    def _append_stage_filter(
-        self,
-        params: list[Any],
-        conditions: list[str],
-        current_stage_state: str | list[str],
-    ) -> None:
-        raw_states = (
-            [current_stage_state]
-            if isinstance(current_stage_state, str)
-            else list(current_stage_state)
-        )
-        states = [
-            str(state).strip().lower().replace("-", "_")
-            for state in raw_states
-            if str(state).strip()
-        ]
-        if not states:
-            return
-        state_placeholders = ", ".join(self._add_param(params, state) for state in states)
-        stage_clauses = [
-            f"""
-            EXISTS (
-                SELECT 1
-                  FROM task_stage_states current_stage
-                 WHERE current_stage.task_id = t.id
-                   AND current_stage.state != 'done'
-                   AND current_stage.position = (
-                       SELECT MIN(stage_scan.position)
-                         FROM task_stage_states stage_scan
-                        WHERE stage_scan.task_id = t.id
-                          AND stage_scan.state != 'done'
-                   )
-                   AND current_stage.state IN ({state_placeholders})
-            )
-            """
-        ]
-        if "ready" in states:
-            stage_clauses.append(
-                """
-                NOT EXISTS (
-                    SELECT 1
-                      FROM task_stage_states stage_any
-                     WHERE stage_any.task_id = t.id
-                )
-                """
-            )
-        conditions.append(f"({' OR '.join(stage_clauses)})")
-        conditions.append("t.closed_at IS NULL")
-
-    def _add_param(self, params: list[Any], value: Any) -> str:
-        params.append(value)
-        return placeholder(self._db, len(params))
 
     def reindex(self) -> dict[str, Any]:
         """Return task search backend statistics.

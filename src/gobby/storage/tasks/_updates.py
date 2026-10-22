@@ -9,7 +9,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._models import (
     UNSET,
-    CheckoutMode,
     MaybeUnset,
     ParentTaskClosedError,
     validate_category,
@@ -93,16 +92,11 @@ def update_task(
     category: MaybeUnset[str | None] = UNSET,
     validation_criteria: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
-    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
-    allow_automation: MaybeUnset[bool] = UNSET,
-    unattended: MaybeUnset[bool] = UNSET,
-    yolo: MaybeUnset[bool] = UNSET,
-    checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -169,9 +163,6 @@ def update_task(
     if validation_fail_count is not UNSET:
         updates.append("validation_fail_count = %s")
         params.append(validation_fail_count)
-    if dispatch_failure_count is not UNSET:
-        updates.append("dispatch_failure_count = %s")
-        params.append(dispatch_failure_count)
     if merge_in_progress is not UNSET:
         if merge_in_progress is None:
             raise ValueError("merge_in_progress cannot be None")
@@ -186,19 +177,6 @@ def update_task(
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = %s")
         params.append(validation_override_reason)
-    if allow_automation is not UNSET:
-        updates.append("allow_automation = %s")
-        params.append(bool(allow_automation))
-    if unattended is UNSET and yolo is not UNSET:
-        unattended = yolo
-    if unattended is not UNSET:
-        updates.append("unattended = %s")
-        params.append(bool(unattended))
-    if checkout_mode is not UNSET:
-        if checkout_mode is None:
-            raise ValueError("checkout_mode cannot be None")
-        updates.append("checkout_mode = %s")
-        params.append(CheckoutMode(cast(str, checkout_mode)).value)
     if assigned_agent is not UNSET:
         updates.append("assigned_agent = %s")
         params.append(assigned_agent)
@@ -317,16 +295,11 @@ def update_task_metadata(
     category: MaybeUnset[str | None] = UNSET,
     validation_criteria: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
-    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
-    allow_automation: MaybeUnset[bool] = UNSET,
-    unattended: MaybeUnset[bool] = UNSET,
-    yolo: MaybeUnset[bool] = UNSET,
-    checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -355,7 +328,7 @@ def update_task_metadata(
             field_class = "legacy state fields"
             transition_hint = "Use close_task, reopen_task, or escalate_task instead."
         else:
-            field_class = "stage or ownership fields"
+            field_class = "ownership fields"
             transition_hint = (
                 "Use claim_task, release_task_claim, escalate_task, "
                 "de_escalate_task, close_task, or reopen_task instead."
@@ -389,16 +362,11 @@ def update_task_metadata(
         category=category,
         validation_criteria=validation_criteria,
         validation_fail_count=validation_fail_count,
-        dispatch_failure_count=dispatch_failure_count,
         merge_in_progress=merge_in_progress,
         blocked_by_merge=blocked_by_merge,
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
         validation_override_reason=validation_override_reason,
-        allow_automation=allow_automation,
-        unattended=unattended,
-        yolo=yolo,
-        checkout_mode=checkout_mode,
         assigned_agent=assigned_agent,
         implementation_domain=implementation_domain,
         additional_skills=additional_skills,

@@ -11,8 +11,8 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableTransfer,
 )
+from gobby.storage.tasks._close import _close_task_in_txn
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
     UNSET,
     MaybeUnset,
@@ -27,7 +27,6 @@ from gobby.storage.tasks._owner_shield import (
     owner_may_resume_guard_params,
 )
 from gobby.storage.tasks._read import get_task
-from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.datetime import parse_stored_datetime, utc_now
@@ -129,71 +128,6 @@ def _has_active_dispatch_mutex(db: HubDatabase, task_id: str) -> bool:
 
 def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:
     return bool(LocalAgentRunManager(db).list_active_global(task_ids=[task_id], limit=1))
-
-
-def _active_build_automation_message(task: Task, task_id: str) -> str:
-    ref = _task_ref(task, task_id)
-    return (
-        f"Task {ref} is controlled by active build automation. "
-        f"Run gobby build stop {ref} before reopening it."
-    )
-
-
-def _current_stage_row(db: HubDatabase, task_id: str) -> Any | None:
-    return db.fetchone(
-        """
-        SELECT *
-          FROM task_stage_states
-         WHERE task_id = %s AND state != 'done'
-         ORDER BY position, stage_name
-         LIMIT 1
-        """,
-        (task_id,),
-    )
-
-
-def reset_current_non_ready_stage(
-    db: HubDatabase,
-    task_id: str,
-    *,
-    reason: str,
-    by_actor: str = "system",
-) -> bool:
-    """Reset the current non-ready stage to ready without a failure transition."""
-    row = _current_stage_row(db, task_id)
-    if row is None or row["state"] == "ready":
-        return False
-
-    now = utc_now()
-    stage_name = row["stage_name"]
-    from_state = row["state"]
-    with db.transaction() as conn:
-        conn.execute(
-            """
-            UPDATE task_stage_states
-               SET state = 'ready',
-                   entered_at = NULL,
-                   entered_by_session_id = NULL,
-                   entered_by_actor = NULL,
-                   completed_at = NULL,
-                   completed_by_session_id = NULL,
-                   completed_by_actor = NULL,
-                   completed_commit_sha = NULL,
-                   artifact_refs = NULL,
-                   notes = NULL,
-                   updated_at = %s
-             WHERE task_id = %s AND stage_name = %s
-            """,
-            (now, task_id, stage_name),
-        )
-    TaskLifecycleEventManager(db).record_lifecycle_event(
-        task_id,
-        f"{stage_name}:{from_state}",
-        f"{stage_name}:ready",
-        reason,
-        by_actor=by_actor,
-    )
-    return True
 
 
 def get_effective_claim_owner(task: Task) -> str | None:
@@ -325,7 +259,6 @@ def release_task_claim(
     *,
     description: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
-    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
@@ -345,7 +278,6 @@ def release_task_claim(
             description=description,
             claimed_by_session_id=None,
             validation_fail_count=validation_fail_count,
-            dispatch_failure_count=dispatch_failure_count,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,
             validation_override_reason=validation_override_reason,
@@ -446,22 +378,13 @@ def reopen_task(
 ) -> Task:
     """Reopen a task and clear ownership/closure metadata."""
     task = get_task(db, task_id)
-    if (
-        task.allow_automation
-        or _has_active_dispatch_mutex(db, task_id)
-        or _has_active_agent_run(db, task_id)
-    ):
-        raise ValueError(_active_build_automation_message(task, task_id))
-
-    current_stage = _current_stage_row(db, task_id)
-    current_stage_ready = current_stage is None or current_stage["state"] == "ready"
+    if _has_active_dispatch_mutex(db, task_id) or _has_active_agent_run(db, task_id):
+        raise ValueError(
+            f"Task {_task_ref(task, task_id)} has an active agent run or dispatch lease; "
+            "stop it before reopening it."
+        )
     has_ownership_metadata = bool(task.claimed_by_session_id)
-    if (
-        not is_task_closed(task)
-        and not task.is_escalated
-        and current_stage_ready
-        and not has_ownership_metadata
-    ):
+    if not is_task_closed(task) and not task.is_escalated and not has_ownership_metadata:
         raise ValueError(f"Task {_task_ref(task, task_id)} is already ready")
 
     description = task.description
@@ -482,13 +405,6 @@ def reopen_task(
         escalation_reason=None,
         # Named validation reset branch (d): manual de-escalation/reopen.
         validation_fail_count=0,
-        dispatch_failure_count=0,
-    )
-    reset_current_non_ready_stage(
-        db,
-        task_id,
-        reason="reopen_task",
-        by_actor="system",
     )
     _reopen_closed_ancestors(db, task_id)
     withdraw_memory_reviews(db, task_id)

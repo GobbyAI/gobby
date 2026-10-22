@@ -18,11 +18,11 @@ from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.loader import SkillLoader
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.plans.review_evidence_helpers import bind_review_seats
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
@@ -171,21 +171,6 @@ def _review_setup(
         encoding="utf-8",
     )
     return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
-
-
-def _bind_run(
-    service: PlanReviewEvidenceService,
-    session_id: str,
-    evidence_id: str,
-    prompt: str,
-) -> str:
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt=prompt,
-    )
-    service.bind_evidence_run(evidence_id, run.id)
-    return run.id
 
 
 def _approval(
@@ -401,7 +386,7 @@ def test_interactive_approval_sequence(
         round_number=1,
         session_id=session_id,
     )
-    _bind_run(service, session_id, rejected.evidence_id, "reject round")
+    bind_review_seats(service, rejected.evidence_id, session_id)
     rejection = {
         "verdict": "needs_review",
         "coverage_attestation": coverage_attestation(
@@ -429,7 +414,9 @@ def test_interactive_approval_sequence(
         rejection,
     )
     assert ensure_checkpoint(plan_path, rejected_checkpoint)
-    service.finalize_plan_review_evidence(rejected.evidence_id, rejection)
+    service.finalize_plan_review_evidence(
+        rejected.evidence_id, rejection, caller_session_id=session_id
+    )
 
     prepared = service.prepare_plan_review_round(
         project_id=project_id,
@@ -437,13 +424,13 @@ def test_interactive_approval_sequence(
         round_number=2,
         session_id=session_id,
     )
-    run_id = _bind_run(service, session_id, prepared.evidence_id, "approve round")
+    _, coordinator_id = bind_review_seats(service, prepared.evidence_id, session_id)
     approval = _approval(service, prepared.evidence_id)
     applied = service.apply_plan_review_manifest(
         prepared.evidence_id,
         approval,
         plan_path=plan_path,
-        run_id=run_id,
+        caller_session_id=coordinator_id,
     )
     applied_bytes = plan_path.read_bytes()
     assert rejected_checkpoint in applied_bytes
@@ -452,7 +439,7 @@ def test_interactive_approval_sequence(
             prepared.evidence_id,
             approval,
             plan_path=plan_path,
-            run_id=run_id,
+            caller_session_id=coordinator_id,
         )
         == applied
     )
@@ -461,7 +448,9 @@ def test_interactive_approval_sequence(
     plan_path.write_bytes(applied_bytes.replace(b"A works.", b"A changed after apply."))
     approval_checkpoint = service.render_plan_changelog_round(prepared.evidence_id)
     assert ensure_checkpoint(plan_path, approval_checkpoint)
-    finalized = service.finalize_plan_review_evidence(prepared.evidence_id, approval)
+    finalized = service.finalize_plan_review_evidence(
+        prepared.evidence_id, approval, caller_session_id=session_id
+    )
     assert finalized.lesson_mint_status == "pending"
     proof = service.resolve_historical_proof(
         rejected.evidence_id,
@@ -474,12 +463,14 @@ def test_interactive_approval_sequence(
         prepared.evidence_id,
         status="minted",
         detail={"lesson_ids": ["round-1-miss"]},
+        caller_session_id=session_id,
     )
     assert minted.lesson_mint_status == "minted"
     assert service.checkpoint_plan_review_lesson_mint(
         prepared.evidence_id,
         status="minted",
         detail={"lesson_ids": ["round-1-miss"]},
+        caller_session_id=session_id,
     ).lesson_mint_detail == {"lesson_ids": ["round-1-miss"]}
 
     stale_service, stale_project, stale_session, stale_path = _review_setup(
@@ -493,7 +484,7 @@ def test_interactive_approval_sequence(
         round_number=1,
         session_id=stale_session,
     )
-    stale_run = _bind_run(stale_service, stale_session, stale.evidence_id, "stale")
+    _, stale_coordinator_id = bind_review_seats(stale_service, stale.evidence_id, stale_session)
     stale_path.write_bytes(stale_path.read_bytes().replace(b"A works.", b"A drifted."))
     drifted_bytes = stale_path.read_bytes()
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
@@ -501,7 +492,7 @@ def test_interactive_approval_sequence(
             stale.evidence_id,
             _approval(stale_service, stale.evidence_id),
             plan_path=stale_path,
-            run_id=stale_run,
+            caller_session_id=stale_coordinator_id,
         )
     stale_row = stale_service.get_evidence(stale.evidence_id)
     assert stale_row.manifest_state is None
@@ -519,11 +510,8 @@ def test_interactive_approval_sequence(
         round_number=1,
         session_id=pending_session,
     )
-    pending_run = _bind_run(
-        pending_service,
-        pending_session,
-        pending.evidence_id,
-        "pending drift",
+    _, pending_coordinator_id = bind_review_seats(
+        pending_service, pending.evidence_id, pending_session
     )
 
     def crash_write(_path: Path, _content: bytes) -> None:
@@ -535,7 +523,7 @@ def test_interactive_approval_sequence(
             pending.evidence_id,
             _approval(pending_service, pending.evidence_id),
             plan_path=pending_path,
-            run_id=pending_run,
+            caller_session_id=pending_coordinator_id,
         )
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
@@ -549,12 +537,15 @@ def test_interactive_approval_sequence(
             pending.evidence_id,
             _approval(pending_service, pending.evidence_id),
             plan_path=pending_path,
-            run_id=pending_run,
+            caller_session_id=pending_coordinator_id,
         )
     revoked = pending_service.get_evidence(pending.evidence_id)
     assert revoked.manifest_state is None
     assert revoked.round_result is None
-    LocalAgentRunManager(temp_db).cancel(pending_run)
+    SessionManager(temp_db).update_status(pending_coordinator_id, "expired")
+    pending_service.expire_plan_review_evidence(
+        pending.evidence_id, caller_session_id=pending_session
+    )
     replacement = pending_service.prepare_plan_review_round(
         project_id=pending_project,
         plan_path=pending_path,
@@ -574,11 +565,8 @@ def test_interactive_approval_sequence(
         round_number=1,
         session_id=recovery_session,
     )
-    recovery_run = _bind_run(
-        recovery_service,
-        recovery_session,
-        recovery.evidence_id,
-        "pending recovery",
+    _, recovery_coordinator_id = bind_review_seats(
+        recovery_service, recovery.evidence_id, recovery_session
     )
     monkeypatch.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
     with pytest.raises(OSError, match="simulated apply crash"):
@@ -586,7 +574,7 @@ def test_interactive_approval_sequence(
             recovery.evidence_id,
             _approval(recovery_service, recovery.evidence_id),
             plan_path=recovery_path,
-            run_id=recovery_run,
+            caller_session_id=recovery_coordinator_id,
         )
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
@@ -598,11 +586,13 @@ def test_interactive_approval_sequence(
         recovery.evidence_id,
         recovery_approval,
         plan_path=recovery_path,
-        run_id=recovery_run,
+        caller_session_id=recovery_coordinator_id,
     )
     recovered_checkpoint = restarted.render_plan_changelog_round(recovery.evidence_id)
     assert ensure_checkpoint(recovery_path, recovered_checkpoint)
-    restarted.finalize_plan_review_evidence(recovery.evidence_id, recovery_approval)
+    restarted.finalize_plan_review_evidence(
+        recovery.evidence_id, recovery_approval, caller_session_id=recovery_session
+    )
     with pytest.raises(ReviewEvidenceError) as pending_mint:
         restarted.prepare_plan_review_round(
             project_id=recovery_project,
@@ -619,6 +609,7 @@ def test_interactive_approval_sequence(
         recovery.evidence_id,
         status="minted",
         detail={"lesson_ids": ["recovered"]},
+        caller_session_id=recovery_session,
     )
     assert restarted.prepare_plan_review_round(
         project_id=recovery_project,

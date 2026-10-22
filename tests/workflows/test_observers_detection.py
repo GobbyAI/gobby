@@ -76,7 +76,6 @@ def _claimed_task(
         claimed_by_session_id=claimed_by_session_id,
         closed_at=None,
         is_escalated=False,
-        stages=(),
     )
 
 

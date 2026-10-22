@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 174,
+  "site_count": 171,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1013,16 +1013,6 @@
       "statement": "PromptLoader ( )"
     },
     {
-      "fingerprint": "538bccb1000c16d7e0968d054e64fde7f57e6fabf97ec7d88635d46938647420",
-      "path": "tests/review_learning/test_round_diff.py",
-      "symbol": "<module>",
-      "directive": "noqa",
-      "codes": [
-        "F401"
-      ],
-      "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
-    },
-    {
       "fingerprint": "4f06014ee0531a9f19bc36c58b1d16fb95c5baa36fd2344dd4585a991bf405b3",
       "path": "tests/servers/routes/test_agents_routes.py",
       "symbol": "_create_agent_row",
@@ -1433,16 +1423,6 @@
       "statement": "assert get_switch_status ( store ) . run_id == journal . run_id"
     },
     {
-      "fingerprint": "a6192e8f473a11c6fcef0093528e88376e4e7d70a792f85c6b406a300117d4de",
-      "path": "tests/storage/test_manager_surface_parity.py",
-      "symbol": "test_subtree_cascade_serializes_overlapping_subtrees",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "db . transaction_immediate = recording_transaction"
-    },
-    {
       "fingerprint": "d0c9b2eba1c8563602c6ac5abe184bda4de7ac8b0dfddb9c9eb6ed4dcf212045",
       "path": "tests/storage/test_personal_remote_init.py",
       "symbol": "test_remote_ensure_upserts_sentinel_without_personal_tree",
@@ -1521,16 +1501,6 @@
         "arg-type"
       ],
       "statement": "store = TokenEventStore ( db )"
-    },
-    {
-      "fingerprint": "a5fec0b4ac17fe6adad45359ac88782a89d5054548e6b3f1943f45d91d4f59ec",
-      "path": "tests/storage/test_stage_review_findings.py",
-      "symbol": "<module>",
-      "directive": "noqa",
-      "codes": [
-        "F401"
-      ],
-      "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
     },
     {
       "fingerprint": "f11d1852f0b3b9cba19b8395623fdc0b6c6ed7ddcbb4611d2180a2de5416d0b0",

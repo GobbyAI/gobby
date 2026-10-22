@@ -305,12 +305,6 @@ def init_startup_content(runner: GobbyRunner) -> None:
     """Publish bundled content, then build the prompt, skill, and hub managers."""
     run_startup_content_sync(runner)
 
-    from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
-
-    stage_sync = StageRegistryLoader().sync(runner.database)
-    if stage_sync.upserted > 0:
-        logger.info("Synced %s bundled stage registry rows", stage_sync.upserted)
-
     from gobby.storage.prompts import LocalPromptManager
 
     runner.prompt_manager = LocalPromptManager(runner.database, dev_mode=runner._dev_mode)

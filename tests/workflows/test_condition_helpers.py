@@ -56,11 +56,6 @@ def _task(
     )
 
 
-def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
-    manager.initialize_task_manifest(task_id)
-    manager.stage_states.start_stage(task_id, "development", by_session_id=None)
-
-
 def _seq_ref(task: Task) -> str:
     assert task.seq_num is not None
     return f"#{task.seq_num}"
@@ -230,19 +225,8 @@ class TestIsTaskComplete:
     ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
-        _start_development_stage(manager, task.id)
 
         assert is_task_complete(manager.get_task(task.id)) is False
-
-    def test_needs_review_is_not_complete(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-        _start_development_stage(manager, task.id)
-        reviewed = manager.submit_for_review(task.id)
-
-        assert is_task_complete(reviewed) is False
 
     def test_escalated_is_not_complete(
         self, temp_db: HubDatabase, sample_project: dict[str, Any]
@@ -277,16 +261,6 @@ class TestTaskNeedsHumanReview:
         task = _task(manager, sample_project)
 
         assert task_needs_human_review(manager, task.seq_num) is False
-
-    def test_needs_review_is_not_human_review(
-        self, temp_db: HubDatabase, sample_project: dict[str, Any]
-    ) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project)
-        _start_development_stage(manager, task.id)
-        manager.submit_for_review(task.id)
-
-        assert task_needs_human_review(manager, task.id) is False
 
     def test_string_task_id(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)

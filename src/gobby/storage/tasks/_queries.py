@@ -19,70 +19,7 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import TaskOrderKey, order_task_keys
 from gobby.storage.tasks._read import _escape_like_pattern
-from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.tasks.state_semantics import AWAITING_HUMAN_REVIEW_LABEL
-
-
-def _current_stage_state_filter_sql(
-    current_stage_state: str | list[str] | None,
-) -> tuple[str | None, list[Any]]:
-    """Build a current-stage-state filter clause and params."""
-    if not current_stage_state:
-        return None, []
-
-    raw_values = (
-        [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
-    )
-    normalized_values = [
-        str(value).strip().lower().replace("-", "_") for value in raw_values if str(value).strip()
-    ]
-    if not normalized_values:
-        return None, []
-
-    placeholders = ", ".join("%s" for _ in normalized_values)
-    clauses = [
-        f"""
-        EXISTS (
-            SELECT 1
-              FROM task_stage_states current_stage_filter
-             WHERE current_stage_filter.task_id = tasks.id
-               AND current_stage_filter.state != 'done'
-               AND current_stage_filter.position = (
-                   SELECT MIN(stage_scan.position)
-                     FROM task_stage_states stage_scan
-                    WHERE stage_scan.task_id = tasks.id
-                      AND stage_scan.state != 'done'
-               )
-               AND current_stage_filter.state IN ({placeholders})
-        )
-        """
-    ]
-    params = list(normalized_values)
-    if "ready" in normalized_values:
-        clauses.append(
-            """
-            NOT EXISTS (
-                SELECT 1
-                  FROM task_stage_states stage_any
-                 WHERE stage_any.task_id = tasks.id
-            )
-            """
-        )
-    return f"({' OR '.join(clauses)})", params
-
-
-def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
-    return f"""
-    {join_type} task_stage_states current_stage
-      ON current_stage.task_id = {task_alias}.id
-     AND current_stage.state != 'done'
-     AND current_stage.position = (
-         SELECT MIN(stage_scan.position)
-           FROM task_stage_states stage_scan
-          WHERE stage_scan.task_id = {task_alias}.id
-            AND stage_scan.state != 'done'
-     )
-    """
 
 
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
@@ -135,7 +72,6 @@ def _awaiting_human_review_sql(task_alias: str = "t") -> str:
 def list_tasks(
     db: HubDatabase,
     project_id: str | None = None,
-    current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
     claimed_by_session_id: str | None = None,
     claimed: bool | None = None,
@@ -146,8 +82,6 @@ def list_tasks(
     labels: list[str] | None = None,
     parent_task_id: str | None = None,
     title_like: str | None = None,
-    stages: list[str] | None = None,
-    stage_state: str | None = None,
     limit: int = 50,
     offset: int = 0,
     sort_by: str | None = None,
@@ -160,7 +94,6 @@ def list_tasks(
     Args:
         db: Database protocol instance
         project_id: Filter by project
-        current_stage_state: Filter by the task's current stage state.
         priority: Filter by priority
         claimed_by_session_id: Filter by canonical owning session
         claimed: Filter by whether canonical ownership exists
@@ -203,13 +136,6 @@ def list_tasks(
             WHERE events.project_id = tasks.project_id
               AND events.seq_text = tasks.seq_num::text
         )"""
-    if current_stage_state:
-        clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
-        if clause:
-            where += f" AND {clause}"
-            params.extend(clause_params)
-            if closed is None:
-                where += " AND closed_at IS NULL"
     if priority is not None:
         where += " AND priority = %s"
         params.append(priority)
@@ -246,20 +172,6 @@ def list_tasks(
     if title_like:
         where += " AND title LIKE %s ESCAPE '\\'"
         params.append(f"%{_escape_like_pattern(title_like)}%")
-    if stages:
-        placeholders = ", ".join("%s" for _ in stages)
-        where += f"""
-        AND EXISTS (
-            SELECT 1
-              FROM task_stage_states stage_filter
-             WHERE stage_filter.task_id = tasks.id
-               AND stage_filter.stage_name IN ({placeholders})
-        """
-        params.extend(stages)
-        if stage_state is not None:
-            where += " AND stage_filter.state = %s"
-            params.append(stage_state)
-        where += ")"
 
     if sort_by is None and closed is True:
         # A hierarchy page of closed tasks is the oldest closures, so a limited
@@ -292,7 +204,6 @@ def list_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
-    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return tasks
 
@@ -347,7 +258,7 @@ def _hierarchy_page(
     without ordering everything the filter matches, so there is no SQL LIMIT to
     push down. What can be avoided is paying for the rows the page discards.
     Ordering reads four columns and the local blocking edges; fetching whole
-    task rows, converting them, and hydrating their stage and blocking state
+    task rows, converting them, and hydrating their blocking state
     for a project-sized set is work thrown away for all but ``limit`` of them.
 
     Measured on a 14,904-task project: SELECT * of every row cost 331.8 ms plus
@@ -440,7 +351,6 @@ def _hydrated_page(
     by_id = {str(row["id"]): Task.from_row(row) for row in rows}
     # ANY() does not preserve argument order, so re-impose the page's own.
     tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
-    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return tasks
 
@@ -502,33 +412,19 @@ def _ready_tasks_cte_sql() -> str:
     """Build the CTE shared by ready-task list and count queries."""
     return f"""
     WITH RECURSIVE ready_tasks(id, path, depth) AS (
-        -- Base case: open/in_progress tasks with no parent and no external blocking deps
+        -- Base case: open tasks with no parent and no external blocking deps
         SELECT t.id, ARRAY[t.id], 0 FROM tasks t
-        {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
-        AND (
-            current_stage.state IN ('ready', 'in_progress')
-            OR NOT EXISTS (
-                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-            )
-        )
         AND t.parent_task_id IS NULL
         AND {_no_external_blocker_sql("t")}
         AND NOT {_awaiting_human_review_sql("t")}
 
         UNION ALL
 
-        -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
+        -- Recursive case: open tasks whose parent is ready and no external blocking deps
         SELECT t.id, rt.path || t.id, rt.depth + 1 FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
-        AND (
-            current_stage.state IN ('ready', 'in_progress')
-            OR NOT EXISTS (
-                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
-            )
-        )
         AND {_no_external_blocker_sql("t")}
         AND NOT {_awaiting_human_review_sql("t")}
         AND rt.depth < 100
@@ -562,7 +458,7 @@ def list_ready_tasks(
     Note: The limit is applied AFTER hierarchical ordering to ensure coherent
     tree structures, so ordering must see every matching task -- but it needs
     only the four-column key projection, not whole rows. This listing backs
-    suggest_next_task and the dispatcher, so it pages the way #20840 taught
+    suggest_next_task, so it pages the way #20840 taught
     the main listing to: order over the projection, then fetch, convert, and
     hydrate only the page (#20878).
     """
