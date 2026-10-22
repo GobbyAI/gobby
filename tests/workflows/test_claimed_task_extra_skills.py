@@ -16,8 +16,6 @@ from gobby.workflows.claimed_task_extra_skills import (
     missing_claimed_task_extra_skills,
     refresh_claimed_task_extra_skills,
 )
-from gobby.workflows.condition_helpers import tdd_gate_open
-from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +54,7 @@ def test_explicit_extras_keep_order_and_precede_inferred_tdd() -> None:
     ]
 
 
-def test_claim_exposes_tdd_gate_state() -> None:
+def test_claim_exposes_tdd_metadata_without_runtime_obligations() -> None:
     manager = MagicMock()
     tasks = {
         "task-1": _task(
@@ -81,21 +79,7 @@ def test_claim_exposes_tdd_gate_state() -> None:
         manager,
     )
 
-    obligations = state.pop("claimed_task_tdd_obligations")
-    assert set(obligations) == {"task-1", "task-2"}
-    assert [item["reference"] for item in obligations["task-1"]] == [
-        "tests/workflows/test_claimed_task_extra_skills.py::test_one",
-        "tests/workflows/test_shared.py::test_shared",
-    ]
-    assert [item["reference"] for item in obligations["task-2"]] == [
-        "tests/workflows/test_shared.py::test_shared",
-        "crates/gclient/tests/parity/sidebar.rs::test_sidebar",
-    ]
-    assert all(item["task_id"] == "task-1" for item in obligations["task-1"])
-    assert all(
-        item["criterion"] == tasks["task-1"].validation_criteria for item in obligations["task-1"]
-    )
-    assert all(item["regression_only"] is False for item in obligations["task-1"])
+    assert "claimed_task_tdd_obligations" not in state
 
     assert state == {
         "claimed_task_extra_skills": ["test-driven-development"],
@@ -130,7 +114,6 @@ def test_claim_exposes_tdd_gate_state() -> None:
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
-        "claimed_task_tdd_obligations": {},
     }
     assert stale_variables["claimed_task_requires_tdd"] is False
     assert stale_variables["claimed_task_acceptance_test_paths"] == []
@@ -144,7 +127,7 @@ def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
             "Acceptance artifacts:\n"
             "- 2.3.1: test: "
             "`tests/workflows/test_claimed_task_extra_skills.py::test_expanded`\n"
-            "- 2.3.2: file: `src/gobby/tasks/acceptance_artifacts.py`"
+            "- 2.3.2: file: `src/gobby/tasks/acceptance_references.py`"
         ),
     )
 
@@ -156,30 +139,6 @@ def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
     assert state["claimed_task_acceptance_test_paths"] == [
         "tests/workflows/test_claimed_task_extra_skills.py"
     ]
-
-
-def test_tdd_gate_rejects_nested_relative_written_path() -> None:
-    variables = {
-        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
-        "tdd_tests_written": ["vendor/tests/test_app.py"],
-    }
-
-    assert tdd_gate_open(variables, "/repo") is False
-
-
-def test_tdd_gate_uses_event_worktree_path_over_registered_project_path() -> None:
-    variables = {
-        "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
-        "tdd_tests_written": ["/worktrees/task/tests/test_app.py"],
-    }
-    context = {
-        "event": SimpleNamespace(metadata={"project_path": "/worktrees/task"}),
-        "project": {"path": "/primary/checkout"},
-    }
-
-    gate = build_condition_helpers(context=context)["tdd_gate_open"]
-
-    assert gate(variables) is False
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
@@ -208,7 +167,7 @@ def test_multiple_claims_dedupe_without_reordering() -> None:
             True,
             id="criteria",
         ),
-        pytest.param({"enforce_tdd": True}, _task(), True, id="session-policy"),
+        pytest.param({"enforce_tdd": True}, _task(), False, id="retired-session-policy-ignored"),
         pytest.param(
             {},
             _task(validation_criteria="Implement src/app.py and config/app.yaml."),
@@ -310,7 +269,6 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
         "claimed_task_requires_tdd": False,
         "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
-        "claimed_task_tdd_obligations": {},
     }
 
 

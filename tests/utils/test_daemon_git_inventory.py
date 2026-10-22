@@ -321,15 +321,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Only navigation_requires_index asks, from rule conditions on the rule-engine
     # executor (tests/workflows/engine/test_condition_git_off_loop.py).
     ("src/gobby/hooks/code_navigation_recovery.py", "_git_ignored"),
-    # tdd_gate_open asks from rule conditions on the rule-engine executor
-    # (tests/workflows/engine/test_condition_git_off_loop.py).
-    ("src/gobby/workflows/tdd_paths.py", "_git_out"),
-    # Server-derived tdd_gate_open reaches this claim-baseline check only from
-    # rule-engine workers; test_tdd_gate_asks_git_only_from_the_rule_engine_executor
-    # in tests/workflows/engine/test_condition_git_off_loop.py proves the Git call
-    # stays off the daemon loop. Other helper consumers lack task/session managers,
-    # and close evaluation does not call authorize_session_write.
-    ("src/gobby/tasks/tdd_write_authorization.py", "_unchanged_at_claim"),
     # Reached only from the `gobby status` Click command
     # (test_bin_freshness_git_is_reached_only_from_cli_status below).
     ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
@@ -354,7 +345,7 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # test_item_completed_shell_write_marks_had_edits_without_rule_pass).
     ("src/gobby/hooks/_normalization_git.py", "_positional_checkout_is_path"),
     # checkout_reads.run_git spawns git only for a local delivery, from the sync callers above
-    # (_git_ignored, _git_out, _positional_checkout_is_path) on worker threads. run_git_async
+    # (_git_ignored, _positional_checkout_is_path) on worker threads. run_git_async
     # runs it through asyncio.to_thread (tests/hooks/test_node_origin_git.py
     # test_local_git_spawn_runs_off_the_event_loop).
     ("src/gobby/hooks/checkout_reads.py", "run_git"),
@@ -362,10 +353,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # tools resolve projects inside _run_db_call or their complete review-evidence
     # service worker (test_plans_tools covers sync and async checkout forms).
     ("src/gobby/mcp_proxy/tools/plans/__init__.py", "_optional_project_id"),
-    # _legacy_task_checkout_proof awaits this helper through asyncio.to_thread.
-    ("src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py", "_same_git_checkout"),
-    # commit_close awaits linking through asyncio.to_thread.
-    ("src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py", "link_close_commit_shas"),
     # The HTTP close route passes this synchronous storage facade to server.run_db.
     # The facade inventory below guards new direct daemon calls; it does not
     # inspect higher-order uses such as run_db(facade, ...).
@@ -373,22 +360,8 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
         "src/gobby/storage/tasks/_transitions_facade.py",
         "TaskTransitionsMixin.close_task_with_commit",
     ),
-    # Close validation calls evaluate_validation_commands on a worker. Its
-    # initial empty-evidence check returns before candidate-tree access.
-    ("src/gobby/tasks/close_test_coverage.py", "_candidate_blobs"),
-    # The same Gate 10 worker verifies landed integration ancestry and cleanliness
-    # (test_close_task_flow.test_close_landed_credit_git_runs_off_the_event_loop).
-    ("src/gobby/tasks/close_integration_credit.py", "_git"),
-    # Historical blobs are resolved during transcript derivation, whose complete
-    # parse runs through run_in_transcript_evidence_pool, never on the daemon loop.
-    ("src/gobby/tasks/transcript_git_sources.py", "_blob"),
     # _run_step_handlers offloads advance_seat and its linked candidate checks.
     ("src/gobby/workflows/engine/seat_transitions.py", "_linked_candidate_matches"),
-    # Rooted close validation reaches tracked-script checks only through its
-    # asyncio.to_thread gate; the empty loop-thread probe has no criteria/root.
-    # test_close_task_flow.test_close_tracked_script_git_runs_off_the_event_loop
-    # proves the actual Git boundary runs without an event loop.
-    ("src/gobby/tasks/transcript_outcomes.py", "_tracked_script"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
     # offline validation remains synchronous (test_expansion_service_compile).
     ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),

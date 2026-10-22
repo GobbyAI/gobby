@@ -45,12 +45,11 @@ def _isolate_bridge_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
+def test_extended_timeout_tools_exclude_retired_review_operations() -> None:
     from gobby.mcp_proxy import wait_tools
 
     assert wait_tools.EXTENDED_TIMEOUT_TOOL_NAMES == (
         "close_task",
-        "submit_close_review",
         "land_commit",
         "expand_task",
         "merge_resolve",

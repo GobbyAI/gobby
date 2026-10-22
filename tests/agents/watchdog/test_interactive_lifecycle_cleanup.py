@@ -27,13 +27,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("task_state", ["closed", "close_handoff"])
-async def test_dead_interactive_seat_is_cleaned_up_after_task_close(
+@pytest.mark.parametrize("task_closed", [False, True])
+async def test_dead_interactive_seat_is_cleaned_up_regardless_of_task_closure(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
-    task_state: str,
+    task_closed: bool,
 ) -> None:
     tasks = LocalTaskManager(temp_db)
     task = tasks.create_task(
@@ -52,16 +52,12 @@ async def test_dead_interactive_seat_is_cleaned_up_after_task_close(
         task_id=task.id,
     )
     agent_run_manager.update_resume_metadata(run.id, {"execution_mode": "interactive"})
-    if task_state == "closed":
+    if task_closed:
         tasks.close_task(task.id)
     _runtime_of(monitor).alive = False
 
-    with patch(
-        "gobby.agents.agent_health.cooperative_close_handoff_pending",
-        return_value=task_state == "close_handoff",
-    ):
-        assert await monitor.check_completed_task_agents() == 0
-        assert await monitor.check_unhealthy_agents() == 1
+    assert await monitor.check_completed_task_agents() == 0
+    assert await monitor.check_unhealthy_agents() == 1
 
     stored = agent_run_manager.get(run.id)
     assert stored is not None
@@ -71,13 +67,13 @@ async def test_dead_interactive_seat_is_cleaned_up_after_task_close(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_interactive", [False, True])
-@pytest.mark.parametrize("task_state", ["closed", "close_handoff", "ended_review"])
-async def test_missing_interactive_terminal_resumes_after_task_close(
+@pytest.mark.parametrize("task_closed", [False, True])
+async def test_missing_terminal_resumes_unless_one_shot_task_is_closed(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
-    task_state: str,
+    task_closed: bool,
     is_interactive: bool,
 ) -> None:
     from gobby.runner_lifecycle_reconcile import _cleanup_missing_terminal_agent_run
@@ -104,33 +100,24 @@ async def test_missing_interactive_terminal_resumes_after_task_close(
         metadata["idle_ttl_seconds"] = 900
     stored = agent_run_manager.update_resume_metadata(run.id, metadata)
     assert stored is not None
-    if task_state == "closed":
+    if task_closed:
         tasks.close_task(task.id)
     runner = _RestartFixtures()._runner(agent_run_manager, db=temp_db)
 
-    with (
-        patch(
-            "gobby.agents.run_completion.cooperative_close_handoff_pending",
-            return_value=task_state == "close_handoff",
-        ),
-        patch(
-            "gobby.agents.run_completion.ended_caller_close_review_outcome",
-            return_value=task_state == "ended_review",
-        ),
-        patch(
-            "gobby.agents.resume_executor.resume_agent_run",
-            new=AsyncMock(return_value=SimpleNamespace(success=True)),
-        ) as resume,
-    ):
+    with patch(
+        "gobby.agents.resume_executor.resume_agent_run",
+        new=AsyncMock(return_value=SimpleNamespace(success=True)),
+    ) as resume:
         assert await _cleanup_missing_terminal_agent_run(runner, stored, "missing-seat") is True
 
-    if is_interactive:
+    if is_interactive or not task_closed:
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             run.id, terminal_reason="daemon_stop"
         )
         resume.assert_awaited_once()
-        assert resume.call_args.kwargs["resume_metadata"]["execution_mode"] == "interactive"
-        assert resume.call_args.kwargs["resume_metadata"]["idle_ttl_seconds"] == 900
+        assert resume.call_args.kwargs["resume_metadata"]["execution_mode"] == mode
+        if is_interactive:
+            assert resume.call_args.kwargs["resume_metadata"]["idle_ttl_seconds"] == 900
     else:
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
         resume.assert_not_awaited()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import warnings
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -19,8 +18,6 @@ from gobby.workflows.condition_helpers import (
     _parse_source_fragment,
     all_tasks_have_durable_stop_wait,
     all_tasks_have_label,
-    first_tdd_code_path,
-    first_tdd_test_path,
     is_task_complete,
     paths_written_this_turn,
     shell_command_consumes_code_review,
@@ -33,7 +30,6 @@ from gobby.workflows.condition_helpers import (
     touches_docker_policy_path,
     touches_ui_design_path,
 )
-from gobby.workflows.safe_evaluator import build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -502,113 +498,6 @@ class TestTaskCommitProjectPathAllowlistViolation:
         }
 
         assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False
-
-
-def _rust_store_file(tmp_path: Path) -> str:
-    """Write a production Rust file the TDD helpers can read before an edit."""
-    path = tmp_path / "crates" / "gcore" / "src" / "store.rs"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("pub fn encode() {}\n", encoding="utf-8")
-    return str(path)
-
-
-class TestTddPathHelpers:
-    def test_absolute_written_path_cannot_forge_named_red(self) -> None:
-        variables = {
-            "claimed_task_acceptance_test_paths": ["tests/test_app.py"],
-            "tdd_tests_written": ["/repo/tests/test_app.py"],
-        }
-        gate = build_condition_helpers(context={"project": {"path": "/repo"}})["tdd_gate_open"]
-
-        assert gate(variables) is False
-
-    def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
-        event_data = {
-            "canonical_file_paths": ["tests/test_app.py", "src/app.py"],
-        }
-
-        assert first_tdd_code_path(event_data, {}) == "src/app.py"
-
-    def test_first_tdd_code_path_guards_init_and_skips_test_files(self) -> None:
-        event_data = {
-            "canonical_file_paths": [
-                "src/__init__.py",
-                "tests/helper.py",
-                "src/conftest.py",
-                "src/test_helper.py",
-                "src/helper_test.py",
-            ],
-        }
-
-        assert first_tdd_code_path(event_data, {}) == "src/__init__.py"
-
-    def test_first_tdd_test_path_uses_canonical_paths(self) -> None:
-        event_data = {
-            "canonical_file_paths": ["src/app.py", "tests/helper.py"],
-        }
-
-        assert first_tdd_test_path(event_data, {}) == "tests/helper.py"
-
-    def test_rust_named_test_module_counts_as_test_path(self) -> None:
-        path = "crates/gcode/src/communities/remap_tests.rs"
-        event_data = {"canonical_file_paths": [path]}
-
-        assert first_tdd_test_path(event_data, {}) == path
-        assert first_tdd_code_path(event_data, {}) == ""
-
-    def test_tdd_helpers_fall_back_to_native_tool_input(self) -> None:
-        tool_input = {"file_path": "src/new_module.py"}
-
-        assert first_tdd_code_path({}, tool_input) == "src/new_module.py"
-
-    def test_rust_inline_cfg_test_edit_counts_as_test_path(self, tmp_path: Path) -> None:
-        path = _rust_store_file(tmp_path)
-        tool_input = {
-            "file_path": path,
-            "old_str": "pub fn encode() {}",
-            "new_str": "pub fn encode() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n",
-        }
-
-        assert first_tdd_test_path({}, tool_input) == path
-        assert first_tdd_code_path({}, tool_input) == ""
-
-    def test_rust_production_edit_stays_code_path(self, tmp_path: Path) -> None:
-        path = _rust_store_file(tmp_path)
-        tool_input = {
-            "file_path": path,
-            "old_str": "pub fn encode() {}",
-            "new_str": "pub fn encode(quoted: bool) {}",
-        }
-
-        assert first_tdd_code_path({}, tool_input) == path
-        assert first_tdd_test_path({}, tool_input) == ""
-
-
-def test_tdd_paths_cover_every_source_language() -> None:
-    source_paths = [
-        "crates/gclient/src/ui/sidebar/agents.rs",
-        "web/src/app.ts",
-        "scripts/run.sh",
-        "src/gobby/__init__.py",
-    ]
-    for path in source_paths:
-        event_data = {"canonical_file_paths": [path]}
-        assert first_tdd_code_path(event_data, {}) == path
-        assert first_tdd_test_path(event_data, {}) == ""
-
-    test_paths = [
-        "crates/gclient/tests/parity/sidebar.rs",
-        "crates/gterminal/src/host/backpressure/tests.rs",
-        "src/foo_test.go",
-        "web/src/app.spec.ts",
-    ]
-    for path in test_paths:
-        event_data = {"canonical_file_paths": [path]}
-        assert first_tdd_code_path(event_data, {}) == ""
-        assert first_tdd_test_path(event_data, {}) == path
-
-    for path in ["docs/x.md", "src/gobby/conftest.py"]:
-        assert first_tdd_code_path({"canonical_file_paths": [path]}, {}) == ""
 
 
 class TestTouchesClaudeMemoryPath:

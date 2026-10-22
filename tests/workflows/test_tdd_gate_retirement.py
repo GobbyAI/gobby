@@ -5,10 +5,20 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import yaml
+
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.safe_evaluator import build_condition_helpers
-from gobby.workflows.sync_rules import sync_bundled_rules
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+
+
+def test_retained_tdd_metadata_defaults() -> None:
+    variables_path = get_bundled_rules_path().parent / "variables" / "gobby-default-variables.yaml"
+    variables = yaml.safe_load(variables_path.read_text())["variables"]
+
+    assert variables["claimed_task_requires_tdd"]["value"] is False
+    assert variables["claimed_task_acceptance_test_paths"]["value"] == []
 
 
 def test_retired_tdd_rules_are_not_installed(temp_db: HubDatabase) -> None:
