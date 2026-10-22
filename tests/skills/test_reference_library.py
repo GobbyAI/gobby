@@ -4,18 +4,15 @@ import asyncio
 import json
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.results import create_results_registry
 from gobby.mcp_proxy.tools.skills import create_skills_registry
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import launch_close_review
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import resume_pipeline
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.sessions.handoff import (
@@ -31,6 +28,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tool_results import ToolResultStore
 from gobby.storage.worktrees import Worktree
+from gobby.tasks.state_semantics import is_task_closed
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
@@ -38,7 +37,7 @@ from tests.mcp_proxy import test_results_tools as result_scenarios
 from tests.mcp_proxy.tools import test_config_values as config_scenarios
 from tests.mcp_proxy.tools import test_mcp_proxy_tools_pipeline_resume as pipeline_scenarios
 from tests.mcp_proxy.tools import test_worktrees_lifecycle as workspace_scenarios
-from tests.mcp_proxy.tools.tasks import test_lifecycle_close_orchestration as task_scenarios
+from tests.mcp_proxy.tools.tasks import test_close_task_attributed_cleanliness as task_scenarios
 from tests.sessions import test_handoff as handoff_scenarios
 from tests.skills.reference_library_helpers import (
     ROOT,
@@ -55,6 +54,7 @@ from tests.skills.reference_library_helpers import (
 
 pytestmark = pytest.mark.unit
 reference_session_manager = handoff_scenarios.session_manager
+reference_close_harness = task_scenarios.close_harness
 _local_machine_identity = handoff_scenarios._local_machine_identity
 
 
@@ -85,76 +85,35 @@ async def test_reference_contract_3_2_2(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     reference_session_manager: SessionManager,
-    monkeypatch: pytest.MonkeyPatch,
+    reference_close_harness: task_scenarios.CloseHarness,
 ) -> None:
     """Exercise and assert representative operations within isolated fixture lifetimes."""
     errors = documentation_errors(load_audits())
     assert errors == [], "\n".join(errors)
     if scenario == "tasks":
-        reviewer_run_id = "a1b2c3d4-1234-4567-89ab-123456789abc"
-        task_store = task_scenarios._Store(task_scenarios._review(status="queued", run_id=None))
-        task_registry = SimpleNamespace(
-            call=AsyncMock(return_value={"success": True, "run_id": reviewer_run_id})
-        )
-        task_ctx = task_scenarios._ctx(
-            registry=task_registry,
-            validation_config=TaskValidationConfig(
-                candidates=["codex/gpt-5.6-terra"],
-                close_review_total_timeout_seconds=17,
-                close_review_validator_timeout_seconds=900,
-            ),
-        )
-        task_scenarios._patch_store(monkeypatch, task_store)
-        task_evaluation = task_scenarios._evaluation()
-        task_evaluation.extra["coordinator_owned_pending"] = True
-        task_arguments = task_scenarios._arguments()
-        task_result = await launch_close_review(
-            task_ctx,
-            evaluation=task_evaluation,
-            close_arguments=task_arguments,
-            evaluate_close=task_scenarios._revalidate(task_evaluation),
-        )
-        assert task_store.created_arguments == {
-            **task_arguments,
-            "_review_timeout_seconds": 900,
-            "_criterion_count": 3,
-            "_manifest_count": None,
-            "_excerpt_chars": None,
-            "_review_provider": "codex",
-            "_review_model": "gpt-5.6-terra",
-        }
-        assert "_review_deadline_at" not in task_arguments
-        assert task_evaluation.task is not None
-        assert task_store.expected_task_updated_at == task_evaluation.task.updated_at
-        task_registry.call.assert_awaited_once()
-        task_launch_args = task_registry.call.call_args.args[1]
-        assert task_launch_args["agent"] == "task-close-reviewer"
-        assert task_launch_args["task_id"] is None
-        assert task_launch_args["checkout_mode"] == "none"
-        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-
-        create_spawn_agent_registry(MagicMock())._prepare_call("spawn_agent", task_launch_args)
-        assert task_launch_args["project_path"] == task_evaluation.repo_path
-        assert task_launch_args["provider"] == "codex"
-        assert task_launch_args["model"] == "gpt-5.6-terra"
-        assert task_launch_args["reasoning_effort"] == "auto"
-        assert task_launch_args["timeout"] == 900
-        assert "close caller is a spawned agent" in task_launch_args["prompt"]
-        assert "state `pending_external`" in task_launch_args["prompt"]
-        assert task_result["success"] is True
-        assert task_result["closed"] is False
-        assert task_result["can_close"] is False
-        assert task_result["error"] == "close_review_required"
-        assert task_result["reviewer_run_id"] == reviewer_run_id
-        assert task_result["review_status"] == "running"
-        assert task_result["criterion_count"] == 3
-        assert task_result["criterion_indexes"] == [1, 2, 3]
-        assert "run_id" not in task_result
-        assert "spawn_request" not in task_result
-        assert "review_run_id" not in task_result
-        assert "Do not poll agent runs or re-call close_task." in task_result["message"]
-        assert "Oversized" not in task_result["message"]
-        assert task_result["close_review_duration_ms"] == 4.25
+        harness = reference_close_harness
+        with session_context_for_test(harness.session_id):
+            preview = await harness.registry.call(
+                "close_task", {"task_id": harness.task.id, "preview": True}
+            )
+            assert preview["success"] is True
+            assert preview["can_close"] is True
+            assert preview["closed"] is False
+            assert [gate["name"] for gate in preview["gates"]] == [
+                "children_closed",
+                "linked_commits",
+                "uncommitted_task_edits",
+                "integration_ancestry",
+            ]
+            assert not is_task_closed(harness.manager.get_task(harness.task.id))
+            closed = await harness.registry.call(
+                "close_task", {"task_id": harness.task.id, "commit_sha": harness.commit_sha}
+            )
+        assert closed["success"] is True
+        assert closed["closed"] is True
+        stored = harness.manager.get_task(harness.task.id)
+        assert is_task_closed(stored)
+        assert stored.closed_commit_sha == harness.commit_sha
     elif scenario == "agent-handoff":
         handoff_predecessor = handoff_scenarios._registered_session(reference_session_manager)
         handoff_payload = build_handoff_payload(current_state="Ready.", next_steps=["Continue."])

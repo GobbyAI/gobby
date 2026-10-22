@@ -493,22 +493,6 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "submit_close_review",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py",
-        "symbol": "submit_close_review"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "validator-only"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
       "tool": "record_close_receipt",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
