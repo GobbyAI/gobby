@@ -73,7 +73,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "reopen_task",
     "repair_closed_candidate",
     "restore_tasks",
-    "submit_close_review",
     "transfer_task_authority",
     "unlink_commit",
     "update_observed_files",
@@ -309,7 +308,9 @@ REPLACED_TASK_SKILL_RULES = {
 class TestTaskEnforcementSync:
     """Test that task-enforcement.yaml syncs correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All task-enforcement rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -322,7 +323,7 @@ class TestTaskEnforcementSync:
         assert REPLACED_TASK_SKILL_RULES.isdisjoint(rule_names)
         assert "block-front-half-on-interactive-lock" not in rule_names
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='task-enforcement'."""
         _sync_bundled(db)
 
@@ -356,7 +357,9 @@ class TestTaskEnforcementSync:
 class TestBlockUnresolvedScopeShellWrite:
     """Unknown-target shell mutations must stop before provider execution."""
 
-    def test_rule_uses_canonical_unknown_scope_metadata(self, db, manager) -> None:
+    def test_rule_uses_canonical_unknown_scope_metadata(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-unresolved-scope-shell-write")
@@ -651,21 +654,28 @@ class TestRequireTaskBeforeCommit:
 class TestBlockNativeTaskTrackerUnclaimed:
     """Verify one rule gates every CLI's native task tracker on a claimed Gobby task."""
 
-    def test_blocks_every_native_tracker_tool(self, db, manager) -> None:
+    def test_blocks_every_native_tracker_tool(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-native-task-tracker-unclaimed")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
+        assert body.effects[0].tools is not None
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert set(body.effects[0].tools) == NATIVE_TRACKER_TOOLS
 
-    def test_when_checks_is_subagent_and_task_claimed(self, db, manager) -> None:
+    def test_when_checks_is_subagent_and_task_claimed(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("block-native-task-tracker-unclaimed")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -846,7 +856,9 @@ class TestRequireTaskBeforeEdit:
 
         assert bool(evaluator.evaluate(body.when)) is blocked
 
-    def test_block_effect_is_not_tied_to_native_tool_names(self, db, manager) -> None:
+    def test_block_effect_is_not_tied_to_native_tool_names(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """The block effect should rely on canonical mutation semantics."""
         _sync_bundled(db)
 
@@ -854,15 +866,19 @@ class TestRequireTaskBeforeEdit:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        assert body.effects[0].tools in (None, [])
+        assert body.effects[0].tools is None or body.effects[0].tools == []
 
-    def test_when_checks_task_claimed_mutation_and_plan_mode(self, db, manager) -> None:
+    def test_when_checks_task_claimed_mutation_and_plan_mode(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should check task_claimed and multi-file task gating."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -1672,11 +1688,14 @@ class TestRequireTasksSkillForMutations:
 
         assert task_mutation_requires_tasks_skill(tool_input, event_data) is False
 
-    def test_rule_uses_normalized_helper_and_default_agent_scope(self, db, manager) -> None:
+    def test_rule_uses_normalized_helper_and_default_agent_scope(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
 
         assert body.event.value == "before_tool"
         assert "variables.get('_agent_type') == 'default'" in (body.when or "")
@@ -1782,12 +1801,17 @@ class TestRequireClaimedTaskExtraSkills:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         return evaluator.evaluate(self.CONDITION)
 
-    def test_rule_syncs_with_dynamic_skill_directive(self, db, manager) -> None:
+    def test_rule_syncs_with_dynamic_skill_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-claimed-task-extra-skills")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
+        assert body.when is not None
+        assert body.effects[0].reason is not None
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
@@ -2231,7 +2255,7 @@ class TestTouchedFileHelpers:
 class TestRequireCommitBeforeStatus:
     """Verify require-commit-before-status requires commit before status transitions."""
 
-    def test_blocks_close_task_mcp(self, db, manager) -> None:
+    def test_blocks_close_task_mcp(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should block gobby-tasks:close_task and de_escalate_task."""
         _sync_bundled(db)
 
@@ -2239,16 +2263,21 @@ class TestRequireCommitBeforeStatus:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
+        assert body.effects[0].mcp_tools is not None
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
         assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
 
-    def test_when_checks_commits_and_reasons(self, db, manager) -> None:
+    def test_when_checks_commits_and_reasons(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should check target task commits and special close reasons."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -2258,7 +2287,9 @@ class TestRequireCommitBeforeStatus:
         assert "preview" not in body.when
 
     @pytest.mark.asyncio
-    async def test_conditional_close_preview_requires_commit_for_edits(self, db) -> None:
+    async def test_conditional_close_preview_requires_commit_for_edits(
+        self, db: HubDatabase
+    ) -> None:
         variables = _status_gate_variables(
             active_task_id="task-1",
             task_edited_files={"task-1": ["src/owned.py"]},
@@ -2328,23 +2359,31 @@ class TestRequireCommitBeforeStatus:
             assert response.reason is not None
             assert "no commit linked" in response.reason.lower()
 
-    def test_when_checks_target_task_edits(self, db, manager) -> None:
+    def test_when_checks_target_task_edits(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should only require commit when the target task has edits."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
 
         assert "target_task_has_edits" in body.when
         assert "session_edited_files" not in body.when
         assert "has_dirty_files" not in body.when
 
-    def test_error_message_mentions_no_commit(self, db, manager) -> None:
+    def test_error_message_mentions_no_commit(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Error message should specifically mention no commit linked."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
 
         reason = body.effects[0].reason or ""
         assert "no commit linked" in reason.lower()
@@ -2353,7 +2392,9 @@ class TestRequireCommitBeforeStatus:
 class TestBlockAskDuringStopCompliance:
     """Verify block-ask-during-stop-compliance blocks questions during stop."""
 
-    def test_blocks_ask_user_question(self, db, manager) -> None:
+    def test_blocks_ask_user_question(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should block AskUserQuestion."""
         _sync_bundled(db)
 
@@ -2361,15 +2402,20 @@ class TestBlockAskDuringStopCompliance:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
+        assert body.effects[0].tools is not None
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "AskUserQuestion" in body.effects[0].tools
 
-    def test_when_checks_stop_attempts_and_task(self, db, manager) -> None:
+    def test_when_checks_stop_attempts_and_task(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should check stop_attempts and task_claimed."""
         _sync_bundled(db)
 
         row = manager.get_by_name("block-ask-during-stop-compliance")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -2380,7 +2426,7 @@ class TestBlockAskDuringStopCompliance:
 class TestTrackTaskClaim:
     """Verify track-task-claim observes task claim events."""
 
-    def test_sets_task_claimed_true(self, db, manager) -> None:
+    def test_sets_task_claimed_true(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should use observe effect to track task claims."""
         _sync_bundled(db)
 
@@ -2388,14 +2434,18 @@ class TestTrackTaskClaim:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
         assert body.event.value == "after_tool"
         assert body.effects[0].type == "observe"
 
-    def test_when_matches_claim_and_create(self, db, manager) -> None:
+    def test_when_matches_claim_and_create(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should fire on claim_task and create_task."""
         _sync_bundled(db)
 
         row = manager.get_by_name("track-task-claim")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -2406,7 +2456,9 @@ class TestTrackTaskClaim:
 class TestBlockReopenTask:
     """Verify reopen is reserved for explicit human-driven lifecycle resets."""
 
-    def test_blocks_reopen_task_calls(self, db, manager) -> None:
+    def test_blocks_reopen_task_calls(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should block the gobby-tasks reopen_task MCP call."""
         _sync_bundled(db)
 
@@ -2414,33 +2466,41 @@ class TestBlockReopenTask:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "reopen_task" in (body.when or "")
 
-    def test_when_checks_claimed_tasks(self, db, manager) -> None:
+    def test_when_checks_claimed_tasks(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should only block when the target task is in this session's claimed_tasks."""
         _sync_bundled(db)
 
         row = manager.get_by_name("block-reopen-task")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
         assert "claimed_tasks" in body.when
         assert "task_id" in body.when
 
-    def test_reason_mentions_de_escalation(self, db, manager) -> None:
+    def test_reason_mentions_de_escalation(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Guidance should route escalated work through de_escalate_task."""
         _sync_bundled(db)
 
         row = manager.get_by_name("block-reopen-task")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
 
         reason = body.effects[0].reason or ""
         assert "de_escalate_task" in reason
 
     @pytest.mark.asyncio
-    async def test_blocks_reopen_for_claimed_task_only(self, db) -> None:
+    async def test_blocks_reopen_for_claimed_task_only(self, db: HubDatabase) -> None:
         """A reopen call should block only when the task is claimed by this session."""
         _sync_bundled(db)
         engine = RuleEngine(db)
@@ -2473,7 +2533,7 @@ class TestBlockReopenTask:
         assert unclaimed_response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_allows_reopen_for_task_claimed_by_other_session(self, db) -> None:
+    async def test_allows_reopen_for_task_claimed_by_other_session(self, db: HubDatabase) -> None:
         """A task absent from this session's claimed_tasks should not be blocked."""
         _sync_bundled(db)
         engine = RuleEngine(db)
@@ -2497,7 +2557,9 @@ class TestBlockReopenTask:
 class TestRequireTasksSkillOnMutationSchema:
     """Verify mutation schema lookup uses the consolidated tasks gate."""
 
-    def test_blocks_create_task_schema_with_canonical_directive(self, db, manager) -> None:
+    def test_blocks_create_task_schema_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-tasks-skill-for-mutations")
@@ -2519,7 +2581,9 @@ class TestRequireTasksSkillOnMutationSchema:
 class TestRequireTasksSkillMutationDefinition:
     """Verify the consolidated mutation rule uses one helper and one directive."""
 
-    def test_when_uses_normalized_mutation_helper(self, db, manager) -> None:
+    def test_when_uses_normalized_mutation_helper(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         row = manager.get_by_name("require-tasks-skill-for-mutations")
@@ -2530,7 +2594,9 @@ class TestRequireTasksSkillMutationDefinition:
         assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
         assert "not skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
 
-    def test_blocks_with_task_transitions_directive(self, db, manager) -> None:
+    def test_blocks_with_task_transitions_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """The rule should block with the canonical directive."""
         _sync_bundled(db)
 
@@ -2538,6 +2604,7 @@ class TestRequireTasksSkillMutationDefinition:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects
         block_effects = [effect for effect in body.effects if effect.type == "block"]
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
@@ -2551,7 +2618,9 @@ class TestRequireTasksSkillMutationDefinition:
 class TestTaskMutationSkillGateRoutes:
     """Verify representative mutation routes require agent-loaded task guidance."""
 
-    def test_creation_gate_blocks_without_loaded_skill(self, db, manager) -> None:
+    def test_creation_gate_blocks_without_loaded_skill(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
@@ -2564,7 +2633,9 @@ class TestTaskMutationSkillGateRoutes:
         assert "gobby:references/tasks/overview.md" in body.effects[0].reason
         assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
-    def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
+    def test_transition_gate_blocks_without_loaded_skill(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-tasks-skill-for-mutations")
         assert row is not None
@@ -2589,7 +2660,7 @@ class TestTaskMutationSkillGateRoutes:
         ],
     )
     async def test_creation_schema_lookup_is_never_blocked(
-        self, db, manager, tool_name: str, target: str
+        self, db: HubDatabase, manager: RuleDefinitionManager, tool_name: str, target: str
     ) -> None:
         _sync_bundled(db)
         event = HookEvent(
@@ -2613,7 +2684,9 @@ class TestTaskMutationSkillGateRoutes:
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_creation_gate_blocks_normalized_call_until_loaded(self, db, manager) -> None:
+    async def test_creation_gate_blocks_normalized_call_until_loaded(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -2651,7 +2724,9 @@ class TestTaskMutationSkillGateRoutes:
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_creation_gate_exempts_pipeline_sessions(self, db, manager) -> None:
+    async def test_creation_gate_exempts_pipeline_sessions(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Deterministic pipeline executors cannot load skills; the gate must not fire."""
         _sync_bundled(db)
         event = HookEvent(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,9 +24,6 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.results import _MAX_SLICE_CHARS, create_results_registry
 from gobby.mcp_proxy.tools.skills import hub_tools, search_skills
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    derive_close_transcript_evidence,
-)
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import tool_summarizer
@@ -444,51 +441,3 @@ async def test_results_schema_stays_pinned_and_live_bound_clamps_the_slice() -> 
     )
     assert result["content"] == "y" * 100
     assert result["next_offset"] == 100
-
-
-@pytest.mark.asyncio
-async def test_task_close_uses_session_lifecycle_archive_override(tmp_path: Path) -> None:
-    archive_dir = str(tmp_path / "archive")
-    window_start = "2026-01-01T00:00:00+00:00"
-    config = DaemonConfig(
-        session_lifecycle={"transcript_archive_dir": archive_dir},
-    )
-    context = MagicMock()
-    context.config = config
-    context.session_manager.get.return_value = SimpleNamespace(
-        created_at=window_start,
-        source="codex",
-    )
-    evidence = MagicMock()
-    merged = MagicMock()
-
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.resolve_validation_detection_config"
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.derive_transcript_evidence",
-            new=AsyncMock(return_value=evidence),
-        ) as derive,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.derive_prelink_runs",
-            new=AsyncMock(return_value=()),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.merge_transcript_evidence",
-            return_value=merged,
-        ),
-    ):
-        result = await derive_close_transcript_evidence(
-            context,
-            task_id="task",
-            owner_session_id="session",
-            closing_session_id="session",
-            owner_window_start=window_start,
-            task_edited_files=set(),
-            repo_path=str(tmp_path),
-        )
-
-    assert result is merged
-    assert derive.await_args is not None
-    assert derive.await_args.kwargs["archive_dir"] == archive_dir

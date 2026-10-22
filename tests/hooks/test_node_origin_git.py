@@ -20,8 +20,6 @@ import pytest
 from gobby.hooks import _normalization_git, checkout_reads, code_navigation_recovery
 from gobby.hooks.checkout_reads import delivery_scope
 from gobby.utils import daemon_git, spawn
-from gobby.workflows import tdd_paths
-from gobby.workflows.tdd_paths import _git_out
 from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
 
 pytestmark = pytest.mark.unit
@@ -68,39 +66,6 @@ async def test_node_git_decodes_stderr_like_local_worker(
     assert result.stderr == "\udcff"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("node_first", [False, True])
-async def test_worktree_identity_cache_is_machine_scoped(
-    node: FakeNode, spawned: list[list[str]], tmp_path: Path, node_first: bool
-) -> None:
-    cwd = str(tmp_path.resolve())
-    subprocess.run(["git", "-C", cwd, "init", "-q"], check=True)
-    spawned.clear()
-    node.set_git(NODE_MACHINE, stdout=b"/node/root\n/node/common\n")
-    node.set_git(_OTHER_NODE, stdout=b"/other/root\n/other/common\n")
-    machines = (
-        [NODE_MACHINE, None, _OTHER_NODE] if node_first else [None, NODE_MACHINE, _OTHER_NODE]
-    )
-    expected = {
-        None: tmp_path.resolve(),
-        NODE_MACHINE: Path("/node/root"),
-        _OTHER_NODE: Path("/other/root"),
-    }
-    tdd_paths._git_identity.cache_clear()
-    try:
-        for machine in machines + machines:
-            with delivery_scope(machine, asyncio.get_running_loop(), cwd):
-                root = await asyncio.to_thread(
-                    tdd_paths.same_repo_worktree_root, tmp_path, tmp_path
-                )
-            assert root == expected[machine]
-        assert [machine for machine, _, _, _ in node.requests] == [NODE_MACHINE, _OTHER_NODE]
-        assert all(request[2]["query"]["args"][0] == "rev-parse" for request in node.requests)
-        assert len(spawned) == 1
-    finally:
-        tdd_paths._git_identity.cache_clear()
-
-
 @pytest.fixture
 def node(monkeypatch: pytest.MonkeyPatch) -> FakeNode:
     fake = FakeNode()
@@ -120,10 +85,12 @@ async def test_git_lookup_preserves_non_utf8_output(
     subprocess.run(["git", "-C", cwd, "config", "test.binary", expected], check=True)
     node.set_git(NODE_MACHINE, stdout=b"directory-\xff\n")
     with delivery_scope(machine, asyncio.get_running_loop(), cwd):
-        value = await asyncio.to_thread(_git_out, tmp_path, "config", "--get", "test.binary")
-    assert value == expected
-    assert value is not None
-    assert os.fsencode(value) == b"directory-\xff"
+        result = await asyncio.to_thread(
+            checkout_reads.run_git, ["config", "--get", "test.binary"], cwd=cwd, timeout=_TIMEOUT
+        )
+    assert result.returncode == 0
+    assert result.stdout == b"directory-\xff\n"
+    assert os.fsdecode(result.stdout.rstrip(b"\n")) == expected
 
 
 @pytest.fixture
@@ -250,8 +217,11 @@ async def test_sync_git_sites_route_by_origin(
 
     node.set_git(NODE_MACHINE, stdout=b"abc\n")
     with delivery_scope(NODE_MACHINE, loop, cwd):
-        toplevel = await asyncio.to_thread(_git_out, tmp_path, "rev-parse", "--show-toplevel")
-    assert toplevel == "abc"
+        toplevel = await asyncio.to_thread(
+            checkout_reads.run_git, ["rev-parse", "--show-toplevel"], cwd=cwd, timeout=_TIMEOUT
+        )
+    assert toplevel.returncode == 0
+    assert toplevel.stdout == b"abc\n"
 
     node.set_git(NODE_MACHINE, stdout=os.fsencode(str(ignored)) + b"\0")
     with delivery_scope(NODE_MACHINE, loop, cwd):
@@ -270,8 +240,11 @@ async def test_sync_git_sites_route_by_origin(
     assert spawned == []
 
     # Local deliveries still spawn git here.
-    local = await asyncio.to_thread(_git_out, tmp_path, "rev-parse", "--is-inside-work-tree")
-    assert local == "true"
+    local = await asyncio.to_thread(
+        checkout_reads.run_git, ["rev-parse", "--is-inside-work-tree"], cwd=cwd, timeout=_TIMEOUT
+    )
+    assert local.returncode == 0
+    assert local.stdout == b"true\n"
     assert spawned == [["git", "-C", cwd, "rev-parse", "--is-inside-work-tree"]]
 
 

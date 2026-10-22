@@ -7071,56 +7071,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_task_enforcement_rules.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 685,
-      "message": "Argument 1 to \"set\" has incompatible type \"list[str] | Any | None\"; expected \"Iterable[Any]\"",
-      "occurrences": 1,
-      "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_task_enforcement_rules.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 684,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 18,
-      "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_task_enforcement_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 334,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 34,
-      "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_task_enforcement_rules.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 883,
-      "message": "Unsupported operand types for in (\"list[str] | Any | None\" and \"tuple[None, list[Never]]\")",
-      "occurrences": 9,
-      "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_task_enforcement_rules.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 2655,
-      "message": "Item \"None\" of \"list[RuleEffect] | None\" has no attribute \"__iter__\" (not iterable)",
-      "occurrences": 2,
-      "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_templates.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 27,

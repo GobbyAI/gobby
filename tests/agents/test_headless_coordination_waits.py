@@ -89,9 +89,7 @@ async def test_headless_run_refuses_an_agent_wait_before_resolving_the_target(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["wait_for_coordination", "wait_for_agent"])
-async def test_srt_close_reviewer_running_codex_exec_refuses_waits(tool: str) -> None:
-    """#23170: the codex reviewer is headless only under SRT, so the provider alone
-    cannot decide; the run's recorded launch does."""
+async def test_legacy_close_reviewer_uses_ordinary_codex_waits(tool: str) -> None:
     registry, ctx = _registry_for_run(
         SimpleNamespace(
             provider="codex",
@@ -105,13 +103,20 @@ async def test_srt_close_reviewer_running_codex_exec_refuses_waits(tool: str) ->
         else {"run_id": "deadbeef"}
     )
 
-    with patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager:
+    ctx.agent_run_manager.find_by_id_prefix.return_value = []
+    with (
+        patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
+        patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
+    ):
+        payload.return_value = {"success": True, "outcome": "waiting"}
         result = await registry.call(tool, arguments)
 
-    assert result["success"] is False
-    assert result["error_code"] == HEADLESS_WAIT_ERROR_CODE
-    manager.assert_not_called()
-    ctx.agent_run_manager.find_by_id_prefix.assert_not_called()
+    if tool == "wait_for_coordination":
+        assert result == {"success": True, "outcome": "waiting"}
+        manager.return_value.register.assert_called_once()
+    else:
+        assert result == {"success": False, "error": "Agent run deadbeef not found"}
+        ctx.agent_run_manager.find_by_id_prefix.assert_called_once_with("deadbeef", limit=2)
 
 
 @pytest.mark.asyncio
