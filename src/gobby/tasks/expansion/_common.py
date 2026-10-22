@@ -24,7 +24,7 @@ from gobby.plans.semantic_lint import collect_target_inventory
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import Transaction
-from gobby.tasks.acceptance_artifacts import parse_test_reference
+from gobby.tasks.acceptance_references import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
 _DEFAULT_AGENT = "developer"

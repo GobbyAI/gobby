@@ -21,7 +21,7 @@ from gobby.storage.tasks._models import (
     validate_implementation_domain,
     validate_task_type,
 )
-from gobby.tasks.criteria_contract import require_validation_criteria
+from gobby.tasks.criteria_text import require_validation_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,6 @@ def _create_task_in_transaction(
     validation_criteria = require_validation_criteria(task_type, validation_criteria)
     category = validate_category(category)
     implementation_domain = validate_implementation_domain(implementation_domain)
-    validation_status = "pending" if validation_criteria else None
 
     if parent_task_id:
         _lock_open_parent(conn, parent_task_id)
@@ -206,7 +205,7 @@ def _create_task_in_transaction(
                     priority,
                     task_type,
                     labels_json,
-                    validation_status,
+                    None,
                     category,
                     validation_criteria,
                     assigned_agent,

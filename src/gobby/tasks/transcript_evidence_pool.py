@@ -135,30 +135,6 @@ async def run_in_transcript_evidence_pool[T](
         return await asyncio.to_thread(function, *args)
 
 
-def run_blocking_in_transcript_evidence_pool[T](
-    function: Callable[..., T],
-    /,
-    *args: object,
-) -> T:
-    """Run one picklable derivation outside the daemon process from a worker thread.
-
-    Waiting on the result holds no GIL, so the work's file reads and parses cannot
-    contend with the event loop (#23801). Pool failure falls back to this thread.
-    """
-    pool: ProcessPoolExecutor | None = None
-    try:
-        pool = _get_pool()
-        pending = pool.submit(function, *args)
-    except (BrokenProcessPool, OSError) as exc:
-        _handle_pool_failure(pool, exc)
-        return function(*args)
-    try:
-        return pending.result()
-    except BrokenProcessPool as exc:
-        _handle_pool_failure(pool, exc)
-        return function(*args)
-
-
 POOL_EXIT_TIMEOUT_SECONDS = 2.0
 
 
@@ -221,7 +197,6 @@ def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECO
 
 __all__ = [
     "prewarm_transcript_evidence_pool",
-    "run_blocking_in_transcript_evidence_pool",
     "run_in_transcript_evidence_pool",
     "shutdown_transcript_evidence_pool",
 ]

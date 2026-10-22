@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
-import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import ParsedShellCommand
@@ -25,7 +22,6 @@ from gobby.tasks.command_equivalence import parse_validation_shell
 from gobby.tasks.validation_launchers import (
     ENV_ASSIGNMENT_PREFIX,
     SHELL_COMMAND_WRAPPERS,
-    directory_options,
     first_executable,
 )
 
@@ -58,19 +54,6 @@ _UNEXECUTED_TOOL_PATTERNS = (
 # Transcript sources whose contract flags every unexecuted tool call with is_error.
 _DENIAL_FLAGGING_SOURCES = frozenset({"claude"})
 
-_TYPE_CHECK_FAILURE_PATTERNS = (
-    re.compile(r"(?m)^Found [1-9]\d* errors? in [1-9]\d* files?\b"),
-    re.compile(r"(?m)^Failing new errors >= \w+: [1-9]\d*\b"),
-)
-_TEST_FAILURE_PATTERNS = (
-    re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?)\b", re.IGNORECASE),
-    re.compile(
-        r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
-    ),
-    re.compile(r"(?m)^=+ [1-9]\d* errors? in \d"),
-    re.compile(r"(?m)^Failing new issues >= \w+: [1-9]\d*\b"),
-)
-
 
 @dataclass(frozen=True, slots=True)
 class ValidationCommandEquivalence:
@@ -91,183 +74,11 @@ def classify_validation_command_equivalence(command: str) -> ValidationCommandEq
     return ValidationCommandEquivalence(core_command, False, None)
 
 
-def unregistered_execution_reason(
-    command: str, project_path: str | None = None, *, workdir: str | None = None
-) -> str | None:
-    """Require known validation semantics for interpreter and launcher criteria."""
-    parsed = parse_validation_shell(command)
-    initial_directory = workdir or project_path
-    directory = Path(initial_directory) if initial_directory is not None else None
-    for segment in parsed.segments:
-        if segment[:1] == ("cd",):
-            directory = directory / segment[1] if directory and len(segment) == 2 else None
-            continue
-        if segment[:1] == ("export",):
-            continue
-        directories: list[str | None] = []
-        env_directories: list[str] = []
-        core = normalize_validation_evidence_command(
-            shlex.join(segment), directories=env_directories
-        )
-        for env_directory in env_directories:
-            directory_options(("--chdir", env_directory), directories)
-        resolved = first_executable(
-            parse_validation_shell(core),
-            directories=directories,
-        )
-        if resolved is None:
-            return "ambiguous launcher"
-        executable, arguments = resolved
-        opaque = (
-            executable in _OPAQUE_LAUNCHER_HEADS
-            or (
-                executable == "find"
-                and any(arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in arguments)
-            )
-            or (executable == "npx" and "-c" in arguments)
-            or (executable == "make" and "-f" in arguments)
-        )
-        interpreter = (
-            executable in SHELL_COMMAND_WRAPPERS | _NODE_WRAPPERS
-            or _INTERPRETER_EXECUTABLE.fullmatch(executable)
-            or _PYTHON_EXECUTABLE.fullmatch(executable)
-            or _SCRIPT_EXECUTABLE.fullmatch(executable)
-        )
-        if not opaque and not interpreter:
-            continue
-        config = resolve_validation_detection_config(project_path=project_path)
-        if is_validation_command(shlex.join((executable, *arguments)), config):
-            continue
-        script_directory = directory
-        for override in directories:
-            script_directory = (
-                script_directory / override if script_directory and override else None
-            )
-        script = _script_argument(executable, arguments, script_directory) if interpreter else None
-        if script and _tracked_script(script, project_path, script_directory):
-            continue
-        return "unregistered interpreter or launcher"
-    return None
-
-
-def _script_argument(
-    executable: str, arguments: tuple[str, ...], directory: Path | None
-) -> str | None:
-    head = _INTERPRETER_EXECUTABLE.fullmatch(executable)
-    family = head.group(1) if head is not None else executable
-    if family == "deno":
-        # Its first operand is a mode, including inline `eval`, never the script.
-        if arguments[:1] != ("run",):
-            return None
-        arguments = arguments[1:]
-    elif family == "bun":
-        return _bun_script_argument(arguments, directory)
-    options = iter(arguments)
-    for argument in options:
-        if argument == "--":
-            return next(options, None)
-        if not argument.startswith(("-", "+")):
-            return argument
-        if not _PYTHON_EXECUTABLE.fullmatch(executable):
-            return None
-        if argument == "--check-hash-based-pycs":
-            next(options, None)
-            continue
-        for index, option in enumerate(argument[1:]):
-            if option in "cm":
-                return None
-            if option in "WX":
-                if index == len(argument) - 2:
-                    next(options, None)
-                break
-    return None
-
-
-def _bun_script_argument(arguments: tuple[str, ...], directory: Path | None) -> str | None:
-    package_mode = arguments[:1] == ("run",)
-    if package_mode:
-        arguments = arguments[1:]
-    if not arguments or arguments[0].startswith(("-", "+")):
-        return None
-    script = arguments[0]
-    if Path(script).is_absolute() or script.startswith(("./", ".\\")):
-        return script  # Explicit paths always select files, even with a same-name package script.
-    if not package_mode:
-        # Naked Bun subcommands win over bare names; recognized source suffixes select files.
-        return (
-            script
-            if Path(script).suffix
-            in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".mts", ".cjs", ".cts", ".sh"}
-            else None
-        )
-    if directory is None:
-        return None
-    try:
-        current = directory.resolve()
-        for parent in (current, *current.parents):
-            try:
-                package = json.loads((parent / "package.json").read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                continue
-            if not isinstance(package, dict):
-                return None
-            scripts = package.get("scripts", {})
-            if not isinstance(scripts, dict) or script in scripts:
-                return None
-            break
-    except (OSError, ValueError):
-        return None
-    return script
-
-
-def _tracked_script(script: str, project_path: str | None, directory: Path | None) -> bool:
-    if not project_path or directory is None or script == "-":
-        return False
-    try:
-        checkout = Path(project_path)
-        if not checkout.is_absolute():
-            checkout = Path.cwd() / checkout
-        root = checkout.resolve(strict=True)
-        path = directory / script
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        # Resolve the checkout alias only; symlinks inside it remain untrusted.
-        if path.is_relative_to(checkout):
-            path = root / path.relative_to(checkout)
-        cursor = root
-        for component in path.relative_to(root).parts:
-            cursor /= component
-            if cursor.is_symlink() or not cursor.resolve(strict=True).is_relative_to(root):
-                return False
-        resolved = path.resolve(strict=True)
-        relative = resolved.relative_to(root)
-        if not resolved.is_file() or resolved != Path(os.path.abspath(path)):
-            return False
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "--literal-pathspecs",
-                "ls-files",
-                "--error-unmatch",
-                "--",
-                str(relative),
-            ],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
 def wrapped_validation_command(command: object, project_path: str | None = None) -> str | None:
-    """Name the wrapper that would void close-gate credit for a validation run.
+    """Name the wrapper that would void reliable outcome attribution for a validation run.
 
     Returns ``None`` when the run is credited as it stands, or when the call runs
-    nothing the close gate recognizes as validation. The gate's own matcher
+    nothing the matcher recognizes as validation. The project's matcher
     config decides that, resolved with the project's ``.gobby/project.json``
     overrides, so custom matchers count and non-executing forms such as
     ``--collect-only`` or ``--version`` stay quiet. The config is read only once
@@ -513,18 +324,6 @@ def extract_outcome(
                 unknown_reason = reason
                 break
     return "unknown", None, unknown_reason or "missing definitive provider outcome"
-
-
-def infer_failure_categories(output: str | None) -> frozenset[str]:
-    """Return validation categories identified by runner-specific failure output."""
-    if not output:
-        return frozenset()
-    categories: set[str] = set()
-    if any(pattern.search(output) for pattern in _TYPE_CHECK_FAILURE_PATTERNS):
-        categories.add("type_check")
-    if any(pattern.search(output) for pattern in _TEST_FAILURE_PATTERNS):
-        categories.add("test")
-    return frozenset(categories)
 
 
 def _find_exit_code(result: Any) -> int | None:

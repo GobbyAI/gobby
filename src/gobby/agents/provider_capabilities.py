@@ -75,17 +75,6 @@ def provider_supports_sandbox(provider: str) -> bool:
     return provider_capabilities(provider).sandbox
 
 
-def codex_launches_headless(
-    agent_name: str | None, *, sandbox_enforced: bool, sandbox_backend: str | None
-) -> bool:
-    """Return whether a Codex launch runs ``codex exec`` instead of the TUI.
-
-    Only the task-close reviewer under enforced SRT runs headless; every other
-    Codex launch keeps reading its terminal.
-    """
-    return agent_name == "task-close-reviewer" and sandbox_enforced and sandbox_backend == "srt"
-
-
 def agent_run_is_headless(agent_run: object) -> bool:
     """Return whether a spawned run's CLI exits when its turn ends.
 
@@ -99,18 +88,4 @@ def agent_run_is_headless(agent_run: object) -> bool:
     if provider == "grok" and isinstance(metadata, Mapping):
         if metadata.get("provider_cli_mode") == "terminal":
             return False
-    if provider_capabilities(provider).headless_spawn:
-        return True
-    agent_name = getattr(agent_run, "agent_name", None)
-    if provider != "codex" or agent_name != "task-close-reviewer":
-        return False
-    sandbox = metadata.get("sandbox") if isinstance(metadata, Mapping) else None
-    if not isinstance(sandbox, Mapping):
-        # Unrecorded launch: refusing a TUI reviewer only forgoes one compaction,
-        # while accepting a headless one ends its turn and with it the process.
-        return True
-    return codex_launches_headless(
-        agent_name,
-        sandbox_enforced=sandbox.get("enforced") is True,
-        sandbox_backend=sandbox.get("backend"),
-    )
+    return provider_capabilities(provider).headless_spawn

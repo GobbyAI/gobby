@@ -24,7 +24,6 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
-from gobby.agents.provider_capabilities import codex_launches_headless
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
@@ -191,11 +190,6 @@ async def _prepare_provider_sandbox(
             phase_timings_ms=request.phase_timings_ms,
             allow_run_unix_sockets=True,
             prewarm_pre_commit_store=request.prewarm_pre_commit_store,
-            claude_reviewer_auto_approve=(
-                request.auto_approve
-                if provider == "claude" and request.agent_name == "task-close-reviewer"
-                else None
-            ),
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         exception_name = type(exc).__name__
@@ -324,11 +318,6 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     post_sandbox_started = start_spawn_phase()
     if launch.enforced and launch.backend == "srt":
         cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
-        if request.agent_name == "task-close-reviewer":
-            # Reviews use Gobby skills, not account sync or CLI background housekeeping.
-            # Nonessential traffic also disables feature flags that enable account sync.
-            env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-            env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"] = "1"
     cmd.extend(launch.provider_args)
     cmd.extend(request.provider_args)
     if request.prompt:
@@ -445,13 +434,6 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         ),
         *request.codex_config_overrides,
     ]
-    if request.agent_name == "task-close-reviewer":
-        # The reviewer loads skills through Gobby MCP and needs no Codex plugins.
-        config_overrides.append("features.plugins=false")
-        config_overrides.append("features.remote_plugin=false")
-        # Its load_skills step permits Gobby MCP tools; hide execution wrappers.
-        config_overrides.append('plugins."unified-computer-use@openai-bundled".enabled=false')
-        config_overrides.append("mcp_servers.node_repl.enabled=false")
     if launch.enforced and launch.backend == "srt":
         config_overrides.append('sandbox_mode="danger-full-access"')
     prompt_text = request.prompt or ""
@@ -459,13 +441,10 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     inject_persona = bool(agent_prompt and request.session_manager is not None)
     if inject_persona:
         prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
-    headless_reviewer = codex_launches_headless(
-        request.agent_name, sandbox_enforced=launch.enforced, sandbox_backend=launch.backend
-    )
     cmd, _cmd_env = build_cli_command(
         cli="codex",
         resume_session_id=request.resume_session_id,
-        prompt=prompt_text if headless_reviewer else "",
+        prompt="",
         auto_approve=True,
         working_directory=request.cwd,
         model=request.model,
@@ -473,8 +452,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
         config_overrides=config_overrides,
-        mode="headless" if headless_reviewer else "agent",
-        external_sandbox_enforced=headless_reviewer,
+        mode="agent",
     )
     await asyncio.to_thread(
         _record_resume_launch_details,
@@ -496,7 +474,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         child_session_id=gobby_session_id,
         agent_run_id=spawn_context.agent_run_id,
         title=f"gobby-codex-d{request.agent_depth}",
-        codex_prompt=None if headless_reviewer else prompt_text,
+        codex_prompt=prompt_text,
         inject_persona=inject_persona,
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -12,9 +13,7 @@ from gobby.skills.instruction_requirements import (
     parse_instruction_requirement,
 )
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.acceptance_artifacts import extract_artifact_references, parse_test_reference
-from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
-from gobby.tasks.tdd_write_authorization import task_tdd_obligations
+from gobby.tasks.acceptance_references import extract_artifact_references, parse_test_reference
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -33,6 +32,25 @@ CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE = "claimed_task_is_source_work"
 # The claimed category is the whole signal: a docs or research claim owes nothing
 # here, and require-task-before-edit still governs what it may write.
 SOURCE_WORK_CATEGORIES = frozenset({"code", "refactor", "test"})
+TDD_SKILL = "test-driven-development"
+
+
+def task_requires_tdd(
+    *,
+    labels: list[str] | None,
+    additional_skills: list[str] | None,
+    validation_criteria: str | None,
+) -> bool:
+    """Select testing guidance from task metadata, independently of write authorization."""
+    if "tdd:required" in (labels or []) or TDD_SKILL in (additional_skills or []):
+        return True
+    text = (validation_criteria or "").lower()
+    return (
+        TDD_SKILL in text
+        or "tdd evidence" in text
+        or all(re.search(rf"\b{word}\b", text) for word in ("red", "green", "refactor"))
+        or ("failing test" in text and "before implementation" in text)
+    )
 
 
 def build_claimed_task_extra_skill_state(
@@ -44,7 +62,6 @@ def build_claimed_task_extra_skill_state(
     extras: list[str] = []
     requires_tdd = False
     acceptance_test_paths: list[str] = []
-    tdd_obligations: dict[str, list[dict[str, Any]]] = {}
     is_source_work = False
 
     if isinstance(claimed_tasks, dict) and task_manager is not None:
@@ -66,20 +83,10 @@ def build_claimed_task_extra_skill_state(
                 labels=labels,
                 additional_skills=additional_skills,
                 validation_criteria=validation_criteria,
-                enforce_tdd=bool(variables.get("enforce_tdd")),
             )
             if task_needs_tdd:
                 requires_tdd = True
                 _append_unique(extras, TDD_SKILL)
-                tdd_obligations[str(task_id)] = [
-                    {
-                        "task_id": obligation.task_id,
-                        "criterion": obligation.criterion,
-                        "reference": obligation.test.reference,
-                        "regression_only": obligation.regression_only,
-                    }
-                    for obligation in task_tdd_obligations(str(task_id), validation_criteria)
-                ]
 
             if validation_criteria:
                 for reference in extract_artifact_references(validation_criteria, "test"):
@@ -95,7 +102,6 @@ def build_claimed_task_extra_skill_state(
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
         CLAIMED_TASK_REQUIRES_TDD_VARIABLE: requires_tdd,
         CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE: acceptance_test_paths,
-        "claimed_task_tdd_obligations": tdd_obligations,
         CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE: is_source_work,
     }
 

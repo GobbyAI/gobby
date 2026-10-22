@@ -6,7 +6,6 @@ import pytest
 
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans.parser import parse_plan
-from gobby.tasks.criterion_commands import authored_criterion_commands
 from gobby.tasks.expansion._contract import _build_contract_entry_work_task
 
 pytestmark = pytest.mark.unit
@@ -44,7 +43,7 @@ pytestmark = pytest.mark.unit
         ),
     ],
 )
-def test_behavior_artifact_does_not_become_close_command(
+def test_behavior_artifact_preserves_contract_and_validation_text(
     tmp_path: Path, acceptance: str, expected_line: str
 ) -> None:
     plan_path = tmp_path / "behavior.md"
@@ -83,9 +82,7 @@ Targets:
         phase_id="phase-p1",
     )
 
-    assert authored_criterion_commands(leaf["validation"]) == [
-        "uv run pytest tests/auth/test_cli.py -q"
-    ]
+    assert "Run `uv run pytest tests/auth/test_cli.py -q`." in leaf["validation"]
     assert expected_line == leaf["validation"].splitlines()[-1]
     assert artifact_referenced(plan.sections[0].acceptance_items[0], leaf["validation"])
     assert leaf["affected_files"] == ["docs/auth.md"]

@@ -3,14 +3,13 @@
 from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.validation import TaskValidator
 from gobby.utils.session_context import session_context_for_test
 
 
@@ -88,16 +87,7 @@ def mock_task_manager() -> MagicMock:
 
 
 @pytest.fixture
-def mock_task_validator() -> MagicMock:
-    """Create a mock task validator."""
-    validator = AsyncMock(spec=TaskValidator)
-    return validator
-
-
-@pytest.fixture
-def task_registry_with_patches(
-    mock_task_manager: MagicMock, mock_task_validator: MagicMock
-) -> Generator[InternalToolRegistry]:
+def task_registry_with_patches(mock_task_manager: MagicMock) -> Generator[InternalToolRegistry]:
     """Create a full task registry for testing de_escalate_task (now in lifecycle)."""
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -105,7 +95,6 @@ def task_registry_with_patches(
     ):
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            task_validator_resolver=lambda: mock_task_validator,
         )
         yield registry
 
@@ -145,7 +134,6 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Fixed manually",
-            reset_validation=False,
         )
 
     @pytest.mark.integration
@@ -219,7 +207,6 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Resolved manually",
-            reset_validation=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
@@ -252,36 +239,7 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Human fixed the issue",
-            reset_validation=False,
         )
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_de_escalate_task_resets_validation_state(
-        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
-    ) -> None:
-        """Test that de_escalate_task optionally resets validation state."""
-        escalated_task = _task_like(
-            title="Escalated task",
-            validation_fail_count=10,
-            is_escalated=True,
-            escalated_at="2024-01-01T00:00:00",
-            escalation_reason="max_iterations",
-        )
-        mock_task_manager.get_task.return_value = escalated_task
-
-        await task_registry_with_patches.call(
-            "de_escalate_task",
-            {"task_id": "t1", "reason": "Fixed", "reset_validation": True},
-        )
-
-        mock_task_manager.de_escalate_task.assert_called_once_with(
-            "t1",
-            reason="Fixed",
-            reset_validation=True,
-        )
-        assert mock_task_manager.de_escalate_task.call_count == 1
-        assert mock_task_manager.de_escalate_task.call_args is not None
 
     @pytest.mark.integration
     @pytest.mark.asyncio

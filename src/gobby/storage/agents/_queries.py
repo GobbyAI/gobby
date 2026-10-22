@@ -18,23 +18,11 @@ from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
 from ._models import AgentRun, AgentRunListRow
 
 
-def _task_run_condition(
-    task_ids: Sequence[str], *, include_close_reviews: bool
-) -> tuple[str, list[object]]:
-    """Match runs bound to ``task_ids``, plus their close-review runs on request.
-
-    Close reviewers keep ``agent_runs.task_id`` NULL so task-scoped guards never
-    count them; ``task_close_reviews`` is their only link to the reviewed task.
-    """
+def _task_run_condition(task_ids: Sequence[str]) -> tuple[str, list[object]]:
+    """Match runs bound to the requested tasks."""
     placeholders = ", ".join("%s" for _ in task_ids)
     condition = f"ar.task_id IN ({placeholders})"
     params: list[object] = list(task_ids)
-    if include_close_reviews:
-        condition = (
-            f"({condition} OR ar.id IN (SELECT agent_run_id FROM task_close_reviews "
-            f"WHERE task_id IN ({placeholders}) AND agent_run_id IS NOT NULL))"
-        )
-        params.extend(task_ids)
     return condition, params
 
 
@@ -73,7 +61,6 @@ class _AgentRunQueryHost(Protocol):
         *,
         machine_id: str | None,
         task_ids: Sequence[str] | None = None,
-        include_close_reviews: bool = False,
     ) -> list[AgentRun]: ...
 
 
@@ -168,15 +155,8 @@ class _AgentRunQueryMixin:
         Task-owned parked runs are relaunched by the dispatcher; these have no
         dispatch owner and are retried by the lifecycle monitor instead.
 
-        Task-close reviewers are excluded here in SQL rather than by the
-        caller: nothing rebinds `task_close_reviews.agent_run_id` to a
-        successor, so `_authenticate_submission` rejects any resumed reviewer
-        and the relaunch is pure waste. Filtering after the query would still
-        spend one of the `limit` candidate slots and burn the run's
-        `daemon_stop_resume_failure_count` budget (#22404).
+        Historical close-review runs are inert and must never resume.
         """
-        from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
-
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
         unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
@@ -209,7 +189,7 @@ class _AgentRunQueryMixin:
                       AND s.status != 'deleted'
               )
             """,
-            (machine_id, TASK_CLOSE_REVIEWER_AGENT, max_age_hours),
+            (machine_id, "task-close-reviewer", max_age_hours),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
@@ -361,7 +341,6 @@ class _AgentRunQueryMixin:
         offset: int = 0,
         *,
         task_ids: Sequence[str] | None = None,
-        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """
         List agent runs, optionally filtered by status and/or project.
@@ -372,7 +351,6 @@ class _AgentRunQueryMixin:
             project_id: Optional project ID filter (joins through sessions).
             offset: Number of matching rows to skip.
             task_ids: Optional task filter.
-            include_close_reviews: Also match close-review runs of ``task_ids``.
 
         Returns:
             List of AgentRun objects.
@@ -391,9 +369,7 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            condition, task_params = _task_run_condition(
-                task_ids, include_close_reviews=include_close_reviews
-            )
+            condition, task_params = _task_run_condition(task_ids)
             conditions.append(condition)
             params.extend(task_params)
 
@@ -466,7 +442,6 @@ class _AgentRunQueryMixin:
         *,
         machine_id: str | None,
         task_ids: Sequence[str] | None = None,
-        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active runs under the requested explicit scope."""
         params: list[object] = []
@@ -477,9 +452,7 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            condition, task_params = _task_run_condition(
-                task_ids, include_close_reviews=include_close_reviews
-            )
+            condition, task_params = _task_run_condition(task_ids)
             where_clause += f" AND {condition}"
             params.extend(task_params)
         return self._fetch_runs_with_live_stats(
@@ -549,7 +522,6 @@ class _AgentRunQueryMixin:
         offset: int = 0,
         *,
         task_ids: Sequence[str] | None = None,
-        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active runs across all machines."""
         return self._list_active_runs(
@@ -557,7 +529,6 @@ class _AgentRunQueryMixin:
             offset,
             machine_id=None,
             task_ids=task_ids,
-            include_close_reviews=include_close_reviews,
         )
 
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:
@@ -577,7 +548,6 @@ class _AgentRunQueryMixin:
         status: AgentRunStatus | None = None,
         *,
         task_ids: Sequence[str] | None = None,
-        include_close_reviews: bool = False,
     ) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
         conditions = ["ar.parent_session_id = %s"]
@@ -590,9 +560,7 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            condition, task_params = _task_run_condition(
-                task_ids, include_close_reviews=include_close_reviews
-            )
+            condition, task_params = _task_run_condition(task_ids)
             conditions.append(condition)
             params.extend(task_params)
 

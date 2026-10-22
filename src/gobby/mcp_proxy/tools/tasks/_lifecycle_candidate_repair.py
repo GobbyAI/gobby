@@ -6,10 +6,10 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import _canonical_commit_sha
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.review_history import ReviewHistory
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.close_invariants import resolve_commit
 from gobby.utils.session_context import get_current_session_id
 
 
@@ -27,9 +27,7 @@ def register_closed_candidate_repair(registry: InternalToolRegistry, ctx: Regist
                 resolve_task_id_for_mcp, ctx.task_manager, task_id
             )
             task = await asyncio.to_thread(ctx.task_manager.get_task, resolved_id)
-            review = await asyncio.to_thread(
-                TaskCloseReviewStore(ctx.task_manager.db).get, review_id
-            )
+            review = await asyncio.to_thread(ReviewHistory(ctx.task_manager.db).get, review_id)
             caller = get_current_session_id()
             if task is None or review is None or caller is None:
                 raise ValueError("A task, original close review and active caller are required.")
@@ -50,7 +48,7 @@ def register_closed_candidate_repair(registry: InternalToolRegistry, ctx: Regist
                 raise ValueError(
                     "The original explicit candidate and registered checkout are required."
                 )
-            candidate = await _canonical_commit_sha(requested, cwd=repo_path)
+            candidate = await resolve_commit(repo_path, requested)
             if candidate is None:
                 raise ValueError("Git cannot resolve the originally reviewed commit object.")
             result = await asyncio.to_thread(

@@ -830,7 +830,6 @@ def register_agent_query_tools(
                         resolved_parent_id,
                         limit=limit,
                         task_ids=task_ids,
-                        include_close_reviews=True,
                     )
             else:
                 parent_status = cast(AgentRunStatus, status_key)
@@ -846,21 +845,17 @@ def register_agent_query_tools(
                         limit=limit,
                         status=parent_status,
                         task_ids=task_ids,
-                        include_close_reviews=True,
                     )
         elif status_key == "active":
             if task_ids is None:
                 runs = ctx.agent_run_manager.list_active_global(limit=limit)
             else:
-                runs = ctx.agent_run_manager.list_active_global(
-                    limit=limit, task_ids=task_ids, include_close_reviews=True
-                )
+                runs = ctx.agent_run_manager.list_active_global(limit=limit, task_ids=task_ids)
         elif resolved_task_id is not None:
             runs = ctx.agent_run_manager.list_by_status(
                 status=status_key,
                 limit=limit,
                 task_ids=task_ids,
-                include_close_reviews=True,
             )
         elif status_key == "running":
             runs = ctx.agent_run_manager.list_running(limit=limit)

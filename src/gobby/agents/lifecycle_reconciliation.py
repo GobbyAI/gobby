@@ -12,8 +12,6 @@ from gobby.agents.capture import TerminationErrorCode, terminate_managed_runtime
 from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.run_completion import (
     closed_task_completion_result,
-    cooperative_close_handoff_pending,
-    ended_caller_close_review_outcome,
 )
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import (
@@ -240,26 +238,10 @@ class LifecycleReconciliation:
                 )
                 continue
             if not is_task_closed(task):
-                outcome = await self._run_db(ended_caller_close_review_outcome, self._db, run)
-                if outcome is not None:
-                    await self._cleanup_handler.cleanup_agent(
-                        run,
-                        terminal_payload=outcome[1],
-                        is_success=outcome[0] == "complete",
-                    )
-                    handled += 1
                 continue
 
             metadata = run.resume_metadata_json or {}
             if metadata.get("allow_closed_task") is True:
-                continue
-
-            if await self._cooperative_close_handoff_pending(run):
-                logger.debug(
-                    "Deferring closed-task completion for agent %s until its "
-                    "cooperative close-review handoff or stagnation fallback",
-                    run.id,
-                )
                 continue
 
             task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
@@ -283,10 +265,6 @@ class LifecycleReconciliation:
                 )
 
         return handled
-
-    async def _cooperative_close_handoff_pending(self, run: AgentRun) -> bool:
-        """Keep a close-review caller alive while it can cooperatively report."""
-        return bool(await self._run_db(cooperative_close_handoff_pending, self._db, run))
 
     async def reap_stale_pending(self) -> int:
         """Reap pending terminals past the in-doubt deadline through the strict reaper."""

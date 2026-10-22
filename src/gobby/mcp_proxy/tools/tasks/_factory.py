@@ -19,7 +19,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
 
 def create_task_registry(
     task_manager: LocalTaskManager,
-    task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
     startup_config: "DaemonConfig | None" = None,
     config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
     project_id: str | None = None,
@@ -42,7 +40,6 @@ def create_task_registry(
 
     Args:
         task_manager: LocalTaskManager instance
-        task_validator_resolver: per-call resolver for the current TaskValidator (optional)
         startup_config: DaemonConfig fallback before runtime readiness
         config_resolver: per-operation current DaemonConfig resolver
         project_id: Default project ID (optional)
@@ -53,7 +50,6 @@ def create_task_registry(
     # Create the shared context
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator_resolver=task_validator_resolver,
         startup_config=startup_config,
         config_resolver=config_resolver,
         review_learning_service=review_learning_service,

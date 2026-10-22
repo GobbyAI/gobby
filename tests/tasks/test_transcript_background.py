@@ -503,7 +503,7 @@ def test_following_multi_file_operator_and_comment_reads_name_no_file(
     assert _read_path(_bash(prefix + command)) is None
 
 
-def test_grep_context_read_delivers_each_group_separately() -> None:
+def test_grep_context_read_keeps_latest_group_separate() -> None:
     runs = [_pending_run()]
     output = (
         "3:Pytest: 1 passed in 0.01s\n4-detail a\n--\n10:Pytest: 2 passed in 0.02s\n11-detail b"
@@ -516,8 +516,5 @@ def test_grep_context_read_delivers_each_group_separately() -> None:
 
     recover_background_receipt(runs, receipt, _bash("grep -n -A1 passed /tmp/job-1.out"), order=2)
 
-    recovered = [delivery.text for delivery in runs[0].output_deliveries if delivery.source]
-    assert recovered == [
-        "Pytest: 1 passed in 0.01s\ndetail a",
-        "Pytest: 2 passed in 0.02s\ndetail b",
-    ]
+    assert runs[0].output == "Pytest: 2 passed in 0.02s\ndetail b"
+    assert runs[0].output_recovered_from == "/tmp/job-1.out"

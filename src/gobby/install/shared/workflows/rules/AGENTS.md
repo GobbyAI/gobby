@@ -19,7 +19,6 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
-| `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
 | `skill-discovery` | `skill-discovery/` | 30 | Bootstrap ordered core guidance each context epoch, require language skills on first file write, require the impeccable design contract on first UI file write, require a plan reference on plan-artifact writes, require the code-review skill on the first commit/merge/rebase/cherry-pick/revert of an epoch and a fresh `ocr delegate rule` review before each later one, list skill hubs once per session, and reset loading tracking |
 | `brevity` | `brevity/` | 5 | Handle opt-out phrases, drift detection and next-turn feedback, and per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |

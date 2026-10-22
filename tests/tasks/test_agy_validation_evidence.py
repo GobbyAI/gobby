@@ -12,7 +12,6 @@ import pytest
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.sessions.transcripts import PARSER_REGISTRY
 from gobby.storage.session_models import Session
-from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 
 pytestmark = pytest.mark.unit
@@ -112,17 +111,7 @@ async def _evidence(path: Path) -> Any:
         _session(path),
         None,
         default_validation_detection_config(),
-        set(),
-        str(path.parent),
         archive_dir=str(path.parent / "archives"),
-    )
-
-
-def _gate(evidence: Any) -> Any:
-    return evaluate_validation_commands(
-        task_category="code",
-        evidence=evidence,
-        has_attributed_edits=True,
     )
 
 
@@ -141,7 +130,6 @@ async def test_agy_success_failure_and_recovery_use_live_generic_payloads(
     )
     failed = await _evidence(transcript)
     assert [(run.outcome, run.exit_code) for run in failed.validation_runs] == [("failure", 7)]
-    assert _gate(failed).status == "failed"
 
     _write_jsonl(
         transcript,
@@ -157,7 +145,6 @@ async def test_agy_success_failure_and_recovery_use_live_generic_payloads(
         ("failure", 7),
         ("success", 0),
     ]
-    assert _gate(recovered).status == "passed"
 
 
 @pytest.mark.asyncio
@@ -176,7 +163,6 @@ async def test_agy_nonterminal_unstructured_contradictory_and_provenance_free(
     )
     nonterminal = await _evidence(transcript)
     assert [run.outcome for run in nonterminal.validation_runs] == ["unknown"]
-    assert _gate(nonterminal).status == "failed"
 
     _write_jsonl(
         transcript,
@@ -188,7 +174,6 @@ async def test_agy_nonterminal_unstructured_contradictory_and_provenance_free(
     unstructured = await _evidence(transcript)
     assert [run.outcome for run in unstructured.validation_runs] == ["unknown"]
     assert unstructured.degraded_capabilities
-    assert _gate(unstructured).status == "failed"
 
     _write_jsonl(
         transcript,
@@ -201,7 +186,6 @@ async def test_agy_nonterminal_unstructured_contradictory_and_provenance_free(
     )
     contradictory = await _evidence(transcript)
     assert [run.outcome for run in contradictory.validation_runs] == ["unknown"]
-    assert _gate(contradictory).status == "failed"
 
     _write_jsonl(
         transcript,
@@ -215,6 +199,5 @@ async def test_agy_nonterminal_unstructured_contradictory_and_provenance_free(
         ("success", 0)
     ]
     assert provenance_free.degraded_capabilities == ()
-    assert _gate(provenance_free).status == "passed"
     end_raw = json.loads(transcript.read_text(encoding="utf-8").splitlines()[-1])
     assert "outcome_provenance" not in end_raw

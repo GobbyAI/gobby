@@ -7,7 +7,7 @@ from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
-from gobby.tasks.criteria_contract import require_validation_criteria
+from gobby.tasks.criteria_text import require_validation_criteria
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 

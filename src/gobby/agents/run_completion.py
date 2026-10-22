@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.lifecycle_checkout import resolve_session_checkout_root
@@ -40,7 +39,6 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRunTerminalReason
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
-    from gobby.storage.task_close_reviews import TaskCloseReview
 
 
 logger = logging.getLogger(__name__)
@@ -282,110 +280,6 @@ def bound_task_is_closed(db: HubDatabase, run: Any) -> bool:
         )
         return False
     return is_task_closed(task)
-
-
-def cooperative_close_handoff_pending(db: HubDatabase, run: Any) -> bool:
-    """True when session-end/dead-PID must not fail a close-review caller.
-
-    An in-flight agentic close review owns the caller. A live caller also
-    waits for a closed verdict's delivery, then can cooperative-end until it
-    stagnates. An ended caller can do neither, so its review state decides.
-    """
-    from gobby.autonomous.progress_tracker import ProgressTracker
-
-    review = _latest_caller_close_review(db, run)
-    if review is None:
-        return False
-    if review.active:
-        return True
-    if review.status != "closed" or not _caller_session_is_live(db, review.caller_session_id):
-        return False
-    return review.delivered_at is None or not ProgressTracker(db).is_stagnant(
-        review.caller_session_id
-    )
-
-
-def ended_caller_close_review_outcome(
-    db: HubDatabase,
-    run: Any,
-    *,
-    caller_ended: bool = False,
-) -> tuple[Literal["complete", "fail"], str] | None:
-    """Terminal action for an open-task run whose caller ended after its close review.
-
-    ``external_pending`` completes, as a live caller following that verdict
-    would. Every other terminal status fails, including ``closed``: close
-    commits the task before finishing the review, so an open task was reopened.
-    SESSION_END passes ``caller_ended`` because it runs before the session row
-    leaves its live status.
-    """
-    review = _latest_caller_close_review(db, run)
-    if (
-        review is None
-        or review.active
-        or (not caller_ended and _caller_session_is_live(db, review.caller_session_id))
-        or bound_task_is_closed(db, run)
-    ):
-        return None
-    if review.status == "external_pending":
-        return (
-            "complete",
-            "Agent session ended with its close review external_pending: coordinator-owned "
-            f"live criteria remain pending verification; task={review.task_ref} remains open; "
-            f"review_id={review.id}",
-        )
-    return (
-        "fail",
-        "Agent session ended before its close review closed the task; "
-        f"review_status={review.status}; task={review.task_ref} remains open; "
-        f"review_id={review.id}",
-    )
-
-
-def _latest_caller_close_review(db: HubDatabase, run: Any) -> TaskCloseReview | None:
-    from gobby.storage.task_close_reviews import TaskCloseReviewStore
-
-    task_id = getattr(run, "task_id", None)
-    child_session_id = getattr(run, "child_session_id", None)
-    if not isinstance(task_id, str) or not task_id:
-        return None
-    if not isinstance(child_session_id, str) or not child_session_id:
-        return None
-    return TaskCloseReviewStore(db).get_latest_agentic_for_task_caller(
-        task_id=task_id,
-        caller_session_id=child_session_id,
-    )
-
-
-def _caller_session_is_live(db: HubDatabase, session_id: str) -> bool:
-    from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
-
-    try:
-        with db.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT s.status,
-                       EXISTS (
-                           SELECT 1
-                           FROM agent_runs ar
-                           JOIN terminals t ON t.id = ar.terminal_id
-                           WHERE ar.id = s.agent_run_id
-                             AND t.state IN ('exited', 'orphaned')
-                       ) AS terminal_gone
-                FROM sessions s
-                WHERE s.id = %s
-                """,
-                (session_id,),
-            ).fetchone()
-    except Exception:
-        # Unknown liveness must not terminalize a caller that may still be working.
-        logger.warning("Failed to read caller session %s liveness", session_id, exc_info=True)
-        return True
-    if not isinstance(row, Mapping):
-        return False
-    status = row["status"]
-    terminal_gone = row["terminal_gone"]
-    return isinstance(status, str) and status in LIVE_SESSION_STATUSES and not bool(terminal_gone)
 
 
 def _task_completion_state(db: HubDatabase, task_id: str | None) -> TaskCompletionState:

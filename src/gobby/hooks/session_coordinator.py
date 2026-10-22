@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakValueDictionary
 
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
-from gobby.agents.run_completion import (
-    cooperative_close_handoff_pending,
-    ended_caller_close_review_outcome,
-)
 from gobby.agents.runtime_cleanup import release_session_end_run
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run, record_sandbox_retention
 from gobby.hooks.session_completion import (
@@ -618,23 +614,9 @@ class SessionCoordinator:
             if task_close_result is not None:
                 result = task_close_result
             else:
-                db = self._agent_run_manager.db
-                outcome = ended_caller_close_review_outcome(db, agent_run, caller_ended=True)
-                if outcome is None and cooperative_close_handoff_pending(db, agent_run):
-                    self.logger.info(
-                        "Deferring session-end for agent run %s: close-review handoff pending",
-                        agent_run_id,
-                    )
-                    return
-                if outcome is None:
-                    fail_reason = incomplete_step_workflow_error(
-                        self._agent_run_manager, self.logger, session_id
-                    )
-                elif outcome[0] == "fail":
-                    fail_reason = outcome[1]
-                else:
-                    fail_reason = None
-                    result = f"{result}\n\n{outcome[1]}" if result else outcome[1]
+                fail_reason = incomplete_step_workflow_error(
+                    self._agent_run_manager, self.logger, session_id
+                )
                 if fail_reason:
                     if tool_calls_count == 0 and turns_used == 0:
                         fail_reason = f"{fail_reason}\n\n{format_no_activity_error(result)}"

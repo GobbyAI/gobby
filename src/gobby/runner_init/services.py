@@ -37,7 +37,6 @@ from gobby.storage.embedding_generation_state import (
 )
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
-from gobby.tasks.validation import TaskValidator
 
 from .config_subscribers import PreparedService, ServiceSubscriber, live_subscriber_keys
 from .embedding_lease import _EMBEDDING_REACQUIRE_POLL_SECONDS, _ManagedEmbeddingLease
@@ -86,7 +85,6 @@ def init_services(runner: GobbyRunner) -> None:
     _init_mcp_stack(runner)
     _init_memory_backup(runner)
     _init_message_processor(runner)
-    _init_task_validator(runner)
     _init_project_context(runner)
     from gobby.utils.deps import get_coding_cli_hook_drift, get_git_hook_drift
 
@@ -210,11 +208,6 @@ async def _register_stateful_services(runner: GobbyRunner) -> None:
             name="message_processor",
             keys=live_subscriber_keys("message_processor"),
             builder=lambda change: _build_message_processor(runner, change.desired, loop),
-        ),
-        ServiceSubscriber(
-            name="task_validator",
-            keys=live_subscriber_keys("task_validator"),
-            builder=lambda change: _build_task_validator(runner, change.desired),
         ),
         ServiceSubscriber(
             name="mcp_proxy_config",
@@ -555,12 +548,6 @@ def _build_message_processor(
     return PreparedService(processor, dispose, activate)
 
 
-def _build_task_validator(runner: GobbyRunner, config: DaemonConfig) -> TaskValidator | None:
-    if not config.gobby_tasks.validation.enabled:
-        return None
-    return TaskValidator(config.gobby_tasks.validation)
-
-
 def _dispose_async(
     loop: asyncio.AbstractEventLoop,
     operation: Callable[[], Any],
@@ -598,8 +585,6 @@ def _apply_stateful_services(runner: GobbyRunner) -> None:
     runner.message_processor = (
         message_processor if isinstance(message_processor, SessionMessageProcessor) else None
     )
-    task_validator = bundle.services.get("task_validator")
-    runner.task_validator = task_validator if isinstance(task_validator, TaskValidator) else None
 
 
 def _init_llm_service(runner: GobbyRunner) -> None:
@@ -808,19 +793,6 @@ def _init_message_processor(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
             run_db=runner.db_executor.run,
         )
-
-
-def _init_task_validator(runner: GobbyRunner) -> None:
-    runner.task_validator = None
-
-    gobby_tasks_config = runner.startup_config.gobby_tasks
-    if not gobby_tasks_config.validation.enabled:
-        return
-    try:
-        runner.task_validator = TaskValidator(gobby_tasks_config.validation)
-    except Exception:
-        mark_service_degraded(runner, "task_validator")
-        logger.exception("Failed to initialize TaskValidator")
 
 
 def _init_project_context(runner: GobbyRunner) -> None:

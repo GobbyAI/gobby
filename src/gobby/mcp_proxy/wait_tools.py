@@ -22,7 +22,6 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # The validator's verdict submission re-runs the same close evaluation as
     # close_task before applying the verdict; at the default 30s the caller gave
     # up while the daemon finished, and the rejection or close result was lost.
-    "submit_close_review",
     # Landing can exceed 30s; preserve the caller's authoritative merge result.
     "land_commit",
     "expand_task",

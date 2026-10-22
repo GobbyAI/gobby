@@ -477,10 +477,7 @@ async def _cleanup_missing_terminal_agent_run(
 ) -> bool:
     """Park and immediately resume a run whose terminal did not survive restart.
 
-    A one-shot close-review caller or closed-task run is left running instead: a resume
-    would start a session its review does not know about. Reporting it resolved
-    clears its fence so lifecycle reconciliation terminalizes it. A task-close
-    reviewer is parked without a resume for the same reason.
+    Closed-task runs are left for lifecycle reconciliation to terminalize.
     """
     config = runner.config_runtime.capture().snapshot.active
     monitor = runner.agent_lifecycle_monitor
@@ -488,37 +485,23 @@ async def _cleanup_missing_terminal_agent_run(
         return False
 
     if getattr(run, "task_id", None) and not getattr(run, "is_interactive", False):
-        from gobby.agents.run_completion import (
-            bound_task_is_closed,
-            cooperative_close_handoff_pending,
-            ended_caller_close_review_outcome,
-        )
+        from gobby.agents.run_completion import bound_task_is_closed
 
         db = runner.agent_runner.run_storage.db
-        for claims_run in (
-            cooperative_close_handoff_pending,
-            bound_task_is_closed,
-            ended_caller_close_review_outcome,
-        ):
-            if await _run_db(runner, claims_run, db, run):
-                logger.info(
-                    "Leaving agent %s to task reconciliation after missing terminal %r",
-                    run.id,
-                    terminal_ref,
-                )
-                return True
+        if await _run_db(runner, bound_task_is_closed, db, run):
+            logger.info(
+                "Leaving agent %s to task reconciliation after missing terminal %r",
+                run.id,
+                terminal_ref,
+            )
+            return True
 
     from gobby.agents.resume_executor import resume_agent_run
-    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
     transitioned = await monitor.terminalize_cancelled_run(
         run.id,
         terminal_reason="daemon_stop",
     )
-    if getattr(run, "agent_name", None) == TASK_CLOSE_REVIEWER_AGENT:
-        # Its review stays bound to this run; close-review reconciliation
-        # retries the parked reviewer, so a resumed successor is never started.
-        return bool(transitioned)
     parked = await _run_db(runner, runner.agent_runner.run_storage.get, run.id)
     if not transitioned or parked is None:
         return False

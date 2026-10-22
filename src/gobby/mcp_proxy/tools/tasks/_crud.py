@@ -27,14 +27,10 @@ from gobby.storage.tasks import (
     ParentTaskClosedError,
     TaskNotFoundError,
 )
-from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
+from gobby.tasks.acceptance_references import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.close_receipts import list_close_receipts
-from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
-from gobby.tasks.criterion_commands import (
-    criterion_command_authoring_payload,
-    malformed_criterion_command_findings,
-)
+from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
@@ -59,10 +55,7 @@ def _task_invariant_error(
     except TaskCriteriaError as exc:
         return str(exc)
     if supplied_validation_criteria is not None:
-        findings = (
-            *malformed_test_reference_findings(supplied_validation_criteria),
-            *malformed_criterion_command_findings(supplied_validation_criteria),
-        )
+        findings = (*malformed_test_reference_findings(supplied_validation_criteria),)
         if findings:
             return "\n".join(findings)
     if category == "code" and implementation_domain is None:
@@ -351,9 +344,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "seq_num": task.seq_num,
                 "ref": f"#{task.seq_num}",
             }
-
-        if validation_criteria:
-            result.update(criterion_command_authoring_payload(validation_criteria))
 
         if claim_warning:
             result["warning"] = claim_warning
@@ -658,8 +648,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         result: dict[str, Any] = {}
         if target_check:
             result["targets_not_found"] = target_check
-        if validation_criteria:
-            result.update(criterion_command_authoring_payload(validation_criteria))
         return result
 
     registry.register(

@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.tasks.validation import TaskValidator
     from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.workspace_agent_panes import AgentPaneReserver
     from gobby.terminals.workspace_ops import WorkspaceOps
@@ -66,7 +65,6 @@ def setup_internal_registries(
     memory_manager_resolver: Callable[[], MemoryManager | None] | None = None,
     task_manager: LocalTaskManager | None = None,
     db: HubDatabase | None = None,
-    task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
     session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
     provider_capacity_resolver: Callable[[], ProviderCapacityService | None] | None = None,
@@ -122,7 +120,6 @@ def setup_internal_registries(
         memory_manager_resolver: per-call resolver for the current MemoryManager
         task_manager: Task storage manager
         db: Active hub database connection for registries that need storage
-        task_validator_resolver: per-call resolver for the current TaskValidator
         session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
         llm_service_resolver: per-call resolver for the current LLM service
@@ -180,7 +177,6 @@ def setup_internal_registries(
 
             tasks_registry = create_task_registry(
                 task_manager=task_manager,
-                task_validator_resolver=task_validator_resolver,
                 startup_config=initial_config,
                 config_resolver=config_resolver,
                 project_id=project_id,
@@ -196,7 +192,6 @@ def setup_internal_registries(
 
             ops_registry = create_task_ops_registry(
                 task_manager=task_manager,
-                task_validator_resolver=task_validator_resolver,
                 startup_config=initial_config,
                 config_resolver=config_resolver,
                 llm_service_resolver=llm_service_resolver,

@@ -8,7 +8,6 @@ at most one active claim, and that claim receives its edits.
 from __future__ import annotations
 
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,9 +19,6 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
-from gobby.tasks.transcript_evidence_models import TranscriptTaskClaim
-from gobby.tasks.transcript_evidence_snapshots import PendingTool
-from gobby.tasks.transcript_task_claims import task_claim
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import claims_without_edit_target
@@ -322,7 +318,7 @@ async def test_releasing_the_newer_claim_leaves_the_survivor_without_an_edit_tar
 
 
 @pytest.mark.asyncio
-async def test_reclaiming_the_sole_survivor_is_a_full_claim_that_close_evidence_counts(
+async def test_reclaiming_the_sole_survivor_restores_claim_and_edit_attribution(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -343,17 +339,6 @@ async def test_reclaiming_the_sole_survivor_is_a_full_claim_that_close_evidence_
     SessionVariableManager(temp_db).record_edited_files(
         canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
     )
-    at = datetime.now(UTC)
-    call = PendingTool(
-        name="mcp__gobby__call_tool",
-        arguments={
-            "server_name": "gobby-tasks",
-            "tool_name": "claim_task",
-            "arguments": {"task_id": f"#{landed.seq_num}"},
-        },
-        timestamp=at,
-        order=1,
-    )
 
     assert reclaimed == {
         "success": True,
@@ -364,7 +349,6 @@ async def test_reclaiming_the_sole_survivor_is_a_full_claim_that_close_evidence_
     state = _variables(temp_db, canonical_task_session)
     assert state["active_task_id"] == landed.id
     assert state["task_edited_files"] == {landed.id: ["a.py"]}
-    assert task_claim(call, reclaimed, at) == TranscriptTaskClaim(task_ref=landed.id, claimed_at=at)
 
 
 @pytest.mark.asyncio

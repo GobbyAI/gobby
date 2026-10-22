@@ -4,21 +4,17 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from gobby.config.validation_detection import classify_validation_command
-from gobby.tasks.close_test_coverage import uncovered_pytest_paths
 from gobby.tasks.command_equivalence import command_covers, pytest_targets, run_location
-from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
     extract_outcome,
     extract_output,
     is_unexecuted_tool_result,
-    unregistered_execution_reason,
     wrapped_validation_command,
 )
 
@@ -39,7 +35,6 @@ def test_env_unset_chdir_ignore_environment_options_are_credited(prefix: str) ->
     equivalence = classify_validation_command_equivalence(command)
     assert equivalence.wrapped is False
     assert equivalence.core_command == bare
-    assert unregistered_execution_reason(command) is None
     assert run_location(command, workdir="/original") == "/wt"
     match = classify_validation_command(command)
     bare_match = classify_validation_command(bare)
@@ -71,7 +66,6 @@ def test_env_unsafe_or_unknown_options_stay_uncredited(options: str) -> None:
     command = f"env {options}"
     if options not in {"-C", "--chdir", "-u", "--unset"}:
         command += " pytest tests/a.py"
-    assert unregistered_execution_reason(command) == "ambiguous launcher"
     assert not command_covers(command, "pytest tests/a.py")
 
 
@@ -85,69 +79,27 @@ def test_env_options_command_equivalence_matches_bare(options: str) -> None:
     )
 
 
-@pytest.mark.parametrize("prefix", ["env -u X -C /wt", "sudo env --chdir=/wt"])
-def test_env_chdir_reaches_tracked_script_ownership(
-    prefix: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    observed: list[tuple[str, str | None, Path | None]] = []
-
-    def tracked_script(script: str, project_path: str | None, directory: Path | None) -> bool:
-        observed.append((script, project_path, directory))
-        return directory == Path("/wt")
-
-    monkeypatch.setattr("gobby.tasks.transcript_outcomes._tracked_script", tracked_script)
-    assert (
-        unregistered_execution_reason(f"{prefix} python check.py", "/repo", workdir="/original")
-        is None
-    )
-    assert observed == [("check.py", "/repo", Path("/wt"))]
-
-
 @pytest.mark.parametrize(
-    "prefix,expected_location,covered",
+    "prefix,expected_location",
     [
-        ("env -C {root} -C .", "foreign", False),
-        ("env --chdir={root} --chdir=.", "foreign", False),
-        ("env -C {root} env -C .", "repo", True),
-        ("env - --chdir={root}", None, False),
-        ("env - --unset=NAME --chdir={root}", None, False),
-        ("env - -C {root}", None, False),
-        ("env -C {root} - --unset=NAME", None, False),
+        ("env -C {root} -C .", "foreign"),
+        ("env --chdir={root} --chdir=.", "foreign"),
+        ("env -C {root} env -C .", "repo"),
+        ("env - --chdir={root}", None),
+        ("env - --unset=NAME --chdir={root}", None),
+        ("env - -C {root}", None),
+        ("env -C {root} - --unset=NAME", None),
     ],
 )
-def test_env_option_boundaries_preserve_foreign_tree_coverage(
-    tmp_path: Path, prefix: str, expected_location: str | None, covered: bool
+def test_env_option_boundaries_preserve_run_location(
+    tmp_path: Path, prefix: str, expected_location: str | None
 ) -> None:
     root = tmp_path / "repo"
     foreign = tmp_path / "foreign"
-    for tree, contents in [(root, "assert True\n"), (foreign, "assert False\n")]:
-        (tree / "tests").mkdir(parents=True)
-        (tree / "tests/a.py").write_text(contents)
     command = f"{prefix.format(root=root)} pytest tests/a.py"
     expected_directory = str(tmp_path / expected_location) if expected_location else None
     assert run_location(command, workdir=str(foreign)) == expected_directory
-    now = datetime(2026, 10, 16, tzinfo=UTC)
-    run = TranscriptValidationRun(
-        session_id="synthetic",
-        source="codex",
-        command=command,
-        categories=("test",),
-        matcher_id="python-tests",
-        label="pytest",
-        outcome="success",
-        started_at=now,
-        completed_at=now,
-        order=0,
-        exit_code=0,
-        output="1 passed in 0.01s",
-        workdir=str(foreign),
-    )
-    expected_uncovered = () if covered else ("tests/a.py",)
-    assert (
-        uncovered_pytest_paths((run,), ("tests/a.py",), close_root=str(root)) == expected_uncovered
-    )
     if expected_location is None:
-        assert unregistered_execution_reason(command) == "ambiguous launcher"
         assert not command_covers(command, "pytest tests/a.py")
 
 
@@ -241,33 +193,7 @@ def test_launcher_wrappers_setsid_ionice_unbuffer_chronic_arch_are_credited(
 def test_launcher_unknown_options_do_not_earn_credit(launcher: str) -> None:
     command = f"{launcher} uv run pytest tests/a.py -q"
     assert not command_covers(command, "uv run pytest tests/a.py -q")
-    assert unregistered_execution_reason(command) is not None
     assert classify_validation_command(command) is None
-
-
-def test_tracked_script_resolves_symlinked_checkout(tmp_path: Path) -> None:
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q", str(repository)], check=True, capture_output=True)
-    script = repository / "check.py"
-    script.write_text("print('ok')\n")
-    subprocess.run(
-        ["git", "-C", str(repository), "add", "check.py"], check=True, capture_output=True
-    )
-    alias = tmp_path / "alias"
-    alias.symlink_to(repository, target_is_directory=True)
-    assert unregistered_execution_reason("python check.py", str(alias), workdir=str(alias)) is None
-    assert (
-        unregistered_execution_reason(
-            f"python {alias / 'check.py'}", str(alias), workdir=str(alias)
-        )
-        is None
-    )
-    (repository / "linked.py").symlink_to(script)
-    subprocess.run(
-        ["git", "-C", str(repository), "add", "linked.py"], check=True, capture_output=True
-    )
-    assert unregistered_execution_reason("python linked.py", str(alias)) is not None
 
 
 @pytest.mark.parametrize("prefix", ["!", "! ", "  ! "])
@@ -285,29 +211,6 @@ def test_native_shell_negation_does_not_credit_failed_command() -> None:
     assert result.returncode == 0
     assert not command_covers("! false", "false")
     assert classify_validation_command_equivalence("! false").wrapped is True
-
-
-@pytest.mark.parametrize("external", [False, True], ids=["internal", "external"])
-def test_tracked_script_rejects_symlink_parent_traversal(tmp_path: Path, external: bool) -> None:
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q", str(repository)], check=True, capture_output=True)
-    (repository / "check.py").write_text("print('tracked')\n")
-    subprocess.run(
-        ["git", "-C", str(repository), "add", "check.py"], check=True, capture_output=True
-    )
-    target = tmp_path / "outside" if external else repository
-    if external:
-        target.mkdir()
-        (target / "check.py").write_text("print('untracked')\n")
-    (target / "deep").mkdir()
-    (repository / "link").symlink_to(target / "deep", target_is_directory=True)
-    alias = tmp_path / "alias"
-    alias.symlink_to(repository, target_is_directory=True)
-    assert (
-        unregistered_execution_reason("python link/../check.py", str(alias), workdir=str(alias))
-        is not None
-    )
 
 
 @pytest.mark.parametrize(

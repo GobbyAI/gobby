@@ -1,16 +1,13 @@
-"""Derive task-close validation evidence directly from provider transcripts."""
+"""Derive validation outcomes directly from provider transcripts."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import Any, cast
 
 from gobby.config.validation_detection import (
@@ -18,22 +15,12 @@ from gobby.config.validation_detection import (
     ValidationDetectionConfig,
     classify_validation_segments,
 )
-from gobby.hooks.normalization import (
-    _normalize_shell_tool_metadata as _shell_tool_metadata,
-)
 from gobby.sessions.machine_scope import require_local_session_ownership
-from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines
-from gobby.sessions.transcript_paths import (
-    find_supplemental_transcripts_on_disk,
-    find_transcript_on_disk,
-)
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     ParsedToolEvent,
-    RawLine,
-    raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_background import (
@@ -42,10 +29,8 @@ from gobby.tasks.transcript_background import (
 )
 from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
-    TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
-    TranscriptTaskClaim,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
@@ -62,12 +47,16 @@ from gobby.tasks.transcript_evidence_snapshots import (
 from gobby.tasks.transcript_evidence_snapshots import (
     derivation_fingerprint as _derivation_fingerprint,
 )
+from gobby.tasks.transcript_evidence_sources import (
+    _as_utc,
+    _resolve_transcript_paths,
+    select_window_raw_lines,
+)
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
     decode_cooperatively,
     encode,
 )
-from gobby.tasks.transcript_git_sources import confirm_git_restore, is_git_source_command
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
 )
@@ -88,31 +77,15 @@ from gobby.tasks.transcript_output_retention import (
 from gobby.tasks.transcript_output_retention import (
     recover_rtk_output as _recover_rtk_output,
 )
-from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
-from gobby.tasks.transcript_tool_arguments import (
-    edited_source,
-    native_created_source,
-    python_added_source,
-    python_edit_tokens,
-    python_keyword_stub,
-    tool_workdir,
-)
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
 )
 from gobby.tasks.transcript_tool_arguments import (
-    extract_edit_paths as _extract_edit_paths,
-)
-from gobby.tasks.transcript_tool_arguments import (
-    match_task_file as _match_task_file,
-)
-from gobby.tasks.transcript_tool_arguments import (
-    normalize_known_path as _normalize_known_path,
-)
-from gobby.tasks.transcript_tool_arguments import (
     normalize_tool_name as _tool_basename,
 )
-from gobby.tasks.transcript_tool_arguments import resolve_edit_path as _resolve_edit_path
+from gobby.tasks.transcript_tool_arguments import (
+    tool_workdir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +97,7 @@ logger = logging.getLogger(__name__)
 # transcript produced identical evidence for 30-minute, 7-hour, and full-session
 # windows. The lookback preserves cross-line parser state for tool calls that
 # straddle the boundary; absent or non-UTC timestamps are always kept.
-WINDOW_LOOKBACK = timedelta(hours=2)
 
-_UTC_LINE_TIMESTAMP_RE = re.compile(
-    r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2}T[0-9:.]{8,})(?:Z|\+00:00)"'
-)
 
 _SHELL_TOOLS = {
     "bash",
@@ -141,29 +110,15 @@ _SHELL_TOOLS = {
     "shell",
     "terminal",
 }
-_EDIT_TOOLS = {
-    "edit",
-    "multiedit",
-    "notebookedit",
-    "write",
-    "apply_patch",
-    "exec",
-    "search_replace",
-}
 
 
 @dataclass
 class _DerivationState:
     session: Session
     detection_config: ValidationDetectionConfig
-    task_edited_files: set[str]
-    repo_path: str
-    task_checkout_paths: frozenset[tuple[str, str]] | None
     window_start: datetime | None
     pending: dict[str, PendingTool] = field(default_factory=dict)
     runs: list[TranscriptValidationRun] = field(default_factory=list)
-    edits: list[TranscriptEdit] = field(default_factory=list)
-    claims: list[TranscriptTaskClaim] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
     order: int = 0
     latest_record_at: datetime | None = None
@@ -177,73 +132,26 @@ async def derive_transcript_evidence(
     session: Session,
     window_start: datetime | str | None,
     detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
     *,
     archive_dir: str | None = None,
-    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
 ) -> TranscriptEvidence:
-    """Parse a complete provider transcript and derive close-checklist evidence."""
+    """Parse provider transcripts for validation failures and their later resolutions."""
     local_machine_id = require_local_session_ownership(session)
     payload = await run_in_transcript_evidence_pool(
         _derive_chunked_transcript_evidence,
         session,
         _coerce_datetime(window_start),
         detection_config,
-        set(task_edited_files),
-        repo_path,
-        task_checkout_paths,
         archive_dir,
         local_machine_id,
     )
     return cast(TranscriptEvidence, await decode_cooperatively(payload))
 
 
-def select_window_raw_lines(
-    lines: Iterable[str],
-    window_start: datetime | None,
-) -> Iterator[RawLine]:
-    """Yield raw lines the claim window can still reach, keeping line numbers.
-
-    A line is dropped only when it carries an unambiguously UTC timestamp
-    older than :data:`WINDOW_LOOKBACK` before the window. Provider cwd metadata,
-    later lines, undated lines, and timestamps in another offset are kept, so
-    filtering preserves the context that later tool calls depend on.
-    """
-    if window_start is None:
-        yield from raw_lines_from_texts(lines)
-        return
-    cutoff = (_as_utc(window_start) - WINDOW_LOOKBACK).strftime("%Y-%m-%dT%H:%M:%S")
-    for index, text in enumerate(lines):
-        # Every timestamp on the line must be older, not just the first one:
-        # the top-level timestamp sits near the end of a Claude JSONL line, so
-        # an unescaped nested one earlier in the line would otherwise shadow it
-        # and strand a live validation run.
-        stamps = [match.group(1) for match in _UTC_LINE_TIMESTAMP_RE.finditer(text)]
-        if stamps and all(stamp < cutoff for stamp in stamps):
-            # Provider metadata establishes the cwd for later relative tools,
-            # even when a long turn began before this task's lookback window.
-            if '"session_meta"' not in text and '"turn_context"' not in text:
-                continue
-            try:
-                context = json.loads(text)
-            except ValueError:
-                continue
-            if not isinstance(context, dict) or context.get("type") not in {
-                "session_meta",
-                "turn_context",
-            }:
-                continue
-        yield RawLine(byte_offset=None, raw_line_no=index, text=text)
-
-
 def _derive_chunked_transcript_evidence(
     session: Session,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
-    task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
 ) -> ChunkedPayload:
@@ -253,9 +161,6 @@ def _derive_chunked_transcript_evidence(
             session,
             window_start,
             detection_config,
-            task_edited_files,
-            repo_path,
-            task_checkout_paths,
             archive_dir,
             local_machine_id,
             None,
@@ -267,9 +172,6 @@ def _derive_transcript_evidence_sync(
     session: Session,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
-    task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
     resume: EvidenceSnapshot | None,
@@ -278,9 +180,6 @@ def _derive_transcript_evidence_sync(
         session,
         window_start,
         detection_config,
-        {_normalize_known_path(item, repo_path) for item in task_edited_files},
-        repo_path,
-        task_checkout_paths,
     )
     snapshot_key = f"{session.id}:{fingerprint}"
     if resume is None:
@@ -300,9 +199,6 @@ def _derive_transcript_evidence_sync(
             path,
             window_start,
             detection_config,
-            task_edited_files,
-            repo_path,
-            task_checkout_paths,
             attempted_paths,
             resume=(
                 resume
@@ -340,21 +236,14 @@ def _derive_transcript_path_evidence(
     path: str,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
-    task_checkout_paths: frozenset[tuple[str, str]] | None,
     attempted_paths: list[str],
     *,
     resume: EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
-    normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
         session,
         window_start,
         detection_config,
-        normalized_task_files,
-        repo_path,
-        task_checkout_paths,
     )
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
@@ -391,9 +280,6 @@ def _derive_transcript_path_evidence(
     state = _DerivationState(
         session=session,
         detection_config=detection_config,
-        task_edited_files=normalized_task_files,
-        repo_path=repo_path,
-        task_checkout_paths=task_checkout_paths,
         window_start=window_start,
     )
     if resume is not None:
@@ -403,8 +289,6 @@ def _derive_transcript_path_evidence(
         parser.hydrate_state(deepcopy(resume.parser_state))
         state.pending = deepcopy(resume.pending)
         state.runs = list(resume.runs)
-        state.edits = list(resume.edits)
-        state.claims = list(resume.claims)
         state.degraded = list(resume.degraded)
         state.order = resume.order
         state.latest_record_at = resume.latest_record_at
@@ -412,9 +296,6 @@ def _derive_transcript_path_evidence(
     for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
         for outcome in event.codex_exec_outcomes:
             _consume_codex_outcome(state, outcome)
-        for item in event.codex_mcp_calls:
-            if claim := codex_item_claim(item, state.window_start, state.pending):
-                state.claims.append(claim)
         for record in event.records:
             if isinstance(record, ParsedMessage):
                 _observe_record_time(state, record.timestamp)
@@ -436,14 +317,12 @@ def _derive_transcript_path_evidence(
             pending=dict(state.pending),
             order=state.order,
             runs=tuple(state.runs),
-            edits=tuple(state.edits),
-            claims=tuple(state.claims),
             degraded=tuple(state.degraded),
             parsed_from_offset=resume.watermark if resume is not None else 0,
             latest_record_at=state.latest_record_at,
         )
     logger.debug(
-        "Derived close transcript evidence",
+        "Derived validation transcript evidence",
         extra={
             "session_id": session.id,
             "transcript_path": path,
@@ -457,8 +336,6 @@ def _derive_transcript_path_evidence(
         TranscriptEvidence(
             validation_runs=tuple(run for run in state.runs if run.categories),
             command_runs=tuple(run for run in state.runs if not run.categories),
-            edits=tuple(state.edits),
-            task_claims=tuple(state.claims),
             attempted_paths=tuple(attempted_paths),
             sessions=(session.id,),
             degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
@@ -466,61 +343,6 @@ def _derive_transcript_path_evidence(
         ),
         snapshot,
     )
-
-
-def _resolve_transcript_path(
-    session: Session,
-    archive_dir: str | None,
-    local_machine_id: str | None = None,
-) -> tuple[str | None, list[str]]:
-    local_machine_id = local_machine_id or require_local_session_ownership(session)
-    attempted: list[str] = []
-    if session.transcript_path:
-        attempted.append(session.transcript_path)
-        if Path(session.transcript_path).is_file():
-            return session.transcript_path, attempted
-
-    discovered = find_transcript_on_disk(
-        session.source,
-        session.external_id,
-        owner_machine_id=session.machine_id,
-        local_machine_id=local_machine_id,
-        caller_context="recovery",
-    )
-    if discovered:
-        attempted.append(discovered)
-        if Path(discovered).is_file():
-            return discovered, attempted
-
-    archive_path = get_archive_dir(archive_dir) / f"{session.external_id}.jsonl.gz"
-    attempted.append(str(archive_path))
-    if archive_path.is_file():
-        return str(archive_path), attempted
-    return None, attempted
-
-
-def _resolve_transcript_paths(
-    session: Session,
-    archive_dir: str | None,
-    local_machine_id: str,
-    window_start: datetime | None = None,
-) -> tuple[list[str], list[str]]:
-    primary, attempted = _resolve_transcript_path(session, archive_dir, local_machine_id)
-    if primary is None:
-        return [], attempted
-    supplemental = find_supplemental_transcripts_on_disk(session.source, primary)
-    # A compact or account switch can replace a live file at the same path.
-    # Read this session's archive as well; never scan other sessions' files.
-    archive = str(get_archive_dir(archive_dir) / f"{session.external_id}.jsonl.gz")
-    if Path(archive).is_file():
-        if window_start is not None and Path(archive).stat().st_mtime < window_start.timestamp():
-            if archive == primary:
-                return [], attempted
-            supplemental = [path for path in supplemental if path != archive]
-        elif archive != primary:
-            supplemental.append(archive)
-    paths = list(dict.fromkeys((primary, *supplemental)))
-    return paths, list(dict.fromkeys((*attempted, *supplemental)))
 
 
 def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
@@ -538,10 +360,6 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
             state.pending[call_id] = PendingTool(
                 name, arguments, timestamp, order, call_id, workdir=tool_workdir(message.raw_json)
             )
-        edit_arguments = arguments
-        if tool_workdir(arguments) is None and (cwd := tool_workdir(message.raw_json)):
-            edit_arguments = {**arguments, "cwd": cwd}
-        _record_edit(state, name, edit_arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
         return
@@ -570,7 +388,6 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
             state.pending[call_id] = PendingTool(
                 name, event.arguments, timestamp, order, call_id, event.server
             )
-        _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
         return
@@ -715,56 +532,8 @@ def _record_validation_run(
     source_label: str,
 ) -> None:
     if _is_unexecuted_tool_result(result, source=state.session.source):
-        # Begin records are provisional until an explicit denial proves no edit ran.
-        state.edits[:] = [edit for edit in state.edits if edit.order != pending.order]
         return
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
-        if claim := task_claim(pending, result, completed_at):
-            state.claims.append(claim)
-        confirmed = _extract_outcome(result)[0] == "success"
-        native_result = result.get("tool_result", result) if isinstance(result, dict) else result
-        output = native_result.get("content") if isinstance(native_result, dict) else native_result
-        written_path = pending.arguments.get("file_path")
-        created_source = (
-            native_created_source(pending.arguments, result, pending.call_id)
-            if confirmed
-            and state.session.source == "grok"
-            and _tool_basename(pending.name) == "search_replace"
-            else None
-        )
-        creation_receipt = (
-            confirmed
-            and _tool_basename(pending.name) == "write"
-            and isinstance(written_path, str)
-            and isinstance(output, str)
-            and (
-                output == f"File created successfully at: {written_path}"
-                or output.startswith(f"File created successfully at: {written_path} ")
-            )
-        ) or created_source is not None
-        state.edits[:] = [
-            replace(
-                edit,
-                source_confirmed=confirmed,
-                source_confirmed_at=completed_at if confirmed else None,
-                source_after=created_source
-                if created_source is not None
-                and not any(
-                    prior.path == edit.path and prior.order < edit.order for prior in state.edits
-                )
-                else edit.source_after,
-                source_created=bool(
-                    creation_receipt
-                    and not any(
-                        prior.path == edit.path and prior.order < edit.order
-                        for prior in state.edits
-                    )
-                ),
-            )
-            if edit.order == pending.order
-            else edit
-            for edit in state.edits
-        ]
         return
     command = _extract_command(pending.arguments)
     matches = classify_validation_segments(command, state.detection_config)
@@ -782,8 +551,7 @@ def _record_validation_run(
         aggregate_status_is_trustworthy=(
             not match.is_compound
             if match
-            else is_git_source_command(command)
-            or not classify_validation_command_equivalence(command).wrapped
+            else not classify_validation_command_equivalence(command).wrapped
         ),
     )
     if outcome == "unknown":
@@ -791,8 +559,6 @@ def _record_validation_run(
             f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
-    if outcome == "success":
-        confirm_git_restore(state.edits, state.runs, pending, state.repo_path, completed_at)
     output, output_truncated = _retained_output(command, segments, output, output_truncated)
     state.runs.append(
         TranscriptValidationRun(
@@ -826,99 +592,8 @@ def _record_validation_run(
     _recover_rtk_output(state.runs, result)
 
 
-def _shell_write_paths(
-    command: str, arguments: dict[str, Any], repo_path: str, require_proven_checkout: bool
-) -> set[str]:
-    """Credit writes recognized by the canonical TDD shell classifier."""
-    if not command.strip():
-        return set()
-    write_paths = _shell_tool_metadata(command).get("canonical_write_file_paths")
-    if not isinstance(write_paths, list):
-        return set()
-    return {
-        resolved
-        for path in write_paths
-        if isinstance(path, str) and path
-        if (resolved := _resolve_edit_path(path, arguments, repo_path, require_proven_checkout))
-        is not None
-    }
-
-
-def _record_edit(
-    state: _DerivationState,
-    tool_name: str,
-    arguments: dict[str, Any],
-    timestamp: datetime,
-    order: int,
-) -> None:
-    basename = _tool_basename(tool_name)
-    require_proven_checkout = state.task_checkout_paths is not None
-    if basename in _EDIT_TOOLS:
-        paths = _extract_edit_paths(
-            basename, arguments, state.repo_path, require_proven_checkout=require_proven_checkout
-        )
-    elif basename in _SHELL_TOOLS:
-        paths = _shell_write_paths(
-            _extract_command(arguments), arguments, state.repo_path, require_proven_checkout
-        )
-    else:
-        return
-    for path in paths:
-        task_file = _match_task_file(
-            path, state.task_edited_files, state.repo_path, state.task_checkout_paths
-        )
-        if task_file is None:
-            continue
-        previous = next((edit for edit in reversed(state.edits) if edit.path == task_file), None)
-        source_after = edited_source(
-            basename,
-            arguments,
-            previous.source_after if previous is not None and previous.source_confirmed else None,
-            path,
-            str(state.repo_path) if state.repo_path is not None else None,
-        )
-        old, new = arguments.get("old_string"), arguments.get("new_string")
-        python_edit = basename in {"edit", "search_replace"} and task_file.endswith(".py")
-        fragment: str | None = None
-        replaced: str | None = None
-        stub: tuple[str, tuple[str, ...]] | None = None
-        added: str | None = None
-        unchanged = False
-        if python_edit and isinstance(old, str) and isinstance(new, str):
-            fragment, replaced = new, old
-            stub = python_keyword_stub(old, new)
-            added = python_added_source(old, new)
-            old_tokens = python_edit_tokens(old)
-            unchanged = bool(old_tokens and old_tokens == python_edit_tokens(new))
-        state.edits.append(
-            TranscriptEdit(
-                session_id=state.session.id,
-                source=state.session.source,
-                path=task_file,
-                timestamp=timestamp,
-                order=order,
-                tool_name=tool_name,
-                checkout_root=next(
-                    (
-                        root
-                        for root, known in state.task_checkout_paths or ()
-                        if known == task_file
-                        and Path(root, known).resolve() == Path(path).resolve()
-                    ),
-                    None,
-                ),
-                source_after=source_after,
-                source_fragment=fragment,
-                source_replaced=replaced,
-                python_stub=stub,
-                python_added_source=added,
-                source_unchanged=unchanged,
-            )
-        )
-
-
 def _observe_record_time(state: _DerivationState, timestamp: datetime) -> None:
-    """Track the newest parsed record so close can recognize a lagging transcript."""
+    """Track the newest record represented in the snapshot."""
     stamp = _as_utc(timestamp)
     if state.latest_record_at is None or stamp > state.latest_record_at:
         state.latest_record_at = stamp
@@ -935,12 +610,6 @@ def _coerce_datetime(value: datetime | str | None) -> datetime | None:
         return _as_utc(value)
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return _as_utc(parsed)
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 __all__ = [

@@ -1,4 +1,4 @@
-"""Incremental close-evidence derivation: watermarks, resume, and fallbacks."""
+"""Incremental validation derivation: watermarks, resume, and fallbacks."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 
@@ -24,18 +24,15 @@ from gobby.tasks import (
     transcript_evidence,
     transcript_evidence_cache,
     transcript_evidence_snapshots,
-    transcript_exclusions,
 )
-from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.close_pytest_collection import collection_target
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
-from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.transcript_evidence_snapshots import (
     clear_evidence_snapshots,
     derivation_fingerprint,
 )
-from gobby.tasks.transcript_evidence_transfer import ChunkedPayload, decode
-from gobby.tasks.transcript_tool_arguments import normalize_known_path
+from gobby.tasks.transcript_evidence_sources import select_window_raw_lines
+from gobby.tasks.transcript_evidence_transfer import ChunkedPayload, decode_cooperatively
 from gobby.workflows.found_work_gate import (
     _reported_failure_paths,
     unresolved_validation_failures,
@@ -44,7 +41,6 @@ from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
     LOCAL_MACHINE_ID,
     _claude_tool_pair,
-    _codex_direct_exec_pair,
     _codex_response_item,
     _session,
     _write_jsonl,
@@ -53,36 +49,18 @@ from tests.tasks.test_transcript_evidence import (
 DETECTION = default_validation_detection_config()
 
 
-def _snapshot_key(
-    session: Session,
-    repo_path: Path,
-    window: datetime | None = BASE_TIME,
-    task_files: set[str] | None = None,
-) -> str:
-    fingerprint = derivation_fingerprint(
-        session,
-        window,
-        DETECTION,
-        {normalize_known_path(item, str(repo_path)) for item in task_files or set()},
-        str(repo_path),
-        None,
-    )
-    return f"{session.id}:{fingerprint}"
+def _snapshot_key(session: Session, window: datetime | None = BASE_TIME) -> str:
+    return f"{session.id}:{derivation_fingerprint(session, window, DETECTION)}"
 
 
 def _stored_snapshot(
-    session: Session,
-    repo_path: Path,
-    window: datetime | None = BASE_TIME,
-    task_files: set[str] | None = None,
+    session: Session, window: datetime | None = BASE_TIME
 ) -> transcript_evidence_snapshots.EvidenceSnapshot | None:
     return transcript_evidence_snapshots.load_durable_snapshot(
-        _snapshot_key(session, repo_path, window, task_files)
+        f"{session.id}:{derivation_fingerprint(session, window, DETECTION)}"
     )
 
 
-Caller = Literal["window", "prelink"]
-Derived = TranscriptEvidence | tuple[TranscriptValidationRun, ...]
 PoolCall = tuple[int, ChunkedPayload]
 
 
@@ -99,32 +77,20 @@ def pool_calls(monkeypatch: pytest.MonkeyPatch) -> list[PoolCall]:
         return payload
 
     monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", run_worker)
-    monkeypatch.setattr(transcript_exclusions, "run_in_transcript_evidence_pool", run_worker)
     return calls
 
 
-async def _derive_for_caller(
-    caller: Caller, session: Session, window: datetime, repo: Path
-) -> Derived:
-    if caller == "prelink":
-        return await transcript_exclusions.derive_prelink_runs(
-            session, window, DETECTION, str(repo)
-        )
+async def _derive_window(session: Session, window: datetime, repo: Path) -> TranscriptEvidence:
     return await derive_transcript_evidence(
-        session, window, DETECTION, set(), str(repo), archive_dir=str(repo / "archives")
+        session, window, DETECTION, archive_dir=str(repo / "archives")
     )
 
 
-def _assert_window_transfer(caller: Caller, result: Derived, call: PoolCall) -> None:
+async def _assert_window_transfer(result: TranscriptEvidence, call: PoolCall) -> None:
     argument_count, payload = call
-    assert argument_count == (8 if caller == "window" else 6), "no outbound resume argument"
-    assert decode(payload) == result, "the worker returns only the requested evidence"
-    records = (
-        len(result.validation_runs) + len(result.command_runs) + len(result.edits)
-        if isinstance(result, TranscriptEvidence)
-        else len(result)
-    )
-    assert payload.record_count == records, "no session-wide snapshot records cross the boundary"
+    assert argument_count == 5, "no outbound resume argument"
+    assert await decode_cooperatively(payload) == result
+    assert payload.record_count == len(result.validation_runs) + len(result.command_runs)
 
 
 def _validation_records(
@@ -139,7 +105,7 @@ def _validation_records(
     )
 
 
-async def test_alternating_callers_resume_their_own_derivation_fingerprint(
+async def test_alternating_windows_resume_their_own_derivation_fingerprint(
     tmp_path: Path, pool_calls: list[PoolCall]
 ) -> None:
     transcript = tmp_path / "alternating.jsonl"
@@ -149,39 +115,31 @@ async def test_alternating_callers_resume_their_own_derivation_fingerprint(
         + _validation_records("after", BASE_TIME + timedelta(seconds=3)),
     )
     session = _session("claude", transcript)
-    credited_start = BASE_TIME + timedelta(seconds=2)
-    prelink_start = BASE_TIME + timedelta(days=1)
-    credited = await _derive_for_caller("window", session, credited_start, tmp_path)
-    prelink = await _derive_for_caller("prelink", session, prelink_start, tmp_path)
-    assert isinstance(credited, TranscriptEvidence)
-    assert len(credited.validation_runs) == 1
-    assert isinstance(prelink, tuple) and len(prelink) == 2
+    starts = (BASE_TIME, BASE_TIME + timedelta(seconds=2))
+    first = await _derive_window(session, starts[0], tmp_path)
+    later = await _derive_window(session, starts[1], tmp_path)
+    assert len(first.validation_runs) == 2
+    assert len(later.validation_runs) == 1
     prior_watermark = transcript.stat().st_size
-
     _append_jsonl(transcript, _validation_records("append", BASE_TIME + timedelta(seconds=4)))
-    callers: tuple[tuple[Caller, datetime], ...] = (
-        ("window", credited_start),
-        ("prelink", prelink_start),
-    )
-    resumed: dict[Caller, Derived] = {}
-    for caller, start in callers:
-        result = await _derive_for_caller(caller, session, start, tmp_path)
-        resumed[caller] = result
-        snapshot = _stored_snapshot(session, tmp_path, start if caller == "window" else None)
+    resumed: dict[datetime, TranscriptEvidence] = {}
+    for start in starts:
+        result = await _derive_window(session, start, tmp_path)
+        resumed[start] = result
+        snapshot = _stored_snapshot(session, start)
         assert snapshot is not None and snapshot.parsed_from_offset == prior_watermark
-        _assert_window_transfer(caller, result, pool_calls[-1])
+        await _assert_window_transfer(result, pool_calls[-1])
     clear_evidence_snapshots()
-    for caller, start in callers:
-        assert resumed[caller] == await _derive_for_caller(caller, session, start, tmp_path)
+    for start in starts:
+        assert resumed[start] == await _derive_window(session, start, tmp_path)
 
 
-@pytest.mark.parametrize("caller", ["window", "prelink"])
 async def test_long_transcript_derive_sends_no_resume_payload_and_returns_window_records_only(
-    tmp_path: Path, caller: Caller, pool_calls: list[PoolCall]
+    tmp_path: Path, pool_calls: list[PoolCall]
 ) -> None:
     transcript = tmp_path / "long.jsonl"
     window = BASE_TIME + timedelta(seconds=1000)
-    filler_at = BASE_TIME if caller == "window" else window + timedelta(seconds=1)
+    filler_at = BASE_TIME
     records = [
         record
         for index in range(600)
@@ -189,63 +147,61 @@ async def test_long_transcript_derive_sends_no_resume_payload_and_returns_window
             f"filler-{index}", filler_at + timedelta(microseconds=index)
         )
     ]
-    selected_at = window + timedelta(seconds=1) if caller == "window" else BASE_TIME
+    selected_at = window + timedelta(seconds=1)
     records.extend(_validation_records("selected", selected_at))
     _write_jsonl(transcript, records)
     session = _session("claude", transcript)
-    first = await _derive_for_caller(caller, session, window, tmp_path)
-    second = await _derive_for_caller(caller, session, window, tmp_path)
+    first = await _derive_window(session, window, tmp_path)
+    second = await _derive_window(session, window, tmp_path)
     assert second == first
     assert pool_calls[-1][1].record_count == 1
-    _assert_window_transfer(caller, second, pool_calls[-1])
+    await _assert_window_transfer(second, pool_calls[-1])
 
 
-@pytest.mark.parametrize("caller", ["window", "prelink"])
 async def test_worker_owned_snapshot_matches_cold_derive_across_append_truncation_and_rewrite(
-    tmp_path: Path, caller: Caller, pool_calls: list[PoolCall]
+    tmp_path: Path, pool_calls: list[PoolCall]
 ) -> None:
     transcript = tmp_path / "mutating.jsonl"
-    window = BASE_TIME if caller == "window" else BASE_TIME + timedelta(days=1)
+    window = BASE_TIME
     initial = _validation_records("initial", BASE_TIME)
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
-    await _derive_for_caller(caller, session, window, tmp_path)
-    initial_snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    await _derive_window(session, window, tmp_path)
+    initial_snapshot = _stored_snapshot(session, window)
     assert initial_snapshot is not None
 
     appended = _validation_records("append", BASE_TIME + timedelta(seconds=1))
     _append_jsonl(transcript, appended)
-    appended_result = await _derive_for_caller(caller, session, window, tmp_path)
-    resumed = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    appended_result = await _derive_window(session, window, tmp_path)
+    resumed = _stored_snapshot(session, window)
     assert resumed is not None
     assert resumed.parsed_from_offset == initial_snapshot.watermark
-    _assert_window_transfer(caller, appended_result, pool_calls[-1])
+    await _assert_window_transfer(appended_result, pool_calls[-1])
     clear_evidence_snapshots()
-    assert appended_result == await _derive_for_caller(caller, session, window, tmp_path)
+    assert appended_result == await _derive_window(session, window, tmp_path)
 
     _write_jsonl(transcript, initial)
-    truncated = await _derive_for_caller(caller, session, window, tmp_path)
-    snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    truncated = await _derive_window(session, window, tmp_path)
+    snapshot = _stored_snapshot(session, window)
     assert snapshot is not None and snapshot.parsed_from_offset == 0
     clear_evidence_snapshots()
-    assert truncated == await _derive_for_caller(caller, session, window, tmp_path)
+    assert truncated == await _derive_window(session, window, tmp_path)
 
     original_bytes = transcript.read_bytes()
     # A Claude success records no exit code, so the same-size rewrite flips the
     # runner summary that classifies it.
     transcript.write_bytes(original_bytes.replace(b"1 passed", b"1 failed"))
     assert transcript.stat().st_size == len(original_bytes)
-    rewritten = await _derive_for_caller(caller, session, window, tmp_path)
-    snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    rewritten = await _derive_window(session, window, tmp_path)
+    snapshot = _stored_snapshot(session, window)
     assert snapshot is not None and snapshot.parsed_from_offset == 0
     clear_evidence_snapshots()
-    assert rewritten == await _derive_for_caller(caller, session, window, tmp_path)
+    assert rewritten == await _derive_window(session, window, tmp_path)
     assert rewritten != truncated
 
 
-@pytest.mark.parametrize("caller", ["window", "prelink"])
 async def test_cross_process_resume_parses_from_prior_watermark(
-    tmp_path: Path, caller: Caller, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     try:
         os.sysconf("SC_SEM_NSEMS_MAX")
@@ -267,49 +223,47 @@ async def test_cross_process_resume_parses_from_prior_watermark(
         return payload
 
     monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", fresh_worker)
-    monkeypatch.setattr(transcript_exclusions, "run_in_transcript_evidence_pool", fresh_worker)
     transcript = tmp_path / "process.jsonl"
     _write_jsonl(transcript, _validation_records("first", BASE_TIME))
     session = _session("claude", transcript)
-    window = BASE_TIME if caller == "window" else BASE_TIME + timedelta(days=1)
-    await _derive_for_caller(caller, session, window, tmp_path)
-    stored = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    window = BASE_TIME
+    await _derive_window(session, window, tmp_path)
+    stored = _stored_snapshot(session, window)
     assert stored is not None
     _append_jsonl(transcript, _validation_records("second", BASE_TIME + timedelta(seconds=1)))
-    resumed = await _derive_for_caller(caller, session, window, tmp_path)
-    advanced = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    resumed = await _derive_window(session, window, tmp_path)
+    advanced = _stored_snapshot(session, window)
     assert advanced is not None
     assert advanced.parsed_from_offset == stored.watermark
     assert advanced.watermark == transcript.stat().st_size
-    _assert_window_transfer(caller, resumed, calls[-1])
+    await _assert_window_transfer(resumed, calls[-1])
 
 
-@pytest.mark.parametrize("caller", ["window", "prelink"])
 async def test_concurrent_derives_equal_cold_and_leave_valid_snapshot(
-    tmp_path: Path, caller: Caller, pool_calls: list[PoolCall]
+    tmp_path: Path, pool_calls: list[PoolCall]
 ) -> None:
     transcript = tmp_path / "concurrent.jsonl"
     _write_jsonl(transcript, _validation_records("first", BASE_TIME))
     session = _session("claude", transcript)
-    window = BASE_TIME if caller == "window" else BASE_TIME + timedelta(days=1)
-    cold = await _derive_for_caller(caller, session, window, tmp_path)
-    expected_snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    window = BASE_TIME
+    cold = await _derive_window(session, window, tmp_path)
+    expected_snapshot = _stored_snapshot(session, window)
     assert expected_snapshot is not None
     clear_evidence_snapshots()
     first, second = await asyncio.gather(
-        _derive_for_caller(caller, session, window, tmp_path),
-        _derive_for_caller(caller, session, window, tmp_path),
+        _derive_window(session, window, tmp_path),
+        _derive_window(session, window, tmp_path),
     )
     assert first == second == cold
-    snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
+    snapshot = _stored_snapshot(session, window)
     assert snapshot is not None
     assert snapshot.fingerprint == expected_snapshot.fingerprint
     assert snapshot.watermark == transcript.stat().st_size
     assert (
         transcript_evidence_snapshots.read_transcript_suffix(str(transcript), snapshot) is not None
     )
-    _assert_window_transfer(caller, first, pool_calls[-2])
-    _assert_window_transfer(caller, second, pool_calls[-1])
+    await _assert_window_transfer(first, pool_calls[-2])
+    await _assert_window_transfer(second, pool_calls[-1])
 
 
 @pytest.fixture(autouse=True)
@@ -324,7 +278,7 @@ def _local_machine(monkeypatch: pytest.MonkeyPatch) -> None:
 def parse_counts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Record how many raw lines each derivation hands to the parse pipeline."""
     counts: list[int] = []
-    original = transcript_evidence.select_window_raw_lines
+    original = select_window_raw_lines
 
     def counting(lines: Any, window_start: datetime | None) -> Iterator[RawLine]:
         material = list(lines)
@@ -366,54 +320,11 @@ def _claude_edit(path: str, *, call_id: str, at: datetime) -> dict[str, Any]:
 async def _derive(
     session: Any,
     window_start: datetime | None,
-    task_files: set[str],
     repo_path: Path,
     **kwargs: Any,
 ) -> TranscriptEvidence:
     kwargs.setdefault("archive_dir", str(repo_path / "archives"))
-    return await derive_transcript_evidence(
-        session,
-        window_start,
-        DETECTION,
-        task_files,
-        str(repo_path),
-        **kwargs,
-    )
-
-
-@pytest.mark.parametrize("collection_flag", ["--collect-only", "--co"])
-async def test_collection_receipt_survives_parser_and_settled_resume(
-    tmp_path: Path, parse_counts: list[int], collection_flag: str
-) -> None:
-    target = "tests/e2e/test_terminal_client_stack.py"
-    command = f"GOBBY_TEST_PROTECT=1 uv run pytest {target} {collection_flag} -q"
-    output = "28 tests collected in 0.12s"
-    transcript = tmp_path / "collection.jsonl"
-    initial = _codex_direct_exec_pair(
-        command=command,
-        call_id="collect",
-        result={"exit_code": 0, "output": output},
-    )
-    _write_jsonl(transcript, initial)
-    session = _session("codex", transcript)
-    first = await _derive(session, BASE_TIME, {target}, tmp_path)
-    assert first.command_runs[0].output == output
-    assert collection_target(first.command_runs[0]) == target
-
-    for index in (1, 2):
-        _append_jsonl(
-            transcript,
-            _codex_direct_exec_pair(
-                command="git status --short",
-                call_id=f"review-{index}",
-                result={"exit_code": 0, "output": "ordinary review-only output"},
-            ),
-        )
-        resumed = await _derive(session, BASE_TIME, {target}, tmp_path)
-        assert resumed.command_runs[0].output == output
-        assert collection_target(resumed.command_runs[0]) == target
-        assert all(run.output is None for run in resumed.command_runs[1:])
-    assert parse_counts == [len(initial)] * 3
+    return await derive_transcript_evidence(session, window_start, DETECTION, **kwargs)
 
 
 async def test_second_derivation_parses_only_appended_lines(
@@ -436,8 +347,8 @@ async def test_second_derivation_parses_only_appended_lines(
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
 
-    first = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    stored = _stored_snapshot(session, tmp_path, task_files={"src/changed.py"})
+    first = await _derive(session, BASE_TIME, tmp_path)
+    stored = _stored_snapshot(session)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
@@ -449,12 +360,12 @@ async def test_second_derivation_parses_only_appended_lines(
     )
     _append_jsonl(transcript, appended)
 
-    second = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
     # The second derivation parsed only the appended suffix, and its watermark
     # advanced past the untouched prefix to the new end of file.
     assert parse_counts == [len(initial), len(appended)]
-    advanced = _stored_snapshot(session, tmp_path, task_files={"src/changed.py"})
+    advanced = _stored_snapshot(session)
     assert advanced is not None
     assert advanced.watermark == transcript.stat().st_size
     assert advanced.watermark > stored.watermark
@@ -464,7 +375,6 @@ async def test_second_derivation_parses_only_appended_lines(
         "uv run ruff check src/",
     ]
     assert second.validation_runs[: len(first.validation_runs)] == first.validation_runs
-    assert second.edits == first.edits
 
 
 async def test_restart_resumes_from_durable_checkpoint(
@@ -480,7 +390,7 @@ async def test_restart_resumes_from_durable_checkpoint(
     )
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
-    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    first = await _derive(session, BASE_TIME, tmp_path)
     assert first.validation_runs[0].outcome == "failure"
 
     # Every invocation now reloads the durable checkpoint, as a fresh worker does.
@@ -491,13 +401,13 @@ async def test_restart_resumes_from_durable_checkpoint(
         result={"exit_code": 0, "stdout": "passed"},
     )
     _append_jsonl(transcript, appended)
-    second = await _derive(session, BASE_TIME, set(), tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(initial), len(appended)]
     assert [run.outcome for run in second.validation_runs] == ["failure", "success"]
 
 
-@pytest.mark.parametrize("prior_version", [21, 22, 25, 26])
+@pytest.mark.parametrize("prior_version", [21, 22, 25, 26, 46])
 async def test_pre_rtk_parity_checkpoint_is_rederived(
     tmp_path: Path, parse_counts: list[int], monkeypatch: pytest.MonkeyPatch, prior_version: int
 ) -> None:
@@ -520,9 +430,9 @@ async def test_pre_rtk_parity_checkpoint_is_rederived(
 
     with monkeypatch.context() as legacy:
         legacy.setattr(json, "dumps", legacy_dumps)
-        await _derive(session, BASE_TIME, set(), tmp_path)
+        await _derive(session, BASE_TIME, tmp_path)
 
-    refreshed = await _derive(session, BASE_TIME, set(), tmp_path)
+    refreshed = await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts == [len(records), len(records)]
     assert refreshed.validation_runs[0].outcome == "success"
 
@@ -616,28 +526,20 @@ async def test_pre_rtk_reader_checkpoint_replays_original_bound_output(
         legacy.setattr(json, "dumps", legacy_dumps)
         legacy.setattr(transcript_background, "_reader_command", lambda argv: argv)
         legacy.setattr(transcript_background, "_rtk_read_path", lambda args: None)
-        old = await _derive(session, BASE_TIME, {test_path}, tmp_path)
-        snapshot = _stored_snapshot(session, tmp_path, task_files={test_path})
+        old = await _derive(session, BASE_TIME, tmp_path)
+        snapshot = _stored_snapshot(session)
         assert snapshot is not None
         assert snapshot.watermark == len(original_bytes)
         assert old.validation_runs[0].output != output
         assert old.validation_runs[0].background_monitor_id is None
 
-    refreshed = await _derive(session, BASE_TIME, {test_path}, tmp_path)
+    refreshed = await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts == [len(records), len(records)]
     assert transcript.read_bytes() == original_bytes
     expected_output = f"{launch_receipt}\n{output}" if monitor else output
     assert refreshed.validation_runs[0].output == expected_output
     assert refreshed.validation_runs[0].exit_code == 0
     assert refreshed.validation_runs[0].background_monitor_id == ("watcher" if monitor else None)
-    gate = evaluate_validation_commands(
-        task_category="code",
-        evidence=refreshed,
-        has_attributed_edits=True,
-        changed_paths=(test_path,),
-        close_root=str(tmp_path),
-    )
-    assert gate.passed, gate.to_dict()
 
 
 @pytest.mark.parametrize(
@@ -655,8 +557,8 @@ async def test_invalid_durable_checkpoint_reparses_safely(
     )
     _write_jsonl(transcript, records)
     session = _session("claude", transcript)
-    await _derive(session, BASE_TIME, set(), tmp_path)
-    checkpoint = transcript_evidence_cache._snapshot_path(_snapshot_key(session, tmp_path))
+    await _derive(session, BASE_TIME, tmp_path)
+    checkpoint = transcript_evidence_cache._snapshot_path(_snapshot_key(session))
     assert checkpoint.stat().st_mode & 0o777 == 0o600
     if corruption == "invalid-json":
         checkpoint.write_bytes(b"invalid JSON")
@@ -670,13 +572,13 @@ async def test_invalid_durable_checkpoint_reparses_safely(
             payload["tail_sha256"] = "0" * 64
         checkpoint.write_text(json.dumps(payload))
 
-    evidence = await _derive(session, BASE_TIME, set(), tmp_path)
+    evidence = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(records), len(records)]
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py"
     ]
-    await _derive(session, BASE_TIME, set(), tmp_path)
+    await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts == [len(records), len(records), 0]
 
 
@@ -724,8 +626,8 @@ async def test_pooled_derivation_keeps_snapshot_resume(
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
 
-    first = await _derive(session, BASE_TIME, set(), tmp_path)
-    stored = _stored_snapshot(session, tmp_path)
+    first = await _derive(session, BASE_TIME, tmp_path)
+    stored = _stored_snapshot(session)
     assert stored is not None
     assert stored.parsed_from_offset == 0
 
@@ -736,9 +638,9 @@ async def test_pooled_derivation_keeps_snapshot_resume(
         result={"exit_code": 0, "stdout": "All checks passed!"},
     )
     _append_jsonl(transcript, appended)
-    second = await _derive(session, BASE_TIME, set(), tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
-    advanced = _stored_snapshot(session, tmp_path)
+    advanced = _stored_snapshot(session)
     assert advanced is not None
     assert advanced.parsed_from_offset == stored.watermark
     assert advanced.watermark == transcript.stat().st_size
@@ -763,8 +665,8 @@ async def test_repeat_derivation_of_an_unchanged_file_parses_nothing(
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
 
-    first = await _derive(session, BASE_TIME, set(), tmp_path)
-    second = await _derive(session, BASE_TIME, set(), tmp_path)
+    first = await _derive(session, BASE_TIME, tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(initial), 0]
     assert second == first
@@ -793,12 +695,12 @@ async def test_supplemental_transcripts_resume_from_the_session_snapshot(
     _write_jsonl(subagent, subagent_records)
     session = _session("claude", transcript)
 
-    first = await _derive(session, BASE_TIME, set(), tmp_path)
-    second = await _derive(session, BASE_TIME, set(), tmp_path)
+    first = await _derive(session, BASE_TIME, tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(primary_records), len(subagent_records), 0, 0]
     assert second == first
-    snapshot = _stored_snapshot(session, tmp_path)
+    snapshot = _stored_snapshot(session)
     assert snapshot is not None
     assert snapshot.transcript_path == str(transcript)
     assert list(snapshot.supplemental) == [str(subagent)]
@@ -812,12 +714,12 @@ async def test_supplemental_transcripts_resume_from_the_session_snapshot(
     )
     _append_jsonl(subagent, appended)
     parse_counts.clear()
-    resumed = await _derive(session, BASE_TIME, set(), tmp_path)
+    resumed = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [0, len(appended)]
     clear_evidence_snapshots()
     parse_counts.clear()
-    assert await _derive(session, BASE_TIME, set(), tmp_path) == resumed
+    assert await _derive(session, BASE_TIME, tmp_path) == resumed
     assert parse_counts == [len(primary_records), len(subagent_records) + len(appended)]
 
 
@@ -826,7 +728,6 @@ async def test_incremental_derivation_matches_a_full_window_parse(
 ) -> None:
     """Differential: resumed evidence is identical to a fresh full parse."""
     transcript = tmp_path / "claude.jsonl"
-    task_files = {"src/changed.py", "src/other.py"}
     prefix = [
         # Older than the window lookback: dropped by window selection either way.
         *_claude_tool_pair(
@@ -907,13 +808,13 @@ async def test_incremental_derivation_matches_a_full_window_parse(
     _write_jsonl(transcript, prefix)
     session = _session("claude", transcript)
 
-    await _derive(session, BASE_TIME, task_files, tmp_path)
+    await _derive(session, BASE_TIME, tmp_path)
     _append_jsonl(transcript, suffix)
-    incremental = await _derive(session, BASE_TIME, task_files, tmp_path)
+    incremental = await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts == [len(prefix), len(suffix)]
 
     clear_evidence_snapshots()
-    full = await _derive(session, BASE_TIME, task_files, tmp_path)
+    full = await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts[-1] == len(prefix) + len(suffix)
 
     assert incremental == full
@@ -924,7 +825,6 @@ async def test_incremental_derivation_matches_a_full_window_parse(
         "success",
         "success",
     ]
-    assert [edit.path for edit in incremental.edits] == ["src/changed.py", "src/other.py"]
 
 
 async def test_codex_execution_chain_survives_restart_and_matches_full_parse(
@@ -988,21 +888,18 @@ async def test_codex_execution_chain_survives_restart_and_matches_full_parse(
     _write_jsonl(transcript, prefix)
     session = _session("codex", transcript)
 
-    await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    await _derive(session, BASE_TIME, tmp_path)
     _append_jsonl(transcript, suffix)
-    incremental = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    incremental = await _derive(session, BASE_TIME, tmp_path)
     assert parse_counts == [len(prefix), len(suffix)]
 
     clear_evidence_snapshots()
-    full = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    full = await _derive(session, BASE_TIME, tmp_path)
 
     assert incremental == full
     assert [(run.command, run.outcome, run.exit_code) for run in incremental.validation_runs] == [
         ("uv run pytest tests/tasks", "success", 0),
         ("pytest", "unknown", None),
-    ]
-    assert [(edit.path, edit.tool_name) for edit in incremental.edits] == [
-        ("src/changed.py", "apply_patch")
     ]
     assert incremental.degraded_capabilities != ()
 
@@ -1028,17 +925,17 @@ async def test_truncated_transcript_falls_back_to_a_full_parse(
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
 
-    await _derive(session, BASE_TIME, set(), tmp_path)
+    await _derive(session, BASE_TIME, tmp_path)
 
     truncated = initial[:2]
     _write_jsonl(transcript, truncated)
-    evidence = await _derive(session, BASE_TIME, set(), tmp_path)
+    evidence = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(initial), len(truncated)]
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py"
     ]
-    stored = _stored_snapshot(session, tmp_path)
+    stored = _stored_snapshot(session)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
@@ -1057,7 +954,7 @@ async def test_rewritten_transcript_fails_the_tail_check_and_reparses(
     _write_jsonl(transcript, initial)
     session = _session("claude", transcript)
 
-    await _derive(session, BASE_TIME, set(), tmp_path)
+    await _derive(session, BASE_TIME, tmp_path)
     old_size = transcript.stat().st_size
 
     replacement = [
@@ -1078,7 +975,7 @@ async def test_rewritten_transcript_fails_the_tail_check_and_reparses(
     _write_jsonl(transcript, replacement)
     assert transcript.stat().st_size >= old_size
 
-    evidence = await _derive(session, BASE_TIME, set(), tmp_path)
+    evidence = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [len(initial), len(replacement)]
     assert [run.command for run in evidence.validation_runs] == [
@@ -1093,7 +990,7 @@ async def test_archived_transcript_falls_back_to_a_full_parse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "gobby.tasks.transcript_evidence.find_transcript_on_disk",
+        "gobby.tasks.transcript_evidence_sources.find_transcript_on_disk",
         lambda *_args, **_kwargs: None,
     )
     transcript = tmp_path / "claude.jsonl"
@@ -1108,51 +1005,22 @@ async def test_archived_transcript_falls_back_to_a_full_parse(
     _write_jsonl(transcript, records)
     session = _session("claude", transcript)
 
-    live = await _derive(session, BASE_TIME, set(), tmp_path, archive_dir=str(archive_dir))
+    live = await _derive(session, BASE_TIME, tmp_path, archive_dir=str(archive_dir))
 
     transcript.unlink()
     archive = archive_dir / f"{session.external_id}.jsonl.gz"
     with gzip.open(archive, "wt", encoding="utf-8") as handle:
         handle.write("\n".join(json.dumps(record) for record in records) + "\n")
 
-    archived = await _derive(session, BASE_TIME, set(), tmp_path, archive_dir=str(archive_dir))
+    archived = await _derive(session, BASE_TIME, tmp_path, archive_dir=str(archive_dir))
 
     # The archive was parsed in full, not served from the live file's watermark.
     assert parse_counts == [len(records), len(records)]
     assert archived.validation_runs == live.validation_runs
     assert archived.attempted_paths[-1] == str(archive)
-    stored = _stored_snapshot(session, tmp_path)
+    stored = _stored_snapshot(session)
     assert stored is not None
     assert stored.transcript_path == str(transcript)
-
-
-async def test_changed_task_files_bypass_the_snapshot(
-    tmp_path: Path, parse_counts: list[int]
-) -> None:
-    """Edits filtered out of the cached prefix reappear when the task set grows."""
-    transcript = tmp_path / "claude.jsonl"
-    records = [
-        _claude_edit(
-            str(tmp_path / "src" / "a.py"),
-            call_id="edit-a",
-            at=BASE_TIME + timedelta(seconds=1),
-        ),
-        _claude_edit(
-            str(tmp_path / "src" / "b.py"),
-            call_id="edit-b",
-            at=BASE_TIME + timedelta(seconds=2),
-        ),
-    ]
-    _write_jsonl(transcript, records)
-    session = _session("claude", transcript)
-
-    narrow = await _derive(session, BASE_TIME, {"src/a.py"}, tmp_path)
-    assert [edit.path for edit in narrow.edits] == ["src/a.py"]
-
-    wide = await _derive(session, BASE_TIME, {"src/a.py", "src/b.py"}, tmp_path)
-
-    assert parse_counts == [len(records), len(records)]
-    assert [edit.path for edit in wide.edits] == ["src/a.py", "src/b.py"]
 
 
 async def test_partial_trailing_line_is_parsed_but_never_persisted(
@@ -1172,9 +1040,9 @@ async def test_partial_trailing_line_is_parsed_but_never_persisted(
     )
     session = _session("claude", transcript)
 
-    first = await _derive(session, BASE_TIME, set(), tmp_path)
+    first = await _derive(session, BASE_TIME, tmp_path)
     assert [run.outcome for run in first.validation_runs] == ["success"]
-    assert _stored_snapshot(session, tmp_path) is None
+    assert _stored_snapshot(session) is None
 
     with transcript.open("a", encoding="utf-8") as handle:
         handle.write("\n")
@@ -1188,14 +1056,14 @@ async def test_partial_trailing_line_is_parsed_but_never_persisted(
         ),
     )
 
-    second = await _derive(session, BASE_TIME, set(), tmp_path)
+    second = await _derive(session, BASE_TIME, tmp_path)
 
     assert parse_counts == [2, 4]
     assert [run.command for run in second.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py",
         "uv run ruff check src/",
     ]
-    stored = _stored_snapshot(session, tmp_path)
+    stored = _stored_snapshot(session)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
@@ -1212,7 +1080,6 @@ def test_snapshot_store_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
         pending={},
         order=0,
         runs=(),
-        edits=(),
         degraded=(),
     )
     # New fingerprints of one session share the existing global eviction bound.
@@ -1303,14 +1170,14 @@ async def test_resumed_snapshot_sheds_settled_command_output(
     _write_jsonl(transcript, records[:7])
     with monkeypatch.context() as legacy:
         _derive_as_legacy(legacy, trim=False)
-        await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    legacy_snapshot = _stored_snapshot(session, tmp_path, task_files={"src/changed.py"})
+        await _derive(session, BASE_TIME, tmp_path)
+    legacy_snapshot = _stored_snapshot(session)
     assert legacy_snapshot is not None
     assert next(run for run in legacy_snapshot.runs if run.command == "git status").output
 
     _append_jsonl(transcript, records[7:13])
-    resumed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    snapshot = _stored_snapshot(session, tmp_path, task_files={"src/changed.py"})
+    resumed = await _derive(session, BASE_TIME, tmp_path)
+    snapshot = _stored_snapshot(session)
 
     assert snapshot is not None
     assert snapshot.parsed_from_offset > 0
@@ -1325,7 +1192,7 @@ async def test_resumed_snapshot_sheds_settled_command_output(
     assert recalled.output_recovered_from == f"rtk recall {_RECALL}"
 
     _append_jsonl(transcript, records[13:])
-    later = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    later = await _derive(session, BASE_TIME, tmp_path)
 
     assert [run.output for run in later.command_runs] == [None, None, None, None]
 
@@ -1333,7 +1200,7 @@ async def test_resumed_snapshot_sheds_settled_command_output(
 async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stop gate and the close gate decide the same with and without the trim."""
+    """Found-work checks decide the same with and without the trim."""
     transcript = tmp_path / "claude.jsonl"
     _write_jsonl(transcript, _long_session_records(tmp_path))
     session = _session("claude", transcript)
@@ -1342,16 +1209,9 @@ async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
         unresolved = unresolved_validation_failures(
             evidence.validation_runs, owner_handoff=False, project_path=str(tmp_path)
         )
-        close = evaluate_validation_commands(
-            task_category="code",
-            evidence=evidence,
-            has_attributed_edits=True,
-            changed_paths=("src/changed.py",),
-        )
         return (
             [run.command for run in unresolved],
             [sorted(_reported_failure_paths(run)) for run in unresolved],
-            close,
         )
 
     derived: dict[bool, TranscriptEvidence] = {}
@@ -1360,7 +1220,7 @@ async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
         transcript_evidence_cache.clear_snapshots()
         with monkeypatch.context() as legacy:
             _derive_as_legacy(legacy, trim=trim)
-            derived[trim] = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+            derived[trim] = await _derive(session, BASE_TIME, tmp_path)
 
     assert any(run.output for run in derived[False].command_runs[:-1])
     assert not any(run.output for run in derived[True].command_runs[:-1])

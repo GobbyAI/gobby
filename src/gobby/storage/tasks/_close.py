@@ -8,7 +8,7 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._automation import has_hold_label
 from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
-from gobby.tasks.criteria_contract import normalized_validation_criteria
+from gobby.tasks.criteria_text import normalized_validation_criteria
 from gobby.utils.datetime import utc_now
 
 _LEGACY_VALIDATION_CRITERIA = (
@@ -39,11 +39,7 @@ def _close_task_in_txn(
     force: bool = False,
     close_ancestors: bool = True,
     closed_ancestors: list[str] | None = None,
-    validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
-    reset_validation_fail_count: bool = False,
-    validation_status: str | None = None,
-    validation_feedback: str | None = None,
 ) -> None:
     """Close a task inside the caller's already-open transaction."""
 
@@ -79,14 +75,10 @@ def _close_task_in_txn(
                closed_reason = %s,
                closed_in_session_id = %s,
                closed_commit_sha = %s,
-               validation_override_reason = %s,
                escalated_at = NULL,
                escalation_reason = NULL,
                is_escalated = FALSE,
                claimed_by_session_id = NULL,
-               validation_fail_count = CASE WHEN %s THEN 0 ELSE validation_fail_count END,
-               validation_status = COALESCE(%s, validation_status),
-               validation_feedback = COALESCE(%s, validation_feedback),
                validation_criteria = CASE
                    WHEN task_type = 'epic'
                         OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
@@ -103,10 +95,6 @@ def _close_task_in_txn(
             reason,
             persisted_session_id,
             commit_sha,
-            validation_override_reason,
-            reset_validation_fail_count,
-            validation_status,
-            validation_feedback,
             _LEGACY_VALIDATION_CRITERIA,
             now,
             task_id,

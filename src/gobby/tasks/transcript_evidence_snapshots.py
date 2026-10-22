@@ -17,8 +17,6 @@ from gobby.config.validation_detection import ValidationDetectionConfig
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
 from gobby.tasks.transcript_evidence_models import (
-    TranscriptEdit,
-    TranscriptTaskClaim,
     TranscriptValidationRun,
 )
 
@@ -29,22 +27,14 @@ def derivation_fingerprint(
     session: Session,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
-    task_checkout_paths: frozenset[tuple[str, str]] | None,
 ) -> str:
     """Invalidate durable snapshots whenever their derivation inputs change."""
     payload = json.dumps(
         {
-            "derivation_version": 46,
+            "derivation_version": 47,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
-            "repo_path": repo_path,
-            "task_checkout_paths": sorted(task_checkout_paths)
-            if task_checkout_paths is not None
-            else None,
-            "task_edited_files": sorted(task_edited_files),
             "detection": detection_config.model_dump(mode="json"),
         },
         sort_keys=True,
@@ -117,11 +107,9 @@ class EvidenceSnapshot:
     pending: dict[str, PendingTool]
     order: int
     runs: tuple[TranscriptValidationRun, ...]
-    edits: tuple[TranscriptEdit, ...]
     degraded: tuple[str, ...]
     parsed_from_offset: int = 0
     latest_record_at: datetime | None = None
-    claims: tuple[TranscriptTaskClaim, ...] = ()
     #: Per-path snapshots of the session's supplemental transcripts (Claude
     #: subagents), carried in the primary's record so one session keeps one
     #: cache slot. Subagent files are append-only, so after one full parse

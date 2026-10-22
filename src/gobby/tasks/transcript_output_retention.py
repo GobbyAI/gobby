@@ -6,15 +6,11 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from gobby.tasks.command_equivalence import pytest_collection_target
-from gobby.tasks.transcript_background import deliver_output
 from gobby.tasks.transcript_evidence_models import (
-    OutputDelivery,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
-from gobby.tasks.transcript_git_sources import CLEAN_HEAD_COMMAND
-from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence, extract_outcome
+from gobby.tasks.transcript_outcomes import extract_outcome
 
 # The general exit-preserving normalizer strips the `rtk` executable itself.
 _RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})(?: --full)?")
@@ -54,14 +50,6 @@ def recover_rtk_output(runs: list[TranscriptValidationRun], result: Any) -> None
         return
     index = originals[0]
     original = runs[index]
-    if original.output_deliveries:
-        runs[index] = deliver_output(
-            original,
-            OutputDelivery(
-                receipt.completed_at, receipt.command, receipt.output, False, appends=False
-            ),
-        )
-        return
     runs[index] = replace(
         original,
         output=receipt.output,
@@ -71,29 +59,18 @@ def recover_rtk_output(runs: list[TranscriptValidationRun], result: Any) -> None
     )
 
 
-def _collection_receipt(command: str) -> bool:
-    """Gate 10 reads collection output even though collection is not test execution."""
-    core = classify_validation_command_equivalence(command).core_command or command
-    return pytest_collection_target(core) is not None
-
-
 def _retained_output(
     command: str,
     segments: tuple[TranscriptValidationSegment, ...],
     output: str | None,
     output_truncated: bool,
 ) -> tuple[str | None, bool]:
-    """Keep output only where a gate reads it: validation runs and recall receipts.
+    """Keep output for validation runs and recall receipts.
 
-    Review-only shell output is never read after outcome extraction, and every
+    Non-validation shell output is never read after outcome extraction, and every
     retained byte is unpickled from the derivation pool while holding the GIL.
     """
-    if (
-        segments
-        or _collection_receipt(command)
-        or _RTK_RECALL_RE.fullmatch(command.strip())
-        or command.strip() == CLEAN_HEAD_COMMAND
-    ):
+    if segments or _RTK_RECALL_RE.fullmatch(command.strip()):
         return output, output_truncated
     return None, False
 
@@ -103,9 +80,8 @@ def _drop_settled_command_output(
 ) -> list[TranscriptValidationRun]:
     """Keep a non-validation run's output only while it is the latest run.
 
-    Clean HEAD receipts also survive incremental resumes until Git restore proof.
-    Validation output stays for the gates. ``_retained_output``
-    drops review-only output as runs are recorded; this also sheds settled
+    Validation output stays for found-work checks. ``_retained_output``
+    drops non-validation output as runs are recorded; this also sheds settled
     recall receipts and the shell output that snapshots written before it still
     carry, on their next resume rather than through a full re-parse.
     """
@@ -116,8 +92,6 @@ def _drop_settled_command_output(
         and run.output is not None
         and not run.categories
         and not run.validation_segments
-        and run.command.strip() != CLEAN_HEAD_COMMAND
-        and not _collection_receipt(run.command)
         else run
         for index, run in enumerate(runs)
     ]

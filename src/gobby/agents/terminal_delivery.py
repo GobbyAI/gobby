@@ -494,23 +494,6 @@ async def _deliver_and_cleanup_terminal_run_once(
     run_db: Callable[..., Awaitable[Any]],
 ) -> _DeliveryAttempt:
     """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
-    from gobby.tasks.close_review_delivery import DELIVERY_DEFERRED, terminal_review_delivery
-
-    try:
-        review_delivery = await run_db(terminal_review_delivery, db, run_id)
-    except Exception as error:
-        logger.warning(
-            "Failed to resolve task-close review delivery for %s: %s",
-            run_id,
-            type(error).__name__,
-        )
-        review_delivery = None
-    deferred = review_delivery == DELIVERY_DEFERRED
-    if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
-        result, message = review_delivery
-    elif deferred:
-        # The review's finalization owns the outcome; the run's bare status is not it.
-        result = None
     if completion_registry is None:
         return _DeliveryAttempt(None, False, False)
 
@@ -571,25 +554,7 @@ async def _deliver_and_cleanup_terminal_run_once(
             run_id,
             type(error).__name__,
         )
-    if delivered_session_ids and result is not None:
-        try:
-            from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
-
-            await run_db(
-                mark_terminal_review_delivered,
-                db,
-                result,
-                delivered_session_ids,
-            )
-        except Exception as error:
-            logger.warning(
-                "Failed to mark task-close review delivery for agent %s: %s",
-                run_id,
-                type(error).__name__,
-            )
-    # A deferred review reaches its caller through the reconciler's durable wake,
-    # which never notifies this registry, so its run state would otherwise linger.
-    if notification_succeeded or deferred:
+    if notification_succeeded:
         completion_registry.cleanup(run_id)
     return _DeliveryAttempt(
         delivery,

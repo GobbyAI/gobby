@@ -41,10 +41,6 @@ class TaskCloseRequest(BaseModel):
         Field(default=None, description="Git commit SHA to link")
     )
     force: bool = Field(default=False, description="Close even when child tasks remain open")
-    validation_override_reason: str | None = Field(
-        default=None,
-        description="Why validation was manually overridden",
-    )
     session_id: str | None = Field(
         default=None,
         description="Session reference or UUID that closed the task",
@@ -65,7 +61,6 @@ class TaskDeEscalateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
-    reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
 ResolveTask = Callable[[str], "Task"]
@@ -211,7 +206,6 @@ def register_task_lifecycle_routes(
                     reason=body.reason,
                     force=body.force,
                     closed_in_session_id=resolved_session_id,
-                    validation_override_reason=body.validation_override_reason,
                     cwd=repo_path,
                 )
             else:
@@ -221,7 +215,6 @@ def register_task_lifecycle_routes(
                     reason=body.reason,
                     force=body.force,
                     closed_in_session_id=resolved_session_id,
-                    validation_override_reason=body.validation_override_reason,
                 )
             result = closed.to_dict()
             warnings = await broadcast_with_warning("task_closed", result)
@@ -263,7 +256,6 @@ def register_task_lifecycle_routes(
                 server.task_manager.de_escalate_task,
                 resolved_id,
                 reason=request_data.decision_context,
-                reset_validation=request_data.reset_validation,
             )
             result = updated.to_dict()
             warnings = await broadcast_with_warning("task_de_escalated", result)

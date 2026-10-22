@@ -20,8 +20,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
-
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import Task
@@ -135,18 +133,6 @@ def record_close_receipt(
             raise CloseReceiptError(
                 f"{kind} receipts come only from the task's creator or delegator"
             )
-        reviewer = conn.execute(
-            """
-            SELECT 1 FROM agent_runs
-            WHERE agent_name = %s
-              AND (child_session_id = %s
-                   OR id = (SELECT agent_run_id FROM sessions WHERE id = %s))
-            LIMIT 1
-            """,
-            (TASK_CLOSE_REVIEWER_AGENT, author_session_id, author_session_id),
-        ).fetchone()
-        if reviewer is not None:
-            raise CloseReceiptError("a task-close reviewer cannot record close receipts")
         rows = conn.execute(
             """
             SELECT id, task_id, author, body, created_at FROM task_comments

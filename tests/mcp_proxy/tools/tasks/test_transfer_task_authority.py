@@ -17,7 +17,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.tasks.close_receipts import (
     ACTIVATION,
     CloseReceipt,
@@ -129,31 +128,6 @@ def test_transfer_refused_for_claimant(
     temp_db.execute("UPDATE tasks SET delegated_by_session_id = NULL WHERE id = %s", (task.id,))
     with pytest.raises(ValueError, match="claimant"):
         _transfer(manager, task, fixtures.claimant)
-
-
-def _close_reviewer(db: HubDatabase, fixtures: _Fixtures, parent: Session) -> Session:
-    reviewer = fixtures._add("Close reviewer")
-    db.execute(
-        """
-        INSERT INTO agent_runs (
-            id, parent_session_id, child_session_id, machine_id, status, provider,
-            prompt, agent_name
-        )
-        VALUES (%s, %s, %s, %s, 'running', 'codex', 'review', %s)
-        """,
-        (str(uuid4()), parent.id, reviewer.id, require_machine_id(), TASK_CLOSE_REVIEWER_AGENT),
-    )
-    return reviewer
-
-
-def test_transfer_refused_for_task_close_reviewer(
-    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
-) -> None:
-    manager, task, fixtures = authority_task
-    reviewer = _close_reviewer(temp_db, fixtures, fixtures.claimant)
-    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (fixtures.filer.id,))
-    with pytest.raises(ValueError, match="reviewer"):
-        _transfer(manager, task, reviewer)
 
 
 def _expire(db: HubDatabase, *sessions: Session) -> None:
@@ -382,12 +356,9 @@ def test_self_claimed_task_keeps_every_transfer_refusal(
 ) -> None:
     manager, task, fixtures = authority_task
     _self_claim(temp_db, task, fixtures)
-    reviewer = _close_reviewer(temp_db, fixtures, fixtures.filer)
 
     with pytest.raises(ValueError, match="claimant"):
         _transfer(manager, task, fixtures.filer)
-    with pytest.raises(ValueError, match="reviewer"):
-        _transfer(manager, task, reviewer)
     live = fixtures._add("Live delegator")
     temp_db.execute(
         "UPDATE tasks SET delegated_by_session_id = %s WHERE id = %s", (live.id, task.id)

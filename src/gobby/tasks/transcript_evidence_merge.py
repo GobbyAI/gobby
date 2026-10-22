@@ -3,11 +3,7 @@
 from dataclasses import replace
 from datetime import datetime
 
-from gobby.tasks.transcript_evidence_models import (
-    TranscriptEdit,
-    TranscriptEvidence,
-    TranscriptValidationRun,
-)
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
 
 
 def archive_before_live(
@@ -15,8 +11,7 @@ def archive_before_live(
 ) -> TranscriptEvidence:
     """Retain only an archive's prefix missing from the resumed live transcript."""
     boundary = min(
-        [run.completed_at for run in (*live.validation_runs, *live.command_runs)]
-        + [edit.timestamp for edit in live.edits],
+        (run.completed_at for run in (*live.validation_runs, *live.command_runs)),
         default=None,
     )
     if boundary is None:
@@ -27,42 +22,31 @@ def archive_before_live(
             run for run in archive.validation_runs if run.completed_at < boundary
         ),
         command_runs=tuple(run for run in archive.command_runs if run.completed_at < boundary),
-        edits=tuple(edit for edit in archive.edits if edit.timestamp < boundary),
-        task_claims=tuple(claim for claim in archive.task_claims if claim.claimed_at < boundary),
     )
 
 
 def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptEvidence:
     """Merge session evidence into one transcript position sequence.
 
-    Each session numbers ``order`` from its own counter, so raw values are not
-    comparable across the owner and closing sessions the close path merges.
-    Sessions interleave by provider timestamp without reordering within a
-    session, and the merged edits and runs are renumbered as one sequence so
-    every consumer can compare positions.
+    Each transcript numbers ``order`` from its own counter. Interleave by
+    provider timestamp without reordering within a transcript, then renumber
+    the runs so consumers can compare their positions.
     """
-    streams: list[list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]]] = []
-    author_run_ids = {
-        id(run) for evidence in evidence_sets for run in evidence.off_task_author_runs
-    }
+    streams: list[list[tuple[datetime, TranscriptValidationRun]]] = []
     for evidence in evidence_sets:
-        items: list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]] = [
+        items: list[tuple[datetime, TranscriptValidationRun]] = [
             (run.completed_at, run)
             for run in (
                 *evidence.validation_runs,
                 *evidence.command_runs,
-                *evidence.off_task_author_runs,
             )
         ]
-        items.extend((edit.timestamp, edit) for edit in evidence.edits)
         items.sort(key=lambda item: item[1].order)
         if items:
             streams.append(items)
 
     cursors = [0] * len(streams)
     runs: list[TranscriptValidationRun] = []
-    author_runs: list[TranscriptValidationRun] = []
-    edits: list[TranscriptEdit] = []
     position = 0
     while True:
         heads = [
@@ -76,22 +60,11 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
         item = streams[index][cursors[index]][1]
         cursors[index] += 1
         position += 1
-        if isinstance(item, TranscriptValidationRun):
-            target = author_runs if id(item) in author_run_ids else runs
-            target.append(replace(item, order=position))
-        else:
-            edits.append(replace(item, order=position))
+        runs.append(replace(item, order=position))
 
     return TranscriptEvidence(
         validation_runs=tuple(run for run in runs if run.categories),
         command_runs=tuple(run for run in runs if not run.categories),
-        off_task_author_runs=tuple(author_runs),
-        off_task_author_edits=tuple(
-            edit for evidence in evidence_sets for edit in evidence.off_task_author_edits
-        ),
-        excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
-        edits=tuple(edits),
-        task_claims=tuple(claim for evidence in evidence_sets for claim in evidence.task_claims),
         attempted_paths=tuple(
             dict.fromkeys(path for evidence in evidence_sets for path in evidence.attempted_paths)
         ),

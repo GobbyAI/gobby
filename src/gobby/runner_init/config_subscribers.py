@@ -154,7 +154,7 @@ _STATEFUL_ROUTES: Mapping[str, _ConsumerRoute] = {
     "ai": _route(
         "daemon AI/model clients",
         "runner_init.services._build_ai_services",
-        subscribers=("ai_services", "memory_services", "task_validator"),
+        subscribers=("ai_services", "memory_services"),
     ),
     "chat": _route(
         "HTTP and WebSocket chat limits",
@@ -194,14 +194,6 @@ _STATEFUL_ROUTES: Mapping[str, _ConsumerRoute] = {
 }
 
 _PREFIX_ROUTES: tuple[tuple[str, _ConsumerRoute], ...] = (
-    (
-        "gobby-tasks.validation.",
-        _route(
-            "TaskValidator",
-            "runner_init.services._build_task_validator",
-            subscriber="task_validator",
-        ),
-    ),
     (
         "logging.dir",
         _route(

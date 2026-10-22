@@ -85,7 +85,6 @@ class ServiceContainer:
     message_processor_resolver: Callable[[], Any | None] | None = None
 
     # Validation & Git
-    task_validator: Any | None = None  # TaskValidator
     worktree_storage: LocalWorktreeManager | None = None
     clone_storage: LocalCloneManager | None = None
     git_manager: Any | None = None  # WorktreeGitManager

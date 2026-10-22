@@ -13,7 +13,6 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT, build_agentic_review_prompt
 from gobby.tasks.close_receipts import (
     ACTIVATION,
     CALLER_RECEIPT_KINDS,
@@ -203,37 +202,6 @@ def test_every_claim_writer_records_the_claimant(
     }
 
 
-@pytest.mark.parametrize("kind", [INDEPENDENT_REVIEW_APPROVAL, LANDING_APPROVAL, LANDING])
-def test_task_close_reviewer_session_cannot_record_receipts(
-    temp_db: HubDatabase, task: Task, roles: dict[str, str], sessions: _Sessions, kind: str
-) -> None:
-    reviewer_session = sessions.add("Close reviewer")
-    temp_db.execute(
-        """
-        INSERT INTO agent_runs (
-            id, parent_session_id, child_session_id, machine_id, status, provider,
-            prompt, agent_name
-        )
-        VALUES (%s, %s, %s, %s, 'running', 'codex', 'review', %s)
-        """,
-        (
-            str(uuid4()),
-            roles["claimant"],
-            reviewer_session,
-            require_machine_id(),
-            TASK_CLOSE_REVIEWER_AGENT,
-        ),
-    )
-    temp_db.execute(
-        "UPDATE tasks SET delegated_by_session_id = %s WHERE id = %s",
-        (reviewer_session, task.id),
-    )
-
-    with pytest.raises(CloseReceiptError, match="task-close reviewer"):
-        _record(temp_db, task, reviewer_session, kind=kind, facts={"reason": "restart"})
-    assert list_close_receipts(temp_db, task.id) == []
-
-
 def test_landing_approval_comes_only_from_task_creator_or_delegator(
     temp_db: HubDatabase, task: Task, roles: dict[str, str], sessions: _Sessions
 ) -> None:
@@ -328,7 +296,7 @@ def test_landing_receipt_is_recorded_once_per_author_and_commit(
         _record(temp_db, task, roles["claimant"], kind=LANDING)
 
 
-def test_reviewer_prompt_explains_landing_receipts(
+def test_landing_facts_preserve_approval_and_landing_roles(
     temp_db: HubDatabase, task: Task, roles: dict[str, str]
 ) -> None:
     _record(temp_db, task, roles["creator"], kind=LANDING_APPROVAL, facts={"reason": "restart"})
@@ -339,18 +307,8 @@ def test_reviewer_prompt_explains_landing_receipts(
         "activation_class": "restart",
     }
     _record(temp_db, task, roles["reviewer"], kind=LANDING, facts=landing_facts)
-    prompt = build_agentic_review_prompt(
-        review_id="landing-review",
-        task_id=task.id,
-        commit_shas=[_TIP],
-        changes_summary="Landed the approved commit.",
-        review_fingerprint="fp",
-        evidence_fingerprint="efp",
-        criterion_count=1,
-        close_receipts=close_receipt_facts(temp_db, task, [_TIP]),
-    )
-    rendered = prompt.split("close_receipts=", 1)[1].split(". close_receipts are", 1)[0]
-    approval, landing = json.loads(rendered)
+    approval, landing = close_receipt_facts(temp_db, task, [_TIP])
+
     assert approval["kind"] == LANDING_APPROVAL
     assert approval["author_role"] == "task_creator"
     assert approval["facts"] == {"reason": "restart"}
@@ -358,10 +316,6 @@ def test_reviewer_prompt_explains_landing_receipts(
     assert landing["facts"] == landing_facts
     assert approval["matches_linked_commit"] is True
     assert landing["matches_linked_commit"] is True
-    assert "creator's or delegator's approval to land that SHA despite the named reasons" in prompt
-    assert "daemon's record that land_commit landed that SHA" in prompt
-    assert "branch, landed tip, mode and activation class" in prompt
-    assert "Neither is a verdict" in prompt
 
 
 def test_landing_approval_new_reasons_append_receipt(
@@ -477,31 +431,19 @@ def test_task_without_receipts_renders_no_launch_facts(temp_db: HubDatabase, tas
     assert close_receipt_facts(temp_db, task, [_LANDED]) == []
 
 
-def test_promotion_activation_receipt_reaches_the_reviewer_prompt(
+def test_promotion_activation_receipt_preserves_supported_promotion_facts(
     temp_db: HubDatabase, task: Task, roles: dict[str, str]
 ) -> None:
-    """#23096 regression: supported-promotion evidence must reach the close reviewer."""
+    """#23096 regression: supported-promotion evidence remains readable after close-review retirement."""
     _record(temp_db, task, roles["creator"], kind=ACTIVATION, sha=_LANDED, facts=_PROMOTION_FACTS)
 
-    prompt = build_agentic_review_prompt(
-        review_id="review-1",
-        task_id=task.id,
-        commit_shas=[_LANDED],
-        changes_summary="Promoted the binary set.",
-        review_fingerprint="fp",
-        evidence_fingerprint="efp",
-        criterion_count=1,
-        close_receipts=close_receipt_facts(temp_db, task, [_LANDED]),
-    )
+    [receipt] = close_receipt_facts(temp_db, task, [_LANDED])
 
-    rendered = prompt.split("close_receipts=", 1)[1].split(". close_receipts are", 1)[0]
-    [receipt] = json.loads(rendered)
     assert receipt["kind"] == ACTIVATION
     assert receipt["commit_sha"] == _LANDED
     assert receipt["matches_linked_commit"] is True
     assert receipt["author_role"] == "task_creator"
     assert receipt["facts"] == _PROMOTION_FACTS
-    assert "never an automatic verdict" in prompt
 
 
 @pytest.fixture

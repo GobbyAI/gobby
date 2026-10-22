@@ -7,9 +7,9 @@ import click
 
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.storage.tasks import TaskStaleStateError
-from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
+from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
+from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import is_task_closed
-from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 
 def create_task_impl(
@@ -282,7 +282,6 @@ def de_escalate_impl(
     services: CrudServices,
     task_id: str,
     reason: str,
-    reset_validation: bool,
 ) -> None:
     manager = services.get_task_manager()
     resolved = services.resolve_task_id(manager, task_id)
@@ -299,8 +298,5 @@ def de_escalate_impl(
     manager.de_escalate_task(
         resolved.id,
         reason=reason,
-        reset_validation=reset_validation,
     )
     click.echo(f"De-escalated task {resolved.id[:8]} ({reason})")
-    if reset_validation:
-        click.echo("  Validation fail count reset to 0")

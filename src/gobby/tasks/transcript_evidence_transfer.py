@@ -27,7 +27,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.tasks.transcript_evidence_models import TranscriptEdit, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
 #: Records per chunk. A 256-run chunk decodes in a median of about 0.5 ms and a p99
 #: of about 1.5 ms at load average 25-33 (2026-10-01, #23256). Under that contention
@@ -35,7 +35,7 @@ from gobby.tasks.transcript_evidence_models import TranscriptEdit, TranscriptVal
 #: 64 and 256 records alike, so a smaller chunk would not bound them.
 CHUNK_RECORDS = 256
 
-_RECORD_TYPES = (TranscriptValidationRun, TranscriptEdit)
+_RECORD_TYPES = (TranscriptValidationRun,)
 
 
 @dataclass(frozen=True)
@@ -146,21 +146,6 @@ def encode(value: object) -> ChunkedPayload:
     return payload
 
 
-def decode(payload: ChunkedPayload) -> object:
-    """Decode in one pass, for pool workers where no event loop waits."""
-    *_, value = _decode_steps(payload)
-    return value
-
-
-async def encode_cooperatively(value: object) -> ChunkedPayload:
-    """Encode on the event loop, yielding to it after each chunk."""
-    for step in _encode_steps(value):
-        if step is not None:
-            return step
-        await asyncio.sleep(0)
-    raise AssertionError("unreachable: encoding always ends with a payload")
-
-
 async def decode_cooperatively(payload: ChunkedPayload) -> object:
     """Decode on the event loop, yielding to it after each chunk.
 
@@ -177,8 +162,6 @@ async def decode_cooperatively(payload: ChunkedPayload) -> object:
 __all__ = [
     "CHUNK_RECORDS",
     "ChunkedPayload",
-    "decode",
     "decode_cooperatively",
     "encode",
-    "encode_cooperatively",
 ]

@@ -91,7 +91,7 @@ from gobby.storage.tasks._transitions_facade import TaskTransitionsMixin
 from gobby.storage.tasks._updates import (
     update_task_metadata as _update_task_metadata,
 )
-from gobby.tasks.criteria_contract import require_validation_criteria
+from gobby.tasks.criteria_text import require_validation_criteria
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)

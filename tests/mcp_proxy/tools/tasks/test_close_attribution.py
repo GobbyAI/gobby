@@ -1,16 +1,7 @@
-"""Close-checklist attribution capture when session variables have gone empty.
-
-Session variables are a volatile cache of which files a task edited. Escalation,
-`_live_session_recovery`, and a fresh claiming session all leave that cache empty
-for a task that really did edit files. The task's linked commits are the durable
-record, so the checklist must fall back to them rather than treat committed work
-as a no-edit close — a no-edit close skips gate 10 entirely, which is exactly the
-validation evidence the gate exists to demand.
-"""
+"""Checkout attribution and linked-path fallback for close cleanliness checks."""
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,14 +9,10 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.config.validation_detection import default_validation_detection_config
-from gobby.mcp_proxy.tools.tasks import _lifecycle_close_finalization as close_finalization
+from gobby.mcp_proxy.tools.tasks import _close_context as close_context
+from gobby.mcp_proxy.tools.tasks._close_context import capture_attribution
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import capture_attribution
-from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
-from gobby.tasks.transcript_evidence import derive_transcript_evidence
-from gobby.utils.machine_id import get_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -84,7 +71,7 @@ def _no_foreign_owners(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _no_owners(*_args: object, **_kwargs: object) -> set[str]:
         return set()
 
-    monkeypatch.setattr(close_finalization, "foreign_owned_dirty_paths_async", _no_owners)
+    monkeypatch.setattr(close_context, "foreign_owned_dirty_paths_async", _no_owners)
 
 
 def _ctx(variables: dict[str, Any]) -> RegistryContext:
@@ -99,169 +86,85 @@ def _ctx(variables: dict[str, Any]) -> RegistryContext:
 
 
 @pytest.mark.asyncio
-async def test_linked_commit_paths_stand_in_for_lost_session_attribution(
-    repo_with_task_commit: tuple[str, str],
-) -> None:
-    """B.4: committed work is never a no-edit close, whatever the session cache says."""
-    repo_path, commit_sha = repo_with_task_commit
-
-    snapshot = await capture_attribution(
-        _ctx({"task_edited_files": {}}),
-        task=_task(commits=[commit_sha]),
-        task_id=TASK_ID,
-        resolved_session_id="closing-session",
-        repo_path=repo_path,
-    )
-
-    assert snapshot.raw_paths == COMMITTED_PATHS
-    assert snapshot.edited_paths == COMMITTED_PATHS
-    assert snapshot.attributed is True
-    assert snapshot.had_attributed_edits is True
-    assert snapshot.used_commit_fallback is True
-
-
-@pytest.mark.asyncio
-async def test_prospective_commit_paths_survive_released_session_attribution(
-    repo_with_task_commit: tuple[str, str],
+@pytest.mark.parametrize("linked", [True, False])
+async def test_linked_and_prospective_commits_fill_lost_attribution(
+    repo_with_task_commit: tuple[str, str], linked: bool
 ) -> None:
     repo_path, commit_sha = repo_with_task_commit
-    commit_union = getattr(close_finalization, "_attribution_commit_shas", None)
-
-    assert callable(commit_union)
-    assert commit_union(_task(commits=[commit_sha]), (commit_sha,)) == (commit_sha,)
-    assert commit_union(_task(commits=[commit_sha]), ("", commit_sha)) == (commit_sha,)
-
     snapshot = await capture_attribution(
-        _ctx({"task_edited_files": {}}),
-        task=_task(commits=None),
-        task_id=TASK_ID,
+        _ctx({}),
+        task=_task(commits=[commit_sha] if linked else None),
         resolved_session_id="closing-session",
         repo_path=repo_path,
         prospective_commit_shas=(commit_sha,),
     )
-
-    assert snapshot.raw_paths == COMMITTED_PATHS
-    assert snapshot.edited_paths == snapshot.raw_paths
-    assert snapshot.had_attributed_edits is True
-
-    transcript = Path(repo_path) / "codex.jsonl"
-    records = [
-        {
-            "timestamp": "2026-08-27T03:00:00Z",
-            "type": "response_item",
-            "payload": {
-                "type": "custom_tool_call",
-                "call_id": "owned-edit",
-                "name": "apply_patch",
-                "input": "*** Begin Patch\n*** Update File: src/gobby/memory/recall.py\n",
-            },
-        },
-        {
-            "timestamp": "2026-08-27T03:00:01Z",
-            "type": "response_item",
-            "payload": {
-                "type": "custom_tool_call",
-                "call_id": "unrelated-edit",
-                "name": "apply_patch",
-                "input": "*** Begin Patch\n*** Update File: src/gobby/other.py\n",
-            },
-        },
-    ]
-    transcript.write_text(
-        "".join(f"{json.dumps(record)}\n" for record in records),
-        encoding="utf-8",
-    )
-    session = cast(
-        Session,
-        SimpleNamespace(
-            id="session-1",
-            external_id="external-1",
-            machine_id=get_machine_id(),
-            source="codex",
-            transcript_path=str(transcript),
-        ),
-    )
-
-    evidence = await derive_transcript_evidence(
-        session,
-        None,
-        default_validation_detection_config(),
-        set(snapshot.edited_paths),
-        repo_path,
-        archive_dir=str(Path(repo_path) / "archives"),
-    )
-
-    assert [edit.path for edit in evidence.edits] == ["src/gobby/memory/recall.py"]
+    assert snapshot.complete
+    assert snapshot.clean_checkouts == {repo_path: COMMITTED_PATHS}
 
 
 @pytest.mark.asyncio
-async def test_session_attribution_wins_and_a_commitless_task_is_still_no_edit(
+async def test_checkout_attribution_wins_and_commitless_task_stays_empty(
     repo_with_task_commit: tuple[str, str],
 ) -> None:
-    """B.5: the fallback only fills a gap; it never overrides or invents attribution.
-
-    Live session attribution is the more precise record — it names the files this
-    task touched rather than everything its commits carried — so it takes
-    precedence. A task with neither is a genuine no-edit close and stays one.
-    """
     repo_path, commit_sha = repo_with_task_commit
-
+    path = "src/gobby/memory/recall.py"
     live = await capture_attribution(
-        _ctx({"task_edited_files": {TASK_ID: ["src/gobby/memory/recall.py"]}}),
+        _ctx(
+            {
+                "task_edited_files": {TASK_ID: [path]},
+                "task_edited_file_checkouts": {TASK_ID: {repo_path: [path]}},
+            }
+        ),
         task=_task(commits=[commit_sha]),
-        task_id=TASK_ID,
         resolved_session_id="closing-session",
         repo_path=repo_path,
+        prospective_commit_shas=(commit_sha,),
     )
-
-    assert live.raw_paths == frozenset({"src/gobby/memory/recall.py"})
-    assert live.had_attributed_edits is True
-    assert live.used_commit_fallback is False
-
+    assert live.complete
+    assert live.clean_checkouts == {repo_path: frozenset({path})}
     no_edit = await capture_attribution(
-        _ctx({"task_edited_files": {}}),
+        _ctx({}),
         task=_task(commits=None),
-        task_id=TASK_ID,
         resolved_session_id="closing-session",
         repo_path=repo_path,
+        prospective_commit_shas=(),
     )
+    assert no_edit.complete
+    assert no_edit.clean_checkouts == {}
 
-    assert no_edit.raw_paths == frozenset()
-    assert no_edit.attributed is False
-    assert no_edit.had_attributed_edits is False
+
+@pytest.mark.asyncio
+async def test_unscoped_ledger_is_not_replaced_by_commit_fallback(
+    repo_with_task_commit: tuple[str, str],
+) -> None:
+    repo_path, commit_sha = repo_with_task_commit
+    snapshot = await capture_attribution(
+        _ctx({"task_edited_files": {TASK_ID: ["unscoped.py"]}}),
+        task=_task(commits=[commit_sha]),
+        resolved_session_id="closing-session",
+        repo_path=repo_path,
+        prospective_commit_shas=(commit_sha,),
+    )
+    assert not snapshot.complete
+    assert snapshot.clean_checkouts == {}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("ledger_paths", "commit_source", "expected_paths", "expected_fallback"),
+    "ledger_paths,expected_paths",
     [
-        pytest.param((IGNORED_SCRATCH,), "linked", COMMITTED_PATHS, True, id="ignored-linked"),
-        pytest.param(
-            (IGNORED_SCRATCH,), "prospective", COMMITTED_PATHS, True, id="ignored-prospective"
-        ),
-        pytest.param(
+        ((IGNORED_SCRATCH,), frozenset()),
+        (
             (IGNORED_SCRATCH, "src/gobby/memory/recall.py"),
-            "linked",
             frozenset({"src/gobby/memory/recall.py"}),
-            False,
-            id="mixed-ledger",
         ),
-        pytest.param(
-            ("src/gobby/memory/recall.py",),
-            "linked",
-            frozenset({"src/gobby/memory/recall.py"}),
-            False,
-            id="committable-ledger",
-        ),
-        pytest.param((IGNORED_SCRATCH,), "none", frozenset(), True, id="ignored-no-commit"),
+        (("src/gobby/memory/recall.py",), frozenset({"src/gobby/memory/recall.py"})),
     ],
 )
-async def test_close_attribution_with_ignored_ledger_paths(
+async def test_ignored_checkout_ledger_paths_are_not_committable(
     repo_with_task_commit: tuple[str, str],
     ledger_paths: tuple[str, ...],
-    commit_source: str,
     expected_paths: frozenset[str],
-    expected_fallback: bool,
 ) -> None:
     repo_path, commit_sha = repo_with_task_commit
     root = Path(repo_path)
@@ -269,18 +172,17 @@ async def test_close_attribution_with_ignored_ledger_paths(
     scratch = root / IGNORED_SCRATCH
     scratch.parent.mkdir(parents=True)
     scratch.write_text("temporary evidence\n", encoding="utf-8")
-
     snapshot = await capture_attribution(
-        _ctx({"task_edited_files": {TASK_ID: list(ledger_paths)}}),
-        task=_task(commits=[commit_sha] if commit_source == "linked" else None),
-        task_id=TASK_ID,
+        _ctx(
+            {
+                "task_edited_files": {TASK_ID: list(ledger_paths)},
+                "task_edited_file_checkouts": {TASK_ID: {repo_path: list(ledger_paths)}},
+            }
+        ),
+        task=_task(commits=[commit_sha]),
         resolved_session_id="closing-session",
         repo_path=repo_path,
-        prospective_commit_shas=(commit_sha,) if commit_source == "prospective" else (),
+        prospective_commit_shas=(commit_sha,),
     )
-
-    assert snapshot.edited_paths == expected_paths
-    assert snapshot.raw_paths == frozenset(ledger_paths) | expected_paths
-    assert snapshot.attributed is True
-    assert snapshot.used_commit_fallback is expected_fallback
-    assert snapshot.had_attributed_edits is bool(expected_paths)
+    assert snapshot.complete
+    assert snapshot.clean_checkouts == {repo_path: expected_paths}

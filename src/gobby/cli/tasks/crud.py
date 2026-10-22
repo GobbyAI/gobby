@@ -32,7 +32,7 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
 from gobby.utils.project_context import get_project_context
 
 
@@ -301,7 +301,7 @@ def reopen_task_cmd(task_id: str, reason: str | None) -> None:
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
     Works on closed or escalated tasks. Clears ownership, closure/escalation
-    fields, and resets validation_fail_count.
+    fields.
     """
     reopen_task_impl(_services(), task_id, reason)
 
@@ -331,11 +331,9 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 @click.command("de-escalate")
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", required=True, help="Reason for de-escalation")
-@click.option("--reset-validation", is_flag=True, help="Reset validation fail count")
 def de_escalate_cmd(
     task_id: str,
     reason: str,
-    reset_validation: bool,
 ) -> None:
     """Return an escalated task to ready.
 
@@ -347,20 +345,18 @@ def de_escalate_cmd(
         _services(),
         task_id,
         reason,
-        reset_validation,
     )
 
 
 @click.command("validation-history")
 @click.argument("task_id", metavar="TASK")
-@click.option("--clear", is_flag=True, help="Clear validation history")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def validation_history_cmd(task_id: str, clear: bool, json_format: bool) -> None:
-    """View or clear validation history for a task.
+def validation_history_cmd(task_id: str, json_format: bool) -> None:
+    """View historical validation records for a task.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
     """
-    validation_history_impl(_services(), task_id, clear, json_format)
+    validation_history_impl(_services(), task_id, json_format)
 
 
 __all__ = [

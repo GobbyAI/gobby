@@ -16,7 +16,7 @@ from gobby.sync.tasks import (
     TaskRestoreError,
     _compute_path_cache,
 )
-from gobby.tasks.criteria_contract import TaskCriteriaError
+from gobby.tasks.criteria_text import TaskCriteriaError
 from gobby.tasks.state_semantics import is_task_closed
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 

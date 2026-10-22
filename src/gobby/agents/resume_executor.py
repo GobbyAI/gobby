@@ -127,12 +127,9 @@ async def resume_agent_run(
         daemon_config: Optional daemon config used for tmux spawn settings.
         agent_pane_reserver: Daemon pane reserver; a placed snapshot is refused without it.
     """
-    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
-
-    if original_run.agent_name == TASK_CLOSE_REVIEWER_AGENT:
-        # Its close review stays bound to this run, so a successor could never
-        # submit a verdict; close-review reconciliation retries the review instead.
-        return ResumeAgentResult(False, error="resume_task_close_reviewer_unsupported")
+    if original_run.agent_name == "task-close-reviewer":
+        # Historical queue runs are inert after retirement, including parked runs.
+        return ResumeAgentResult(False, error="retired_close_review_run")
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     try:
         await asyncio.to_thread(revalidate_write_grant, resume_metadata)

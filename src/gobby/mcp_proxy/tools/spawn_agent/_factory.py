@@ -449,13 +449,9 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
-        from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
-
-        # Queued task-close reviewer runs keep their own validation below, even
-        # when a pipeline step is the ambient caller.
         invoking_pipeline = (
             await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
-            if reserved_run_id is not None and agent != TASK_CLOSE_REVIEWER_AGENT
+            if reserved_run_id is not None
             else None
         )
         if reserved_run_id is not None and invoking_pipeline is not None:
@@ -471,25 +467,7 @@ def create_spawn_agent_registry(
             if invocation_reply is not None:
                 return invocation_reply
         elif reserved_run_id is not None:
-            from uuid import UUID
-
-            from gobby.storage.agents import LocalAgentRunManager
-
-            if agent != TASK_CLOSE_REVIEWER_AGENT or task_id is not None or db is None:
-                return {"success": False, "error": "reserved_run_id is reviewer-internal"}
-            try:
-                reserved_run_id = str(UUID(reserved_run_id))
-            except ValueError:
-                return {"success": False, "error": "reserved_run_id is invalid"}
-            queued_run = await asyncio.to_thread(LocalAgentRunManager(db).get, reserved_run_id)
-            if (
-                queued_run is None
-                or queued_run.status != "queued"
-                or queued_run.parent_session_id != resolved_parent_session_id
-                or queued_run.agent_name != TASK_CLOSE_REVIEWER_AGENT
-                or queued_run.prompt != prompt
-            ):
-                return {"success": False, "error": "reserved queued reviewer run mismatch"}
+            return {"success": False, "error": "reserved_run_id requires a pipeline caller"}
 
         # Compose prompt — hooks inject agent instructions via session_start,
         # so no preamble prepend needed here.

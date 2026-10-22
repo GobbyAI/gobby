@@ -1,7 +1,7 @@
 ---
 name: test-driven-development
-description: "Required TDD loop for tasks that need red, green, refactor, final-green, and test-quality evidence."
-version: "1.0.0"
+description: "Tests-first development with focused red, green, refactor, and reviewer reruns."
+version: "1.1.0"
 category: core
 internal: true
 triggers: tdd, test-driven development, red green refactor
@@ -12,96 +12,47 @@ metadata:
 
 # Test-Driven Development
 
-Use this when a task requires TDD.
-
-## Leaf-wide production-write barrier
-
-Resolve every named test in the claimed leaf's stored criteria before implementing
-behavior. Each behavior test needs its own authenticated retained RED after its
-relevant test edit and before any behavior-bearing production write. Writing one
-acceptance file, a sibling test's failure, a first GREEN, compile/collection errors,
-or an aggregate failure count cannot open the barrier. Test edits invalidate that
-test's earlier RED; another task's claim or run cannot authorize this leaf.
-
-All named criteria are behavior obligations unless the stored criterion explicitly
-says `regression-only:` and its test is proven unchanged against the claim baseline.
-Only those unchanged regressions may use GREEN alone. Uncertain identity or
-regression status keeps production blocked. Close checks the same per-test RED
-chronology and a later GREEN for every named test.
-
-Test-only writes and mechanically verified behavior-free API stubs may prepare RED.
-Skill completion permits that preparation; the write guard still requires every
-behavior test's original retained failure before implementation. Shell writes and
-mixed patches share the barrier. Compaction preserves authenticated originals;
-never reconstruct or replay historical RED.
+Use this when a task requires TDD. The developer and reviewer judge the test
+sequence from the work and its commits.
 
 ## Required Loop
 
-1. Write or update the smallest meaningful test before implementation.
-2. Run the exact test command and verify the expected failure.
-3. Implement the smallest change that makes the new failing test pass: the
-   minimal green step.
-4. Run the exact test command and verify green.
-5. Refactor only after green, then rerun final green validation.
+1. Write the smallest meaningful test for the intended behavior before implementing it.
+2. Run that test and inspect its expected assertion failure. Fix collection,
+   environment, or compilation failures before treating the run as RED.
+3. Commit the test when useful to make the tests-first sequence reviewable.
+4. Implement the smallest complete change that makes the failing test pass.
+5. Run the focused tests and inspect GREEN.
+6. Refactor, then rerun the relevant validation.
 
-## Rust Stub-First RED
+Named acceptance tests should exercise observable behavior and meaningful failure
+cases. Keep unchanged regression coverage and add coverage for the changed contract.
+Do not manufacture failures or rewrite historical results.
 
-Rust tests for a new API cannot reach their test bodies until the test target
-compiles. Preserve test-first order with a compile-only API-shape step:
+## New APIs and Rust
 
-1. Write the smallest focused test before the behavior exists.
-2. Add only the minimal API shape needed to compile: product types, fields,
-   functions, or variants using a safe default, a behavior-free stub, or
-   `todo!()`. Do not implement the behavior.
-3. Run the focused test command directly in the foreground, for example:
+When a test cannot compile without a new API, first add the minimal behavior-free
+shape needed to reach the test body. A safe default, stub, or `todo!()` can prepare
+that run. Inspect the resulting assertion or panic before implementing the behavior.
 
-   ```bash
-   cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
-   ```
+Run focused commands directly, for example:
 
-   Do not wrap the command in a pipe, redirect, trailing `echo`, fallback,
-   subshell, or background invocation.
-4. Verify that the named test runs and RED is a test-attributed assertion or
-   panic.
-5. Implement the behavior, then rerun the same direct command and verify green.
+```bash
+cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
+```
 
-Compiler failures from missing product types, unresolved imports, or unknown
-fields do not count as RED. A reconstructed RED run after implementation is
-also uncredited.
+## Review and Handoff
 
-## Completion Evidence
+Include the tests-first commit sequence, the commands used, the expected failing
+behavior, and the final passing results. The reviewer inspects test quality and
+reruns relevant tests independently. Fix review findings and rerun affected checks.
 
-The task handoff must include:
-
-- Red evidence: exact command and test-attributed failure output from before implementation:
-  assertion/panic, pytest `Failed: DID NOT RAISE`, a `pytest.fail()` reached from the test
-  body (never a top-level placeholder reached before a conditional or application call,
-  or `Failed: Timeout`), or a test-body
-  `*Error`/`*Exception` (including bare `NotImplementedError` after a stub edit).
-- Green evidence: exact command and pass output summary after minimal implementation.
-- Refactor/final-green evidence: exact final command and pass output summary.
-- Test-quality audit evidence for supported touched test paths, or an
-  unsupported-language warning plus focused repo-native validation outside Gobby.
-- Test-types audit output for touched Python test paths.
-
-When tests were added or heavily edited, run:
+For added or substantially changed tests, run the repository's quality checks:
 
 ```bash
 uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low
+uv run gobby test-types audit <python-test-paths> --baseline .gobby/test-types-baseline.json --fail-on-new
 ```
 
-Fix every reported finding regardless of severity; never raise `--min-severity`
-to pass. A missing baseline is not a skip reason; the CLI falls back to treating
-current supported-language issues as new.
-
-For Python test paths, also run:
-
-```bash
-uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new
-```
-
-A missing `.gobby/test-types-baseline.json` is not a skip reason; without it,
-the CLI treats all current type errors as new.
-
-TDD is not satisfied by writing tests after implementation, by only running a broad
-suite, or by omitting the expected red failure.
+Fix reported issues. For unsupported languages, use focused native validation.
+A missing baseline means current findings are new; it does not waive the check.

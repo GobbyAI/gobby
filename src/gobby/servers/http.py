@@ -206,7 +206,6 @@ class HTTPServer:
         """Initialize MCP proxy, internal registries, and semantic search."""
         from gobby.mcp_proxy.manager import MCPClientManager
         from gobby.runner_init.services import AIServiceBundle, MemoryServiceBundle
-        from gobby.tasks.validation import TaskValidator
 
         runtime_bundle = self.capture_runtime_bundle()
         config = self.resolve_runtime_config()
@@ -258,10 +257,6 @@ class HTTPServer:
             if isinstance(service, MemoryServiceBundle):
                 return service.memory_backup_manager
             return services.memory_backup_manager
-
-        def resolve_task_validator() -> TaskValidator | None:
-            service = self._runtime_service("task_validator")
-            return service if isinstance(service, TaskValidator) else services.task_validator
 
         memory_services = captured_service("memory_services")
         mcp_manager = resolve_mcp_manager()
@@ -321,7 +316,6 @@ class HTTPServer:
             memory_manager_resolver=resolve_memory_manager,
             task_manager=services.task_manager,
             db=services.mcp_db_manager.db if services.mcp_db_manager else None,
-            task_validator_resolver=resolve_task_validator,
             session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
             provider_capacity_resolver=lambda: services.provider_capacity_service,

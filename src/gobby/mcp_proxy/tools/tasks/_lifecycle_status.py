@@ -47,7 +47,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
     def reopen_task(task_id: str, reason: str | None = None) -> dict[str, Any]:
         """Reopen a closed or escalated task.
 
-        Clears ownership, closure/escalation fields, and resets validation_fail_count.
+        Clears ownership and closure/escalation fields.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -118,7 +118,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
 
     registry.register(
         name="reopen_task",
-        description="Reopen a closed or escalated task. Clears ownership, closure/escalation fields, and resets validation. Optionally appends a reopen reason to the description.",
+        description="Reopen a closed or escalated task. Clears ownership and closure/escalation fields. Optionally appends a reopen reason to the description.",
         input_schema={
             "type": "object",
             "properties": {
@@ -250,7 +250,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
     def de_escalate_task(
         task_id: str,
         reason: str,
-        reset_validation: bool = False,
     ) -> dict[str, Any]:
         """De-escalate a task and record the user's decision.
 
@@ -263,7 +262,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         Args:
             task_id: Task reference (#N, path, or UUID)
             reason: Reason for de-escalation (required)
-            reset_validation: Also reset validation fail count (default: False)
 
         Returns:
             Empty dict on success, or error dict with details.
@@ -310,7 +308,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             updated = ctx.task_manager.de_escalate_task(
                 resolved_id,
                 reason=reason,
-                reset_validation=reset_validation,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -344,7 +341,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
     registry.register(
         name="de_escalate_task",
-        description="Return an escalated task to its preserved current stage after human intervention resolves the issue. Optionally resets validation failure count, current stage work attempts, and a stopped approved stage from lifecycle history.",
+        description="Return an escalated task to ready after human intervention resolves the issue.",
         input_schema={
             "type": "object",
             "properties": {
@@ -355,11 +352,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "reason": {
                     "type": "string",
                     "description": "Why the task is being de-escalated (e.g., 'dependency resolved', 'workaround applied')",
-                },
-                "reset_validation": {
-                    "type": "boolean",
-                    "description": "Also reset the validation failure count (default: false)",
-                    "default": False,
                 },
             },
             "required": ["task_id", "reason"],

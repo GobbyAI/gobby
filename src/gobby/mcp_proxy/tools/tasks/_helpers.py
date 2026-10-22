@@ -6,7 +6,7 @@ for task operations.
 
 import uuid
 
-from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
 
 
 def _is_uuid(value: str) -> bool:

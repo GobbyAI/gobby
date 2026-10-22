@@ -722,12 +722,14 @@ async def foreign_owned_dirty_paths_async(
     project_id: str,
     checkout_root: str,
     paths: AbstractSet[str] | None = None,
+    release_clean: bool = True,
 ) -> set[str]:
     """Return foreign-attributed paths that are dirty in ``checkout_root``.
 
     Verifies only the paths another active session's open task claims, narrowed
     to ``paths`` when one is given, so git never walks the tree. Entries whose
-    path is clean there are released as stale. Raises
+    path is clean there are released as stale unless release_clean is false
+    for read-only inspection. Raises
     DirtyEditOwnershipInspectionError when the ownership query or the bounded
     status is unavailable.
     """
@@ -741,12 +743,15 @@ async def foreign_owned_dirty_paths_async(
     except (psycopg.OperationalError, PoolTimeout) as exc:
         raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
     candidates = set(owners) if paths is None else overlapping_task_edit_paths(owners.keys(), paths)
-    dirty_paths = await _dirty_owned_paths_releasing_clean(
-        db,
-        owners,
-        candidates,
-        checkout_root=checkout_root,
-    )
+    if release_clean:
+        dirty_paths = await _dirty_owned_paths_releasing_clean(
+            db,
+            owners,
+            candidates,
+            checkout_root=checkout_root,
+        )
+    else:
+        dirty_paths = await task_dirty_paths_async(candidates, checkout_root)
     if dirty_paths is None:
         raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
     return dirty_paths

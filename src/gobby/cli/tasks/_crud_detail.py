@@ -58,9 +58,7 @@ def show_task_impl(services: CrudServices, task_id: str) -> None:
         click.echo(f"\n{task.description}")
 
 
-def validation_history_impl(
-    services: CrudServices, task_id: str, clear: bool, json_format: bool
-) -> None:
+def validation_history_impl(services: CrudServices, task_id: str, json_format: bool) -> None:
     from gobby.tasks.validation_history import ValidationHistoryManager
 
     manager = services.get_task_manager()
@@ -69,12 +67,6 @@ def validation_history_impl(
         return
 
     history_manager = ValidationHistoryManager(manager.db)
-
-    if clear:
-        history_manager.clear_history(resolved.id)
-        manager.update_task(resolved.id, validation_fail_count=0)
-        click.echo(f"Cleared validation history for {resolved.id[:8]}")
-        return
 
     iterations = history_manager.get_iteration_history(resolved.id)
 

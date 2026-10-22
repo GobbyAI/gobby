@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
 from gobby.plans.semantic_lint import collect_description_target_inventory
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
-from gobby.tasks.acceptance_artifacts import extract_artifact_references
+from gobby.tasks.acceptance_references import extract_artifact_references
 from gobby.tasks.commit_graph import CommitGraph
 from gobby.tasks.commits import ancestry_order, collect_net_name_status_async
 from gobby.utils.daemon_git import GitOk, daemon_git

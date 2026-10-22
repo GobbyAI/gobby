@@ -125,7 +125,6 @@ def transfer_task_authority(
     creator-or-delegator check accepts it without a receipt-rule change. The
     task's claimant and its close reviewers stay excluded.
     """
-    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
     reason = reason.strip()
     if not reason:
@@ -172,18 +171,6 @@ def transfer_task_authority(
             raise ValueError("A closed task's authority cannot be transferred")
         if str(row["claimed_by_session_id"]) == caller_session_id:
             raise ValueError("the task's claimant cannot take over receipt authority")
-        reviewer = conn.execute(
-            """
-            SELECT 1 FROM agent_runs
-            WHERE agent_name = %s
-              AND (child_session_id = %s
-                   OR id = (SELECT agent_run_id FROM sessions WHERE id = %s))
-            LIMIT 1
-            """,
-            (TASK_CLOSE_REVIEWER_AGENT, caller_session_id, caller_session_id),
-        ).fetchone()
-        if reviewer is not None:
-            raise ValueError("a task-close reviewer cannot take over receipt authority")
         if (
             row["actor_status"] not in LIVE_SESSION_STATUSES
             or row["actor_project_id"] != row["project_id"]

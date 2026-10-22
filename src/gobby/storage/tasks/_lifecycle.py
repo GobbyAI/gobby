@@ -14,7 +14,13 @@ import re
 from datetime import datetime
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
+from gobby.storage.review_history import read_review_row
+from gobby.storage.tasks._models import (
+    Task,
+    TaskHasChildrenError,
+    TaskHasDependentsError,
+    TaskHasOpenChildrenError,
+)
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
@@ -39,9 +45,7 @@ def repair_closed_candidate(
         raise ValueError("Repair requires an audit reason and a full reviewed candidate SHA.")
     with db.transaction() as conn:
         task = conn.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
-        review = conn.execute(
-            "SELECT * FROM task_close_reviews WHERE id = %s FOR SHARE", (review_id,)
-        ).fetchone()
+        review = read_review_row(conn, review_id)
         if task is None or review is None or review["task_id"] != task_id:
             raise ValueError("The original close review must belong to this task.")
         actor = conn.execute(
@@ -143,11 +147,7 @@ def close_task(
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
-    validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
-    reset_validation_fail_count: bool = False,
-    validation_status: str | None = None,
-    validation_feedback: str | None = None,
 ) -> None:
     """Close a task.
 
@@ -158,7 +158,6 @@ def close_task(
         force: If True, close even if there are open children (default: False)
         closed_in_session_id: Session ID where task was closed
         closed_commit_sha: Git commit SHA at time of closing
-        validation_override_reason: Why agent bypassed validation (if applicable)
 
     Raises:
         ValueError: If task not found or has open children (and force=False)
@@ -173,9 +172,7 @@ def close_task(
             child_list = ", ".join(f"{c['id']} ({c['title']})" for c in open_children[:3])
             if len(open_children) > 3:
                 child_list += f" and {len(open_children) - 3} more"
-            raise ValueError(
-                f"Cannot close task {task_id}: has {len(open_children)} open child task(s): {child_list}"
-            )
+            raise TaskHasOpenChildrenError(task_id, [child_list])
 
     collected: list[str] = [] if closed_ancestors is None else closed_ancestors
     _close_task_transition(
@@ -186,11 +183,7 @@ def close_task(
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
         closed_ancestors=collected,
-        validation_override_reason=validation_override_reason,
         expected_updated_at=expected_updated_at,
-        reset_validation_fail_count=reset_validation_fail_count,
-        validation_status=validation_status,
-        validation_feedback=validation_feedback,
     )
 
 
@@ -202,7 +195,7 @@ def reopen_task(
     """Reopen a task to the ready state.
 
     Works from any non-ready state (in_progress, closed, needs_review, escalated, etc.).
-    Clears ownership, closed fields, and resets validation_fail_count.
+    Clears ownership and closed fields.
 
     Args:
         db: Database protocol instance

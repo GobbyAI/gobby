@@ -81,7 +81,6 @@ if TYPE_CHECKING:
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.memories import MemoryBackupManager
-    from gobby.tasks.validation import TaskValidator
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.services import TerminalServices
@@ -216,7 +215,6 @@ class GobbyRunner:
     mcp_proxy: MCPClientManager
     memory_backup_manager: MemoryBackupManager | None
     message_processor: SessionMessageProcessor | None
-    task_validator: TaskValidator | None
     worktree_storage: LocalWorktreeManager
     clone_storage: LocalCloneManager
     git_manager: WorktreeGitManager | None

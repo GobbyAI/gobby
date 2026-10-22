@@ -8,7 +8,6 @@ rewrite_input, load_skill.
 import asyncio
 import json
 import logging
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -38,7 +37,6 @@ from gobby.storage.pipeline_subscribers import (
     PipelineSubscriberStorageError,
 )
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.condition_helpers import all_tasks_have_durable_stop_wait
@@ -370,10 +368,6 @@ class RuleEngine(
                                 all_tasks_have_durable_stop_wait,
                                 self._task_manager,
                                 claimed_task_ids,
-                                partial(
-                                    TaskCloseReviewStore(self.db).has_retry_wait,
-                                    caller_session_id=session_id,
-                                ),
                             )
                         except Exception as exc:
                             logger.warning(

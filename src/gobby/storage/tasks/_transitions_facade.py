@@ -15,7 +15,7 @@ from gobby.storage.tasks._lifecycle import (
     reopen_task as _reopen_task,
 )
 from gobby.storage.tasks._lifecycle import repair_closed_candidate as _repair_closed_candidate
-from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
+from gobby.storage.tasks._models import UNSET, MaybeUnset, Task, TaskStaleStateError
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
@@ -24,9 +24,6 @@ from gobby.storage.tasks._transitions import (
 )
 from gobby.storage.tasks._transitions import (
     escalate_task as _escalate_task,
-)
-from gobby.storage.tasks._transitions import (
-    increment_validation_failure as _increment_validation_failure,
 )
 from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
@@ -125,7 +122,6 @@ class TaskTransitionsMixin:
         )
         self._notify_listeners()
         return task
-
     def claim_task_for_agent(
         self,
         task_id: str,
@@ -181,11 +177,7 @@ class TaskTransitionsMixin:
         closed_in_session_id: str | None = None,
         closed_commit_sha: str | None = None,
         closed_ancestors: list[str] | None = None,
-        validation_override_reason: str | None = None,
         expected_updated_at: datetime | None = None,
-        reset_validation_fail_count: bool = False,
-        validation_status: str | None = None,
-        validation_feedback: str | None = None,
     ) -> Task:
         """Close a task."""
         _close_task(
@@ -196,11 +188,7 @@ class TaskTransitionsMixin:
             closed_in_session_id=closed_in_session_id,
             closed_commit_sha=closed_commit_sha,
             closed_ancestors=closed_ancestors,
-            validation_override_reason=validation_override_reason,
             expected_updated_at=expected_updated_at,
-            reset_validation_fail_count=reset_validation_fail_count,
-            validation_status=validation_status,
-            validation_feedback=validation_feedback,
         )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -213,8 +201,9 @@ class TaskTransitionsMixin:
         reason: str | None = None,
         force: bool = False,
         closed_in_session_id: str | None = None,
-        validation_override_reason: str | None = None,
         cwd: str | Path | None = None,
+        expected_updated_at: datetime | None = None,
+        closed_ancestors: list[str] | None = None,
     ) -> Task:
         """Link a commit and close the task in one transaction.
 
@@ -225,7 +214,16 @@ class TaskTransitionsMixin:
         short_sha = normalize_commit_sha(commit_sha, cwd=cwd)
         if short_sha is None:
             raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
-        with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
+        with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)) as conn:
+            row = conn.execute(
+                "SELECT closed_at, updated_at FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Task {task_id} not found")
+            if row["closed_at"] is not None:
+                return self.get_task(task_id)
+            if expected_updated_at is not None and row["updated_at"] != expected_updated_at:
+                raise TaskStaleStateError(task_id)
             _link_commit(self.db, task_id, short_sha)
             _close_task(
                 self.db,
@@ -234,7 +232,7 @@ class TaskTransitionsMixin:
                 force=force,
                 closed_in_session_id=closed_in_session_id,
                 closed_commit_sha=commit_sha,
-                validation_override_reason=validation_override_reason,
+                closed_ancestors=closed_ancestors,
             )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -247,7 +245,7 @@ class TaskTransitionsMixin:
         """Reopen a task to the ready state.
 
         Works from any non-ready state. Clears ownership, closed fields,
-        and resets validation_fail_count.
+        and closure metadata.
 
         Args:
             task_id: The task ID to reopen
@@ -285,37 +283,12 @@ class TaskTransitionsMixin:
         self,
         task_id: str,
         reason: str,
-        reset_validation: bool = False,
     ) -> Task:
-        """Clear escalation state and optionally reset validation failures."""
+        """Clear escalation state while preserving historical validation records."""
         task = _de_escalate_task(
             self.db,
             task_id=task_id,
             reason=reason,
-            reset_validation=reset_validation,
         )
         self._notify_listeners()
         return task
-
-    def increment_validation_failure(
-        self,
-        task_id: str,
-        *,
-        expected_updated_at: datetime,
-        threshold: int,
-        validation_status: str,
-        validation_feedback: str | None,
-        escalation_reason: str,
-    ) -> tuple[int, bool]:
-        """Record a guarded validation failure and escalate atomically when due."""
-        result = _increment_validation_failure(
-            self.db,
-            task_id,
-            expected_updated_at=expected_updated_at,
-            threshold=threshold,
-            validation_status=validation_status,
-            validation_feedback=validation_feedback,
-            escalation_reason=escalation_reason,
-        )
-        self._notify_listeners()
-        return result

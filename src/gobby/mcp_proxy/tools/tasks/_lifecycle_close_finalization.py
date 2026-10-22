@@ -1,208 +1,109 @@
-"""Concurrency rechecks and mutations for checklist-based task closure."""
+"""Atomic finalization after rechecking the same four close invariants."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 from typing import Any
 
-from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    CloseAttributionSnapshot,
-    CloseEvaluationFingerprint,
-    closes_as_structural_parent,
-    fingerprint_differences,
-)
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    claimed_session_window_start as _claimed_session_window_start,
-)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
-    CloseEvaluation,
-    link_close_commit_shas,
-    resolve_close_commit_shas,
-    select_close_candidate,
-    unlinked_tagged_commits,
-)
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
-    determine_close_outcome,
-    evaluate_task_clean_proof,
-)
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
-from gobby.mcp_proxy.tools.tasks._task_scope import (
-    collect_commit_paths_async as collect_commit_paths,
-)
-from gobby.mcp_proxy.tools.tasks._task_scope import (
-    evaluate_task_scope_async as evaluate_task_scope,
-)
-from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateError
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
-from gobby.workflows.commit_guard import (
-    DirtyEditOwnershipInspectionError,
-    foreign_owned_dirty_paths_async,
-)
-from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
-from gobby.workflows.task_dirty_state import (
-    committable_task_paths_async as _committable_task_paths,
-)
+from gobby.storage.tasks import TaskHasOpenChildrenError, TaskStaleStateError
 
 logger = logging.getLogger(__name__)
 
 
-def claim_window_start(ctx: RegistryContext, *, task: Task, resolved_id: str) -> str | None:
-    """Expose the claim boundary shared by evaluation and attribution capture."""
-    return _claimed_session_window_start(ctx, task=task, resolved_id=resolved_id)
-
-
-def children_state(
+async def commit_close(
     ctx: RegistryContext,
-    task_id: str,
-) -> tuple[list[Task], tuple[tuple[str, str | None, bool], ...]]:
-    """Return children and the gate-relevant structural state."""
-    children = collect_task_query_pages(
-        ctx.task_manager.list_tasks,
-        parent_task_id=task_id,
-    )
-    state = tuple(
-        sorted((child.id, child.parent_task_id, is_task_closed(child)) for child in children)
-    )
-    return children, state
-
-
-def _attribution_commit_shas(
-    task: Task,
-    prospective_commit_shas: Sequence[str],
-) -> tuple[str, ...]:
-    """Return the stable union used to recover committed path attribution."""
-    return tuple(
-        dict.fromkeys(
-            sha for sha in [*(task.commits or ()), *prospective_commit_shas] if sha.strip()
-        )
-    )
-
-
-async def _linked_commit_paths(
-    task: Task,
-    repo_path: str,
-    prospective_commit_shas: Sequence[str] = (),
-) -> frozenset[str]:
-    """Return the paths this task's linked commits changed, or nothing on failure."""
-    commits = _attribution_commit_shas(task, prospective_commit_shas)
-    if not commits:
-        return frozenset()
-    try:
-        return frozenset(await collect_commit_paths(commits, repo_path))
-    except RuntimeError as exc:
-        # A sha git cannot inspect here (rebased away, wrong checkout) leaves the
-        # checklist exactly where it was before this fallback existed. Gate 7 and
-        # gate 8 still report the broken commit set on their own terms.
-        logger.debug("Cannot resolve linked commit paths for task %s: %s", task.id, exc)
-        return frozenset()
-
-
-async def _linked_commit_clean_proof_paths(
-    ctx: RegistryContext,
+    evaluation: CloseEvaluation,
     *,
-    paths: frozenset[str],
-    owner_session_id: str,
-    project_id: str,
-    repo_path: str,
-) -> frozenset[str]:
-    """Exclude paths another active task owner still holds uncommitted.
+    reason: str,
+    changes_summary: str,
+    commit_sha: str | None,
+) -> dict[str, Any]:
+    from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 
-    A foreign entry for a path that is clean here names committed work, so it is
-    released as stale and the path stays in this task's clean proof.
-    """
+    if not evaluation.ready or evaluation.task is None:
+        return evaluation.response(preview=False)
+    fresh = await _evaluate_close(
+        ctx,
+        task_id=evaluation.task_id,
+        reason=reason,
+        commit_sha=commit_sha,
+        project_path=evaluation.repo_path,
+        response_detail=evaluation.response_detail,
+        closing_session_id=evaluation.resolved_session_id,
+    )
+    if fresh.already_closed or not fresh.ready:
+        return fresh.response(preview=False)
+    task = fresh.task
+    if task is None or task.updated_at != evaluation.task.updated_at:
+        return evaluation.refuse("close_state_changed", "Task changed; retry close_task.").response(
+            preview=False
+        )
+    if fresh.commit_shas != evaluation.commit_shas:
+        return evaluation.refuse(
+            "close_state_changed", "Linked commits changed; retry close_task."
+        ).response(preview=False)
+    ancestors: list[str] = []
     try:
-        foreign_owned = await foreign_owned_dirty_paths_async(
-            ctx.task_manager.db,
-            session_id=owner_session_id,
-            project_id=project_id,
-            checkout_root=repo_path,
-            paths=paths,
-        )
-    except DirtyEditOwnershipInspectionError:
-        logger.warning(
-            "Linked-commit ownership inspection failed during close_task; "
-            "retaining every committed path",
-            extra={"project_id": project_id, "session_id": owner_session_id},
-            exc_info=True,
-        )
-        return paths
-    return paths.difference(foreign_owned)
+        if commit_sha is not None and fresh.candidate_commit_sha is not None:
+            await asyncio.to_thread(
+                ctx.task_manager.close_task_with_commit,
+                task.id,
+                fresh.candidate_commit_sha,
+                reason=reason,
+                closed_in_session_id=fresh.resolved_session_id,
+                cwd=fresh.repo_path,
+                expected_updated_at=task.updated_at,
+                closed_ancestors=ancestors,
+            )
+        else:
+            await asyncio.to_thread(
+                ctx.task_manager.close_task,
+                task.id,
+                reason=reason,
+                closed_in_session_id=fresh.resolved_session_id,
+                closed_commit_sha=fresh.candidate_commit_sha,
+                expected_updated_at=task.updated_at,
+                closed_ancestors=ancestors,
+            )
+    except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
+        return fresh.refuse("close_state_changed", str(exc)).response(preview=False)
 
-
-async def capture_attribution(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    task_id: str,
-    resolved_session_id: str,
-    repo_path: str,
-    prospective_commit_shas: Sequence[str] = (),
-) -> CloseAttributionSnapshot:
-    """Capture the session-owned inputs used by close gates 7 through 9."""
-    owner_session_id = get_claimed_session_id(task) or resolved_session_id
-    session_vars = ctx.session_var_manager.get_variables(owner_session_id)
-
-    from gobby.workflows.task_claim_state import (
-        target_task_has_edits,
-        task_edit_path_covers,
-        task_edited_file_set,
+    await asyncio.to_thread(
+        _queue_close_memory_review, ctx, fresh, task.id, changes_summary, reason, fresh.commit_shas
     )
+    summaries = await asyncio.to_thread(_collect_closed_ancestors, ctx, ancestors)
+    if summaries:
+        fresh.extra["closed_ancestors"] = summaries
+    for summary in summaries:
+        notify_parent_on_task_state_change(
+            ctx.task_manager.db, summary["id"], "closed", task_ref=summary["ref"]
+        )
+    if fresh.is_epic and reason.casefold() in {"completed", "obsolete"}:
+        from gobby.hooks.event_handlers._plan import on_epic_terminal
 
-    attributed = target_task_has_edits(session_vars, task_id)
-    raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
-    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
-    used_commit_fallback = not edited_paths
-    if used_commit_fallback:
-        # Escalation, recovery, a fresh claimant, or ignored scratch can leave the
-        # volatile ledger without committable paths. Recover the durable commit
-        # paths so validation and transcript gates still receive edit evidence,
-        # retaining known ignored paths when no durable commit paths exist.
-        raw_paths |= await _linked_commit_paths(
-            task,
-            repo_path,
-            prospective_commit_shas,
+        await asyncio.to_thread(
+            on_epic_terminal,
+            {
+                "task_ref": f"#{task.seq_num}" if task.seq_num else task.id,
+                "project_id": task.project_id,
+                "status": "closed",
+                "closure_reason": reason.casefold(),
+            },
+            db=ctx.task_manager.db,
         )
-        attributed = attributed or bool(raw_paths)
-        edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
-    # Task attribution outlives the owner's commit, so a path the owner no longer
-    # holds dirty is committed work that another live owner may have re-dirtied.
-    # Paths the owner still holds dirty stay in the proof, fallback or not.
-    owner_dirty = session_dirty_file_set_for_checkout(session_vars, repo_path)
-    committed = frozenset(
-        path
-        for path in edited_paths
-        if not any(
-            task_edit_path_covers(path, dirty) or task_edit_path_covers(dirty, path)
-            for dirty in owner_dirty
-        )
+    # The notifier schedules a coroutine and must run on the event-loop thread.
+    notify_parent_on_task_state_change(
+        ctx.task_manager.db,
+        task.id,
+        "closed",
+        task_ref=f"#{task.seq_num}" if task.seq_num else None,
     )
-    clean_proof_paths = edited_paths
-    if committed:
-        clean_proof_paths = (edited_paths - committed) | await _linked_commit_clean_proof_paths(
-            ctx,
-            paths=committed,
-            owner_session_id=owner_session_id,
-            project_id=task.project_id,
-            repo_path=repo_path,
-        )
-    return CloseAttributionSnapshot(
-        owner_session_id=owner_session_id,
-        attributed=attributed,
-        raw_paths=raw_paths,
-        edited_paths=edited_paths,
-        clean_proof_paths=clean_proof_paths,
-        had_attributed_edits=attributed and bool(edited_paths),
-        used_commit_fallback=used_commit_fallback,
-        claim_started_at=_claimed_session_window_start(
-            ctx,
-            task=task,
-            resolved_id=task_id,
-        ),
-    )
+    await asyncio.to_thread(_cleanup_closed_claim, ctx, fresh, fresh.commit_shas)
+    return fresh.response(preview=False, closed=True)
 
 
 def _queue_close_memory_review(
@@ -245,260 +146,6 @@ def _queue_close_memory_review(
         logger.warning("Failed to queue memory review for closed task %s", task_id, exc_info=True)
 
 
-async def commit_close(
-    ctx: RegistryContext,
-    evaluation: CloseEvaluation,
-    *,
-    reason: str,
-    changes_summary: str,
-    skip_validation: bool,
-    override_justification: str | None,
-    commit_sha: str | None,
-) -> dict[str, Any]:
-    """Apply close mutations after cheap concurrency-sensitive rechecks."""
-    task = evaluation.task
-    if task is None or evaluation.task_id is None:
-        return evaluation.response(preview=False)
-    # Off the loop, here and at every storage call below: each one reaches
-    # psycopg synchronously, and leaving them inline made whether commit_close
-    # blocks the loop depend on which of its calls you looked at (#20864).
-    fresh = await asyncio.to_thread(ctx.task_manager.get_task, task.id)
-    if fresh is None:
-        return stale_close_response(
-            evaluation, "Task state changed after evaluation; retry close_task."
-        )
-    # Paginated: this walks every child, so its cost grows with the sibling set.
-    fresh_children, fresh_children_state = await asyncio.to_thread(children_state, ctx, task.id)
-    # Same rule as the evaluation: a worked leaf with found-work children keeps
-    # its attribution in the fingerprint, so the recheck below compares like
-    # with like (#21093).
-    fresh_skip_leaf_checks = closes_as_structural_parent(fresh, has_children=bool(fresh_children))
-    fresh_attribution: CloseAttributionSnapshot | None = None
-    if not fresh_skip_leaf_checks:
-        if evaluation.resolved_session_id is None or evaluation.repo_path is None:
-            return stale_close_response(
-                evaluation,
-                "Close evaluation context is incomplete; retry close_task.",
-            )
-        try:
-            fresh_attribution = await capture_attribution(
-                ctx,
-                task=fresh,
-                task_id=task.id,
-                resolved_session_id=evaluation.resolved_session_id,
-                repo_path=evaluation.repo_path,
-                prospective_commit_shas=evaluation.commit_shas,
-            )
-        except (KeyError, TypeError, ValueError):
-            return stale_close_response(
-                evaluation,
-                "Task edit attribution changed after evaluation; retry close_task.",
-            )
-    fresh_fingerprint = CloseEvaluationFingerprint.capture(
-        fresh,
-        children_state=fresh_children_state,
-        attribution=fresh_attribution,
-    )
-    if evaluation.fingerprint is None or fresh_fingerprint != evaluation.fingerprint:
-        changed = fingerprint_differences(evaluation.fingerprint, fresh_fingerprint)
-        evaluation.extra["changed_gate_inputs"] = changed
-        return stale_close_response(
-            evaluation,
-            f"Task gate inputs changed after evaluation ({', '.join(changed)}); retry close_task.",
-        )
-    commit_shas, error = await resolve_close_commit_shas(
-        ctx.task_manager,
-        task=fresh,
-        task_id=task.id,
-        claim_started_at=(
-            fresh_attribution.claim_started_at if fresh_attribution is not None else None
-        ),
-        commit_sha=commit_sha,
-        cwd=evaluation.repo_path,
-        project_name=ctx.get_current_project_name(),
-    )
-    if error or commit_shas != evaluation.commit_shas:
-        return stale_close_response(
-            evaluation,
-            "The prospective commit set changed after evaluation; retry close_task.",
-        )
-    candidate_commit_sha, candidate_error = await select_close_candidate(
-        commit_shas if commit_sha or not fresh_skip_leaf_checks else [],
-        commit_sha,
-        cwd=evaluation.repo_path,
-    )
-    if candidate_error or candidate_commit_sha != evaluation.candidate_commit_sha:
-        return stale_close_response(
-            evaluation,
-            "The reviewed close candidate is missing or changed; retry close_task with commit_sha.",
-        )
-    if not fresh_skip_leaf_checks:
-        # The evaluation's gate-7 divergence scan, repeated against fresh git state.
-        (unlinked_on_head, _elsewhere), tagged_error = await unlinked_tagged_commits(
-            ctx.task_manager,
-            task=fresh,
-            task_id=task.id,
-            commit_shas=commit_shas,
-            cwd=evaluation.repo_path,
-            project_name=ctx.get_current_project_name(),
-            candidate_commit_sha=candidate_commit_sha,
-        )
-        if tagged_error or unlinked_on_head:
-            return stale_close_response(
-                evaluation,
-                "Task-tagged commits landed after evaluation and are not linked; retry close_task.",
-            )
-        try:
-            fresh_scope = await evaluate_task_scope(
-                db=ctx.task_manager.db,
-                task=fresh,
-                commit_shas=commit_shas,
-                attributed_paths=(
-                    fresh_attribution.edited_paths if fresh_attribution is not None else ()
-                ),
-                repo_path=evaluation.repo_path,
-                scope_justification=evaluation.scope_justification,
-            )
-        except RuntimeError:
-            return stale_close_response(
-                evaluation,
-                "Task scope inputs changed after evaluation; retry close_task.",
-            )
-        if fresh_scope.snapshot() != evaluation.scope_snapshot:
-            return stale_close_response(
-                evaluation,
-                "Task scope inputs changed after evaluation; retry close_task.",
-            )
-    fresh_edited_paths = (
-        set(fresh_attribution.edited_paths) if fresh_attribution is not None else set()
-    )
-    clean_proof = await evaluate_task_clean_proof(
-        ctx,
-        edited_paths=(
-            set(fresh_attribution.clean_proof_paths)
-            if fresh_attribution is not None
-            else fresh_edited_paths
-        ),
-        repo_path=evaluation.repo_path or "",
-    )
-    evaluation.extra["clean_proof"] = clean_proof.as_dict()
-    if clean_proof.status == "unavailable":
-        evaluation.error = "task_clean_proof_unavailable"
-        evaluation.message = "Git could not prove that task-attributed files are clean."
-        evaluation.action = "Retry close_task after Git recovers."
-        return evaluation.response(preview=False)
-    if clean_proof.status == "dirty":
-        return stale_close_response(
-            evaluation,
-            "Task-attributed files changed after evaluation; commit them and retry close_task.",
-        )
-    linked, link_error = await asyncio.to_thread(
-        link_close_commit_shas,
-        ctx.task_manager,
-        task=fresh,
-        commit_shas=commit_shas,
-        cwd=evaluation.repo_path,
-    )
-    if link_error:
-        evaluation.error = str(link_error["error"])
-        evaluation.message = str(link_error["message"])
-        return evaluation.response(preview=False)
-
-    _route, store_override = determine_close_outcome(
-        linked,
-        skip_validation and evaluation.skip_leaf_checks,
-        override_justification,
-    )
-    audit_reason = (
-        override_justification.strip() if store_override and override_justification else None
-    )
-    if evaluation.scope_justification:
-        scope_reason = f"Task scope justification: {evaluation.scope_justification}"
-        audit_reason = (
-            f"Validation override: {audit_reason}\n\n{scope_reason}"
-            if audit_reason
-            else scope_reason
-        )
-    if clean_proof.status == "skipped":
-        clean_reason = "Task clean proof: disabled_by_configuration"
-        audit_reason = f"{audit_reason}\n\n{clean_reason}" if audit_reason else clean_reason
-    current_commit_sha = candidate_commit_sha
-    closed_ancestors: list[str] = []
-    try:
-        # Off the loop: the transition runs synchronous psycopg, and
-        # _close_eligible_ancestors walks up the tree inside the transaction it
-        # holds open, so the wait grows with depth and sibling count (#20862).
-        # closed_ancestors is filled in place, so the worker thread's writes are
-        # visible here once the await returns.
-        await asyncio.to_thread(
-            ctx.task_manager.close_task,
-            task.id,
-            reason=reason,
-            closed_in_session_id=evaluation.resolved_session_id,
-            closed_commit_sha=current_commit_sha,
-            closed_ancestors=closed_ancestors,
-            validation_override_reason=audit_reason,
-            expected_updated_at=linked.updated_at,
-            reset_validation_fail_count=evaluation.validation_reset_reason is not None,
-            validation_status=evaluation.validation_status or "valid",
-            validation_feedback=evaluation.validation_feedback,
-        )
-    except TaskStaleStateError as exc:
-        return stale_close_response(evaluation, str(exc))
-    except TaskHasOpenChildrenError as exc:
-        # The offloads above suspend this path twice, so a child can be created
-        # under the task between the freshness check and the transition. That
-        # insert does not touch the parent's updated_at, so it passes the CAS
-        # and only the in-transaction guard sees it. It is a retry, not a
-        # fault, and it reaches the caller as one (#20871).
-        return stale_close_response(evaluation, str(exc))
-
-    await asyncio.to_thread(
-        _queue_close_memory_review, ctx, evaluation, task.id, changes_summary, reason, commit_shas
-    )
-
-    # A get_task per ancestor the transition closed, so the walk scales with
-    # how far up the tree the close reached and stays off the loop.
-    ancestor_summaries = await asyncio.to_thread(_collect_closed_ancestors, ctx, closed_ancestors)
-    if ancestor_summaries:
-        evaluation.extra["closed_ancestors"] = ancestor_summaries
-    for summary in ancestor_summaries:
-        # On the loop thread, for the reason given at the task's own notify.
-        notify_parent_on_task_state_change(
-            ctx.task_manager.db,
-            summary["id"],
-            "closed",
-            task_ref=summary["ref"],
-        )
-
-    if evaluation.is_epic and reason.casefold() in {"completed", "obsolete"}:
-        from gobby.hooks.event_handlers._plan import on_epic_terminal
-
-        await asyncio.to_thread(
-            on_epic_terminal,
-            {
-                "task_ref": f"#{task.seq_num}" if task.seq_num else task.id,
-                "project_id": task.project_id,
-                "status": "closed",
-                "closure_reason": reason.casefold(),
-            },
-            db=ctx.task_manager.db,
-        )
-    # On the loop thread on purpose. This call does not notify: it hands a
-    # coroutine to schedule_background_task, which needs a running loop or the
-    # internal-tool ContextVar, and an async tool sets neither in a worker
-    # thread. Off the loop it raises RuntimeError, which the notifier swallows,
-    # so the parent's progress broadcast disappears without a log (#20871).
-    notify_parent_on_task_state_change(
-        ctx.task_manager.db,
-        task.id,
-        "closed",
-        task_ref=f"#{task.seq_num}" if task.seq_num else None,
-    )
-    await asyncio.to_thread(_cleanup_closed_claim, ctx, evaluation, commit_shas)
-    return evaluation.response(preview=False, closed=True)
-
-
 def _collect_closed_ancestors(
     ctx: RegistryContext,
     ancestor_ids: list[str],
@@ -512,14 +159,6 @@ def _collect_closed_ancestors(
         ref = f"#{ancestor.seq_num}" if ancestor.seq_num else ancestor.id
         summaries.append({"id": ancestor.id, "ref": ref, "title": ancestor.title})
     return summaries
-
-
-def stale_close_response(evaluation: CloseEvaluation, message: str) -> dict[str, Any]:
-    evaluation.error = "stale_task_state"
-    evaluation.message = message
-    evaluation.action = "Retry close_task; the existing evaluation will not be reused."
-    evaluation.extra["stale_state"] = True
-    return evaluation.response(preview=False)
 
 
 def _cleanup_closed_claim(
@@ -554,6 +193,3 @@ def _cleanup_closed_claim(
         recompute_automatic_title(ctx.session_manager, evaluation.edit_session_id)
     except Exception as exc:
         logger.warning("Failed to clean closed-task claim state: %s", exc)
-
-
-__all__ = ["capture_attribution", "children_state", "commit_close", "stale_close_response"]

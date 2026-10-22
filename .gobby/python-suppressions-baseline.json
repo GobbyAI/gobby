@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 171,
+  "site_count": 170,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1241,16 +1241,6 @@
         "arg-type"
       ],
       "statement": "guards = _build_empty_session_prune_reference_guards ( db )"
-    },
-    {
-      "fingerprint": "fb0084d8c52f8b03e9c686c5706adc7eb6c2573f689ec524be802e32ea3d2b34",
-      "path": "tests/storage/tasks/test_validation_backoff.py",
-      "symbol": "test_get_rejects_unexpected_non_mapping_row_shape",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "store = TaskValidationBackoffStore ( FakeDb ( ) )"
     },
     {
       "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",

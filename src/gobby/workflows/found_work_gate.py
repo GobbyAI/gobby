@@ -545,7 +545,7 @@ class FoundWorkStopAnalyzer:
                 json_schema=_SHIRK_CONFIRM_SCHEMA,
                 caller="workflows.found_work_gate",
                 total_timeout_seconds=min(
-                    float(validation.close_review_total_timeout_seconds),
+                    float(validation.confirmation_timeout_seconds),
                     8.0,
                 ),
             )
@@ -582,8 +582,6 @@ class FoundWorkStopAnalyzer:
                 session,
                 window_start if window_start is not None else session.created_at,
                 config,
-                set(),
-                project_path,
             )
         except TranscriptEvidenceUnavailable:
             logger.debug("Found-work validation evidence unavailable for session %s", session_id)

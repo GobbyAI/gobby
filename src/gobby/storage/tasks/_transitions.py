@@ -20,7 +20,6 @@ from gobby.storage.tasks._models import (
     TaskAlreadyClaimedError,
     TaskAlreadyEscalatedError,
     TaskClosedError,
-    TaskStaleStateError,
 )
 from gobby.storage.tasks._owner_shield import (
     OWNER_MAY_RESUME_GUARD_SQL,
@@ -403,8 +402,6 @@ def reopen_task(
         closed_commit_sha=None,
         escalated_at=None,
         escalation_reason=None,
-        # Named validation reset branch (d): manual de-escalation/reopen.
-        validation_fail_count=0,
     )
     _reopen_closed_ancestors(db, task_id)
     withdraw_memory_reviews(db, task_id)
@@ -486,78 +483,6 @@ def escalate_abandoned_task(
     return get_task(db, task_id) if cursor.rowcount == 1 else None
 
 
-def increment_validation_failure(
-    db: HubDatabase,
-    task_id: str,
-    *,
-    expected_updated_at: datetime,
-    threshold: int,
-    validation_status: str,
-    validation_feedback: str | None,
-    escalation_reason: str,
-) -> tuple[int, bool]:
-    """Record one guarded invalid verdict and atomically escalate at the threshold."""
-    if threshold <= 0:
-        raise ValueError("Validation escalation threshold must be positive")
-
-    now = utc_now()
-    with db.transaction() as conn:
-        row = conn.execute(
-            """
-            UPDATE tasks
-               SET validation_fail_count = COALESCE(validation_fail_count, 0) + 1,
-                   validation_status = %s,
-                   validation_feedback = %s,
-                   claimed_by_session_id = CASE
-                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN NULL
-                       ELSE claimed_by_session_id
-                   END,
-                   escalated_at = CASE
-                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN %s
-                       ELSE escalated_at
-                   END,
-                   escalation_reason = CASE
-                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN %s
-                       ELSE escalation_reason
-                   END,
-                   is_escalated = CASE
-                       WHEN COALESCE(validation_fail_count, 0) + 1 >= %s THEN TRUE
-                       ELSE is_escalated
-                   END,
-                   updated_at = %s
-             WHERE id = %s
-               AND closed_at IS NULL
-               AND is_escalated = FALSE
-               AND updated_at = %s
-             RETURNING validation_fail_count, is_escalated
-            """,
-            (
-                validation_status,
-                validation_feedback,
-                threshold,
-                threshold,
-                now,
-                threshold,
-                escalation_reason,
-                threshold,
-                now,
-                task_id,
-                expected_updated_at,
-            ),
-        ).fetchone()
-
-    if row is None:
-        task = get_task(db, task_id)
-        if is_task_closed(task):
-            raise ValueError(
-                f"Cannot record validation failure for task {task_id}: task is closed."
-            )
-        if task.is_escalated:
-            raise TaskAlreadyEscalatedError(task_id, task.escalation_reason)
-        raise TaskStaleStateError(task_id)
-    return int(row["validation_fail_count"]), bool(row["is_escalated"])
-
-
 def close_task(
     db: HubDatabase,
     task_id: str,
@@ -567,11 +492,7 @@ def close_task(
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
-    validation_override_reason: str | None = None,
     expected_updated_at: datetime | None = None,
-    reset_validation_fail_count: bool = False,
-    validation_status: str | None = None,
-    validation_feedback: str | None = None,
 ) -> Task:
     """Close a task and clear active ownership metadata."""
     collected: list[str] = []
@@ -585,11 +506,7 @@ def close_task(
             closed_in_session_id=closed_in_session_id,
             force=force,
             closed_ancestors=collected,
-            validation_override_reason=validation_override_reason,
             expected_updated_at=expected_updated_at,
-            reset_validation_fail_count=reset_validation_fail_count,
-            validation_status=validation_status,
-            validation_feedback=validation_feedback,
         )
     if closed_ancestors is not None:
         closed_ancestors.extend(collected)

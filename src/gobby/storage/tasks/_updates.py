@@ -235,14 +235,6 @@ def update_task(
         updates.append("escalation_reason = %s")
         params.append(None)
 
-    if current_task.closed_at and next_closed_at is None:
-        if validation_status is UNSET:
-            updates.append("validation_status = %s")
-            params.append(None)
-        if validation_feedback is UNSET:
-            updates.append("validation_feedback = %s")
-            params.append(None)
-
     if not updates:
         return False
 

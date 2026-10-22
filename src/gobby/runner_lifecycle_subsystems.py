@@ -15,10 +15,10 @@ from gobby.hooks.terminal_handoff_delivery import (
     resume_dead_handoff_dispatches,
     resume_unconfirmed_compact_expiries,
 )
+from gobby.runner_background_services import start_background_services
 from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
-    _reconcile_task_close_reviews,
     _recover_agent_completion_subscribers_on_startup,
     _retry_parked_non_task_resumes,
 )
@@ -65,8 +65,7 @@ async def _reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
     # handshake again.
     rotated = await _rotate_due_managed_credentials(runner)
     reclassified = await _reclassify_reconciliation_pending_runs(runner)
-    close_reviews = await _reconcile_task_close_reviews(runner)
-    return rotated + reclassified + close_reviews
+    return rotated + reclassified
 
 
 async def _run_db(
@@ -851,14 +850,7 @@ async def init_subsystems(
     # Both HTTP and WebSocket must serve while the CPU workers import.
     # Recheck shutdown below: it can begin while this barrier is pending.
     if services is None or not bool(getattr(services, "shutdown_in_progress", False)):
-        from gobby.tasks.transcript_evidence_pool import prewarm_transcript_evidence_pool
-
-        try:
-            await timed_startup_phase("transcript_pool_prewarm", prewarm_transcript_evidence_pool())
-        except Exception as exc:
-            logger.exception("Transcript evidence pool prewarm failed during startup")
-            if tracker:
-                tracker.error("Transcript evidence pool", str(exc))
+        await start_background_services(tracker)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return

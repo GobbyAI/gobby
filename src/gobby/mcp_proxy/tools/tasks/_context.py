@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.config.tasks import TaskValidationConfig
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -38,7 +37,6 @@ if TYPE_CHECKING:
     from gobby.review_learning.service import ReviewLearningService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.session_models import Session
-    from gobby.tasks.validation import TaskValidator
 
 CHECKOUT_UNRESOLVED = "checkout_unresolved"
 
@@ -70,7 +68,6 @@ class RegistryContext:
 
     # Optional managers. Runtime-replaceable services are held as resolver
     # callables so every tool call observes the current runtime epoch.
-    task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None
     startup_config: "DaemonConfig | None" = None
     config_resolver: "Callable[[], DaemonConfig | None] | None" = None
     llm_service_resolver: "Callable[[], LLMService | None] | None" = None
@@ -108,17 +105,6 @@ class RegistryContext:
     def show_result_on_create(self) -> bool:
         config = self.config
         return config.get_gobby_tasks_config().show_result_on_create if config else False
-
-    @property
-    def validation_config(self) -> "TaskValidationConfig | None":
-        config = self.config
-        return config.get_gobby_tasks_config().validation if config else None
-
-    @property
-    def task_validator(self) -> "TaskValidator | None":
-        """Resolve the current-epoch task validator per access."""
-        resolver = self.task_validator_resolver
-        return resolver() if resolver is not None else None
 
     @property
     def llm_service(self) -> "LLMService | None":

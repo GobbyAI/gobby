@@ -12,7 +12,7 @@ from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.kill import inspect_agent_process_identity, pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
-from gobby.agents.run_completion import bound_task_is_closed, cooperative_close_handoff_pending
+from gobby.agents.run_completion import bound_task_is_closed
 from gobby.agents.stall_classifier import StallStatus
 from gobby.hooks.events import HookEventType
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
@@ -269,8 +269,7 @@ class AgentHealthMonitor:
         for run in runs:
             try:
                 if not run.is_interactive and (
-                    await self._run_db(cooperative_close_handoff_pending, self._db, run)
-                    or await self._run_db(bound_task_is_closed, self._db, run)
+                    await self._run_db(bound_task_is_closed, self._db, run)
                 ):
                     continue
                 reason: str | None = None

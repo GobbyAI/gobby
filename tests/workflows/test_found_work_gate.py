@@ -26,7 +26,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
@@ -690,17 +689,9 @@ class TestPermissionDeferralConfirmation:
 
 
 class TestTerminalValidationFailures:
-    def test_category_green_supersedes_failure_in_close_and_stop(self) -> None:
+    def test_category_green_supersedes_failure_at_stop(self) -> None:
         runs = [_run(1, "failure"), _run(2, "success")]
 
-        close_gate = evaluate_validation_commands(
-            task_category="code",
-            evidence=TranscriptEvidence(validation_runs=tuple(runs)),
-            has_attributed_edits=True,
-        )
-
-        assert close_gate.passed is True
-        assert close_gate.details["latest_outcomes"] == {"test": "success"}
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
     def test_terminal_failure_remains(self) -> None:

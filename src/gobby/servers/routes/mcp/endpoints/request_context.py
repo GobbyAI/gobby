@@ -21,11 +21,6 @@ from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
-from gobby.storage.task_close_reviews import (
-    REVIEWER_RUN_ENDED_SUCCESS_ERROR,
-    TaskCloseReviewStore,
-)
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
     TERMINAL_CONTEXT_HEADER,
@@ -40,7 +35,6 @@ from gobby.utils.session_context import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-    from gobby.storage.agents import AgentRun
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.utils.session_context import RequestPrincipal
 
@@ -350,26 +344,7 @@ async def _bind_agent_run_context(
         ):
             raise HTTPException(status_code=403, detail="Invalid agent run identity")
         if run.status not in {"pending", "running"}:
-            late_review = (
-                request.method == "POST"
-                and request.path_params.get("server_name") == "gobby-tasks"
-                and request.path_params.get("tool_name") == "submit_close_review"
-                and (
-                    run.status == "success"
-                    or (run.status == "error" and run.terminal_reason == "review_verdict_missing")
-                )
-                and tokens.resolved_session_id is not None
-                and run.child_session_id == tokens.resolved_session_id
-                and run.agent_name == TASK_CLOSE_REVIEWER_AGENT
-                and run.task_id is None
-                and isinstance(arguments, dict)
-                and isinstance(arguments.get("review_id"), str)
-                and await server.run_db(
-                    _owns_recoverable_close_review, db, run, arguments["review_id"]
-                )
-            )
-            if not late_review:
-                raise HTTPException(status_code=403, detail="Invalid agent run identity")
+            raise HTTPException(status_code=403, detail="Invalid agent run identity")
         tokens.agent_run_token = set_current_agent_run_id(header_run_id)
         return
     if tokens.resolved_session_id is None:
@@ -381,40 +356,6 @@ async def _bind_agent_run_context(
         and active_run.child_session_id == tokens.resolved_session_id
     ):
         raise HTTPException(status_code=403, detail="Missing agent run identity")
-
-
-def _owns_recoverable_close_review(db: HubDatabase, run: AgentRun, review_id: str) -> bool:
-    """Admit the bound validator's late submission, correction, or result replay.
-
-    This does not reopen the run. The store's atomic finalizing claim still
-    protects against a competing review created after these identity checks.
-    """
-    store = TaskCloseReviewStore(db)
-    review = store.get(review_id)
-    if (
-        review is None
-        or review.agent_run_id != run.id
-        or review.caller_session_id != run.parent_session_id
-    ):
-        return False
-    recoverable = (
-        review.status in {"running", "finalizing"}
-        or (
-            review.status == "error"
-            and (
-                review.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR
-                or (review.result_payload or {}).get("reviewer_ended_without_verdict") is True
-            )
-        )
-        or (
-            review.status in {"closed", "invalid", "external_pending"}
-            and review.result_payload is not None
-        )
-    )
-    if not recoverable:
-        return False
-    active = store.get_active_for_task(review.task_id)
-    return active is None or active.id == review.id
 
 
 def _reset_context(tokens: SeededContextTokens) -> None:

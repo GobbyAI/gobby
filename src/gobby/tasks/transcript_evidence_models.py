@@ -1,15 +1,8 @@
-"""Evidence types derived from provider transcripts.
-
-These are the vocabulary the close path speaks: what a session ran, what it edited,
-and the failure to read a transcript at all. They sit below transcript parsing and
-below the derivation cache so both can depend on them without depending on each
-other.
-"""
+"""Validation outcomes shared by transcript parsing, caching and found-work checks."""
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
@@ -35,23 +28,8 @@ class TranscriptValidationSegment:
 
 
 @dataclass(frozen=True)
-class OutputDelivery:
-    """One delivery of a run's output into the transcript: its launch or a recovery."""
-
-    delivered_at: datetime
-    #: The recovered file; None for the launch output itself.
-    source: str | None
-    text: str | None
-    truncated: bool
-    #: A Monitor event extends the delivered output; a launch, Read or tail replaces it.
-    appends: bool
-    #: The Bash command, ``Read <path>`` or ``Monitor <id>`` that delivered this output.
-    reader: str | None = None
-
-
-@dataclass(frozen=True)
 class TranscriptValidationRun:
-    """One shell outcome, with empty categories for review-only commands."""
+    """One shell outcome, with empty categories for non-validation commands."""
 
     session_id: str
     source: str
@@ -74,13 +52,8 @@ class TranscriptValidationRun:
     background_output_path: str | None = None
     background_monitor_id: str | None = None
     background_description: str | None = None
-    #: A recovered job's launch output then each recovery, oldest first. ``output`` and
-    #: ``output_recovered_*`` replay all of them; gate 12 replays those before its edit.
-    output_deliveries: tuple[OutputDelivery, ...] = field(default=(), compare=False)
     #: The shell tool call's absolute working directory, when the provider recorded one.
     workdir: str | None = None
-    #: Why a diagnostic-only observation was removed from task credit.
-    exclusion_reason: str | None = None
     #: Every validation segment of ``command`` in order, each with its own
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
@@ -97,103 +70,15 @@ class TranscriptValidationRun:
 
 
 @dataclass(frozen=True)
-class TranscriptEdit:
-    """One task-attributed edit observed in a transcript."""
-
-    session_id: str
-    source: str
-    path: str
-    timestamp: datetime
-    order: int
-    tool_name: str
-    #: Exact source reconstructed only from this session's structured edit receipts.
-    source_after: str | None = None
-    source_confirmed: bool = False
-    source_confirmed_at: datetime | None = None
-    source_created: bool = False
-    source_fragment: str | None = None
-    #: The text a Python Edit replaced with ``source_fragment``.
-    source_replaced: str | None = None
-    python_stub: tuple[str, tuple[str, ...]] | None = None
-    #: Inert declarations an Edit added around its verbatim-preserved anchor.
-    python_added_source: str | None = None
-    source_unchanged: bool = False
-    checkout_root: str | None = None
-    #: Off-task owner edits still invalidate GREEN, but cannot prove a TDD cycle.
-    task_attributed: bool = True
-
-
-@dataclass(frozen=True)
-class TranscriptTaskClaim:
-    """One successful task claim a session made, as its transcript recorded it."""
-
-    #: The reference the session passed (``#N``, a path, or a UUID), resolved by the caller.
-    task_ref: str
-    claimed_at: datetime
-
-
-@dataclass(frozen=True)
 class TranscriptEvidence:
-    """Validation runs and task edits derived from one or more sessions."""
+    """Validation outcomes derived from one or more transcript sources."""
 
     validation_runs: tuple[TranscriptValidationRun, ...] = ()
     command_runs: tuple[TranscriptValidationRun, ...] = ()
-    edits: tuple[TranscriptEdit, ...] = ()
-    #: Task claims the sessions made, unordered. They bound a linked session's work per task.
-    task_claims: tuple[TranscriptTaskClaim, ...] = ()
     attempted_paths: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
     degraded_capabilities: tuple[str, ...] = ()
-    # Observations outside the task link window never enter credit-bearing collections.
-    excluded_runs: tuple[TranscriptValidationRun, ...] = ()
-    #: Owner runs made under another claim, eligible only for Gate 10 candidate proof.
-    off_task_author_runs: tuple[TranscriptValidationRun, ...] = ()
-    #: Unfiltered owner edits for Gate 10's off-task proof; never Gate 12 attribution.
-    off_task_author_edits: tuple[TranscriptEdit, ...] = ()
-    #: gcode's indexed language per task-edited path, attached by close evaluation.
-    edit_languages: Mapping[str, str] = field(default_factory=dict, compare=False)
-    #: Newest provider record timestamp these transcripts actually contained. Close
-    #: compares it against live provider activity to tell a transcript still being
-    #: flushed apart from one that genuinely holds no evidence (#22367). It describes
-    #: the read rather than the evidence, and a transcript that only grew outside the
-    #: credit window must not make two otherwise identical evidence sets differ.
     latest_record_at: datetime | None = field(default=None, compare=False)
-
-    def summary(self) -> dict[str, Any]:
-        """Return bounded deterministic facts for checklist diagnostics."""
-        outcome_counts = {"success": 0, "failure": 0, "unknown": 0}
-        category_successes: dict[str, int] = {}
-        for run in self.validation_runs:
-            outcome_counts[run.outcome] += 1
-            if run.outcome == "success":
-                for category in run.categories:
-                    category_successes[category] = category_successes.get(category, 0) + 1
-        return {
-            "sessions": list(self.sessions),
-            "validation_run_count": len(self.validation_runs),
-            "command_run_count": len(self.command_runs),
-            "outcomes": outcome_counts,
-            "successful_categories": category_successes,
-            "task_edit_count": len(self.edits),
-            "latest_task_edit_at": (
-                max(edit.timestamp for edit in self.edits).isoformat() if self.edits else None
-            ),
-            "degraded_capabilities": list(self.degraded_capabilities),
-        }
-
-
-_MISSING_LINKED_SESSION = re.compile(r"Linked session (\S+) was not found")
-
-
-def missing_linked_session_capability(session_id: str) -> str:
-    """The degraded capability a linked session that no longer exists contributes."""
-    return f"Linked session {session_id} was not found"
-
-
-def missing_linked_session(capability: str) -> str | None:
-    """The session a ``missing_linked_session_capability`` names, else None."""
-    match = _MISSING_LINKED_SESSION.fullmatch(capability)
-    return match[1] if match else None
 
 
 class TranscriptEvidenceUnavailable(RuntimeError):

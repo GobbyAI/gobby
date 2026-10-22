@@ -700,14 +700,10 @@ def test_legacy_truncation_and_direct_diff_callers_are_removed() -> None:
     root = Path(__file__).parents[2]
     commits_source = (root / "src/gobby/tasks/commits.py").read_text()
     factory_source = (root / "src/gobby/mcp_proxy/tools/tasks/_factory.py").read_text()
-    validation_source = (
-        root / "src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py"
-    ).read_text()
 
     assert "TASK_DIFF_MAX_CHARS" not in commits_source
     assert "_safe_truncate" not in commits_source
     assert "from gobby.tasks.commits import get_task_diff" not in factory_source
-    assert "get_task_diff(" not in validation_source
 
 
 @pytest.mark.parametrize("link_side", [False, True])

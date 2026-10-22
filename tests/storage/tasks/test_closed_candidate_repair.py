@@ -1,27 +1,23 @@
 """Closed-candidate correction preserves the original reviewed closure."""
 
+import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
+from gobby.storage.review_history import HistoricalCloseReview, ReviewHistory
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import (
-    QueuedAgentRunSpec,
-    TaskCloseReview,
-    TaskCloseReviewStore,
-)
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.agentic_close_review import build_terminal_review_payload
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from tests.mcp_proxy.tools.tasks.test_close_task_flow import _ctx
 
 pytestmark = pytest.mark.unit
 _CANDIDATE = "b8fa20f6a339132f9791a23c907e2a82dbeb25ed"
@@ -31,14 +27,12 @@ _REASON = "Correct the insertion-order marker to the originally reviewed candida
 
 @pytest.mark.asyncio
 async def test_public_repair_tool_derives_the_candidate_from_original_review(
-    reviewed_task: tuple[LocalTaskManager, TaskCloseReview],
+    reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
 ) -> None:
     manager, review = reviewed_task
     task = manager.get_task(review.task_id)
     assert task is not None
-    ctx = _ctx(task)
-    ctx.task_manager = manager
-    ctx.session_manager = SessionManager(manager.db)
+    ctx = RegistryContext(task_manager=manager)
     registry = create_lifecycle_registry(ctx)
     schema = registry.get_schema("repair_closed_candidate")
     assert schema is not None
@@ -50,8 +44,8 @@ async def test_public_repair_tool_derives_the_candidate_from_original_review(
             return_value="/repo",
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_candidate_repair._canonical_commit_sha",
-            return_value=_CANDIDATE,
+            "gobby.mcp_proxy.tools.tasks._lifecycle_candidate_repair.resolve_commit",
+            AsyncMock(return_value=_CANDIDATE),
         ),
     ):
         result = await registry.call(
@@ -73,7 +67,8 @@ async def test_public_repair_tool_derives_the_candidate_from_original_review(
 @pytest.fixture
 def reviewed_task(
     temp_db: HubDatabase, sample_project: dict[str, Any]
-) -> tuple[LocalTaskManager, TaskCloseReview]:
+) -> tuple[LocalTaskManager, HistoricalCloseReview]:
+    """Seed immutable rows produced by the retired automatic close reviewer."""
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         sample_project["id"],
@@ -88,56 +83,53 @@ def reviewed_task(
     )
     manager.link_commit(task.id, _CANDIDATE)
     manager.link_commit(task.id, _OLD)
-    linked = manager.get_task(task.id)
-    assert linked is not None
-    store = TaskCloseReviewStore(temp_db)
-    review, created = store.create_or_get_active(
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=actor.id,
-        commit_shas=linked.commits or [],
-        close_arguments={"commit_sha": _CANDIDATE, "reason": "completed"},
-        expected_task_updated_at=linked.updated_at,
-        review_fingerprint="a" * 64,
-        evidence_fingerprint="e" * 64,
-        diff_sha="d" * 64,
-        test_bodies_sha="b" * 64,
-        stable_facts={"commit_shas": linked.commits or []},
-        review_id=str(uuid4()),
-        run=QueuedAgentRunSpec(
-            id=str(uuid4()),
-            machine_id=actor.machine_id or "",
-            provider="codex",
-            model=None,
-            agent_name="task-close-reviewer",
-            prompt="Isolated historical review fixture",
-            timeout_seconds=30,
-        ),
-    )
-    assert created is True
     manager.close_task(
-        task.id,
-        reason="completed",
-        closed_in_session_id=actor.id,
-        closed_commit_sha=_OLD,
-        validation_status="valid",
-        validation_feedback="Original independent VALID review.",
+        task.id, reason="completed", closed_in_session_id=actor.id, closed_commit_sha=_OLD
     )
-    finished = store.finish(
-        review.id,
-        status="closed",
-        result_payload=build_terminal_review_payload(
-            review,
-            status="closed",
-            close_result={"closed": True, "validation_status": "valid"},
+    closed = manager.get_task(task.id)
+    assert closed.closed_at is not None
+    temp_db.execute(
+        "UPDATE tasks SET validation_status = 'valid', validation_feedback = %s WHERE id = %s",
+        ("Original independent VALID review.", task.id),
+    )
+    review_id = str(uuid4())
+    payload = {
+        "closed": True,
+        "validation_status": "valid",
+        "status": "closed",
+        "event": "task_close_review_completed",
+        "review_id": review_id,
+        "task_id": task.id,
+    }
+    temp_db.execute(
+        """INSERT INTO task_close_reviews (
+            id, task_id, task_ref, caller_session_id, close_arguments, review_fingerprint,
+            evidence_fingerprint, status, result_payload, created_at, completed_at,
+            diff_sha, test_bodies_sha, stable_facts
+        ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, 'closed', %s::jsonb, %s, %s, %s, %s, %s::jsonb)""",
+        (
+            review_id,
+            task.id,
+            f"#{task.seq_num}",
+            actor.id,
+            json.dumps({"commit_sha": _CANDIDATE, "reason": "completed"}),
+            "a" * 64,
+            "e" * 64,
+            json.dumps(payload),
+            closed.closed_at - timedelta(seconds=1),
+            closed.closed_at + timedelta(seconds=1),
+            "d" * 64,
+            "b" * 64,
+            json.dumps({"commit_shas": closed.commits}),
         ),
     )
-    assert finished is not None
-    return manager, finished
+    review = ReviewHistory(temp_db).get(review_id)
+    assert review is not None
+    return manager, review
 
 
 def test_repair_preview_is_read_only_and_apply_is_audited(
-    reviewed_task: tuple[LocalTaskManager, TaskCloseReview],
+    reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
 ) -> None:
     manager, review = reviewed_task
     before = manager.get_task(review.task_id)
@@ -165,7 +157,7 @@ def test_repair_preview_is_read_only_and_apply_is_audited(
     assert after.validation_feedback == before.validation_feedback
     assert after.commits == before.commits
     assert after.claimed_by_session_id is None
-    assert TaskCloseReviewStore(manager.db).get(review.id) == review
+    assert ReviewHistory(manager.db).get(review.id) == review
     events = manager.db.fetchall(
         "SELECT * FROM task_lifecycle_events WHERE task_id = %s AND reason LIKE %s",
         (review.task_id, "repair_closed_candidate:%"),
@@ -178,7 +170,7 @@ def test_repair_preview_is_read_only_and_apply_is_audited(
 
 
 def test_audit_failure_rolls_back_the_marker_correction(
-    reviewed_task: tuple[LocalTaskManager, TaskCloseReview],
+    reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager, review = reviewed_task
@@ -210,7 +202,7 @@ def test_audit_failure_rolls_back_the_marker_correction(
             preview=False,
         )
     assert manager.get_task(review.task_id) == before
-    assert TaskCloseReviewStore(manager.db).get(review.id) == review
+    assert ReviewHistory(manager.db).get(review.id) == review
     assert (
         manager.db.fetchall(
             "SELECT id FROM task_lifecycle_events WHERE task_id = %s AND reason LIKE %s",
@@ -236,7 +228,7 @@ def test_audit_failure_rolls_back_the_marker_correction(
     ],
 )
 def test_repair_rejects_unreviewed_or_changed_state_without_writes(
-    reviewed_task: tuple[LocalTaskManager, TaskCloseReview], drift: str
+    reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview], drift: str
 ) -> None:
     manager, review = reviewed_task
     if drift == "open":

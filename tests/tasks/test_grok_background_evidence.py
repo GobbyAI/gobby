@@ -1,4 +1,4 @@
-"""Grok's captured background pytest lifecycle must reach Gate 10 (#24501)."""
+"""Grok's captured background pytest lifecycle preserves validation outcomes."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
-from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 
@@ -57,8 +56,6 @@ async def evidence_for(tmp_path: Path, events: list[dict[str, Any]]) -> Transcri
         session,
         None,
         default_validation_detection_config(),
-        set(),
-        str(tmp_path),
         archive_dir=str(tmp_path / "archives"),
     )
 
@@ -89,14 +86,6 @@ async def test_captured_grok_pytest_credits_all_targets(
     assert run.completed_at == datetime.fromtimestamp(
         events[-2 if not foreground else -1]["timestamp"], UTC
     )
-    gate = evaluate_validation_commands(
-        task_category="code",
-        evidence=evidence,
-        has_attributed_edits=True,
-        validation_criteria=f"Run `{original}`.",
-    )
-    assert gate.status == "passed", gate.message
-    assert not gate.details.get("criterion_command_gaps")
     # The repeated background_tasks inventory includes an unrelated older gcode call.
     assert not evidence.command_runs
 
@@ -120,10 +109,6 @@ async def test_background_nonpassing_snapshot_is_not_credited(
     events[3]["params"]["update"]["task_snapshot"][field] = value
     evidence = await evidence_for(tmp_path, events)
     assert not any(run.outcome == "success" for run in evidence.validation_runs)
-    gate = evaluate_validation_commands(
-        task_category="code", evidence=evidence, has_attributed_edits=True
-    )
-    assert gate.status == "failed"
 
 
 @pytest.mark.asyncio

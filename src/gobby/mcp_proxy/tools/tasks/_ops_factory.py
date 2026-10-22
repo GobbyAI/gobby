@@ -24,7 +24,6 @@ from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._landing import create_landing_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 
 def create_task_ops_registry(
     task_manager: LocalTaskManager,
-    task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None,
     startup_config: "DaemonConfig | None" = None,
     config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
     llm_service_resolver: "Callable[[], LLMService | None] | None" = None,
@@ -48,7 +46,6 @@ def create_task_ops_registry(
 
     Args:
         task_manager: LocalTaskManager instance
-        task_validator_resolver: per-call resolver for the current TaskValidator (optional)
         startup_config: DaemonConfig fallback before runtime readiness
         config_resolver: per-operation current DaemonConfig resolver
 
@@ -58,7 +55,6 @@ def create_task_ops_registry(
     # Create own RegistryContext (lightweight, shares the same manager objects)
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator_resolver=task_validator_resolver,
         startup_config=startup_config,
         config_resolver=config_resolver,
         llm_service_resolver=llm_service_resolver,

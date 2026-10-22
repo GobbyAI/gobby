@@ -10,8 +10,7 @@ from datetime import datetime
 from defusedxml import ElementTree
 
 from gobby.sessions.transcripts.base import ParsedMessage
-from gobby.tasks.acceptance_artifacts import panic_has_message
-from gobby.tasks.transcript_evidence_models import OutputDelivery, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_evidence_snapshots import PendingTool
 from gobby.tasks.transcript_outcomes import extract_outcome, extract_output
 
@@ -33,56 +32,26 @@ _SHELL_OPERATOR_CHARS = frozenset("();<>|&")
 _UNQUOTED_EXPANSION_CHARS = frozenset("{}*?[~!")
 
 
-def output_as_of(run: TranscriptValidationRun, before: datetime) -> TranscriptValidationRun:
-    """The run as its transcript had delivered it before ``before``.
-
-    A later recovery never displaces what was delivered earlier.
-    """
-    if not run.output_deliveries:
-        return run
-    output: str | None = None
-    truncated = False
-    source: str | None = None
-    recovered_at: datetime | None = None
-    for delivery in run.output_deliveries:
-        if delivery.delivered_at < before:
-            output, truncated = _applied(output, truncated, delivery)
-            source = delivery.source
-            recovered_at = delivery.delivered_at if source is not None else None
+def deliver_output(
+    run: TranscriptValidationRun,
+    *,
+    delivered_at: datetime,
+    source: str | None,
+    text: str | None,
+    truncated: bool,
+    appends: bool,
+) -> TranscriptValidationRun:
+    """Update the current output using a correlated read or monitor receipt."""
+    if appends:
+        joined = (run.output or "") + "\n" + (text or "")
+        text = joined[:_MAX_RECOVERED_CHARS]
+        truncated = run.output_truncated or truncated or len(joined) > _MAX_RECOVERED_CHARS
     return replace(
         run,
-        output=output,
+        output=text,
         output_truncated=truncated,
         output_recovered_from=source,
-        output_recovered_at=recovered_at,
-    )
-
-
-def deliver_output(
-    run: TranscriptValidationRun, delivery: OutputDelivery
-) -> TranscriptValidationRun:
-    """Apply one recovery to the run and record it for gate 12's replay."""
-    launch = OutputDelivery(run.started_at, None, run.output, run.output_truncated, appends=False)
-    output, truncated = _applied(run.output, run.output_truncated, delivery)
-    return replace(
-        run,
-        output=output,
-        output_truncated=truncated,
-        output_recovered_from=delivery.source,
-        output_recovered_at=delivery.delivered_at,
-        output_deliveries=(*(run.output_deliveries or (launch,)), delivery),
-    )
-
-
-def _applied(
-    output: str | None, truncated: bool, delivery: OutputDelivery
-) -> tuple[str | None, bool]:
-    if not delivery.appends:
-        return delivery.text, delivery.truncated
-    joined = (output or "") + "\n" + (delivery.text or "")
-    return (
-        joined[:_MAX_RECOVERED_CHARS],
-        truncated or delivery.truncated or len(joined) > _MAX_RECOVERED_CHARS,
+        output_recovered_at=delivered_at,
     )
 
 
@@ -136,14 +105,15 @@ def recover_background_receipt(
             output = _GREP_LINE_NUMBER.sub("", output)
         if not output or message.timestamp < runs[index].started_at:
             return
-        reader = _reader(pending, path)
         # Each grep -A group is its own delivery, so separate groups never become adjacent.
         for group in _context_groups(output) if context else (output,):
             runs[index] = deliver_output(
                 runs[index],
-                OutputDelivery(
-                    message.timestamp, path, group, truncated, appends=False, reader=reader
-                ),
+                delivered_at=message.timestamp,
+                source=path,
+                text=group,
+                truncated=truncated,
+                appends=False,
             )
         return
     notice = _notification(message)
@@ -263,14 +233,11 @@ def _recover_monitor_receipt(
     if not event.startswith(("[Monitor expired", "[exited with code")):
         runs[index] = deliver_output(
             run,
-            OutputDelivery(
-                message.timestamp,
-                run.background_output_path,
-                event,
-                False,
-                appends=True,
-                reader=f"Monitor {run.background_monitor_id}",
-            ),
+            delivered_at=message.timestamp,
+            source=run.background_output_path,
+            text=event,
+            truncated=False,
+            appends=True,
         )
     return True
 
@@ -373,13 +340,6 @@ def _grep_shape(args: list[str]) -> tuple[str, bool, bool] | None:
     return args[index + 1], numbered, context
 
 
-def _reader(pending: PendingTool, path: str) -> str:
-    """The call that delivered output: ``Read <path>``, or the Bash command."""
-    if pending.name.lower() == "read":
-        return f"Read {path}"
-    return str(pending.arguments.get("command"))
-
-
 def _context_groups(output: str) -> list[str]:
     """Each contiguous group grep -A printed, split at its ``--`` separators."""
     groups: list[list[str]] = [[]]
@@ -389,40 +349,6 @@ def _context_groups(output: str) -> list[str]:
         else:
             groups[-1].append(line)
     return ["\n".join(group) for group in groups if any(line.strip() for line in group)]
-
-
-def recovered_deliveries(
-    run: TranscriptValidationRun, before: datetime | None
-) -> list[OutputDelivery]:
-    """Each recovered delivery before ``before``, in delivery order.
-
-    Gate 12 proves each one alone: deliveries are never joined, since a newline between
-    two reads would make unrelated lines adjacent to a failure section. Identical text is
-    not deduplicated: each delivery has its own provenance and must validate on its own.
-    """
-    return [
-        delivery
-        for delivery in run.output_deliveries
-        if delivery.source is not None
-        and delivery.text
-        and (before is None or delivery.delivered_at < before)
-    ]
-
-
-def unread_reason(run: TranscriptValidationRun, before: datetime | None, name: str) -> str:
-    """Why a background run's pre-cutoff reads did not prove RED for ``name``."""
-    deliveries = recovered_deliveries(run, before)
-    readers = list(
-        dict.fromkeys(delivery.reader or str(delivery.source) for delivery in deliveries)
-    )
-    if not readers:
-        return "its output was never read in a recognized form before the implementation edit"
-    reads = f"its reads before the implementation edit ({', '.join(readers)})"
-    # A bare panic header names the thread but not the failure it carries.
-    named = [delivery for delivery in deliveries if f"thread '{name}'" in (delivery.text or "")]
-    if named and not any(panic_has_message(delivery.text or "") for delivery in named):
-        return f"{reads} name the panic thread for {name} but no failure message after it"
-    return f"{reads} name no runner row for {name}"
 
 
 def _reader_command(argv: list[str]) -> list[str]:

@@ -17,7 +17,6 @@ from gobby.storage.tasks._runtime_mutex import (
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
 )
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
@@ -486,11 +485,7 @@ def _count_active_agents(
     parent_session_id: str | None = None,
 ) -> int:
     parent_filter = "AND ar.parent_session_id = %s" if parent_session_id else ""
-    params = (
-        (project_id, TASK_CLOSE_REVIEWER_AGENT, parent_session_id)
-        if parent_session_id
-        else (project_id, TASK_CLOSE_REVIEWER_AGENT)
-    )
+    params = (project_id, parent_session_id) if parent_session_id else (project_id,)
     row = db.fetchone(
         f"""
         SELECT COUNT(*) AS count
@@ -498,7 +493,6 @@ def _count_active_agents(
         JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
         WHERE ar.status IN ('pending', 'running')
           AND parent_s.project_id = %s
-          AND ar.agent_name IS DISTINCT FROM %s
           {parent_filter}
         """,
         params,

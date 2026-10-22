@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence
 
 pytestmark = pytest.mark.unit
@@ -33,7 +32,7 @@ pytestmark = pytest.mark.unit
         ((), (), True),
     ],
 )
-def test_python_wrapper_masking_inner_exit_cannot_pass_gate(
+def test_python_wrapper_masking_inner_exit_preserves_real_exit_and_marks_wrapper(
     printed_exit: int,
     uv_options: tuple[str, ...],
     options: tuple[str, ...],
@@ -57,7 +56,9 @@ def test_python_wrapper_masking_inner_exit_cannot_pass_gate(
 
 
 @pytest.mark.parametrize("printed_exit", [0, 101])
-def test_uv_node_wrapper_masking_inner_exit_cannot_pass_gate(printed_exit: int) -> None:
+def test_uv_node_wrapper_masking_inner_exit_preserves_real_exit_and_marks_wrapper(
+    printed_exit: int,
+) -> None:
     source = (
         "const r=require('node:child_process').spawnSync(process.execPath,"
         "['-e','process.exit(101)']); "
@@ -93,18 +94,10 @@ def _assert_wrapper_rejected(arguments: list[str], printed_exit: int) -> None:
         completed_at=now,
         order=1,
     )
-    gate = evaluate_validation_commands(
-        task_category="docs",
-        evidence=TranscriptEvidence(validation_runs=(run,)),
-        has_attributed_edits=True,
-        validation_criteria=f"Run `{command}`.",
-    )
-    assert gate.status == "failed", gate.message
     assert run.wrapped is True
     assert run.wrapper_reason in {"python inline wrapper", "node wrapper"}
     # The shell's real status remains intact; stdout cannot forge a native exit.
     assert run.exit_code == 0
-    assert gate.details["criterion_command_gaps"]
 
 
 @pytest.mark.parametrize(
@@ -259,28 +252,3 @@ def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> 
 )
 def test_ambiguous_interpreter_and_launcher_forms_get_no_credit(command: str) -> None:
     assert classify_validation_command_equivalence(command).wrapped is True
-
-
-def test_direct_validation_exit_zero_still_earns_gate_credit() -> None:
-    now = datetime.now(UTC)
-    run = TranscriptValidationRun(
-        session_id="session-1",
-        source="codex",
-        command="uv run pytest tests/tasks/test_python_wrapper_credit.py -q",
-        categories=("test",),
-        matcher_id="pytest",
-        label="Pytest",
-        outcome="success",
-        exit_code=0,
-        started_at=now,
-        completed_at=now,
-        order=1,
-    )
-    gate = evaluate_validation_commands(
-        task_category="code",
-        evidence=TranscriptEvidence(validation_runs=(run,)),
-        has_attributed_edits=True,
-        validation_criteria=f"Run `{run.command}`.",
-    )
-    assert gate.status == "passed", gate.message
-    assert gate.details["criterion_command_gaps"] == []

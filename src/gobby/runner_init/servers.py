@@ -166,7 +166,6 @@ def init_servers(runner: GobbyRunner) -> None:
         metrics_manager=runner.metrics_manager,
         agent_runner=runner.agent_runner,
         message_processor_resolver=lambda: _resolve_message_processor(runner),
-        task_validator=runner.task_validator,
         worktree_storage=runner.worktree_storage,
         clone_storage=runner.clone_storage,
         git_manager=runner.git_manager,

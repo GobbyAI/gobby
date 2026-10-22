@@ -14,7 +14,6 @@ import re
 import tokenize
 from collections.abc import Callable, Iterator, Mapping
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from psycopg.errors import QueryCanceled
@@ -565,11 +564,7 @@ def build_condition_helpers(
 
     from .approval_brace_guard import approval_command_word_expansion
     from .condition_helpers import (
-        _event_and_tool_paths,
-        _is_tdd_code_path,
-        _normalize_condition_path,
         all_tasks_have_label,
-        first_tdd_test_path,
         is_validation_command,
         paths_written_this_turn,
         shell_command_consumes_code_review,
@@ -580,7 +575,6 @@ def build_condition_helpers(
         task_needs_human_review,
         task_state_in,
         task_type_in,
-        tdd_stub_only_write,
         touches_claude_memory_path,
         touches_ui_design_path,
         wrapped_validation_command,
@@ -597,63 +591,11 @@ def build_condition_helpers(
 
     ctx = context or {}
 
-    def _tdd_project_path() -> str | None:
-        return _event_field(ctx.get("event"), "metadata", {}).get(
-            "project_path"
-        ) or _get_project_path(ctx)
-
-    def _is_claimed_acceptance_test_path(path: str) -> str:
-        variables = _get_variables(ctx)
-        acceptance_paths = variables.get("claimed_task_acceptance_test_paths", [])
-        if not isinstance(acceptance_paths, list | tuple):
-            return ""
-        for acceptance_path in acceptance_paths:
-            if not isinstance(acceptance_path, str) or not acceptance_path:
-                continue
-            project_path = _tdd_project_path()
-            root = Path(project_path).resolve() if project_path else None
-            from .tdd_paths import tdd_path_identity
-
-            if tdd_path_identity(path, root, _normalize_condition_path) == tdd_path_identity(
-                acceptance_path, root, _normalize_condition_path
-            ):
-                return acceptance_path
-        return ""
-
-    def _claimed_acceptance_test_path(event_data: Any, tool_input: Any) -> str:
-        for path in _event_and_tool_paths(event_data, tool_input):
-            if acceptance_path := _is_claimed_acceptance_test_path(path):
-                return acceptance_path
-        return ""
-
-    def _first_tdd_code_path(event_data: Any, tool_input: Any) -> str:
-        for path in _event_and_tool_paths(event_data, tool_input):
-            if not _is_claimed_acceptance_test_path(path) and _is_tdd_code_path(path, tool_input):
-                return path
-        return ""
-
-    def _first_tdd_test_path(event_data: Any, tool_input: Any) -> str:
-        return _claimed_acceptance_test_path(event_data, tool_input) or first_tdd_test_path(
-            event_data, tool_input
-        )
-
-    def _tdd_authorization() -> Any:
-        from .condition_helpers import server_tdd_authorization
-
-        return server_tdd_authorization(task_manager, session_manager, ctx, _tdd_project_path())
-
     funcs = build_agent_workflow_allowed_funcs(ctx)
     funcs.update(
         {
             "normalize_path": lambda p: p.replace("\\", "/"),
             "approval_command_word_expansion": approval_command_word_expansion,
-            "first_tdd_code_path": _first_tdd_code_path,
-            "first_tdd_test_path": _first_tdd_test_path,
-            "tdd_gate_open": lambda variables: _tdd_authorization().allowed,
-            "tdd_missing_red": lambda: list(_tdd_authorization().missing),
-            "tdd_stub_only_write": lambda data, tool_input: tdd_stub_only_write(
-                data, tool_input, _tdd_project_path()
-            ),
             "is_validation_command": is_validation_command,
             "wrapped_validation_command": lambda command: wrapped_validation_command(
                 command, _get_project_path(ctx)

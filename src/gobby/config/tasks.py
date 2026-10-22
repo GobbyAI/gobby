@@ -18,7 +18,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
-from gobby.config.url_validation import validate_optional_endpoint_url
 
 # Sits above the shared blocking-effect budget plus the RTK proxy stage's
 # reservation, and below the adapter timeout, which in turn sits inside the
@@ -125,118 +124,18 @@ class TaskExpansionConfig(FeatureDefaultConfig):
 
 
 class TaskValidationConfig(FeatureDefaultConfig):
-    """Configuration for task validation (checking completion against criteria)."""
+    """Model settings used by found-work confirmation."""
 
     profile: FeatureProfile = Field(
         default=FeatureProfile.MID,
-        description="Capability profile for task validation.",
+        description="Capability profile for found-work confirmation.",
     )
-    enabled: bool = Field(
-        default=True,
-        description="Enable automated task validation",
-    )
-    criteria_prompt_path: str | None = Field(
-        default=None,
-        description="Path to custom criteria generation prompt template (e.g., 'validation/criteria')",
-    )
-    criteria_system_prompt: str = Field(
-        default=(
-            "You are a QA engineer writing acceptance criteria. Only include "
-            "requirements explicitly stated in the task — invented values, "
-            "thresholds, timeouts, or edge cases create false failures. Vague "
-            "tasks get vague criteria. Use markdown checkboxes."
-        ),
-        description="System prompt for generating validation criteria",
-    )
-
-    max_iterations: int = Field(
-        default=10,
-        description="Maximum validation attempts before escalation",
-    )
-    close_validation_escalation_threshold: int = Field(
-        default=5,
-        description="Invalid or pending close verdicts before atomic task escalation.",
-    )
-    close_review_prompt_max_chars: int = Field(
-        default=256_000,
-        description="Maximum rendered character count for the task-close criteria-review prompt.",
-    )
-    close_review_total_timeout_seconds: float = Field(
-        default=120.0,
+    enabled: bool = Field(default=True, description="Enable found-work confirmation")
+    confirmation_timeout_seconds: float = Field(
+        default=8.0,
         gt=0,
-        description=(
-            "Wall-clock bound on the whole task-close criteria-review provider chain, "
-            "including fallbacks. Expiry fails closed into validation backoff."
-        ),
+        description="Wall-clock bound for found-work confirmation, including provider fallbacks.",
     )
-    require_clean_attributed_paths_on_close: bool = Field(
-        default=True,
-        description=(
-            "Require a path-scoped Git status proof that task-attributed paths are clean "
-            "before final close."
-        ),
-    )
-    close_review_validator_timeout_seconds: float = Field(
-        default=1200.0,
-        gt=0,
-        description=(
-            "Wall-clock bound on a spawned task-close reviewer and its durable review deadline."
-        ),
-    )
-    close_review_min_severity: Literal["critical", "high", "medium", "low"] = Field(
-        default="low",
-        description=(
-            "Minimum close-review code-finding severity that blocks closure. "
-            "Criterion gaps always block regardless of this setting."
-        ),
-    )
-    close_review_max_concurrency_per_project: int = Field(
-        default=3,
-        description=(
-            "Maximum active close reviewers per project. Other tasks' reviews count against "
-            "it at admission and promotion; a task never runs two reviews at once."
-        ),
-    )
-    # Escalation settings
-    escalation_enabled: bool = Field(
-        default=True,
-        description="Enable task escalation on repeated validation failures",
-    )
-    escalation_notify: Literal["webhook", "slack", "none"] = Field(
-        default="none",
-        description="Notification method when task is escalated",
-    )
-    escalation_webhook_url: str | None = Field(
-        default=None,
-        description="Webhook URL for escalation notifications",
-    )
-    # Auto-generation settings
-    auto_generate_on_create: bool = Field(
-        default=True,
-        description="Auto-generate validation criteria when creating tasks via create_task",
-    )
-    auto_generate_on_expand: bool = Field(
-        default=True,
-        description="Auto-generate validation criteria when expanding tasks via expand_task",
-    )
-
-    @field_validator(
-        "max_iterations",
-        "close_validation_escalation_threshold",
-        "close_review_prompt_max_chars",
-        "close_review_max_concurrency_per_project",
-    )
-    @classmethod
-    def validate_positive_int(cls, v: int) -> int:
-        """Validate value is positive."""
-        if v <= 0:
-            raise ValueError("Value must be positive")
-        return v
-
-    @field_validator("escalation_webhook_url")
-    @classmethod
-    def validate_escalation_webhook_url(cls, value: str | None) -> str | None:
-        return validate_optional_endpoint_url(value, field_name="escalation_webhook_url")
 
 
 class FileExtractionConfig(BaseModel):
