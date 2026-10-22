@@ -29,7 +29,6 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks.criterion_commands import malformed_criterion_command_findings
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.command_matching import command_patterns_match, mask_quoted_spans
 from gobby.workflows.engine.core import RuleEngine
@@ -962,10 +961,10 @@ FULL_SUITE_RULE_NAMES = [
         ("go test ./pkg/...", False),
     ],
 )
-async def test_full_suite_rules_match_criterion_authoring_for_default_agent(
+async def test_full_suite_rules_require_scoped_commands_for_default_agent(
     db: HubDatabase, command: str, full_suite: bool
 ) -> None:
-    """An interactive default-agent session is blocked exactly where criterion authoring rejects."""
+    """An interactive default-agent session must scope test commands."""
     sync_bundled_agents(db)
     assert AgentDefinitionManager(db).get_by_name("default") is not None
     db.execute("DELETE FROM rule_definitions WHERE name <> ALL(%s)", (FULL_SUITE_RULE_NAMES,))
@@ -973,10 +972,7 @@ async def test_full_suite_rules_match_criterion_authoring_for_default_agent(
     result = await RuleEngine(db).evaluate(
         _bash_event(command), session_id=SESSION_ID, variables={"_agent_type": "default"}
     )
-    findings = malformed_criterion_command_findings(f"Run `{command}`.")
-
     assert (result.decision == "block") is full_suite
-    assert any("full suite" in finding for finding in findings) is full_suite
 
 
 def test_mask_quoted_spans_blanks_data_and_keeps_substitution() -> None:
