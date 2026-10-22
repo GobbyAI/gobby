@@ -10,10 +10,12 @@ from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.close_receipts import list_close_receipts
+from gobby.tasks.state_semantics import TaskState, validate_task_state
 from gobby.utils.datetime import datetime_to_iso
 
 
 class TaskStateFilters(TypedDict, total=False):
+    state: TaskState
     claimed: bool
     escalated: bool
     updated_since: datetime
@@ -153,10 +155,13 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
         refs: list[str] | None = None,
         view: str = "default",
         candidate: bool | None = None,
+        state: TaskState | None = None,
     ) -> dict[str, Any]:
         """List tasks with optional filters."""
         try:
             project_id = ctx.resolve_project_filter(project, all_projects)
+            if state is not None:
+                state = validate_task_state(state)
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
@@ -220,6 +225,8 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
 
         closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
         state_filters: TaskStateFilters = {}
+        if state is not None:
+            state_filters["state"] = state
         if claimed is not None:
             state_filters["claimed"] = claimed
         if escalated is not None:

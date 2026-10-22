@@ -35,7 +35,7 @@ def test_claim_task_raises_task_closed_error(temp_db, sample_project) -> None:
         title="Closed task",
         validation_criteria="Test task completion is observable.",
     )
-    close_task(temp_db, task.id, reason="test")
+    close_task(temp_db, task.id, reason="done")
 
     with pytest.raises(TaskClosedError, match="task is closed"):
         claim_task(temp_db, task.id, "session-1")

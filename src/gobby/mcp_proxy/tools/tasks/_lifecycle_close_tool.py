@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_clo
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     async def close_task(
         task_id: str,
-        reason: str = "completed",
+        reason: str = "done",
         changes_summary: str | None = None,
         commit_sha: str | None = None,
         project_path: str | None = None,
@@ -51,7 +51,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference (#N, path, or UUID)."},
-                "reason": {"type": "string", "default": "completed"},
+                "reason": {
+                    "type": "string",
+                    "enum": ["done", "moot", "superseded", "wont_do"],
+                    "default": "done",
+                },
                 "changes_summary": {"type": "string"},
                 "commit_sha": {"type": "string", "minLength": 1},
                 "project_path": {"type": "string"},

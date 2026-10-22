@@ -13,7 +13,7 @@ import logging
 import re
 from datetime import datetime
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.review_history import read_review_row
 from gobby.storage.tasks._models import (
     Task,
@@ -27,6 +27,38 @@ from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transit
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+def _original_close_reason(
+    conn: Transaction, task_id: str, closed_at: datetime, closed_reason: str | None
+) -> str | None:
+    """Recover the exact reason archived when migration 475 normalized a closure."""
+    rows = conn.execute(
+        "SELECT body FROM task_comments "
+        "WHERE task_id = %s AND author = 'migration:475' AND author_type = 'system'",
+        (task_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            snapshot = json.loads(row["body"])
+            if (
+                isinstance(snapshot, dict)
+                and snapshot.get("kind") == "legacy_close_reason_snapshot"
+                and datetime.fromisoformat(snapshot["closed_at"]) == closed_at
+            ):
+                original = snapshot.get("closed_reason")
+                if original is None or isinstance(original, str):
+                    normalized = {
+                        "obsolete": "moot",
+                        "duplicate": "superseded",
+                        "wont_fix": "wont_do",
+                        "out_of_repo": "wont_do",
+                    }.get(original or "", "done")
+                    if normalized == closed_reason:
+                        return original
+        except (ValueError, TypeError, KeyError):
+            continue
+    return closed_reason
 
 
 def repair_closed_candidate(
@@ -92,7 +124,8 @@ def repair_closed_candidate(
             or payload.get("review_id") != review_id
             or payload.get("task_id") != task_id
             or arguments.get("commit_sha") != candidate_commit_sha
-            or arguments.get("reason") != task["closed_reason"]
+            or arguments.get("reason")
+            != _original_close_reason(conn, task_id, task["closed_at"], task["closed_reason"])
         ):
             raise ValueError(
                 "Only the exact explicit candidate of a completed VALID review can be repaired."

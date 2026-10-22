@@ -64,7 +64,7 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
         return await lifecycle._evaluate_close(
             ctx,
             task_id=task.id,
-            reason="completed",
+            reason="done",
             commit_sha=requested,
             project_path=str(repo),
             closing_session_id="session",

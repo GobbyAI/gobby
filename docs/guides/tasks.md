@@ -21,11 +21,21 @@ flowchart LR
 
 The storage row still has task metadata such as title, description, priority,
 type, category, parent, labels, and validation criteria. The workflow-facing
-state comes from closure and escalation metadata:
+state comes from closure, escalation, holds, dependencies, and ownership:
 
-- `ready`: the task is open and not escalated.
-- `closed`: the task has closure metadata.
-- `escalated`: the task needs intervention and is excluded from ready work.
+- `open`: unclaimed work with no hold or unresolved blocker.
+- `in_progress`: claimed work with no hold or unresolved blocker.
+- `blocked`: work waiting on an external dependency or merge blocker.
+- `needs_human`: work explicitly held for human input.
+- `escalated`: work escalated for intervention.
+- `deferred`: work held with a required follow-up date.
+- `closed`: work with closure metadata and a required close reason.
+
+The precedence is closed, escalated, explicit hold, blocked, in_progress, open.
+The existing `awaiting-human-review` label also projects to `needs_human`.
+Reaching a deferred task's follow-up date does not itself release the hold.
+Review results are independent of task state. Readiness remains a query for
+eligible work, rather than a task-state value.
 
 A claim records the owner session. The projected task state is not a free-form
 `status` field. Agent code should use lifecycle tools such as `claim_task` and `close_task`
@@ -164,14 +174,14 @@ workflow before closing; preserve exact commands and results in completion
 notes. After closing, call `gobby-memory:review_task_memories` with the task and
 summary.
 
-The canonical no-work reasons are `duplicate`, `already_implemented`, `wont_fix`,
-`obsolete`, and `out_of_repo`. They allow a commitless close but do not waive
+The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
+The no-work reasons `moot`, `superseded`, and `wont_do` allow a commitless close but do not waive
 child closure, attributed-file cleanliness, or ancestry checks for existing
 commit links. An epic does not receive a separate commit exemption.
 
 Human operators may disposition an unneeded leaf directly with
-`gobby tasks close '#14390' --reason already_implemented`. The CLI accepts only
-the five canonical no-work reasons for direct leaf closure and still refuses a
+`gobby tasks close '#14390' --reason moot`. The CLI accepts only
+the three canonical no-work reasons for direct leaf closure and still refuses a
 task with open children. Agent lifecycle work uses MCP.
 
 ## Dependencies and Ready Work
@@ -189,7 +199,7 @@ call_tool(server_name="gobby-tasks", tool_name="add_dependency", arguments={
 
 Readiness is hierarchical. A task appears in ready work when:
 
-1. The task is not closed or escalated.
+1. The task is open or in progress, without an explicit hold.
 2. It has no unresolved external `blocks` dependency.
 3. Its parent chain is also ready.
 
@@ -351,7 +361,7 @@ does not interpret them as comments.
 
 ```bash
 # Listing and inspection
-gobby tasks list [--active] [--ready] [--blocked] [--closed] [--escalated]
+gobby tasks list [--state STATE] [--active] [--ready] [--blocked] [--closed] [--escalated]
 gobby tasks list [--claimed] [--unclaimed]
 gobby tasks ready [--limit N] [--priority N] [--type TYPE] [--json]
 gobby tasks blocked [--limit N] [--json]

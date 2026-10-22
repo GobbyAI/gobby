@@ -779,7 +779,7 @@ class TestImportEdgeCases:
             "id": _task_id("task-commits"),
             "title": "Task with Commits",
             "description": "Desc",
-            "status": "completed",
+            "status": "done",
             "created_at": now,
             "updated_at": now,
             "project_id": sample_project["id"],
@@ -1012,7 +1012,7 @@ class TestClosedStateRoundTrip:
         backup_manager.db.execute(
             """UPDATE tasks SET
                 closed_at = '2026-01-15T10:00:00+00:00',
-                closed_reason = 'completed',
+                closed_reason = 'done',
                 closed_commit_sha = 'abc123def456',
                 review_status = 'valid',
                 review_feedback = 'Independent reviewer approved this commit',
@@ -1034,7 +1034,7 @@ class TestClosedStateRoundTrip:
         data = json.loads(lines[0])
         assert data["state"]["is_closed"] is True
         assert data["closed_at"] is not None
-        assert data["closed_reason"] == "completed"
+        assert data["closed_reason"] == "done"
         assert data["closed_commit_sha"] == "abc123def456"
         assert data["labels"] == ["bug", "p0"]
         assert data["category"] == "code"
@@ -1059,7 +1059,7 @@ class TestClosedStateRoundTrip:
         assert reimported is not None
         assert is_task_closed(reimported)
         assert reimported.closed_at == datetime(2026, 1, 15, 10, tzinfo=UTC)
-        assert reimported.closed_reason == "completed"
+        assert reimported.closed_reason == "done"
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.review_status == "valid"
         assert reimported.review_feedback == "Independent reviewer approved this commit"

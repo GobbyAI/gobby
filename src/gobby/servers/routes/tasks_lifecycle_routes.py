@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from gobby.servers.routes.source_control_git import _resolve_project
 from gobby.servers.routes.tasks_assignment import TaskAssignmentNotifier
 from gobby.storage.tasks._models import TaskNotFoundError
+from gobby.tasks.state_semantics import TaskCloseReason
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -36,7 +37,7 @@ class TaskEscalateRequest(BaseModel):
 class TaskCloseRequest(BaseModel):
     """Request body for closing a task."""
 
-    reason: str | None = Field(default=None, description="Reason for closing")
+    reason: TaskCloseReason = Field(default="done", description="Canonical closure disposition")
     commit_sha: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None = (
         Field(default=None, description="Git commit SHA to link")
     )

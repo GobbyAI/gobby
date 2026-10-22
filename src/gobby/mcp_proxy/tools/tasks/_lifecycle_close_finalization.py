@@ -82,7 +82,7 @@ async def commit_close(
         notify_parent_on_task_state_change(
             ctx.task_manager.db, summary["id"], "closed", task_ref=summary["ref"]
         )
-    if fresh.is_epic and reason.casefold() in {"completed", "obsolete"}:
+    if fresh.is_epic and reason in {"done", "moot"}:
         from gobby.hooks.event_handlers._plan import on_epic_terminal
 
         await asyncio.to_thread(

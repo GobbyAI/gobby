@@ -457,12 +457,11 @@ step_workflow:
         relinks the existing commit the same way, then resends the unchanged
         CANDIDATE to your Lane Manager only. Close only from submit, after your
         Lane Manager releases the task.
-        If the assigned task needs no changes and no candidate was sent, close
-        it here with reason already_implemented and evidence in changes_summary;
+        If the assigned task is moot and no candidate was sent, close
+        it here with reason moot and evidence in changes_summary;
         the ordinary close checklist still applies. No candidate or manual step-variable write is needed.
-        An assigned research or no-commit leaf with no candidate may also close
-        here with its research evidence, only with no supplied or linked commit;
-        preview uses the same ownership and commit checks.
+        Existing delivered work closes as done after linking its implementation
+        commit and following the normal candidate review and release flow.
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
@@ -486,11 +485,11 @@ step_workflow:
           tool: close_task
           action: block
           when: >-
-            tool_input.get('reason') == 'already_implemented'
+            tool_input.get('reason') in ['moot', 'superseded', 'wont_do']
             and vars.get('candidate_sent')
           reason: >-
-            A candidate was already sent for this task, so it cannot close as
-            already_implemented. Fix the bounce, commit, link_commit, and send a
+            A candidate was already sent for this task, so it cannot take the
+            no-work shortcut. Fix the bounce, commit, link_commit, and send a
             new candidate.
         - <<: *handoff_close_guard
           when: >-

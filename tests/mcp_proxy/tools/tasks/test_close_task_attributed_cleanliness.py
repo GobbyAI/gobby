@@ -215,7 +215,7 @@ async def _close_task(
         evaluation = await lifecycle._evaluate_close(
             harness.context,
             task_id=harness.task.id,
-            reason="completed",
+            reason="done",
             commit_sha=harness.commit_sha,
             project_path=None,
             response_detail="diagnostic",
@@ -227,7 +227,7 @@ async def _close_task(
         return await close_finalization.commit_close(
             harness.context,
             evaluation,
-            reason="completed",
+            reason="done",
             changes_summary="Verified task-attributed cleanliness.",
             commit_sha=harness.commit_sha,
         )

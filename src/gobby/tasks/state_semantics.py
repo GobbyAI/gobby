@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, cast, get_args
 
 AWAITING_HUMAN_REVIEW_LABEL = "awaiting-human-review"
+TaskState = Literal[
+    "open", "in_progress", "blocked", "needs_human", "escalated", "deferred", "closed"
+]
+TaskHoldState = Literal["needs_human", "deferred"]
+TaskCloseReason = Literal["done", "moot", "superseded", "wont_do"]
+TASK_STATES = frozenset(get_args(TaskState))
+TASK_HOLD_STATES = frozenset(get_args(TaskHoldState))
+TASK_CLOSE_REASONS = frozenset(get_args(TaskCloseReason))
 
 
 def _read_field(value: Any, *names: str) -> Any:
@@ -22,13 +30,69 @@ def _has_timestamp(value: Any) -> bool:
     return isinstance(value, datetime) or (isinstance(value, str) and bool(value))
 
 
-def projected_task_state(task: Any) -> str:
+def validate_task_state(value: object) -> TaskState:
+    """Reject retired and unknown state values at query boundaries."""
+    if not isinstance(value, str) or value not in TASK_STATES:
+        raise ValueError(
+            f"Unknown task state {value!r}; expected one of: {', '.join(sorted(TASK_STATES))}"
+        )
+    return cast(TaskState, value)
+
+
+def validate_task_close_reason(value: object) -> TaskCloseReason:
+    """Require a canonical reason; narrative evidence belongs in the close summary."""
+    if not isinstance(value, str) or value not in TASK_CLOSE_REASONS:
+        raise ValueError(
+            f"Unknown task close reason {value!r}; "
+            f"expected one of: {', '.join(sorted(TASK_CLOSE_REASONS))}"
+        )
+    return cast(TaskCloseReason, value)
+
+
+def get_task_hold_state(task: Any) -> TaskHoldState | None:
+    """Read an explicit hold, then the existing human-review label."""
+    state = _read_field(task, "state")
+    hold = _read_field(state, "hold_state") or _read_field(task, "hold_state")
+    if isinstance(hold, str) and hold in TASK_HOLD_STATES:
+        return cast(TaskHoldState, hold)
+    return "needs_human" if is_awaiting_human_review(task) else None
+
+
+def validate_task_hold_state(value: object, follow_up_at: object | None) -> TaskHoldState | None:
+    """Validate hold data without choosing routing or follow-up behavior."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in TASK_HOLD_STATES:
+        raise ValueError(f"Unknown task hold state: {value!r}")
+    if value == "deferred" and follow_up_at is None:
+        raise ValueError("Deferred tasks require a follow-up date")
+    return cast(TaskHoldState, value)
+
+
+def is_task_blocked(task: Any) -> bool:
+    """Read unresolved dependencies and the existing merge hold."""
+    state = _read_field(task, "state")
+    return bool(
+        _read_field(task, "active_blocked_by")
+        or _read_field(task, "blocked_by_merge") is True
+        or _read_field(state, "is_blocked") is True
+        or _read_field(task, "is_blocked") is True
+    )
+
+
+def projected_task_state(task: Any, *, is_blocked: bool | None = None) -> TaskState:
     """Return the canonical workflow-facing task state."""
     if is_task_closed(task):
         return "closed"
     if _task_is_escalated(task):
         return "escalated"
-    return "ready"
+    if hold := get_task_hold_state(task):
+        return hold
+    if is_task_blocked(task) if is_blocked is None else is_blocked:
+        return "blocked"
+    if get_claimed_session_id(task):
+        return "in_progress"
+    return "open"
 
 
 def is_awaiting_human_review(task: Any) -> bool:
@@ -121,16 +185,18 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
     """Build the canonical task-state projection for external callers."""
     owner_session_id = get_claimed_session_id(task)
     is_escalated = _task_is_escalated(task)
-    if is_blocked is None:
-        active_blocked_by = _read_field(task, "active_blocked_by")
-        is_blocked = bool(active_blocked_by) or is_escalated or is_awaiting_human_review(task)
+    name = projected_task_state(task, is_blocked=is_blocked)
+    state = _read_field(task, "state")
 
     return {
+        "name": name,
+        "hold_state": get_task_hold_state(task),
+        "follow_up_at": _read_field(state, "follow_up_at") or _read_field(task, "follow_up_at"),
         "owner_session_id": owner_session_id,
         "is_claimed": bool(owner_session_id),
         "is_closed": is_task_closed(task),
         "is_escalated": is_escalated,
-        "is_blocked": bool(is_blocked),
+        "is_blocked": name == "blocked",
         "closed_at": _read_field(task, "closed_at"),
         "closed_reason": _read_field(task, "closed_reason"),
         "closed_in_session_id": _read_field(task, "closed_in_session_id"),

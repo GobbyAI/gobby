@@ -15,10 +15,10 @@ const GOLDEN_BASELINE_CHECKSUM: &str =
     "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_LATEST_CHECKSUM: &str =
-    "7835942b14a328d04388a5fae421d6871a4c33f6fddd9f0eb868feb7691b4bfc";
+    "1eea8ea3f53d81d8cff578f7bd1af038507740d6bc48cd9607552ec846076d7a";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "a07eb78ce3ea696d95a1f690c9d2fd2d8aec9d76c1456e8517b11302d47a9ab3";
+    "e5dfb2da3925ed5e2f871fb6829a1f7e93072e2840789e3f447ef60fe4ac1de8";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -215,7 +215,7 @@ pub fn expected_schema_identity() -> GrantSchemaIdentity {
             runner_protocol: 1,
             baseline_version: 420,
             baseline_checksum: GOLDEN_BASELINE_CHECKSUM.to_string(),
-            latest_version: 474,
+            latest_version: 475,
             latest_checksum: GOLDEN_LATEST_CHECKSUM.to_string(),
             assets_root_hash: GOLDEN_ASSETS_ROOT_HASH.to_string(),
         }

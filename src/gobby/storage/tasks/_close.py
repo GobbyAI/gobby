@@ -9,12 +9,13 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._automation import has_hold_label
 from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.tasks.criteria_text import normalized_validation_criteria
+from gobby.tasks.state_semantics import validate_task_close_reason
 from gobby.utils.datetime import utc_now
 
 _LEGACY_VALIDATION_CRITERIA = (
     "Legacy task: validation criteria were not recorded before they became required."
 )
-_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
+_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"done", "moot"})
 
 
 def _session_exists(
@@ -42,6 +43,7 @@ def _close_task_in_txn(
     expected_updated_at: datetime | None = None,
 ) -> None:
     """Close a task inside the caller's already-open transaction."""
+    reason = validate_task_close_reason("done" if reason is None else reason)
 
     if not force:
         # Hold this row before counting children. Creation takes the same lock on
@@ -165,7 +167,7 @@ def close_eligible_parent_chain(
     A child's close enters at its parent; a reparent enters at the old parent, which
     may have just lost its last open child (#23384).
     """
-    close_reason = reason or "completed"
+    close_reason = validate_task_close_reason("done" if reason is None else reason)
     while parent_id:
         parent = conn.execute(
             """

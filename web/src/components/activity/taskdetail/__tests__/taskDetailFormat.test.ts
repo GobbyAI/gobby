@@ -58,7 +58,7 @@ describe("taskDetailFormat — stage + dates (#14772 / D5)", () => {
     expect(stageVariant(false, "in_progress")).toBe("active");
     expect(stageVariant(false, "blocked")).toBe("blocked");
     expect(stageVariant(false, "closed")).toBe("closed");
-    expect(stageVariant(false, "ready")).toBe("default");
+    expect(stageVariant(false, "open")).toBe("default");
   });
 
   it("labels an escalated task 'Escalated' and a closed task 'Closed'", () => {

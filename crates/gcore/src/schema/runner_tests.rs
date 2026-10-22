@@ -1194,6 +1194,96 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 475)
+        .expect("task state migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'task state migration')",
+        &[&project_id],
+    )?;
+    let reasons = [
+        (None, "done"),
+        (Some("completed"), "done"),
+        (Some("already_implemented"), "done"),
+        (Some("obsolete"), "moot"),
+        (Some("duplicate"), "superseded"),
+        (Some("wont_fix"), "wont_do"),
+        (Some("out_of_repo"), "wont_do"),
+        (Some("Original narrative close summary"), "done"),
+    ];
+    let task_ids: Vec<Uuid> = reasons.iter().map(|_| Uuid::new_v4()).collect();
+    for (task_id, (reason, _)) in task_ids.iter().zip(reasons) {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, validation_criteria, closed_at, closed_reason) \
+             VALUES ($1, $2, 'historical closure', 'history survives', now(), $3)",
+            &[task_id, &project_id, &reason],
+        )?;
+    }
+    let open_task = Uuid::new_v4();
+    let human_task = Uuid::new_v4();
+    for (task_id, labels) in [
+        (open_task, "[]"),
+        (human_task, "[\"awaiting-human-review\"]"),
+    ] {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, validation_criteria, labels) \
+             VALUES ($1, $2, 'open work', 'state agrees', $3::text::jsonb)",
+            &[&task_id, &project_id, &labels],
+        )?;
+    }
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for (task_id, (original, expected)) in task_ids.iter().zip(reasons) {
+        let row = client.query_one(
+            "SELECT closed_reason, state_bucket FROM tasks WHERE id = $1",
+            &[task_id],
+        )?;
+        assert_eq!(row.get::<_, String>(0), expected);
+        assert_eq!(row.get::<_, String>(1), "closed");
+        let body: String = client
+            .query_one(
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:475'",
+                &[task_id],
+            )?
+            .get(0);
+        let snapshot: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(snapshot["kind"], "legacy_close_reason_snapshot");
+        assert_eq!(snapshot["closed_reason"], serde_json::json!(original));
+    }
+    for (task_id, expected) in [(open_task, "open"), (human_task, "needs_human")] {
+        let bucket: String = client
+            .query_one("SELECT state_bucket FROM tasks WHERE id = $1", &[&task_id])?
+            .get(0);
+        assert_eq!(bucket, expected);
+    }
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    let snapshots: i64 = client
+        .query_one(
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:475'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(snapshots, i64::try_from(reasons.len())?);
+    Ok(())
+}
+
+#[test]
 fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

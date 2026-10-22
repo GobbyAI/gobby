@@ -405,11 +405,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
         sort_order: str = "asc",
         updated_since: datetime | None = None,
         candidate: bool | None = None,
+        state: str | None = None,
     ) -> list[Task]:
         """List tasks with filtering.
 
         Args:
-                state string, a list of states, or None to include all stage states.
+            state: Canonical task state, or None to include all states.
             sort_by: None lists closed tasks (``closed=True``) newest closure
                 first and everything else hierarchically.
 
@@ -435,6 +436,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
             sort_order=sort_order,
             updated_since=updated_since,
             candidate=candidate,
+            state=state,
         )
 
     def get_candidate_sent_times(self, task_ids: list[str]) -> dict[str, datetime]:
@@ -512,6 +514,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
         title_like: str | None = None,
         updated_since: datetime | None = None,
         candidate: bool | None = None,
+        state: str | None = None,
     ) -> int:
         """Count tasks with optional filters.
 
@@ -536,6 +539,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
             title_like=title_like,
             updated_since=updated_since,
             candidate=candidate,
+            state=state,
         )
 
     def count_by_state(self, project_id: str | None = None) -> dict[str, int]:

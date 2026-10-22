@@ -766,7 +766,7 @@ async def test_developer_proof_return_rearms_candidate_latch(
     assert not await run.admits(
         "gobby-tasks",
         "close_task",
-        {"task_id": task.id, "reason": "already_implemented"},
+        {"task_id": task.id, "reason": "moot"},
     )
 
 
@@ -1557,7 +1557,7 @@ async def test_candidate_latch_survives_native_reset_and_blocks_already_implemen
         "close_task",
         {
             "task_id": task.id,
-            "reason": "already_implemented",
+            "reason": "moot",
         },
     )
     assert run.vars["candidate_sent"] is True
@@ -1571,7 +1571,7 @@ async def test_candidate_latch_survives_native_reset_and_blocks_already_implemen
         "close_task",
         {
             "task_id": task.id,
-            "reason": "already_implemented",
+            "reason": "moot",
         },
     )
     assert run.vars["candidate_sent"] is True

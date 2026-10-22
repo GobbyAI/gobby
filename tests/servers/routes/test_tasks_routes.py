@@ -153,6 +153,48 @@ def two_tasks(task_manager, project_id) -> tuple[dict, dict]:
 
 
 class TestListTasks:
+    @pytest.mark.parametrize(
+        "state",
+        ["open", "in_progress", "blocked", "needs_human", "escalated", "deferred", "closed"],
+    )
+    def test_canonical_state_filter_matches_page_and_total(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict[str, Any],
+        session_id: str,
+        state: str,
+    ) -> None:
+        task_id = sample_task["id"]
+        if state == "in_progress":
+            task_manager.claim_task(task_id, session_id=session_id)
+        elif state == "closed":
+            task_manager.close_task(task_id, reason="done")
+        elif state == "escalated":
+            task_manager.escalate_task(task_id, reason="Needs owner intervention")
+        elif state == "blocked":
+            task_manager.db.execute(
+                "UPDATE tasks SET blocked_by_merge = TRUE WHERE id = %s", (task_id,)
+            )
+        elif state in {"needs_human", "deferred"}:
+            task_manager.db.execute(
+                "UPDATE tasks SET hold_state = %s, follow_up_at = NOW() WHERE id = %s",
+                (state, task_id),
+            )
+        response = client.get("/api/tasks", params={"state": state})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total"] == 1
+        assert [(task["id"], task["state"]["name"]) for task in payload["tasks"]] == [
+            (task_id, state)
+        ]
+
+    @pytest.mark.parametrize("state", ["ready", "needs_review", "review_approved", "done", "bogus"])
+    def test_retired_or_unknown_state_filter_is_rejected(
+        self, client: TestClient, state: str
+    ) -> None:
+        assert client.get("/api/tasks", params={"state": state}).status_code == 422
+
     def test_list_empty(self, client: TestClient) -> None:
         response = client.get("/api/tasks")
         assert response.status_code == 200
@@ -438,8 +480,7 @@ class TestListTasks:
         response = client.get("/api/tasks")
         data = response.json()
         assert "stats" in data
-        # At least one ready task
-        assert data["stats"].get("ready", 0) >= 1
+        assert data["stats"].get("open", 0) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -960,7 +1001,7 @@ class TestCloseTask:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/close",
             json={
-                "reason": "Completed",
+                "reason": "done",
             },
         )
         assert response.status_code == 200
@@ -1293,6 +1334,60 @@ class TestComments:
         assert response.status_code == 403
         assert response.json()["detail"] == "Close receipts cannot be deleted"
         assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (receipt_id,))
+
+    @pytest.mark.parametrize("author", ["migration:474", "migration:475"])
+    def test_create_comment_refuses_migration_snapshot(
+        self, client: TestClient, sample_task: dict[str, Any], author: str
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/comments",
+            json={"body": "forged snapshot", "author": author, "author_type": "system"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == (
+            "Migration snapshots are recorded only by schema migrations"
+        )
+        assert client.get(f"/api/tasks/{sample_task['id']}/comments").json()["total"] == 0
+
+    @pytest.mark.parametrize("author", ["migration:474", "migration:475"])
+    def test_delete_comment_preserves_migration_snapshot(
+        self,
+        client: TestClient,
+        sample_task: dict[str, Any],
+        temp_db: HubDatabase,
+        author: str,
+    ) -> None:
+        body = '{"close_reason":"Historical narrative"}'
+        snapshot_id = self._insert_comment(
+            temp_db, sample_task["id"], body, author, author_type="system"
+        )
+
+        response = client.delete(f"/api/tasks/{sample_task['id']}/comments/{snapshot_id}")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Migration snapshots cannot be deleted"
+        row = temp_db.fetchone("SELECT body FROM task_comments WHERE id = %s", (snapshot_id,))
+        assert row is not None
+        assert row["body"] == body
+
+    @pytest.mark.parametrize(
+        ("author", "author_type"), [("migration:475", "session"), ("watchdog", "system")]
+    )
+    def test_comment_with_unreserved_author_pair_remains_mutable(
+        self, client: TestClient, sample_task: dict[str, Any], author: str, author_type: str
+    ) -> None:
+        base_url = f"/api/tasks/{sample_task['id']}/comments"
+        response = client.post(
+            base_url,
+            json={"body": "Ordinary comment", "author": author, "author_type": author_type},
+        )
+
+        assert response.status_code == 200
+        comment_id = response.json()["id"]
+        deletion = client.delete(f"{base_url}/{comment_id}")
+        assert deletion.status_code == 200
+        assert client.get(base_url).json()["total"] == 0
 
     def test_comments_for_nonexistent_task(self, client: TestClient) -> None:
         response = client.get("/api/tasks/nonexistent-id-000/comments")

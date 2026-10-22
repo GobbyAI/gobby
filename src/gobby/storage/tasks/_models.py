@@ -15,7 +15,11 @@ from typing import Any, Literal
 
 from gobby.tasks import task_types as _task_types
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.state_semantics import (
+    TaskHoldState,
+    serialize_task_state,
+    validate_task_hold_state,
+)
 from gobby.utils.datetime import normalize_datetime_model
 
 
@@ -229,6 +233,7 @@ class TaskHasDependentsError(ValueError):
     optional=(
         "closed_at",
         "escalated_at",
+        "follow_up_at",
     ),
 )
 @dataclass
@@ -256,6 +261,8 @@ class Task:
     closed_at: datetime | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
+    hold_state: TaskHoldState | None = None
+    follow_up_at: datetime | None = None
     review_status: Literal["pending", "valid", "invalid", "error"] = "pending"
     review_feedback: str | None = None
     category: str | None = None
@@ -289,6 +296,7 @@ class Task:
         """Normalize enum-backed fields for manually constructed tasks."""
         self.task_type = validate_task_type(self.task_type)
         self.implementation_domain = validate_implementation_domain(self.implementation_domain)
+        self.hold_state = validate_task_hold_state(self.hold_state, self.follow_up_at)
         if self.escalated_at and not self.closed_at:
             self.is_escalated = True
 
@@ -337,6 +345,8 @@ class Task:
             closed_at=closed_at,
             labels=labels,
             closed_reason=row["closed_reason"],
+            hold_state=row["hold_state"] if "hold_state" in keys else None,
+            follow_up_at=row["follow_up_at"] if "follow_up_at" in keys else None,
             review_status=row["review_status"] if "review_status" in keys else "pending",
             review_feedback=(row["review_feedback"] if "review_feedback" in keys else None),
             category=row["category"] if "category" in keys else None,

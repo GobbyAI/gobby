@@ -4701,6 +4701,14 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "tasks.follow_up_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "tasks.hold_state",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "tasks.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -4762,7 +4770,7 @@
     },
     {
       "name": "tasks.state_bucket",
-      "definition": "text|text|NO|'ready'::text|NEVER"
+      "definition": "text|text|NO|'open'::text|NEVER"
     },
     {
       "name": "tasks.task_type",
@@ -7119,8 +7127,16 @@
       "definition": "FOREIGN KEY (closed_in_session_id) REFERENCES sessions(id) DEFERRABLE"
     },
     {
+      "name": "tasks.tasks_closed_reason_check",
+      "definition": "CHECK (closed_at IS NULL OR closed_reason IS NOT NULL AND (closed_reason = ANY (ARRAY['done'::text, 'moot'::text, 'superseded'::text, 'wont_do'::text])))"
+    },
+    {
       "name": "tasks.tasks_created_in_session_id_fkey",
       "definition": "FOREIGN KEY (created_in_session_id) REFERENCES sessions(id) DEFERRABLE"
+    },
+    {
+      "name": "tasks.tasks_deferred_follow_up_check",
+      "definition": "CHECK (hold_state IS DISTINCT FROM 'deferred'::text OR follow_up_at IS NOT NULL)"
     },
     {
       "name": "tasks.tasks_delegated_by_session_id_fkey",
@@ -7129,6 +7145,10 @@
     {
       "name": "tasks.tasks_delegated_to_session_id_fkey",
       "definition": "FOREIGN KEY (delegated_to_session_id) REFERENCES sessions(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "tasks.tasks_hold_state_check",
+      "definition": "CHECK (hold_state IS NULL OR (hold_state = ANY (ARRAY['needs_human'::text, 'deferred'::text])))"
     },
     {
       "name": "tasks.tasks_implementation_domain_check",
@@ -7172,7 +7192,7 @@
     },
     {
       "name": "tasks.tasks_state_bucket_check",
-      "definition": "CHECK (state_bucket = ANY (ARRAY['ready'::text, 'closed'::text, 'escalated'::text]))"
+      "definition": "CHECK (state_bucket = ANY (ARRAY['open'::text, 'in_progress'::text, 'needs_human'::text, 'escalated'::text, 'deferred'::text, 'closed'::text]))"
     },
     {
       "name": "terminal_host_epochs.terminal_host_epochs_check",
@@ -7634,7 +7654,7 @@
     },
     {
       "name": "$schema.compute_task_state_bucket(p_task_id uuid)",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE 'ready'\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
+      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nWHEN t.hold_state IS NOT NULL THEN t.hold_state\nWHEN COALESCE(t.labels, '[]'::jsonb) @> '[\"awaiting-human-review\"]'::jsonb\nTHEN 'needs_human'\nWHEN t.claimed_by_session_id IS NOT NULL THEN 'in_progress'\nELSE 'open'\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
     },
     {
       "name": "$schema.coordination_message_committed()",
@@ -9466,7 +9486,7 @@
     },
     {
       "name": "tasks.tasks_state_bucket_au",
-      "definition": "CREATE TRIGGER tasks_state_bucket_au AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_task()"
+      "definition": "CREATE TRIGGER tasks_state_bucket_au AFTER UPDATE OF closed_at, escalated_at, is_escalated, claimed_by_session_id, hold_state, labels ON tasks FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_task()"
     }
   ]
 }

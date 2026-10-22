@@ -46,15 +46,15 @@ def test_close_has_exactly_four_invariants() -> None:
 @pytest.mark.parametrize(
     "children,commit,reason,dirty,failed",
     [
-        (False, "landed", "completed", False, ()),
-        (True, "landed", "completed", False, ("children_closed",)),
-        (False, "none", "completed", False, ("linked_commits",)),
-        (False, "none", "obsolete", False, ()),
-        (False, "none", "obsolete", True, ("uncommitted_task_edits",)),
-        (False, "landed", "completed", True, ("uncommitted_task_edits",)),
-        (False, "unlanded", "completed", False, ("integration_ancestry",)),
-        (False, "invalid", "completed", False, ("integration_ancestry",)),
-        (False, "unlanded", "obsolete", False, ("integration_ancestry",)),
+        (False, "landed", "done", False, ()),
+        (True, "landed", "done", False, ("children_closed",)),
+        (False, "none", "done", False, ("linked_commits",)),
+        (False, "none", "moot", False, ()),
+        (False, "none", "moot", True, ("uncommitted_task_edits",)),
+        (False, "landed", "done", True, ("uncommitted_task_edits",)),
+        (False, "unlanded", "done", False, ("integration_ancestry",)),
+        (False, "invalid", "done", False, ("integration_ancestry",)),
+        (False, "unlanded", "moot", False, ("integration_ancestry",)),
     ],
 )
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_all_linked_commits_must_be_landed(repository: tuple[Path, str, st
     result = await evaluate_close_invariants(
         open_children=[],
         commit_shas=[unlanded, landed],
-        reason="completed",
+        reason="done",
         attributed_checkouts={},
         integration_repo_path=str(repo),
         integration_ref="refs/heads/integration",
@@ -110,7 +110,7 @@ async def test_integration_tip_must_resolve(repository: tuple[Path, str, str]) -
     result = await evaluate_close_invariants(
         open_children=[],
         commit_shas=[landed],
-        reason="completed",
+        reason="done",
         attributed_checkouts={},
         integration_repo_path=str(repo),
         integration_ref="refs/heads/missing",
@@ -137,7 +137,7 @@ def test_close_is_atomic_and_idempotent(
     rejected = manager.get_task(task.id)
     assert rejected.closed_at is None
     assert not rejected.commits
-    manager.close_task(child.id, reason="obsolete")
+    manager.close_task(child.id, reason="moot")
     # The unclaimed structural parent may already have auto-closed. A fresh leaf
     # exercises the explicit commit/link transition and its repeated call.
     leaf = manager.create_task(
@@ -344,7 +344,7 @@ async def test_no_work_close_checks_dirty_task_checkout(
     )
     registry = InternalToolRegistry("gobby-tasks")
     register_close_task(registry, ctx)
-    args: dict[str, Any] = {"task_id": task.id, "reason": "obsolete"}
+    args: dict[str, Any] = {"task_id": task.id, "reason": "moot"}
     if explicit_main:
         args["project_path"] = str(main)
     for preview in (True, False):

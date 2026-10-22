@@ -84,10 +84,26 @@ def reviewed_task(
     manager.link_commit(task.id, _CANDIDATE)
     manager.link_commit(task.id, _OLD)
     manager.close_task(
-        task.id, reason="completed", closed_in_session_id=actor.id, closed_commit_sha=_OLD
+        task.id, reason="done", closed_in_session_id=actor.id, closed_commit_sha=_OLD
     )
     closed = manager.get_task(task.id)
     assert closed.closed_at is not None
+    # Migration 475 preserves the exact reason while normalizing the live row.
+    temp_db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, 'migration:475', 'system', %s)",
+        (
+            str(uuid4()),
+            task.id,
+            json.dumps(
+                {
+                    "kind": "legacy_close_reason_snapshot",
+                    "closed_reason": "completed",
+                    "closed_at": closed.closed_at.isoformat(),
+                }
+            ),
+        ),
+    )
     temp_db.execute(
         "UPDATE tasks SET review_status = 'valid', review_feedback = %s WHERE id = %s",
         ("Original independent VALID review.", task.id),
@@ -225,6 +241,8 @@ def test_audit_failure_rolls_back_the_marker_correction(
         "different_candidate",
         "terminal_payload",
         "marker",
+        "close_reason",
+        "missing_reason_snapshot",
     ],
 )
 def test_repair_rejects_unreviewed_or_changed_state_without_writes(
@@ -269,6 +287,15 @@ def test_repair_rejects_unreviewed_or_changed_state_without_writes(
         manager.db.execute(
             "UPDATE tasks SET closed_commit_sha = %s WHERE id = %s",
             ("c" * 40, review.task_id),
+        )
+    elif drift == "close_reason":
+        manager.db.execute(
+            "UPDATE tasks SET closed_reason = 'moot' WHERE id = %s", (review.task_id,)
+        )
+    elif drift == "missing_reason_snapshot":
+        manager.db.execute(
+            "DELETE FROM task_comments WHERE task_id = %s AND author = 'migration:475'",
+            (review.task_id,),
         )
     before = manager.get_task(review.task_id)
     with pytest.raises(ValueError):

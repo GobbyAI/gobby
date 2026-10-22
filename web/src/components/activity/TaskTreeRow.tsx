@@ -51,8 +51,8 @@ function deriveSafeTaskState(task: GobbyTask): {
   } catch (error) {
     console.warn("Failed to derive task row state", { taskId: task.id, error });
     return {
-      displayState: "ready",
-      stateSummary: "Ready",
+      displayState: "open",
+      stateSummary: "Open",
       failed: true,
     };
   }

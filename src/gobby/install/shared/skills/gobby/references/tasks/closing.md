@@ -36,8 +36,9 @@ Task, caller, machine, and repository authorization are checked before the gates
 The final close re-evaluates current state before writing. A concurrent change
 can require another preview or retry.
 
-No-work reasons are `duplicate`, `already_implemented`, `wont_fix`, `obsolete`,
-and `out_of_repo`. Explain the disposition. They permit a commitless close;
+Close reasons are `done`, `moot`, `superseded`, and `wont_do`.
+The no-work reasons `moot`, `superseded`, and `wont_do` permit a commitless close.
+Explain the disposition in `changes_summary`;
 they do not waive child closure, attributed-file cleanliness, or ancestry checks
 for commits already linked to the task.
 

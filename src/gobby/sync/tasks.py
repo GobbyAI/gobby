@@ -9,7 +9,12 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
 from gobby.sync.task_review_serialization import deserialize_task_review, serialize_task_review
 from gobby.tasks.criteria_text import require_validation_criteria
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.state_semantics import (
+    serialize_task_state,
+    validate_task_close_reason,
+    validate_task_hold_state,
+    validate_task_state,
+)
 from gobby.utils.json_helpers import json_dumps
 
 TASK_BACKUP_PAGE_SIZE = 100_000
@@ -244,8 +249,12 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
                     f"Task backup line {line_num}: invalid {field} timestamp"
                 ) from exc
 
-        state = data.get("state") or {}
-        for field in ("closed_at", "escalated_at"):
+        state = data.get("state")
+        if state is None:
+            state = {}
+        if not isinstance(state, dict):
+            raise TaskRestoreError(f"Task backup line {line_num}: state must be an object")
+        for field in ("closed_at", "escalated_at", "follow_up_at"):
             value = data.get(field, state.get(field))
             if value is not None:
                 try:
@@ -254,6 +263,15 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
                     raise TaskRestoreError(
                         f"Task backup line {line_num}: invalid {field} timestamp"
                     ) from exc
+
+        try:
+            if "name" in state:
+                validate_task_state(state["name"])
+            validate_task_hold_state(state.get("hold_state"), state.get("follow_up_at"))
+            if data.get("closed_at", state.get("closed_at")):
+                validate_task_close_reason(data.get("closed_reason", state.get("closed_reason")))
+        except ValueError as exc:
+            raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
         uuid_fields = (
             "project_id",
@@ -361,8 +379,11 @@ class TaskBackupManager:
             backup_data: list[dict[str, Any]] = []
             for task in tasks:
                 state = serialize_task_state(task)
+                # Labels can project a hold without owning an intrinsic hold field.
+                state["hold_state"] = task.hold_state
                 state["closed_at"] = _normalize_timestamp(task.closed_at)
                 state["escalated_at"] = _normalize_timestamp(task.escalated_at)
+                state["follow_up_at"] = _normalize_timestamp(task.follow_up_at)
                 task_dict = {
                     "id": task.id,
                     "title": task.title,
@@ -570,6 +591,8 @@ class TaskBackupManager:
                             "commits": commits_json,
                             "closed_at": closed_at_file,
                             "closed_reason": data.get("closed_reason", state.get("closed_reason")),
+                            "hold_state": state.get("hold_state"),
+                            "follow_up_at": _parse_optional_timestamp(state.get("follow_up_at")),
                             "closed_in_session_id": closed_in_session_id,
                             "closed_commit_sha": data.get(
                                 "closed_commit_sha", state.get("closed_commit_sha")

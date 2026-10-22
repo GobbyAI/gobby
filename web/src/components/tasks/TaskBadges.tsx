@@ -27,12 +27,7 @@ import {
 // Color maps
 // =============================================================================
 
-const STATUS_COLORS: Record<string, string> = {
-  open: TASK_STATE_COLORS.ready,
-  in_progress: "var(--color-warning-foreground)",
-  closed: "var(--text-muted)",
-  escalated: "var(--color-error)",
-};
+const STATUS_COLORS: Record<string, string> = TASK_STATE_COLORS;
 
 const PRIORITY_STYLES: Record<
   PriorityGlyphLevel,
@@ -67,14 +62,13 @@ function chipToken(value: string | number): string {
 
 const STATE_TONES: Record<string, ChipTone> = {
   open: "info",
-  ready: "info",
   claimed: "info",
   in_progress: "warning",
-  "in-progress": "warning",
   closed: "accent",
-  done: "accent",
   blocked: "error",
   escalated: "error",
+  needs_human: "warning",
+  deferred: "neutral",
 };
 
 const PRIORITY_TONES: Record<PriorityGlyphLevel, ChipTone> = {
@@ -111,11 +105,10 @@ export function StatusBadge({ status }: { status: string }) {
 // =============================================================================
 
 function displayStateFromStatus(status: string | undefined): TaskDisplayState {
-  if (status === "open") return "ready";
   if (status && TASK_STATE_ORDER.includes(status as TaskDisplayState)) {
     return status as TaskDisplayState;
   }
-  return "ready";
+  return "open";
 }
 
 export function StatusDot({

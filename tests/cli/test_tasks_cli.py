@@ -668,6 +668,7 @@ class TestTaskStatsCommand:
         mock_task.claimed_by_session_id = None
 
         mock_manager = MagicMock()
+        mock_manager.count_by_state.return_value = {"open": 1}
         mock_manager.list_tasks.return_value = [mock_task]
         mock_manager.list_ready_tasks.return_value = [mock_task]
         mock_manager.list_blocked_tasks.return_value = []
@@ -689,6 +690,7 @@ class TestTaskStatsCommand:
     ) -> None:
         """Test stats with JSON output."""
         mock_manager = MagicMock()
+        mock_manager.count_by_state.return_value = {}
         mock_manager.list_tasks.return_value = []
         mock_manager.list_ready_tasks.return_value = []
         mock_manager.list_blocked_tasks.return_value = []
@@ -704,6 +706,38 @@ class TestTaskStatsCommand:
         assert "closed" in data
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
+    def test_stats_exposes_all_states_and_sizes_queries_from_total(
+        self, mock_get_manager: MagicMock, runner: CliRunner
+    ) -> None:
+        mock_manager = MagicMock()
+        mock_manager.count_by_state.return_value = {"open": 10001, "needs_human": 2, "deferred": 1}
+        mock_manager.list_tasks.return_value = []
+        mock_manager.list_ready_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "stats", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total"] == 10004
+        assert data["by_state"] == {
+            "open": 10001,
+            "in_progress": 0,
+            "blocked": 0,
+            "needs_human": 2,
+            "escalated": 0,
+            "deferred": 1,
+            "closed": 0,
+        }
+        assert mock_manager.list_tasks.call_args.kwargs["limit"] == 10004
+        assert mock_manager.list_ready_tasks.call_args.kwargs["limit"] == 10004
+
+        rendered = runner.invoke(cli, ["tasks", "stats"])
+        assert rendered.exit_code == 0
+        assert "Needs Human: 2" in rendered.output
+        assert "Deferred: 1" in rendered.output
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
     def test_stats_groups_out_of_range_priorities_as_other(
         self,
         mock_get_manager: MagicMock,
@@ -716,6 +750,7 @@ class TestTaskStatsCommand:
         mock_task.task_type = "chore"
 
         mock_manager = MagicMock()
+        mock_manager.count_by_state.return_value = {"open": 1}
         mock_manager.list_tasks.return_value = [mock_task]
         mock_manager.list_ready_tasks.return_value = []
         mock_manager.list_blocked_tasks.return_value = []
@@ -1256,7 +1291,7 @@ class TestCloseTaskCommand:
     @patch("gobby.cli.tasks.crud.resolve_task_id")
     @pytest.mark.parametrize(
         "reason",
-        ["duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"],
+        ["moot", "superseded", "wont_do"],
     )
     def test_close_task_with_no_work_reason(
         self,
@@ -1285,14 +1320,14 @@ class TestCloseTaskCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_close_task_with_custom_reason_requires_evidence_contract(
+    def test_close_task_with_custom_reason_is_rejected(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Custom reasons do not bypass the leaf evidence contract."""
+        """Close reasons are restricted to the canonical enum before any mutation."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
@@ -1300,8 +1335,8 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "paused"])
 
-        assert result.exit_code == 1
-        assert "criterion-to-evidence close_task contract" in result.output
+        assert result.exit_code == 2
+        assert "Invalid value for '--reason'" in result.output
         mock_manager.close_task.assert_not_called()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -1326,7 +1361,7 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(
             cli,
-            ["tasks", "close", "gt-abc123", "--reason", "obsolete"],
+            ["tasks", "close", "gt-abc123", "--reason", "moot"],
         )
 
         assert result.exit_code == 1

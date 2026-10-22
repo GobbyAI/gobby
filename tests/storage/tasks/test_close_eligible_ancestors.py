@@ -284,7 +284,9 @@ def test_inverse_concurrent_reparents_do_not_deadlock(
         both_at_walk.wait()
         close_eligible_parent_chain(*args, **kwargs)
 
-    monkeypatch.setattr("gobby.storage.tasks._manager.close_eligible_parent_chain", walk_together)
+    monkeypatch.setattr(
+        "gobby.storage.tasks._update_facade.close_eligible_parent_chain", walk_together
+    )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         moves = [

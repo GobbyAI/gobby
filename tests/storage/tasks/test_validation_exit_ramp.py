@@ -100,9 +100,9 @@ def test_repeated_close_preserves_terminal_timestamps(
         "Idempotent close",
         validation_criteria="Test task completion is observable.",
     )
-    first = manager.close_task(task.id, reason="finished")
-    second = manager.close_task(task.id, reason="ignored retry")
+    first = manager.close_task(task.id, reason="done")
+    second = manager.close_task(task.id, reason="moot")
 
     assert second.closed_at == first.closed_at
     assert second.updated_at == first.updated_at
-    assert second.closed_reason == first.closed_reason == "finished"
+    assert second.closed_reason == first.closed_reason == "done"

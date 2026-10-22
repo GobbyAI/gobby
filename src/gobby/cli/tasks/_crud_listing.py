@@ -3,7 +3,7 @@
 import click
 
 from gobby.cli.tasks._crud_services import CrudServices
-from gobby.tasks.state_semantics import is_task_closed, serialize_task_state
+from gobby.tasks.state_semantics import TASK_STATES, is_task_closed, serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
 
@@ -20,7 +20,14 @@ def list_tasks_impl(
     limit: int,
     group_by: str | None,
     json_format: bool,
+    *,
+    state: str | None = None,
 ) -> None:
+    if state is not None and any((ready, blocked, closed_only, escalated)):
+        raise click.UsageError(
+            "--state cannot be combined with --ready, --blocked, --closed, or --escalated."
+        )
+
     if ready and blocked:
         click.echo("Error: --ready and --blocked are mutually exclusive.", err=True)
         return
@@ -77,8 +84,11 @@ def list_tasks_impl(
             closed=closed_filter,
             escalated=True if escalated else None,
             limit=limit,
+            state=state,
         )
-        if closed_filter:
+        if state is not None:
+            label = f"{state} tasks"
+        elif closed_filter:
             label = "closed tasks"
         elif escalated:
             label = "escalated tasks"
@@ -102,7 +112,14 @@ def list_tasks_impl(
 
     primary_ids: set[str] | None = None
     display_tasks = tasks_list
-    if ready or blocked or escalated or claimed_filter is not None or closed_filter is not None:
+    if (
+        state is not None
+        or ready
+        or blocked
+        or escalated
+        or claimed_filter is not None
+        or closed_filter is not None
+    ):
         display_tasks, primary_ids = services.collect_ancestors(tasks_list, manager)
 
     display_tasks = services.sort_tasks_for_tree(display_tasks)
@@ -235,8 +252,10 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
     project_id = services.resolve_project_ref(project_ref)
     manager = services.get_task_manager()
 
-    all_tasks = manager.list_tasks(project_id=project_id, limit=10000)
-    total = len(all_tasks)
+    state_counts = manager.count_by_state(project_id=project_id)
+    by_state = {name: state_counts.get(name, 0) for name in sorted(TASK_STATES)}
+    total = sum(by_state.values())
+    all_tasks = manager.list_tasks(project_id=project_id, limit=max(total, 1))
     by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     other_priority_count = 0
     by_type: dict[str, int] = {}
@@ -264,11 +283,12 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
         if task.task_type:
             by_type[task.task_type] = by_type.get(task.task_type, 0) + 1
 
-    ready_count = len(manager.list_ready_tasks(project_id=project_id, limit=10000))
-    blocked_count = len(manager.list_blocked_tasks(project_id=project_id, limit=10000))
+    ready_count = len(manager.list_ready_tasks(project_id=project_id, limit=max(total, 1)))
+    blocked_count = by_state["blocked"]
 
     stats = {
         "total": total,
+        "by_state": by_state,
         "by_priority": {
             "critical": by_priority.get(0, 0),
             "high": by_priority.get(1, 0),
@@ -292,10 +312,11 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
 
     click.echo("Task Statistics:")
     click.echo(f"  Total: {total}")
-    click.echo(f"  Closed: {closed_count}")
+    click.echo("\n  By State:")
+    for name, count in by_state.items():
+        click.echo(f"    {name.replace('_', ' ').title()}: {count}")
     click.echo(f"\n  Claimed: {claimed_count}")
     click.echo(f"  Unclaimed Active: {unclaimed_count}")
-    click.echo(f"  Escalated: {escalated_count}")
     click.echo(f"\n  Ready (no blockers): {ready_count}")
     click.echo(f"  Blocked: {blocked_count}")
     click.echo(f"\n  Critical Priority: {by_priority.get(0, 0)}")

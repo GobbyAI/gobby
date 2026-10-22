@@ -239,12 +239,12 @@ class TestListCrossProjectTasks:
         registry = create_hub_registry(db=db)
         tool = registry.get_tool("list_cross_project_tasks")
 
-        result = asyncio.run(tool(state="ready"))
+        result = asyncio.run(tool(state="open"))
 
         assert result["success"] is True
         assert result["count"] == 2
         tasks = result["tasks"]
-        assert tasks, "expected at least one ready task"
+        assert tasks, "expected at least one open task"
         assert "current_stage" not in tasks[0]["state"]
         assert tasks[0]["state"]["is_closed"] is False
 
@@ -341,7 +341,7 @@ class TestHubStats:
 
         assert result["success"] is True
         stats = result["stats"]
-        assert stats["tasks"]["by_state"]["ready"] == 2
+        assert stats["tasks"]["by_state"]["open"] == 2
         assert stats["tasks"]["by_state"]["closed"] == 1
 
     def test_hub_stats_empty_database(self, temp_hub_db) -> None:

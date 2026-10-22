@@ -8,9 +8,7 @@ from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
-NO_WORK_CLOSE_REASONS = frozenset(
-    {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
-)
+NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
 CLOSE_GATE_ORDER = (
     (1, "children_closed"),
     (2, "linked_commits"),

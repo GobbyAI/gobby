@@ -67,10 +67,10 @@ def test_legacy_leaf_closes_as_obsolete(
     task = _create(manager, sample_project["id"], "Legacy leaf")
     _make_legacy(temp_db, task.id)
 
-    closed = manager.close_task(task.id, reason="obsolete")
+    closed = manager.close_task(task.id, reason="moot")
 
     assert closed.closed_at is not None
-    assert closed.closed_reason == "obsolete"
+    assert closed.closed_reason == "moot"
     assert closed.validation_criteria == LEGACY_VALIDATION_CRITERIA
 
 
@@ -81,7 +81,7 @@ def test_close_preserves_existing_validation_criteria(
     manager = _manager(temp_db)
     task = _create(manager, sample_project["id"], "Current leaf")
 
-    closed = manager.close_task(task.id, reason="obsolete")
+    closed = manager.close_task(task.id, reason="moot")
 
     assert closed.validation_criteria == "Original validation criteria."
 
@@ -101,11 +101,11 @@ def test_legacy_non_epic_ancestor_auto_closes(
     _make_legacy(temp_db, parent.id)
     closed_ancestors: list[str] = []
 
-    manager.close_task(child.id, reason="obsolete", closed_ancestors=closed_ancestors)
+    manager.close_task(child.id, reason="moot", closed_ancestors=closed_ancestors)
 
     closed_parent = manager.get_task(parent.id)
     assert closed_ancestors == [parent.id]
     assert closed_parent is not None
     assert closed_parent.closed_at is not None
-    assert closed_parent.closed_reason == "obsolete"
+    assert closed_parent.closed_reason == "moot"
     assert closed_parent.validation_criteria == LEGACY_VALIDATION_CRITERIA

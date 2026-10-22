@@ -161,7 +161,7 @@ def _completed_plan_sections(
                 and task.closed_at is not None
                 for task in tasks
             )
-            and any(task.closed_reason in {"completed", "already_implemented"} for task in tasks)
+            and any(task.closed_reason == "done" for task in tasks)
             for label, tasks in zip(labels, owners, strict=True)
         ):
             executed.add(section_id)
@@ -172,9 +172,9 @@ def _completed_plan_sections(
             continue
         if task.project_id != project_id or not set(labels).issubset(task.labels or []):
             continue
-        if task.closed_reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}:
+        if task.closed_reason in {"superseded", "wont_do", "moot"}:
             continue
-        delivered = task.closed_at and task.closed_reason in {"completed", "already_implemented"}
+        delivered = task.closed_at and task.closed_reason == "done"
         if delivered or (project_root and _task_has_landed_commit(task, project_root)):
             completed.add(section_id)
     return frozenset(completed), frozenset(executed)
