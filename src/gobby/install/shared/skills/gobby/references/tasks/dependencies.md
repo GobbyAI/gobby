@@ -17,13 +17,13 @@ call_tool(server_name="gobby-tasks", tool_name="add_dependency", arguments={
 
 Inspect the dependency tree before adding edges and check cycles after changing
 an ordering. Never reverse the edge to make a blocked task appear ready.
-Readiness includes current-stage eligibility, unresolved external blockers,
+Readiness includes unresolved external blockers,
 closure/escalation, and parent-chain readiness. A parent's unfinished children
 are not equivalent to an external blocker; use the task tree for completion.
 
 On unresolved or cyclic dependencies, inspect the named upstream tasks and
 repair the actual ordering or finish the blocker. Do not remove necessary edges
-just to claim or dispatch work. Use event-driven waits when dependent work is
+just to claim work. Use event-driven waits when dependent work is
 owned by another active session; arbitrary message text is not a durable wait.
 
 Guide: [Dependencies and Ready Work](../../../../../../../../docs/guides/tasks.md#dependencies-and-ready-work).

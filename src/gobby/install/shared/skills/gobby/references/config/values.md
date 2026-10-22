@@ -8,8 +8,8 @@ Read `revision`, `desired`, `active`, `secret_set`, `pending_restart_keys` and
 Desired values include registry defaults plus persisted machine overrides.
 Active values describe the daemon's activated projection. A default appearing
 in the response does not prove that an override row exists. Neither projection
-is a project's session-variable store. Bootstrap topology, project settings and
-build defaults have their own sources and precedence.
+is a project's session-variable store. Bootstrap topology and project settings
+have their own sources and precedence.
 
 Public reads mask secret payloads; use desired/active `secret_set` flags to check
 presence. Do not export secrets into the conversation. Operator/client

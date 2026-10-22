@@ -90,14 +90,12 @@ Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
 Use `update_task` for supported metadata, not `status` or `assignee`. Add/remove
 ordinary labels through their tools. The `live-session` label has special root
 terminal authorization: load the entire live-work topic before changing it.
-Isolation changes affect future dispatch and reject conflicting existing
-workspace artifacts; clean up through workspace tools before retargeting.
 
 Escalate only with a concrete unresolved decision or blocker, or explicitly
 directed recovery. Escalation releases your canonical ownership: stop treating
-the task as claimed. De-escalation normally preserves the current stage and
-leaves the task unclaimed; claim it again when ready to resume and capacity is
-available. Reopening handles closed/escalated work. Deletion
+the task as claimed. De-escalation leaves the task unclaimed; claim it again
+when ready to resume and capacity is available. Reopening handles
+closed/escalated work. Deletion
 is destructive: inspect children and dependency consequences and honor the
 requested scope. Use closing guidance for no-work dispositions.
 

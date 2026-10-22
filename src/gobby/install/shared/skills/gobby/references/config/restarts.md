@@ -12,8 +12,8 @@ whether restart is the right recovery. Do not announce activation from commit
 success alone.
 
 Bootstrap YAML controls pre-database startup wiring and is not a runtime override
-document. `~/.gobby/config.yaml` is an export/import artifact. Project JSON and
-build defaults have their own consumers; a daemon restart is not a generic way
+document. `~/.gobby/config.yaml` is an export/import artifact. Project JSON has
+its own consumers; a daemon restart is not a generic way
 to apply every configuration source.
 
 The operator CLI's global `--config PATH` selects bootstrap input for commands

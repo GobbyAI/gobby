@@ -1,6 +1,6 @@
 ---
 name: research
-description: Internal methodology for the research discovery stage. Produces concise evidence and source-backed context for architecture and PRD stages.
+description: Internal methodology for research. Produces concise evidence and source-backed context for architecture and PRD work.
 version: "1.0.0"
 category: methodology
 internal: true
@@ -12,7 +12,7 @@ metadata:
 
 # research - Research Findings Methodology
 
-Use this skill when acting as the `researcher` discovery-stage agent.
+Use this skill when acting as the `researcher` agent.
 
 ## Purpose
 

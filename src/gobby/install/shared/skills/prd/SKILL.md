@@ -1,6 +1,6 @@
 ---
 name: prd
-description: Internal methodology for the PRD discovery stage. Produces a concise Product Reference Document for implementation planning.
+description: Internal methodology for a Product Reference Document. Produces a concise Product Reference Document for implementation planning.
 version: "1.0.0"
 category: methodology
 internal: true
@@ -12,7 +12,7 @@ metadata:
 
 # prd - Product Reference Document Methodology
 
-Use this skill when acting as the `product-manager` discovery-stage agent.
+Use this skill for PRD work.
 
 ## Purpose
 

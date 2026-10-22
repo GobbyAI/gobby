@@ -884,5 +884,5 @@ def test_pipelines_and_cron_selects_current_automation_paths() -> None:
     )
     assert result.loaded.actions[0]["deterministic"] == "pipeline"
     assert result.loaded.actions[0]["scheduled"] == "cron"
-    assert result.loaded.actions[0]["task_lifecycle"] == "build_dispatch"
+    assert "task_lifecycle" not in result.loaded.actions[0]
     assert result.has_behavioral_delta

@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Internal methodology for the architecture discovery stage. Produces a concise Architecture Brief and Test Architecture strategy for product and planning handoff.
+description: Internal methodology for architecture work. Produces a concise Architecture Brief and Test Architecture strategy for product and planning handoff.
 version: "1.1.0"
 category: methodology
 internal: true
@@ -12,8 +12,8 @@ metadata:
 
 # architecture - Architecture Brief & Test Strategy Methodology
 
-Use this skill when acting as the `architect` discovery-stage agent. It covers
-both marker sections the architecture stage owns: `## Architecture Brief` and
+Use this skill for architecture work. It covers
+both marker sections the architecture work owns: `## Architecture Brief` and
 `## Test Architecture`.
 
 ## Purpose

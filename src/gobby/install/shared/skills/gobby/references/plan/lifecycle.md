@@ -15,7 +15,7 @@ Inspect current state, root closure, filesystem collisions and scope before muta
 
 ## Operator surface
 The plans CLI exposes list, show, register, validate, archive, review-evidence and review-runs. review-runs prints an expansion-QA pointer, not review-run history; review-evidence provides that inspection surface. Agents use MCP for lifecycle writes.
-There is no standalone public plans HTTP registry route; operator HTTP plan-mode behavior is part of chat/session approval and build requests. Inspect the actual route schema rather than inventing /api/plans endpoints.
+There is no standalone public plans HTTP registry route; operator HTTP plan-mode behavior is part of chat/session approval. Inspect the actual route schema rather than inventing /api/plans endpoints.
 
 See [Plan records](../../../../../../../../docs/guides/plans-and-plan-mode.md#plan-records) and [Archive and delete](../../../../../../../../docs/guides/plans-and-plan-mode.md#archive-and-delete).
 

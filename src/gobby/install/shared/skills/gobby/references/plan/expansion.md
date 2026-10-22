@@ -7,7 +7,7 @@ Use gobby-tasks-ops:get_latest_expansion_run/get_expansion_run and gobby-plans:g
 ## Run
 Prefer installed expand-task pipeline via gobby-workflows:run_pipeline with task_id and optional plan_file. Inspect its installed definition before relying on defaults: bundled provider/model/wait/coverage settings may be overridden. The returned execution_id is asynchronous; retain it and yield for the durable completion notification, then inspect get_pipeline_status.
 Direct start_expansion_run supports compile/apply and caller subscription. Default auto_apply is true; inspect schema before overriding. Durable expansion state lives on expansion_runs. The pipeline owns its internal wait and uses subscribe_caller false to avoid duplicate caller subscriptions.
-Compile preserves one source section/manifest entry/leaf. Multi-phase roots gain phase sub-epics titled P<N>: <title>. Apply wires dependencies, stage policy, affected files and provenance, retaining parent automation/isolation settings. Dev-only expansion can finish without children.
+Compile preserves one source section/manifest entry/leaf. Multi-phase roots gain phase sub-epics titled P<N>: <title>. Apply wires dependencies, affected files and provenance, and copies the parent's target branch to created leaves.
 
 ## Routing and coverage
 Typed code domains all route to developer unless an explicit privileged override exists; the domain stays on the task as a skill-routing hint. Docs route to tech-writer; inspect agent definitions for other supported categories and available routes. Ad-hoc selection uses concrete scope/files over weak label hints; prefer a matching specialist. If no confident available route exists, use developer and record an Agent Selection rationale. Do not split typed source sections during expansion.
@@ -18,7 +18,7 @@ For placeholder deferrals, read checkpoints.deferral_task_map, replace matching 
 ## Recovery and constraints
 start reuses active runs by default. resume_expansion_run restarts interrupted/failed work; cancel_expansion_run cancels active work. Inspect status/error/checkpoints before choosing. reset_expansion_output and reset_output delete generated output; use only with explicit scope and established need, after checking descendants/ownership. force_new is not a routine retry.
 Plan path conflicts and checkout-resolution errors must be resolved against the owning project/root. Never duplicate a tree to escape them, use removed save/execute-spec tools, or bypass task lifecycle with SQL/CLI mutations.
-MCP is the agent surface. Task-expansion CLI commands are operator-only. Build profiles/stages are governed by build guidance.
+MCP is the agent surface. Task-expansion CLI commands are operator-only.
 
 See [Task expansion](../../../../../../../../docs/guides/task-expansion.md#expansion-runs).
 

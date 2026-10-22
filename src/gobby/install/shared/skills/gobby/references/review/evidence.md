@@ -2,7 +2,6 @@
 
 Load before evaluating task or epic completion. Discover task records through
 `gobby-tasks:get_task`, `list_tasks`, linked commits and artifact readers; load
-[task reviews](../tasks/reviews.md) for stage evidence and
 [source control](../source-control/overview.md) for implementation diffs.
 
 ## Establish the review scope

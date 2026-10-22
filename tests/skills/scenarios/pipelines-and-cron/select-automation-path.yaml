@@ -1,6 +1,6 @@
 skill: "gobby:references/pipelines/overview.md"
 agent: default
-description: Agent must separate deterministic, scheduled, and task-lifecycle automation.
+description: Agent must separate deterministic and scheduled automation.
 prompt: |
   Automate a weekly release check. It must run tests in order, pause for approval
   before deployment, and execute every Monday. Use the current Gobby interfaces.
@@ -21,7 +21,6 @@ runs:
       - action: classify_automation_path
         deterministic: pipeline
         scheduled: cron
-        task_lifecycle: build_dispatch
       - action: write_pipeline_yaml
         path: .gobby/workflows/pipelines/weekly-release.yaml
       - action: validate_pipeline_definition
@@ -39,7 +38,7 @@ runs:
       - action: list_cron_runs
         tool: gobby-cron:list_cron_runs
       - action: respond
-        text: "Verified: pipeline owns ordered approval-gated work; cron owns the Monday trigger; build/dispatch remains the task-lifecycle path."
+        text: "Verified: pipeline owns ordered approval-gated work; cron owns the Monday trigger."
 assertions:
   baseline_action_order:
     - run_gobby_build
@@ -62,6 +61,5 @@ assertions:
   loaded_text_contains:
     - pipeline owns ordered approval-gated work
     - cron owns the Monday trigger
-    - build/dispatch remains the task-lifecycle path
   loaded_text_forbids:
     - developer agent definition

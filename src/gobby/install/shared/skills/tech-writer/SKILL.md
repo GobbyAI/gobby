@@ -96,8 +96,8 @@ honest. Apply the eight-point checklist established by the audit epic:
 4. Code blocks showing CLI/MCP/HTTP usage match current signatures (no
    positional/keyword drift). Re-fetch tool schemas with
    `get_tool_schema(server, tool)` rather than recalling them.
-5. Architecture references align with current `CLAUDE.md` (dispatch
-   architecture, plan-coverage contract, stage-manifest model).
+5. Architecture references align with current `CLAUDE.md` and `AGENTS.md`
+   (plan-coverage contract).
 6. If guide is < 100 lines and content overlaps another guide, justify
    keeping it standalone or merge it. Two thin guides that overlap is worse
    than one complete guide.
@@ -162,8 +162,6 @@ closing the task.
 - Hook events → `src/gobby/hooks/events.py` and `src/gobby/hooks/hook_types/`
 - Agent definitions → `src/gobby/agents/definitions.py` and
   `src/gobby/install/shared/agents/`
-- Dispatch architecture → `src/gobby/dispatch/rules.py` plus the dispatch
-  section of `CLAUDE.md`
 
 ### Commit and close
 Doc work is real work — claim a Gobby task, commit the changes, validate

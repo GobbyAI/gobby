@@ -162,7 +162,8 @@ def test_approval_uses_canonical_payload_and_finalized_round_counts() -> None:
     assert "complete canonical approved result, never reconstructed fields" in reviewed
     assert "lesson" not in body.lower()
     assert "verification section with bold round labels" in reviewed
-    assert "planning_seed_state approved" in body
+    assert "manual [expansion](expansion.md)" in body
+    assert "planning_seed_state" not in body
     assert "only finalized completed_plan_review_rounds" in body
 
 

@@ -4,7 +4,7 @@ description: Declining optional reviews preserves validation and explicit approv
 prompt: |
   The canonical plan is materialized and all material questions are resolved.
   I decline enhancement and adversarial review. Do not start implementation
-  until the mandatory gates are complete, then offer both supported routes.
+  until the mandatory gates are complete, then offer manual expansion.
 runs:
   excluded:
     loaded_skills: []
@@ -35,13 +35,13 @@ runs:
         mode: expansion
         plan_file: .gobby/plans/session-recovery.md
       - action: offer_implementation_route
-        options: [manual expansion, gobby build]
+        options: [manual expansion]
       - action: respond
-        text: Optional reviews were declined; base validation and explicit user approval still completed before manual expansion or gobby build.
+        text: Optional reviews were declined; base validation and explicit user approval still completed before manual expansion.
 assertions:
   baseline_action_order: [skip_reviews, expand_plan, respond]
   loaded_action_order:
     [load_reference, load_reference, validate_plan, record_optional_review_choices, request_user_approval, derive_plan_handoff_manifest, apply_plan_handoff_manifest, validate_plan, offer_implementation_route, respond]
   baseline_text_contains: [expansion started immediately]
-  loaded_text_contains: [base validation, explicit user approval, manual expansion, gobby build]
+  loaded_text_contains: [base validation, explicit user approval, manual expansion]
   loaded_text_forbids: [review verdict]

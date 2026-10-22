@@ -20,7 +20,7 @@ Used when adversarial review is skipped, and by the Plan Adversary seat on plann
 
 ## Boundaries
 If implementation handoff is requested while an enhancer or reviewer is active, mark it pending, finish the run, votes, accepted edits and checkpoints before handing off; launch no new optional round.
-After approval, choose manual [expansion](expansion.md) or authorized build with planning_seed_state approved and only finalized completed_plan_review_rounds. A file edit that changes reviewed scope requires renewed evidence; interrupted checkpoint recovery follows [repair](repair.md).
+After approval, choose manual [expansion](expansion.md) with only finalized completed_plan_review_rounds. A file edit that changes reviewed scope requires renewed evidence; interrupted checkpoint recovery follows [repair](repair.md).
 
 See [Manifest-on-approval contract](../../../../../../../../docs/contracts/plan-coverage.md#manifest-on-approval-contract).
 

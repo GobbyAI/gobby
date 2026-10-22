@@ -32,12 +32,6 @@
           "when": "Closing any task or handling close blockers"
         },
         {
-          "name": "reviews",
-          "description": "Manage stages and review transitions",
-          "path": "references/tasks/reviews.md",
-          "when": "Submitting or reviewing autonomous stage work"
-        },
-        {
           "name": "artifacts",
           "description": "Manage task evidence and artifact pointers",
           "path": "references/tasks/artifacts.md",

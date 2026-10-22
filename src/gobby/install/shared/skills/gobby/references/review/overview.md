@@ -12,8 +12,8 @@ before calling it and finish every reference page before acting.
 | Feedback | Capture observations or review a frozen batch | `$gobby review references feedback` |
 | Outcomes | Record verdicts and inspect accepted feedback actions | `$gobby review references outcomes` |
 
-Discover feedback evidence through `gobby-feedback`, task records through
-`gobby-tasks`, and stage decisions through `gobby-tasks-ops`. General code-review
+Discover feedback evidence through `gobby-feedback` and task records through
+`gobby-tasks`. General code-review
 methodology belongs to the standalone `code-review` skill, and plan review to
 [plan](../plan/overview.md).
 

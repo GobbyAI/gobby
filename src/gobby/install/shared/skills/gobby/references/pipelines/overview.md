@@ -1,7 +1,7 @@
 # Pipelines and scheduling
 
 Load when choosing or operating deterministic automation. Use pipelines for
-ordered steps, cron for timing, and the build capability for task lifecycle dispatch.
+ordered steps and cron for timing.
 A scheduled pipeline composes those responsibilities without moving task ownership.
 
 Discover definitions with `gobby-workflows:list_pipelines`, inspect the intended

@@ -16,7 +16,7 @@ subscription for live work. Call it once and yield. `wait_for_output` is a bound
 run-terminal regex diagnostic with internal polling, not a durable completion
 subscription; it cannot replace waiting for successful work.
 
-A spawned worker finishes its task/stage obligations first, then calls
+A spawned worker finishes its task obligations first, then calls
 `end_agent_run` with current_state and concrete next_steps plus supporting handoff
 fields. It resolves the current trusted child boundary and persists the handoff
 before completion. The parent reads it with `gobby-sessions:get_handoff` using

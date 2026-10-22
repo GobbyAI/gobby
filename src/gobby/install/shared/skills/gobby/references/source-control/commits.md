@@ -19,7 +19,7 @@ standalone `code-review` skill before the pre-commit review.
    ```
 
 5. Keep the returned commit SHA for the task's lifecycle transition. Follow the
-   close or autonomous stage workflow; a commit alone does not close work.
+   close workflow; a commit alone does not close work.
 
 Use `feat`, `fix`, `refactor`, `docs` or `chore` as appropriate to the
 repository convention. Replace example project/task names with the actual ones.

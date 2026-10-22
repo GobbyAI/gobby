@@ -11,12 +11,12 @@ Tool schemas own parameters and defaults. The task CLI and HTTP lifecycle routes
 are operator interfaces, not substitutes for agent ownership and close gates.
 
 Start with `list_ready_tasks`, `suggest_next_task`, or `search_tasks`; use
-`list_tasks` for parent, label, project, closed-state, or current-stage filters.
+`list_tasks` for parent, label, project or closed-state filters.
 Read the selected task with `get_task(brief=false)`, including dependencies and
 acceptance criteria. A listing is bounded by its schema's limit; do not assume
 the first result set is a complete project inventory.
 
-Task state projects ownership, ordered stages, closure, escalation, and blockers.
+Task state projects ownership, closure, escalation, and blockers.
 It is not an editable status string. Claim before editing, track implementation
 substeps in the CLI's native tracker when it offers one (otherwise your working
 plan), preserve other sessions' files, then
@@ -28,7 +28,7 @@ project first when context is ambiguous. Use `get_session_tasks`,
 linking a session does not claim the task.
 
 Choose `$gobby tasks references creation`, `dependencies`, `implementation`,
-`closing`, `reviews`, `artifacts`, `backups`, or `live-work` for the next action.
+`closing`, `artifacts`, `backups`, or `live-work` for the next action.
 For plan expansion use `$gobby plan`.
 Unknown names should return choices without executing operations.
 

@@ -63,8 +63,8 @@ def test_documents_complete_cron_tool_family() -> None:
 
 def test_separates_automation_paths_and_omits_retired_content() -> None:
     body = " ".join(_body().split())
-    assert "pipelines for ordered steps, cron for timing" in body
-    assert "build capability for task lifecycle dispatch" in body
+    assert "pipelines for ordered steps and cron for timing" in body
+    assert "build capability" not in body
     assert "without moving task ownership" in body
     assert "## Agent Definitions" not in body
     assert "mode: terminal" not in body

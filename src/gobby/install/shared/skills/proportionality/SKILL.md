@@ -15,7 +15,7 @@ metadata:
 
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
 > `plan-adversary` (plan altitude), `epic-reviewer` (epic altitude), and
-> `qa-reviewer` (leaf altitude). Not a user-facing command.
+> `task-close-reviewer` (leaf altitude). Not a user-facing command.
 >
 > `restraint` is the authoring-side counterpart: restraint disciplines work
 > being written; proportionality judges work already written.
@@ -141,7 +141,7 @@ The criterion is identical at every altitude; the unit under review changes.
   thing, frameworks introduced by one leaf and used by none, and product
   behavior no plan section asked for. This is the same criterion the
   epic-review `proportionality` dimension carries.
-- **Leaf altitude (`qa-reviewer`).** Unit = a single leaf's diff. Flag a leaf
+- **Leaf altitude (`task-close-reviewer`).** Unit = a single leaf's diff. Flag a leaf
   that introduces an abstraction, config knob, or indirection layer
   disproportionate to its single task, and name the simpler form. This is a
   `code_quality`-tier observation; it does **not** gate `spec_compliance` — a

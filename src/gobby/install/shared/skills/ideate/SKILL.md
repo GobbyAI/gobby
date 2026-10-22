@@ -1,6 +1,6 @@
 ---
 name: ideate
-description: Internal methodology for the ideation discovery stage. Produces a concise Discovery Brief for downstream research, architecture, PRD, and planning.
+description: Internal methodology for ideation. Produces a concise Discovery Brief for downstream research, architecture, PRD, and planning.
 version: "1.0.0"
 category: methodology
 internal: true
@@ -12,13 +12,13 @@ metadata:
 
 # ideate - Discovery Brief Methodology
 
-Use this skill when acting as the `analyst` discovery-stage agent.
+Use this skill for ideation work.
 
 ## Purpose
 
 Frame the work before evidence gathering. Convert the task description, user
 context, existing labels, and any visible constraints into a short brief that
-downstream stages can rely on.
+downstream work can rely on.
 
 ## Method
 

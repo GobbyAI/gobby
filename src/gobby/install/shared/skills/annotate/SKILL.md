@@ -10,8 +10,8 @@ metadata:
 # Import Gobby Annotate
 
 Turn a supplied ZIP, extracted capture directory, or export UUID into tasks in the
-current project. This command imports work; it does not claim tasks, implement
-changes, enable dispatch, or run `gobby build`. Drawbridge retains `/gobby bridge`.
+current project. This command imports work; it does not claim tasks or implement
+changes. Drawbridge retains `/gobby bridge`.
 
 ## Attach and read
 

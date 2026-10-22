@@ -92,7 +92,7 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     assert "repeat the same close with\n   `preview=false`" in content
     assert "review_task_memories" in content[positions[-1] :]
     overview = (SKILL_DIR / "overview.md").read_text()
-    for topic in ("creation", "implementation", "closing", "reviews"):
+    for topic in ("creation", "implementation", "closing"):
         assert topic in overview
 
 

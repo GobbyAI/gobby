@@ -28,7 +28,7 @@ Cron shell does no splitting or implicit shell; default timeout is 60 seconds.
 Agent default provider is claude and timeout 300 seconds; agent_definition adds
 prompt/provider selection, not arbitrary spawn controls. Use pipeline MCP spawn
 for richer controls. Outer action budget also applies. Multi-step work belongs
-in a pipeline; task dispatch belongs in build.
+in a pipeline.
 
 Manual run bypasses schedule/enabled state but obeys admission/capacity and
 retired-job checks. It returns admission, not completion. `dispatched` links a
