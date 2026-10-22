@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.tasks.close_receipts import CLOSE_RECEIPT_AUTHOR_TYPE
+from gobby.tasks.step_records import STEP_RECORD_AUTHOR_TYPE
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -78,6 +79,13 @@ def register_task_comment_routes(
                 status_code=403,
                 detail="Close receipts are recorded only through record_close_receipt",
             )
+        if request_data.author_type == STEP_RECORD_AUTHOR_TYPE:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Task step records are recorded only through the dedicated record_*_step tools"
+                ),
+            )
         if request_data.author_type == "system" and request_data.author.startswith("migration:"):
             raise HTTPException(
                 status_code=403,
@@ -132,8 +140,16 @@ def register_task_comment_routes(
             cursor = server.task_manager.db.execute(
                 "DELETE FROM task_comments WHERE id = %s AND task_id = %s "
                 "AND author_type IS DISTINCT FROM %s "
+                "AND author_type IS DISTINCT FROM %s "
                 "AND (author_type IS DISTINCT FROM %s OR author NOT LIKE %s)",
-                (comment_id, task.id, CLOSE_RECEIPT_AUTHOR_TYPE, "system", "migration:%"),
+                (
+                    comment_id,
+                    task.id,
+                    CLOSE_RECEIPT_AUTHOR_TYPE,
+                    STEP_RECORD_AUTHOR_TYPE,
+                    "system",
+                    "migration:%",
+                ),
             )
             if cursor.rowcount == 0:
                 protected = server.task_manager.db.fetchone(
@@ -141,11 +157,12 @@ def register_task_comment_routes(
                     (comment_id, task.id),
                 )
                 if protected:
-                    detail = (
-                        "Close receipts cannot be deleted"
-                        if protected["author_type"] == CLOSE_RECEIPT_AUTHOR_TYPE
-                        else "Migration snapshots cannot be deleted"
-                    )
+                    if protected["author_type"] == CLOSE_RECEIPT_AUTHOR_TYPE:
+                        detail = "Close receipts cannot be deleted"
+                    elif protected["author_type"] == STEP_RECORD_AUTHOR_TYPE:
+                        detail = "Task step records cannot be deleted"
+                    else:
+                        detail = "Migration snapshots cannot be deleted"
                     raise HTTPException(status_code=403, detail=detail)
                 raise HTTPException(status_code=404, detail="Comment not found")
             return {"deleted": True}
