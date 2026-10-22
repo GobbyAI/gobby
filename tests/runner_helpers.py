@@ -303,7 +303,6 @@ def create_base_patches(
         patch("gobby.runner_init.mcp_stack.MCPClientManager", return_value=mock_mcp_manager),
         patch("gobby.runner_init.services.MemoryBackupManager"),
         patch("gobby.runner_init.services.SessionMessageProcessor", return_value=AsyncMock()),
-        patch("gobby.runner_init.services.TaskValidator"),
         patch("gobby.runner_init.orchestration.SessionLifecycleManager", return_value=AsyncMock()),
         patch("gobby.runner_init.services.create_llm_service", return_value=None),
         patch("gobby.runner_init.services.build_daemon_text_generation_service"),

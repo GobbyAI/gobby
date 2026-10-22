@@ -6,6 +6,7 @@ then will pass once task-related config classes are extracted from app.py.
 """
 
 import unittest.mock
+from collections.abc import Mapping
 
 import pytest
 from pydantic import ValidationError
@@ -245,96 +246,41 @@ class TestTaskValidationConfigDefaults:
         assert "tool_loop_enabled" not in TaskValidationConfig.model_fields
         assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
         assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
-        assert config.max_iterations == 10
-        assert config.close_validation_escalation_threshold == 5
-        assert config.close_review_prompt_max_chars == 256_000
-        assert config.require_clean_attributed_paths_on_close is True
-        assert config.close_review_validator_timeout_seconds == 1200.0
-        assert config.escalation_enabled is True
-        assert config.escalation_notify == "none"
-        assert config.auto_generate_on_create is True
-        assert config.auto_generate_on_expand is True
+        assert config.confirmation_timeout_seconds == 8.0
 
 
 class TestTaskValidationConfigCustom:
     """Test TaskValidationConfig with custom values."""
 
-    def test_custom_max_iterations(self) -> None:
-        """Test setting custom max_iterations."""
+    def test_disabled_confirmation(self) -> None:
+        """Found-work confirmation can be disabled independently."""
         from gobby.config.tasks import TaskValidationConfig
 
-        config = TaskValidationConfig(max_iterations=5)
-        assert config.max_iterations == 5
+        config = TaskValidationConfig(enabled=False)
+        assert config.enabled is False
 
-    def test_custom_close_review_prompt_limit(self) -> None:
+    def test_custom_confirmation_timeout(self) -> None:
         from gobby.config.tasks import TaskValidationConfig
 
-        config = TaskValidationConfig(close_review_prompt_max_chars=24_000)
-        assert config.close_review_prompt_max_chars == 24_000
+        config = TaskValidationConfig(confirmation_timeout_seconds=12.5)
+        assert config.confirmation_timeout_seconds == 12.5
 
-    def test_custom_close_review_validator_timeout(self) -> None:
+    def test_custom_candidates(self) -> None:
         from gobby.config.tasks import TaskValidationConfig
 
-        config = TaskValidationConfig(close_review_validator_timeout_seconds=900)
-        assert config.close_review_validator_timeout_seconds == 900
-
-    def test_escalation_webhook(self) -> None:
-        """Test escalation with webhook."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        config = TaskValidationConfig(
-            escalation_notify="webhook",
-            escalation_webhook_url="https://example.com/webhook",
-        )
-        assert config.escalation_notify == "webhook"
-        assert config.escalation_webhook_url == "https://example.com/webhook"
+        config = TaskValidationConfig(candidates=["claude/sonnet"])
+        assert candidate_labels(config.candidates) == ("claude/sonnet",)
 
 
 class TestTaskValidationConfigValidation:
     """Test TaskValidationConfig validation."""
 
-    def test_max_iterations_must_be_positive(self) -> None:
-        """Test that max_iterations must be positive."""
+    @pytest.mark.parametrize("value", [0, -0.5, -1])
+    def test_confirmation_timeout_must_be_positive(self, value: float) -> None:
         from gobby.config.tasks import TaskValidationConfig
 
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(max_iterations=0)
-        assert "positive" in str(exc_info.value).lower()
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(max_iterations=-1)
-        assert "positive" in str(exc_info.value).lower()
-
-    @pytest.mark.parametrize("value", [0, -1])
-    def test_close_validation_escalation_threshold_must_be_positive(self, value: int) -> None:
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(close_validation_escalation_threshold=value)
-        assert "positive" in str(exc_info.value).lower()
-
-    @pytest.mark.parametrize("value", [0, -1])
-    def test_close_review_prompt_limit_must_be_positive(self, value: int) -> None:
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(close_review_prompt_max_chars=value)
-        assert "positive" in str(exc_info.value).lower()
-
-    @pytest.mark.parametrize("value", [0, -1])
-    def test_close_review_validator_timeout_must_be_positive(self, value: int) -> None:
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(close_review_validator_timeout_seconds=value)
-        assert "greater than 0" in str(exc_info.value).lower()
-
-    def test_invalid_escalation_notify(self) -> None:
-        """Test that invalid escalation_notify raises ValidationError."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError):
-            TaskValidationConfig.model_validate({"escalation_notify": "invalid"})
+        with pytest.raises(ValidationError, match="greater than 0"):
+            TaskValidationConfig(confirmation_timeout_seconds=value)
 
 
 # =============================================================================
@@ -393,9 +339,9 @@ class TestGobbyTasksConfigCustom:
         """Test custom validation config."""
         from gobby.config.tasks import GobbyTasksConfig, TaskValidationConfig
 
-        validation = TaskValidationConfig(max_iterations=5)
+        validation = TaskValidationConfig(confirmation_timeout_seconds=5)
         config = GobbyTasksConfig(validation=validation)
-        assert config.validation.max_iterations == 5
+        assert config.validation.confirmation_timeout_seconds == 5
 
 
 # =============================================================================
@@ -494,14 +440,14 @@ class TestTaskValidationConfigFromAppPy:
 
         config = TaskValidationConfig()
         assert config.enabled is True
-        assert config.max_iterations == 10
+        assert config.confirmation_timeout_seconds == 8.0
 
     def test_validation_via_tasks_module(self) -> None:
         """Test validation works when imported from tasks module."""
         from gobby.config.tasks import TaskValidationConfig
 
         with pytest.raises(ValidationError):
-            TaskValidationConfig(max_iterations=0)
+            TaskValidationConfig(confirmation_timeout_seconds=0)
 
 
 class TestGobbyTasksConfigFromAppPy:
@@ -627,7 +573,7 @@ class TestWorkflowVariablesMergeWithDB:
         }
 
         # DB has no overrides (empty dict)
-        db_overrides: dict = {}
+        db_overrides: dict[str, object] = {}
 
         # Merge: YAML | DB (DB takes precedence)
         effective = {**yaml_defaults, **db_overrides}
@@ -853,7 +799,7 @@ class TestBackwardCompatibilityLayer:
         }
 
         # New workflow YAML has empty variables (not specified)
-        yaml_variables: dict = {}
+        yaml_variables: dict[str, object] = {}
 
         # Merge with old config as fallback
         # Pattern: yaml_variables | old_config_values | hardcoded_defaults
@@ -894,10 +840,10 @@ class TestBackwardCompatibilityLayer:
         from gobby.config.tasks import WorkflowVariablesConfig
 
         # No old config values
-        old_config_values: dict = {}
+        old_config_values: dict[str, object] = {}
 
         # No YAML variables
-        yaml_variables: dict = {}
+        yaml_variables: dict[str, object] = {}
 
         # Merge
         hardcoded_defaults = WorkflowVariablesConfig().model_dump()
@@ -919,10 +865,10 @@ class TestBackwardCompatibilityLayer:
 
         # Test structure for deprecation detection
         def get_effective_with_deprecation_check(
-            yaml_variables: dict,
-            old_config_values: dict,
+            yaml_variables: Mapping[str, object],
+            old_config_values: Mapping[str, object],
             logger: logging.Logger,
-        ) -> dict:
+        ) -> dict[str, object]:
             """Get effective config with deprecation warnings for old config usage."""
             hardcoded_defaults = WorkflowVariablesConfig().model_dump()
 
@@ -945,7 +891,7 @@ class TestBackwardCompatibilityLayer:
         test_logger = logging.getLogger("test_deprecation")
 
         # When old config is used without YAML override, warning should be possible
-        yaml_variables: dict = {}
+        yaml_variables: dict[str, object] = {}
         old_config_values = {"require_task_before_edit": True}
 
         with unittest.mock.patch.object(test_logger, "warning") as mock_warning:
@@ -962,10 +908,10 @@ class TestBackwardCompatibilityLayer:
         from gobby.config.tasks import WorkflowVariablesConfig
 
         def get_effective_with_deprecation_check(
-            yaml_variables: dict,
-            old_config_values: dict,
+            yaml_variables: Mapping[str, object],
+            old_config_values: Mapping[str, object],
             logger: logging.Logger,
-        ) -> dict:
+        ) -> dict[str, object]:
             hardcoded_defaults = WorkflowVariablesConfig().model_dump()
 
             deprecated_keys_used = []

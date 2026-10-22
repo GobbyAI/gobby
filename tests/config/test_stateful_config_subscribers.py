@@ -485,7 +485,6 @@ def test_live_key_consumer_matrix_is_complete() -> None:
         "mcp_proxy_config",
         "memory_services",
         "message_processor",
-        "task_validator",
     }
     assert all(live_subscriber_keys(name) for name in subscriber_names)
     synthetic = replace(CONFIG_REGISTRY.key_specs[0], key="unmapped.live.setting")

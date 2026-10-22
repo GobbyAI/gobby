@@ -12,7 +12,6 @@ from gobby.config.communications import CommunicationsConfig
 from gobby.config.extensions import WebhookEndpointConfig
 from gobby.config.persistence import EmbeddingsConfig, QdrantConfig
 from gobby.config.skills import HubConfig
-from gobby.config.tasks import TaskValidationConfig
 from gobby.config.url_validation import validate_endpoint_url
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig
 from gobby.mcp_proxy.models import MCPServerConfig
@@ -46,10 +45,6 @@ def _hub_config(url: str) -> BaseModel:
     return HubConfig(type="skillsmp", base_url=url)
 
 
-def _task_validation_config(url: str) -> BaseModel:
-    return TaskValidationConfig(escalation_webhook_url=url)
-
-
 def _audio_binding_config(url: str) -> BaseModel:
     return OpenAICompatibleAudioBindingConfig(
         provider="local-audio",
@@ -65,7 +60,6 @@ HTTP_URL_MODEL_FACTORIES: tuple[UrlModelFactory, ...] = (
     _qdrant_config,
     _embeddings_config,
     _hub_config,
-    _task_validation_config,
     _audio_binding_config,
 )
 
@@ -115,7 +109,6 @@ def test_optional_http_url_config_fields_preserve_unset_values() -> None:
     assert QdrantConfig(url=None).url is None
     assert EmbeddingsConfig(api_base=None).api_base is None
     assert HubConfig(type="skillsmp", base_url=None).base_url is None
-    assert TaskValidationConfig(escalation_webhook_url=None).escalation_webhook_url is None
     assert CommunicationsConfig(webhook_base_url="").webhook_base_url == ""
 
 

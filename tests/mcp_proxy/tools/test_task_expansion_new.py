@@ -3,7 +3,7 @@
 import asyncio
 import textwrap
 import threading
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -14,6 +14,7 @@ import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import (
     _background_run_tasks,
@@ -27,6 +28,7 @@ from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
 )
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
@@ -45,7 +47,7 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.fixture
-def task_manager(temp_db):
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
@@ -61,7 +63,7 @@ def test_project(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.Monke
 
 
 @pytest.fixture
-def test_session(session_manager, test_project):
+def test_session(session_manager: SessionManager, test_project: str) -> str:
     session = session_manager.register(
         project_id=test_project,
         source="test",
@@ -72,16 +74,15 @@ def test_session(session_manager, test_project):
 
 
 @pytest.fixture
-def expansion_registry(task_manager):
+def expansion_registry(task_manager: LocalTaskManager) -> InternalToolRegistry:
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator_resolver=None,
     )
     return create_expansion_registry(ctx)
 
 
 @pytest.fixture(autouse=True)
-async def clear_background_runs():
+async def clear_background_runs() -> AsyncIterator[None]:
     _background_run_tasks.clear()
     yield
     pending = list(_background_run_tasks.values())
@@ -94,7 +95,7 @@ async def clear_background_runs():
 
 
 @pytest.fixture
-def parent_task(task_manager, test_project):
+def parent_task(task_manager: LocalTaskManager, test_project: str) -> str:
     task = task_manager.create_task(
         project_id=test_project,
         title="Parent task for expansion",
@@ -104,7 +105,7 @@ def parent_task(task_manager, test_project):
     return task.id
 
 
-def _compiled_spec() -> dict:
+def _compiled_spec() -> dict[str, Any]:
     return {
         "phases": [
             {
@@ -136,7 +137,7 @@ def _compiled_spec() -> dict:
     }
 
 
-def _write_plan_missing_target(tmp_path) -> str:
+def _write_plan_missing_target(tmp_path: Path) -> str:
     path = tmp_path / "plan.md"
     path.write_text(
         textwrap.dedent(
@@ -234,9 +235,9 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_validate_plan_file_returns_semantic_lint_errors(
         self,
-        expansion_registry,
-        test_project,
-        tmp_path,
+        expansion_registry: InternalToolRegistry,
+        test_project: str,
+        tmp_path: Path,
     ) -> None:
         # Semantic lint runs only after project-scoped completion lookup (#23620).
         token = set_project_context({"id": test_project})
@@ -432,10 +433,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_start_expansion_run_creates_run(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: InternalToolRegistry,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         run_manager = LocalExpansionRunManager(task_manager.db)
 
@@ -469,7 +470,6 @@ class TestExpansionRuns:
         registry = create_expansion_registry(
             RegistryContext(
                 task_manager=task_manager,
-                task_validator_resolver=None,
                 completion_registry=completion_registry,
             )
         )
@@ -498,7 +498,6 @@ class TestExpansionRuns:
         registry = create_expansion_registry(
             RegistryContext(
                 task_manager=task_manager,
-                task_validator_resolver=None,
                 completion_registry=completion_registry,
             )
         )
@@ -527,10 +526,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_start_expansion_run_binds_active_registered_plan(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: InternalToolRegistry,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         registered_path = _register_active_plan(task_manager, parent_task)
         run_manager = LocalExpansionRunManager(task_manager.db)
@@ -555,10 +554,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_start_expansion_run_rejects_conflicting_registered_plan_path(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: InternalToolRegistry,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         registered_path = _register_active_plan(task_manager, parent_task)
 
@@ -575,10 +574,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_registered_plan_rebinds_organizational_child_to_root(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: InternalToolRegistry,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         registered_path = _register_active_plan(task_manager, parent_task)
         root = task_manager.get_task(parent_task)

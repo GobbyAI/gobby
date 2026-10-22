@@ -32,7 +32,6 @@ def test_project(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.Monke
 def expansion_registry(task_manager: LocalTaskManager) -> InternalToolRegistry:
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator_resolver=None,
     )
     return create_expansion_registry(ctx)
 

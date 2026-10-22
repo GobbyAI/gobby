@@ -17,7 +17,6 @@ from gobby.config import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig, resolve_bootstrap_path
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
-from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.llm.model_registry import ModelInfo
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import (
@@ -1033,87 +1032,6 @@ class TestGobbyRunnerInitialization:
             assert runner.message_processor == mock_message_processor
             assert runner.lifecycle_manager is not None
 
-    def test_init_with_task_validator(self) -> None:
-        """TaskValidator is built from the validation config alone."""
-        mock_config = DaemonConfig(
-            daemon_port=60887,
-            gobby_tasks=GobbyTasksConfig(
-                expansion=TaskExpansionConfig(enabled=False),
-                validation=TaskValidationConfig(enabled=True),
-            ),
-        )
-
-        mock_text_generation = MagicMock()
-        mock_llm_service = MagicMock()
-        mock_llm_service.enabled_providers = ["test"]
-        mock_task_validator = MagicMock()
-        task_validator_factory = MagicMock(return_value=mock_task_validator)
-
-        patches = create_base_patches(mock_config=mock_config)
-        patches = [p for p in patches if "create_llm_service" not in str(p)]
-        patches = [p for p in patches if "TaskValidator" not in str(p)]
-        patches.append(
-            patch(
-                "gobby.runner_init.services.build_daemon_text_generation_service",
-                return_value=mock_text_generation,
-            )
-        )
-        patches.append(
-            patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
-        )
-        patches.append(patch("gobby.runner_init.services.TaskValidator", task_validator_factory))
-
-        with ExitStack() as stack:
-            [stack.enter_context(p) for p in patches]
-
-            runner = GobbyRunner()
-
-            assert runner.task_validator == mock_task_validator
-            assert runner.llm_service == mock_llm_service
-            assert runner.text_generation_service == mock_text_generation
-            task_validator_factory.assert_called_once_with(mock_config.gobby_tasks.validation)
-
-    def test_init_task_validator_exception(self) -> None:
-        """Test TaskValidator initialization exception is handled."""
-        mock_config = DaemonConfig(
-            daemon_port=60887,
-            gobby_tasks=GobbyTasksConfig(
-                expansion=TaskExpansionConfig(enabled=False),
-                validation=TaskValidationConfig(enabled=True),
-            ),
-        )
-
-        mock_text_generation = MagicMock()
-        mock_llm_service = MagicMock()
-        mock_llm_service.enabled_providers = ["test"]
-
-        patches = create_base_patches(mock_config=mock_config)
-        patches = [p for p in patches if "create_llm_service" not in str(p)]
-        patches = [p for p in patches if "TaskValidator" not in str(p)]
-        patches.append(
-            patch(
-                "gobby.runner_init.services.build_daemon_text_generation_service",
-                return_value=mock_text_generation,
-            )
-        )
-        patches.append(
-            patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
-        )
-        patches.append(
-            patch(
-                "gobby.runner_init.services.TaskValidator", side_effect=Exception("Validator error")
-            )
-        )
-
-        with ExitStack() as stack:
-            [stack.enter_context(p) for p in patches]
-
-            runner = GobbyRunner()
-            assert runner.task_validator is None
-            assert runner.llm_service == mock_llm_service
-            assert runner.text_generation_service == mock_text_generation
-            assert "task_validator" in runner.degraded_services
-
     def test_init_agent_runner_exception(self) -> None:
         """Test AgentRunner initialization exception is handled."""
         mock_config = MagicMock()
@@ -1151,18 +1069,14 @@ class TestGobbyRunnerInitialization:
         mock_config.memory_backup.enabled = False
         mock_config.session_feedback.review.enabled = False
 
-        task_validator_factory = MagicMock()
-
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
-        patches = [p for p in patches if "TaskValidator" not in str(p)]
         patches.append(
             patch(
                 "gobby.runner_init.services.create_llm_service",
                 side_effect=Exception("LLM init error"),
             )
         )
-        patches.append(patch("gobby.runner_init.services.TaskValidator", task_validator_factory))
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
@@ -1170,9 +1084,6 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.llm_service is None
             assert "llm_service" in runner.degraded_services
-            # The validator no longer depends on the LLM service, so it is still built.
-            assert runner.task_validator is task_validator_factory.return_value
-            assert "task_validator" not in runner.degraded_services
             llm_error = next(
                 record
                 for record in caplog.records

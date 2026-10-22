@@ -491,7 +491,6 @@ def _init_servers_runner(
     runner.metrics_manager = None
     runner.agent_runner = None
     runner.message_processor = None
-    runner.task_validator = None
     runner.worktree_storage = None
     runner.clone_storage = None
     runner.git_manager = None
@@ -4687,9 +4686,7 @@ def _empty_database_double() -> MagicMock:
 
     A bare ``MagicMock()`` answers every query with another truthy MagicMock,
     which models a database that can never return "no row". Startup recovery
-    reads task_close_reviews through a strict row guard that rightly refuses a
-    non-Mapping, so the bare double fails there for a reason that has nothing
-    to do with what these tests assert (#20842).
+    needs empty query results when a test has not provided stored records.
     """
     database = MagicMock()
     cursor = database.transaction.return_value.__enter__.return_value.execute.return_value
@@ -5840,28 +5837,25 @@ async def test_terminal_completion_recovery_skips_foreign_machine_runs() -> None
         terminal_reason=None,
         resume_metadata_json=None,
     )
-    subscriber_manager = MagicMock()
-    subscriber_manager.list_completion_ids.return_value = ["foreign-run", "local-run"]
-    subscriber_manager.get_completion_subscribers.side_effect = lambda run_id: {
-        "local-run": ["local-session"],
+    subscribers = {
         "foreign-run": ["foreign-session"],
-    }[run_id]
-    run_manager = MagicMock()
-    run_manager.get.side_effect = lambda run_id: {
-        "local-run": local,
-        "foreign-run": foreign,
-    }[run_id]
-    review_lookups: list[str] = []
-    marked: list[dict[str, str]] = []
+        "local-run": ["local-session"],
+    }
+    lookups: list[str] = []
 
-    def terminal_review_delivery(_db: object, run_id: str) -> None:
-        review_lookups.append(run_id)
+    class SubscriberStore:
+        def list_completion_ids(self) -> list[str]:
+            return list(subscribers)
 
-    def mark_terminal_review_delivered(
-        _db: object, payload: dict[str, str], _acknowledged: list[str]
-    ) -> None:
-        marked.append(payload)
+        def get_completion_subscribers(self, run_id: str) -> list[str]:
+            lookups.append(run_id)
+            return subscribers[run_id]
 
+        def remove_completion_subscribers(self, run_id: str, *, session_ids: list[str]) -> None:
+            subscribers[run_id] = [sid for sid in subscribers[run_id] if sid not in session_ids]
+
+    subscriber_manager = SubscriberStore()
+    run_manager = SimpleNamespace(get={"local-run": local, "foreign-run": foreign}.get)
     wake = AsyncMock(return_value={"ism_persisted": True})
     runner = SimpleNamespace(
         bootstrap_config=BootstrapConfig(),
@@ -5877,14 +5871,6 @@ async def test_terminal_completion_recovery_skips_foreign_machine_runs() -> None
             return_value=subscriber_manager,
         ),
         patch.object(runner_lifecycle_agents, "LocalAgentRunManager", return_value=run_manager),
-        patch(
-            "gobby.tasks.close_review_delivery.terminal_review_delivery",
-            terminal_review_delivery,
-        ),
-        patch(
-            "gobby.tasks.close_review_delivery.mark_terminal_review_delivered",
-            mark_terminal_review_delivered,
-        ),
     ):
         delivered = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
             cast(GobbyRunner, runner)
@@ -5896,9 +5882,5 @@ async def test_terminal_completion_recovery_skips_foreign_machine_runs() -> None
         "Agent local-run reached terminal status success",
         {"status": "success", "run_id": "local-run"},
     )
-    subscriber_manager.get_completion_subscribers.assert_called_once_with("local-run")
-    subscriber_manager.remove_completion_subscribers.assert_called_once_with(
-        "local-run", session_ids=["local-session"]
-    )
-    assert review_lookups == ["local-run"]
-    assert marked == [{"status": "success", "run_id": "local-run"}]
+    assert lookups == ["local-run"]
+    assert subscribers == {"foreign-run": ["foreign-session"], "local-run": []}

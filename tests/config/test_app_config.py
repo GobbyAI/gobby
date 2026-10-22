@@ -1174,9 +1174,7 @@ class TestTaskValidationConfig:
         assert "tool_loop_enabled" not in TaskValidationConfig.model_fields
         assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
         assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
-        assert config.close_review_min_severity == "low"
-        assert config.close_review_max_concurrency_per_project == 3
-        assert config.close_review_prompt_max_chars == 256_000
+        assert config.confirmation_timeout_seconds == 8.0
 
 
 class TestWorkflowConfig:

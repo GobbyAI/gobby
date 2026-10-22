@@ -579,7 +579,6 @@ class TestGobbyRunnerShutdown:
             runner.code_indexer = None
             runner.mcp_proxy = mock_mcp_manager
             runner.message_processor = mock_message_processor
-            runner.task_validator = None
 
         patches.append(
             patch(

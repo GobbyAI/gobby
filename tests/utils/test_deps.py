@@ -335,7 +335,6 @@ def test_init_services_logs_one_warning_per_stale_cli(
         "_init_mcp_stack",
         "_init_memory_backup",
         "_init_message_processor",
-        "_init_task_validator",
         "_init_project_context",
     ):
         monkeypatch.setattr(services_mod, name, lambda runner: None)
@@ -448,7 +447,6 @@ def test_init_services_logs_one_warning_per_stale_checkout(
         "_init_mcp_stack",
         "_init_memory_backup",
         "_init_message_processor",
-        "_init_task_validator",
         "_init_project_context",
     ):
         monkeypatch.setattr(services_mod, name, lambda runner: None)

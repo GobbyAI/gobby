@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -70,14 +70,6 @@ def personal_task_session(temp_db: HubDatabase) -> Session:
         project_id=None,
         title="Personal task tool test session",
     )
-
-
-@pytest.fixture
-def mock_task_validator() -> AsyncMock:
-    """Create a mock task validator."""
-    validator = AsyncMock()
-    validator.validate_task = AsyncMock()
-    return validator
 
 
 @pytest.fixture

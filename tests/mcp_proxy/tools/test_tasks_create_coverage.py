@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -660,7 +660,7 @@ class TestCreateTaskTool:
         mock_task_manager.create_task_with_decomposition.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_rejects_malformed_command_span(
+    async def test_create_preserves_pipeline_validation_text(
         self, mock_task_manager: MagicMock
     ) -> None:
         registry = create_task_registry(mock_task_manager)
@@ -668,22 +668,23 @@ class TestCreateTaskTool:
         result = await registry.call(
             "create_task",
             {
-                "title": "Reject piped close command",
+                "title": "Preserve authored pipeline instructions",
                 "category": "research",
                 "validation_criteria": "Done when `uv run pytest tests/foo.py | tee log`.",
             },
         )
 
-        assert "error" in result
-        assert "pipelines" in result["error"]
-        mock_task_manager.create_task_with_decomposition.assert_not_called()
+        assert "error" not in result
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] == (
+            "Done when `uv run pytest tests/foo.py | tee log`."
+        )
 
     @pytest.mark.asyncio
-    async def test_create_explains_exact_command_contract(
+    async def test_create_preserves_validation_command_prose(
         self, mock_task_manager: MagicMock
     ) -> None:
-        from gobby.tasks.criterion_commands import CRITERION_COMMAND_CONTRACT
-
         registry = create_task_registry(mock_task_manager)
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
@@ -697,18 +698,21 @@ class TestCreateTaskTool:
         result = await registry.call(
             "create_task",
             {
-                "title": "Explain exact close commands",
+                "title": "Preserve authored validation instructions",
                 "category": "research",
                 "validation_criteria": ("Done when `uv run pytest tests/foo.py -q` passes."),
             },
         )
 
         assert "error" not in result
-        assert result["criterion_commands"] == ["uv run pytest tests/foo.py -q"]
-        assert result["criterion_command_contract"] == CRITERION_COMMAND_CONTRACT
         mock_task_manager.create_task_with_decomposition.assert_called_once()
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert (
+            create_kwargs["validation_criteria"]
+            == "Done when `uv run pytest tests/foo.py -q` passes."
+        )
 
-    async def test_create_reports_excluded_daemon_lifecycle_spans(
+    async def test_create_preserves_daemon_lifecycle_instructions(
         self, mock_task_manager: MagicMock
     ) -> None:
         registry = create_task_registry(mock_task_manager)
@@ -734,10 +738,12 @@ class TestCreateTaskTool:
         )
 
         assert "error" not in result
-        assert result["criterion_commands"] == ["uv run pytest tests/foo.py -q"]
-        excluded = result["excluded_criterion_commands"]
-        assert [entry["command"] for entry in excluded] == ["gobby restart --wait"]
-        assert "daemon lifecycle" in excluded[0]["reason"]
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] == (
+            "Done when `uv run pytest tests/foo.py -q` passes. "
+            "The coordinator then runs `gobby restart --wait`."
+        )
 
     @pytest.mark.asyncio
     async def test_create_ignores_prose_after_test_marker(
@@ -805,7 +811,7 @@ class TestCreateTaskTool:
         assert "expected path::test_symbol" in criteria_result["error"]
         mock_task_manager.update_task.assert_not_called()
 
-    async def test_update_reports_excluded_daemon_lifecycle_spans(
+    async def test_update_preserves_daemon_lifecycle_instructions(
         self, mock_task_manager: MagicMock
     ) -> None:
         registry = create_task_registry(mock_task_manager)
@@ -831,10 +837,11 @@ class TestCreateTaskTool:
         )
 
         assert "error" not in result
-        assert "criterion_commands" not in result
-        excluded = result["excluded_criterion_commands"]
-        assert [entry["command"] for entry in excluded] == ["gobby cutover"]
-        assert "daemon lifecycle" in excluded[0]["reason"]
+        mock_task_manager.update_task.assert_called_once()
+        update_kwargs = mock_task_manager.update_task.call_args.kwargs
+        assert update_kwargs["validation_criteria"] == (
+            "Done when `gobby cutover` completes after the merge review."
+        )
 
     @pytest.mark.asyncio
     async def test_create_non_code_task_without_validation_criteria(
@@ -977,18 +984,14 @@ class TestCreateTaskTool:
         }
 
     @pytest.mark.asyncio
-    async def test_create_task_does_not_auto_generate_validation(
+    async def test_create_task_preserves_explicit_criteria(
         self,
         mock_task_manager: MagicMock,
-        mock_task_validator: AsyncMock,
         mock_config: MagicMock,
     ) -> None:
-        """Explicit criteria remain authoritative when auto-generation is enabled."""
-        mock_config.get_gobby_tasks_config.return_value.validation.auto_generate_on_create = True
-
+        """Explicit criteria remain authoritative."""
         registry = create_task_registry(
             mock_task_manager,
-            task_validator_resolver=lambda: mock_task_validator,
             startup_config=mock_config,
         )
 
