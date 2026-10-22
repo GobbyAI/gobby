@@ -102,6 +102,7 @@ def update_task(
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
     start_date: MaybeUnset[str | None] = UNSET,
     due_date: MaybeUnset[str | None] = UNSET,
+    review_epoch: MaybeUnset[int] = UNSET,
     _require_escalated: bool = False,
 ) -> bool:
     """Internal storage primitive for task field updates.
@@ -163,6 +164,9 @@ def update_task(
     if review_fail_count is not UNSET:
         updates.append("review_fail_count = %s")
         params.append(review_fail_count)
+    if review_epoch is not UNSET:
+        updates.append("review_epoch = %s")
+        params.append(review_epoch)
     if merge_in_progress is not UNSET:
         if merge_in_progress is None:
             raise ValueError("merge_in_progress cannot be None")

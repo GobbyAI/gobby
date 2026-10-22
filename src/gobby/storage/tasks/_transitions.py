@@ -257,13 +257,15 @@ def release_task_claim(
     task_id: str,
     *,
     description: MaybeUnset[str | None] = UNSET,
+    review_status: MaybeUnset[str | None] = UNSET,
+    review_feedback: MaybeUnset[str | None] = UNSET,
     review_fail_count: MaybeUnset[int | None] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
 ) -> Task:
-    """Clear ownership while optionally changing recovery metadata."""
+    """Clear ownership while optionally changing review or recovery metadata."""
     with db.transaction() as conn:
         prior = conn.execute(
             "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
@@ -276,6 +278,8 @@ def release_task_claim(
             task_id,
             description=description,
             claimed_by_session_id=None,
+            review_status=review_status,
+            review_feedback=review_feedback,
             review_fail_count=review_fail_count,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,

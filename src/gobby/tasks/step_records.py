@@ -20,6 +20,9 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
+from gobby.storage.tasks._transitions import release_task_claim
+from gobby.storage.tasks._updates import update_task
 from gobby.utils.datetime import utc_now
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
@@ -30,6 +33,9 @@ StepStatus = Literal["pending", "in_progress", "approved", "rejected"]
 STEP_RECORD_AUTHOR_TYPE = "task_step"
 TASK_STEPS: tuple[TaskStep, ...] = ("test", "implementation", "review", "closing")
 _TERMINAL = frozenset({"approved", "rejected"})
+# Test evidence may precede implementation; these steps attest the task tip.
+_TIP_BOUND: frozenset[TaskStep] = frozenset({"implementation", "review", "closing"})
+_REVIEW_EXHAUSTED = "Three independent review rejections in the current epoch"
 
 
 class StepRecordError(ValueError):
@@ -98,6 +104,20 @@ def list_task_step_records(db: HubDatabase, task_id: str) -> list[TaskStepRecord
 def current_task_steps(records: list[TaskStepRecord], epoch: int) -> dict[TaskStep, TaskStepRecord]:
     """Project the latest record per step without discarding historical evidence."""
     return {record.step: record for record in records if record.epoch == epoch}
+
+
+def approved_task_step(
+    task: Task, records: list[TaskStepRecord], step: TaskStep
+) -> TaskStepRecord | None:
+    """Return the current-epoch approval of one step for the task's present evidence."""
+    record = current_task_steps(records, task.review_epoch).get(step)
+    if record is None or record.status != "approved":
+        return None
+    commits = task.commits or []
+    if record.commit_sha is None:
+        return None if commits else record
+    evidence = commits[-1:] if step in _TIP_BOUND else commits
+    return record if any(record.commit_sha.startswith(sha) for sha in evidence) else None
 
 
 def _writer(
@@ -195,27 +215,36 @@ def record_task_step(
                 raise StepRecordError("step progress cannot move backwards")
         if task.closed_at is not None:
             raise StepRecordError("closed tasks cannot receive new step records")
-        if task.is_escalated:
-            raise StepRecordError("escalated tasks require an audited reset before another round")
+        rejections = {
+            record.round_number
+            for record in records
+            if record.step == "review"
+            and record.epoch == task.review_epoch
+            and record.status == "rejected"
+        }
+        if len(rejections) >= REVIEW_REJECTION_LIMIT:
+            raise StepRecordError("exhausted review rounds require an audited reset")
         if submission.epoch != task.review_epoch:
             raise StepRecordError("step record epoch is stale")
         if submission.commit_sha:
             if not any(submission.commit_sha.startswith(sha) for sha in task.commits or []):
                 raise StepRecordError("step commit must be linked to the task")
-            if step in {"implementation", "review", "closing"} and (
+            if step in _TIP_BOUND and (
                 not task.commits or not submission.commit_sha.startswith(task.commits[-1])
             ):
                 raise StepRecordError("step commit must match the task's latest linked commit")
         elif submission.status == "approved" and task.commits:
             raise StepRecordError("linked work requires commit evidence, not a no-work disposition")
         if step == "review":
-            rejections = {
-                record.round_number
+            review_key = (submission.epoch, submission.round_number, submission.commit_sha)
+            if submission.status in _TERMINAL and any(
+                record.step == "review"
+                and (record.epoch, record.round_number, record.commit_sha) == review_key
+                and record.status in _TERMINAL
+                and record.status != submission.status
                 for record in records
-                if record.step == "review"
-                and record.epoch == task.review_epoch
-                and record.status == "rejected"
-            }
+            ):
+                raise StepRecordError("a terminal review result cannot be contradicted")
             if submission.round_number != len(rejections) + 1:
                 raise StepRecordError(
                     "review round must follow the current epoch's rejection count"
@@ -242,32 +271,29 @@ def record_task_step(
             (record.id, task_id, session_id, STEP_RECORD_AUTHOR_TYPE, record.model_dump_json()),
         )
         if step == "review":
-            rejected = submission.status == "rejected"
-            count = len(rejections) + int(rejected)
+            # Pending and in_progress (including infrastructure errors) never count.
+            count = len(rejections) + int(submission.status == "rejected")
             review_status = {"approved": "valid", "rejected": "invalid"}.get(
                 submission.status, "pending"
             )
-            conn.execute(
-                "UPDATE tasks SET review_status = %s, review_feedback = %s, review_fail_count = %s, "
-                "claimed_by_session_id = CASE WHEN %s THEN NULL ELSE claimed_by_session_id END, "
-                "escalated_at = CASE WHEN %s THEN %s ELSE escalated_at END, "
-                "escalation_reason = CASE WHEN %s THEN %s ELSE escalation_reason END, "
-                "is_escalated = CASE WHEN %s THEN TRUE ELSE is_escalated END, updated_at = %s "
-                "WHERE id = %s",
-                (
-                    review_status,
-                    submission.feedback,
-                    count,
-                    rejected,
-                    count >= 3,
-                    now,
-                    count >= 3,
-                    "Three independent review rejections in the current epoch",
-                    count >= 3,
-                    now,
+            if count >= REVIEW_REJECTION_LIMIT:
+                release_task_claim(
+                    db,
                     task_id,
-                ),
-            )
+                    review_status=review_status,
+                    review_feedback=submission.feedback,
+                    review_fail_count=count,
+                    escalated_at=now,
+                    escalation_reason=_REVIEW_EXHAUSTED,
+                )
+            else:
+                update_task(
+                    db,
+                    task_id,
+                    review_status=review_status,
+                    review_feedback=submission.feedback,
+                    review_fail_count=count,
+                )
         else:
             # Final close freshness includes every step change, not only reviews.
             conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
