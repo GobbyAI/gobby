@@ -418,7 +418,7 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — scope-reason: retain the runbook role and replace its retired automatic-close tool instructions
 - `src/gobby/install/shared/workflows/agents/expansion-qa.yaml::*` — scope-reason: repurpose the retained agent for runbook-spawned tree and dependency checks
 - `src/gobby/install/shared/rules/build/build-agent-safety.yaml::*` — operation: delete — scope-reason: retire build-only safety rules after build removal
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md::*` — operation: delete — scope-reason: rename and rewrite the complete procedure as dev-manager.md
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/triage.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
