@@ -37,7 +37,7 @@
         "resume",
         "runbooks",
         "installation-and-operator-boundaries",
-        "dispatch-boundary",
+        "when-to-use-pipelines",
         "related-guides"
       ],
       "evidence": [

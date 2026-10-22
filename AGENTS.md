@@ -211,8 +211,6 @@ state inconsistent.
 - Finish with `close_task(task_id, commit_sha=...)` so the commit links and the task
   closes in one step; use `link_commit` only to attach a commit while keeping the
   task open.
-- Hand a stage to review with `gobby-tasks-ops` tools such as
-  `submit_for_review(stage_name=...)`.
 - If `gobby-tasks` is unavailable, stop and surface that as the blocker.
 
 ## Architecture Facts

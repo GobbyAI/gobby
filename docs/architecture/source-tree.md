@@ -64,10 +64,8 @@ src/gobby/
 ├── ai/                                 # AI feature configuration support
 ├── autonomous/                         # Autonomous execution support (progress
 │                                       #   tracking, stop registry, stuck detection)
-├── build/                              # gobby build shared service (service.py is the
-│                                       #   single core behind CLI, MCP, and HTTP build)
 ├── cli/                                # CLI commands (Click); entry point gobby.cli:cli
-│                                       #   daemon.py, init.py, install.py, build.py,
+│                                       #   daemon.py, init.py, install.py,
 │                                       #   plan.py/plans.py, tasks/, memory/, postgres*.py,
 │                                       #   qdrant.py, secrets.py, worktrees.py, ...
 │                                       #   installers/ (per-CLI + service installers)
@@ -76,12 +74,10 @@ src/gobby/
 ├── communications/                     # Comms channels (Telegram etc.): manager.py,
 │                                       #   adapters/
 ├── config/                             # Configuration models: app.py (DaemonConfig),
-│                                       #   bootstrap.py (pre-DB settings), build.py,
+│                                       #   bootstrap.py (pre-DB settings),
 │                                       #   features.py, sessions.py, tasks.py, ...
 ├── data/                               # Bundled data files: docker-compose.services.yml,
 │                                       #   postgres-pgsearch/
-├── dispatch/                           # State-driven task dispatch: rules.py (ordered
-│                                       #   lifecycle rules), dispatcher.py (heartbeat)
 ├── events/                             # Event models and routing
 ├── github_triage/                      # GitHub issue triage service
 ├── hooks/                              # Hook event system: hook_manager.py (central
@@ -92,8 +88,6 @@ src/gobby/
 │   ├── agy/ claude/ codex/ droid/ grok/            # Per-CLI install assets
 │   └── shared/                         # Bundled content synced to DB on startup
 │       ├── config/ detection/ hooks/ prompts/ rules/ services/
-│       ├── registry/                   # build_profiles.yaml, stages.yaml
-│       ├── rules/build/                # Build rule group
 │       ├── skills/                     # Bundled skills (SKILL.md dirs)
 │       └── workflows/                  # review.yaml plus grouped workflow assets
 │           ├── agents/                 # Bundled agent definitions (YAML)
@@ -109,7 +103,7 @@ src/gobby/
 │                                       #   manager.py (MCPClientManager), instructions.py
 │   ├── tools/                          # Internal tool modules: tasks/, sessions/,
 │   │                                   #   skills/, workflows/, worktrees/, plans/,
-│   │                                   #   spawn_agent/, build.py, memory.py, merge*.py,
+│   │                                   #   spawn_agent/, memory.py, merge*.py,
 │   │                                   #   internal.py, communications.py, ...
 │   └── transports/                     # HTTP, stdio, WebSocket transports
 ├── memory/                             # Persistent memory system: manager.py
@@ -130,7 +124,7 @@ src/gobby/
 ├── servers/                            # HTTP and WebSocket servers
 │   ├── http.py                         # FastAPI HTTP server
 │   ├── routes/                         # HTTP API routes: tasks.py, sessions/, agents.py,
-│   │                                   #   build.py, chat.py, workflows.py, memory.py,
+│   │                                   #   chat.py, workflows.py, memory.py,
 │   │                                   #   skills.py, projects.py, source_control.py,
 │   │                                   #   github_triage.py, admin/, mcp/, ...
 │   └── websocket/                      # WebSocket server: server.py, broadcast.py,
@@ -148,7 +142,7 @@ src/gobby/
 │   ├── hub/                            # postgres.py (PostgresHubDatabase),
 │   │                                   #   protocol.py (HubDatabase protocol), runtime.py
 │   ├── sessions/ tasks/ agents/        # CRUD packages (_manager.py, _crud.py, ...)
-│   └── *.py                            # plans.py, build_history.py, build_profiles.py,
+│   └── *.py                            # plans.py,
 │                                       #   memories.py, secrets.py, config_store.py,
 │                                       #   token_events.py, spans.py, cron.py, ...
 ├── sync/                               # Task/memory JSONL backup/restore and issue import
@@ -208,7 +202,7 @@ Counts as of 2026-06-11; expect drift. Regenerate with the commands shown.
 | **Source Python Files** | ~1,170 | `find src/gobby -name '*.py' -not -path '*__pycache__*' \| wc -l` |
 | **Test Python Files** | ~1,340 | `find tests -name '*.py' -not -path '*__pycache__*' \| wc -l` |
 | **Top-Level Packages** | 39 | `ls src/gobby/` |
-| **Bundled Rule Groups** | 22 | `ls src/gobby/install/shared/workflows/rules/ src/gobby/install/shared/rules/build/` |
+| **Bundled Rule Groups** | See checkout | `ls src/gobby/install/shared/workflows/rules/` |
 | **Bundled Skills** | ~59 | `ls -d src/gobby/install/shared/skills/*/ \| wc -l` |
 | **Bundled Agent Definitions** | 23 | `ls src/gobby/install/shared/workflows/agents/*.yaml \| wc -l` |
 | **Bundled Workflow Definitions** | 3 (+7 pipelines) | `ls src/gobby/install/shared/workflows/*.yaml` |
@@ -232,11 +226,8 @@ cli/
 │   ├── mcp_proxy/server.py
 │   │   ├── mcp_proxy/manager.py
 │   │   └── mcp_proxy/tools/*
-│   ├── dispatch/dispatcher.py
-│   │   └── dispatch/rules.py
 │   ├── agents/runner.py
 │   └── sessions/ (lifecycle, processor)
-├── build/service.py
 ├── storage/hub/postgres.py             # Schema SQL: crates/gcore/assets/schema/
 ├── llm/service.py
 │   └── llm/{claude,claude_cli,local}.py

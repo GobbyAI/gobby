@@ -28,11 +28,11 @@ repeatedly submit oversized content, or bypass permissions through another write
 When writing is permitted, save the canonical draft and reference its project-relative
 path in the handoff. Once materialized, the file is the
 sole authority. Deterministic validation and explicit user approval are
-mandatory; enhancement and taskless adversarial review are recommended but
+mandatory; enhancement and adversarial review are recommended but
 optional.
 
-Planning has three roles: the **planner** drafts and folds in changes, the
-optional **plan-enhancer-old** proposes constructive Better/Bigger improvements,
+Planning has three roles: the **plan-writer** drafts and folds in changes, the
+optional **plan-enhancer** proposes constructive Better/Bigger improvements,
 and the optional **plan-adversary** reviews correctness and contract
 compliance. Neither reviewer edits the plan. Base validation and human approval
 remain the mandatory gates.
@@ -86,7 +86,7 @@ Plan mode is enforced through workflow/rule state. In plan mode:
   the existing plan-mode shell restrictions.
 - `/gobby plan` does not create planning epics, review anchors, or per-round
   review tasks while drafting or reviewing. Registration waits for the real
-  implementation root used by manual expansion or build.
+  implementation root used by manual expansion.
 - User approval can exit plan mode and authorize execution.
 - The UI can show an approval bar for the active plan state.
 
@@ -102,12 +102,11 @@ source of truth after daemon startup and sync.
 ## Optional Enhancement
 
 After materialization and base validation, `/gobby plan` offers an optional
-enhancement loop. When selected, the parent session spawns
-`plan-enhancer-taskless-old` (no `task_id`, `checkout_mode="none"`) with the plan path,
-round number, max rounds, and parent session id. The enhancer loads
-`gobby:references/plan/enhancement.md` and standalone `proportionality`, then returns ranked Better/Bigger
-suggestions to the parent via `send_message` and calls `end_agent_run`. It never
-claims tasks, edits the plan file, or calls a review verdict.
+enhancement loop. When selected, the planning runbook's live `plan-enhancer`
+seat loads `gobby:references/plan/enhancement.md` and standalone
+`proportionality`, then sends ranked Better/Bigger suggestions to the Writer
+through `send_message`. It never claims tasks, edits the plan file, or calls a
+review verdict.
 
 The coordinator surfaces the ranked suggestions to the user (impact-vs-effort,
 top first); the human is the scope gate. Accepted suggestions are folded into the
@@ -118,18 +117,14 @@ the user also selects adversarial review, accepted changes pass that review.
 
 ## Optional Adversarial Review
 
-Taskless review uses `plan-adversary-taskless-old`. After project-aware validation, the parent calls `prepare_plan_review_round`,
-passes the returned evidence ID, canonical path, clean deterministic sweep report,
-round number, review cap, and parent session ID, then binds the spawned run with
-`bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
-is followed immediately by a structured `set_handoff(clear_session=false)`. An
-unspawned interactive round binds through `bind_static_review_seats` instead:
-the evidence owner names the exact live Writer and coordinator session UUIDs,
-the binding is immutable and exclusive with a run binding, and the round's
+Open a review round with `prepare_plan_review_round`, then bind it once with
+`bind_static_review_seats`: the evidence owner names the exact live Writer and coordinator session UUIDs,
+the binding is immutable, and the round's
 writes are seat-gated (the Writer appends and repairs, the coordinator applies
 the manifest, the owner finalizes). The adversary loads
-`gobby:references/plan/review.md` and standalone `proportionality`, returns structured findings or approval to
-the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
+`gobby:references/plan/review.md` and standalone `proportionality`, then sends
+structured findings or approval to the Writer and coordinator seats through
+`send_message`. It does not claim or mutate Gobby tasks.
 The adversary now also carries an `over-engineering` review dimension: mechanism
 disproportionate to the goal is a finding, while ambition and net-new scope are
 not.
@@ -144,13 +139,14 @@ Every review round is recorded in the plan under:
 Each round records reviewer run/session, verdict, findings, and resolution
 notes. Keep prior rounds for audit. The reviewer reads an immutable snapshot,
 completes three review lanes and returns server-validated coverage attestation;
-it never writes the manifest. A rejection is appended and finalized with its
-canonical result before the coordinator (the Writer seat in a static-seat
-round) applies accepted typed repairs.
+it never writes the manifest. The Writer appends a rejection and the evidence
+owner finalizes its canonical result before the Writer applies accepted typed
+repairs.
 
 On user-accepted approval, the coordinator calls `apply_plan_review_manifest`,
-then `append_plan_changelog_round` and `finalize_plan_review_evidence`. The
-daemon writes canonical V1 fences; never hand-build them.
+then the Writer calls `append_plan_changelog_round` and the evidence owner calls
+`finalize_plan_review_evidence`. The daemon writes canonical V1 fences; never
+hand-build them.
 If review is skipped, use `derive_plan_handoff_manifest` and
 `apply_plan_handoff_manifest` with their exact returned hashes/digest instead.
 These paths reject stale evidence rather than guessing a replacement manifest.
@@ -163,11 +159,7 @@ uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
 
 If adversarial review is skipped, the coordinator derives and applies the human
 handoff manifest through the existing `gobby-plans` APIs; it never fabricates
-review evidence. After user approval, offer either manual expansion or build:
-
-```bash
-uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
-```
+review evidence. After user approval, offer manual expansion.
 
 `/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
@@ -205,8 +197,7 @@ settles disagreements.
 
 The Adversary stamps M1 before Josh's approval; approval gates expansion, and
 nothing expands until Josh approves the stamped bytes. The evidence-round
-protocol above stays the contract for spawned taskless reviewers and
-`gobby build` stage reviews. Old plans, and
+protocol above stays the contract for static-seat rounds. Old plans, and
 implemented plans that never had adversarial review, move to
 `.gobby/plans/completed/` (registered plans through `archive_plan`).
 
@@ -226,8 +217,7 @@ include:
 `create_plan` requires a real root task (`root_task_ref`, or `#N` inferred from a
 `task-<N>-*` plan filename) and generates the initial coverage manifest. Do not
 create a planning task only to register a draft. Manual expansion registers
-against its real epic; `gobby build` creates or reuses the real root and
-preserves its configured unattended stage sequence.
+against its real epic.
 
 Coverage manifests are generated under the project root and are removed when a
 plan is archived or deleted.
@@ -291,7 +281,7 @@ and plan approval state rather than only static plan files.
 - `validate_plan`
 
 Review evidence uses `prepare_plan_review_round`, `get_plan_review_snapshot`,
-`bind_evidence_run`, `bind_static_review_seats`, `expire_plan_review_evidence`,
+`bind_static_review_seats`, `expire_plan_review_evidence`,
 and `verify_plan_unchanged`.
 Manifest derivation/application, coverage attestation, typed repairs, and
 changelog append/finalization tools share this service. Discover

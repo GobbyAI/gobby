@@ -1,8 +1,8 @@
 # Task Management Guide
 
 Gobby's task system is the durable work ledger for local-first development. It
-tracks task trees, dependency edges, stage manifests, session ownership, review
-state, validation, and commit links across restarts and agent handoffs.
+tracks task trees, dependency edges, session ownership, validation, and commit
+links across restarts and agent handoffs.
 
 Use the MCP tools for agent lifecycle work. Use the CLI for human inspection and
 manual operator actions.
@@ -11,16 +11,9 @@ manual operator actions.
 
 ```mermaid
 flowchart LR
-    Task["Task<br/>#14390"] --> Manifest["Stage manifest"]
-    Task --> Dependencies["Dependencies"]
+    Task["Task<br/>#14390"] --> Dependencies["Dependencies"]
     Task --> Owner["Owner session"]
     Task --> Commits["Linked commits"]
-
-    Manifest --> Ready["ready"]
-    Ready --> InProgress["in_progress"]
-    InProgress --> NeedsReview["needs_review"]
-    NeedsReview --> ReviewApproved["review_approved"]
-    ReviewApproved --> Done["done"]
 
     Task --> Closed["closed metadata"]
     Task --> Escalated["escalation metadata"]
@@ -28,18 +21,14 @@ flowchart LR
 
 The storage row still has task metadata such as title, description, priority,
 type, category, parent, labels, and validation criteria. The workflow-facing
-state comes from the stage manifest plus close and escalation metadata:
+state comes from closure and escalation metadata:
 
-- `ready`: the current stage has not started.
-- `in_progress`: a session or agent owns the current stage work.
-- `needs_review`: the current stage is waiting for review.
-- `review_approved`: the current stage passed review and can be completed.
-- `done`: a stage row is complete; the next incomplete row becomes current.
+- `ready`: the task is open and not escalated.
 - `closed`: the task has closure metadata.
 - `escalated`: the task needs intervention and is excluded from ready work.
 
-The projected task state is not a free-form `status` field. Agent code should
-use lifecycle tools such as `claim_task`, `submit_for_review`, and `close_task`
+A claim records the owner session. The projected task state is not a free-form
+`status` field. Agent code should use lifecycle tools such as `claim_task` and `close_task`
 instead of trying to set `status` or `assignee` through `update_task`.
 
 ## Agent Workflow
@@ -146,7 +135,7 @@ the work must be committed and linked before close.
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
-    "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
+    "changes_summary": "Refreshed the task guide for the MCP-first task flow.",
     "preview": True,
 })
 ```
@@ -164,7 +153,7 @@ After a clean preview, repeat the close with `preview=false`:
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
-    "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
+    "changes_summary": "Refreshed the task guide for the MCP-first task flow.",
     "preview": False,
 })
 ```
@@ -209,61 +198,6 @@ deliberate close skips only the criteria review: gates 1-9 still apply, the
 justification is stored as `validation_override_reason`, and closure clears
 escalation metadata and resets the validation failure count.
 
-Autonomous stage work may require review instead of direct close. Inspect the
-stage manifest first:
-
-```python
-call_tool(server_name="gobby-tasks", tool_name="get_task_stages", arguments={
-    "task_id": "#14390",
-})
-```
-
-If the current stage has `review_policy="required"`, commit the changes and
-submit that stage:
-
-```python
-call_tool(server_name="gobby-tasks-ops", tool_name="submit_for_review", arguments={
-    "task_id": "#14390",
-    "stage_name": "development",
-    "review_notes": "Refreshed docs/guides/tasks.md against current task behavior.",
-})
-```
-
-## Stage Manifests
-
-Every lifecycle-enabled task can have an ordered manifest of stage rows. The
-current stage is the first row whose state is not `done`.
-
-Common stage tools:
-
-| Server | Tool | Purpose |
-| :--- | :--- | :--- |
-| `gobby-tasks` | `get_task_stages` | Read a task's manifest. |
-| `gobby-tasks` | `list_stages_registry` | Read installed stage definitions. |
-| `gobby-tasks` | `get_task_type_defaults` | Read default stages for a task type. |
-| `gobby-tasks-ops` | `initialize_task_manifest` | Initialize defaults or explicit stages. |
-| `gobby-tasks-ops` | `start_stage` | Move a ready stage to `in_progress`. |
-| `gobby-tasks-ops` | `complete_stage` | Complete a stage according to review policy. |
-| `gobby-tasks-ops` | `fail_stage` | Return failed work to ready or escalate after caps. |
-| `gobby-tasks-ops` | `submit_for_review` | Move `in_progress` to `needs_review`. |
-| `gobby-tasks-ops` | `approve_review` | Move reviewed work to `review_approved`. |
-| `gobby-tasks-ops` | `reject_review` | Return reviewed work for another attempt. |
-
-For CLI inspection:
-
-```bash
-gobby tasks stages '#14390'
-```
-
-For human stage transitions:
-
-```bash
-gobby tasks advance '#14390'
-gobby tasks review '#14390' --submit
-gobby tasks review '#14390' --approve
-gobby tasks review '#14390' --reject --reason "Missing validation evidence"
-```
-
 ## Dependencies and Ready Work
 
 A `blocks` dependency means the dependent task cannot become ready until the
@@ -280,9 +214,8 @@ call_tool(server_name="gobby-tasks", tool_name="add_dependency", arguments={
 Readiness is hierarchical. A task appears in ready work when:
 
 1. The task is not closed or escalated.
-2. Its current stage is `ready` or `in_progress`, or it has no stage manifest.
-3. It has no unresolved external `blocks` dependency.
-4. Its parent chain is also ready.
+2. It has no unresolved external `blocks` dependency.
+3. Its parent chain is also ready.
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="list_ready_tasks", arguments={
@@ -306,11 +239,10 @@ gobby tasks dep cycles
 
 ## Search and Listing
 
-Use `list_tasks` for metadata and current-stage filters:
+Use `list_tasks` for metadata filters:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="list_tasks", arguments={
-    "current_stage_state": ["ready", "in_progress"],
     "priority": 2,
     "label": "docs",
     "limit": 20,
@@ -321,7 +253,7 @@ Use `search_tasks` for full-text search across task content:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
-    "query": "stage manifest review",
+    "query": "close validation",
     "limit": 10,
 })
 ```
@@ -330,10 +262,9 @@ Useful CLI views:
 
 ```bash
 gobby tasks list --active
-gobby tasks list --stage development --state in_progress
 gobby tasks list --claimed
 gobby tasks list --ready
-gobby tasks search "stage manifest" --limit 5
+gobby tasks search "close validation" --limit 5
 gobby tasks show '#14390'
 gobby tasks stats
 ```
@@ -383,7 +314,7 @@ git commit --only -m "[gobby-#14390] docs: refresh task guide" -- docs/guides/ta
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
-    "changes_summary": "Updated the task guide against current MCP and stage behavior.",
+    "changes_summary": "Refreshed the task guide for the MCP-first task flow.",
     "preview": True,
 })
 # Repair deterministic blockers, then repeat with preview=False.
@@ -459,7 +390,7 @@ does not interpret them as comments.
 ```bash
 # Listing and inspection
 gobby tasks list [--active] [--ready] [--blocked] [--closed] [--escalated]
-gobby tasks list [--stage NAME --state STATE] [--claimed] [--unclaimed]
+gobby tasks list [--claimed] [--unclaimed]
 gobby tasks ready [--limit N] [--priority N] [--type TYPE] [--json]
 gobby tasks blocked [--limit N] [--json]
 gobby tasks show TASK
@@ -467,23 +398,18 @@ gobby tasks stats
 
 # CRUD
 gobby tasks create "Title" --validation-criteria CRITERIA [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
-gobby tasks update TASK [--title TITLE] [--validation-criteria CRITERIA] [--priority N] [--parent TASK] [--task-type TYPE] [--checkout-mode MODE]
+gobby tasks update TASK [--title TITLE] [--validation-criteria CRITERIA] [--priority N] [--parent TASK] [--task-type TYPE]
 gobby tasks close TASK [--reason REASON]
 gobby tasks reopen TASK [--reason REASON]
 gobby tasks delete TASK [--cascade | --unlink] [--yes]
 
-# Dependencies, labels, stages, and review
+# Dependencies and labels
 gobby tasks dep add TASK BLOCKER [--type blocks]
 gobby tasks dep remove TASK BLOCKER
 gobby tasks dep tree TASK
 gobby tasks dep cycles
 gobby tasks label add TASK LABEL
 gobby tasks label remove TASK LABEL
-gobby tasks stages TASK
-gobby tasks advance TASK [--stage NAME]
-gobby tasks review TASK --submit
-gobby tasks review TASK --approve
-gobby tasks review TASK --reject --reason REASON
 
 # Expansion, validation, search, backup, and maintenance
 gobby tasks expand validate-plan PLAN_FILE
@@ -498,13 +424,7 @@ gobby tasks reindex
 gobby tasks backup [--output PATH] [--quiet]
 gobby tasks restore [--input PATH] [--quiet]
 gobby tasks doctor
-gobby tasks repair-lifecycle
 ```
-
-`MODE` for task updates is `none`, `worktree`, or `clone`. Updating isolation
-changes future dispatch state only. Gobby rejects `worktree` when clone
-artifacts are present and rejects `clone` when worktree artifacts are present;
-use the artifact cleanup tools before retargeting when cleanup is intentional.
 
 ## Storage and Backups
 
@@ -528,8 +448,7 @@ CLI additionally accepts unambiguous UUID prefixes.
 
 ## Automation Notes
 
-Lifecycle automation, build dispatch, and workflow rules operate on semantic
-events such as `turn_start` and `turn_end`. Raw provider/runtime hooks such as
+Lifecycle automation and workflow rules operate on semantic events such as `turn_start` and `turn_end`. Raw provider/runtime hooks such as
 `before_agent`, `after_agent`, and `stop` are adapter details below the authoring
 API. See [Workflows Overview](./workflows-overview.md) for the event model.
 

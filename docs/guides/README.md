@@ -18,7 +18,6 @@ links to the guide that owns that topic.
 
 `$gobby intro` captures a concise global working profile. It lives at
 `<files_home>/USER.md` on the hub owner and is never copied into a repository.
-It is separate from the build profiles managed by `gobby profiles`.
 
 Read the existing profile first. Infer relevant low-risk facts from the user's
 context, and ask only for missing preferences that change agent behavior.
@@ -60,7 +59,6 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 | [memory.md](memory.md) | Persistent memory, vector search, knowledge graph, and session recall |
 | [workflows-overview.md](workflows-overview.md) | How workflows, rules, agents, and pipelines fit together |
 | [prompts.md](prompts.md) | Bundled prompts, DB overrides, precedence, sync, and import/export |
-| [dispatch.md](dispatch.md) | Stage-manifest dispatch, readiness projection, and rule actions |
 | [rules.md](rules.md) | Rule engine reference for events, conditions, effects, and enforcement |
 | [workflow-rules.md](workflow-rules.md) | Rule-authoring guidance for semantic turn events and safe conditions |
 | [pipelines.md](pipelines.md) | Pipeline workflows, data flow, approval gates, and automation steps |
@@ -74,8 +72,8 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 |-------|-------------|
 | [agents.md](agents.md) | Agent definitions, spawning, command routing, and run lifecycle |
 | [worktrees.md](worktrees.md) | Worktree and clone isolation, merge operations, and task links |
-| [orchestration.md](orchestration.md) | Stage dispatch, isolation, review gates, and automated task execution |
-| [cron-scheduler.md](cron-scheduler.md) | Cron jobs, run history, scheduler execution, and dispatcher automation |
+| [orchestration.md](orchestration.md) | Spawned agent work, isolation, and the spawn cap |
+| [cron-scheduler.md](cron-scheduler.md) | Cron jobs, run history, and scheduler execution |
 | [skills.md](skills.md) | Skill discovery, installation, project scope, and hub integrations |
 
 ## Search & Code Navigation
@@ -166,8 +164,8 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 
 1. Read [task-expansion.md](task-expansion.md) to understand expanded task trees.
 2. Read [plans-and-plan-mode.md](plans-and-plan-mode.md) before turning specs into work.
-3. Read [orchestration.md](orchestration.md) to follow staged automation.
-4. Read [cron-scheduler.md](cron-scheduler.md) for scheduled dispatcher and pipeline work.
+3. Read [orchestration.md](orchestration.md) for spawned agent work.
+4. Read [cron-scheduler.md](cron-scheduler.md) for scheduled pipeline work.
 5. Read [agents.md](agents.md) and [worktrees.md](worktrees.md) for isolated parallel work.
 6. Read [workflow-rules.md](workflow-rules.md) before authoring lifecycle rules.
 

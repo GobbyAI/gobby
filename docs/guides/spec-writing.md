@@ -7,9 +7,7 @@ has implementation work.
 
 Use the `/gobby plan` skill for interactive drafting. It gathers requirements,
 loads the `gobby:references/plan/drafting.md` methodology, writes the plan artifact, and runs the
-planner-side validation flow before expansion. Use
-`gobby build <plan-file> --checkout-mode none` to start lifecycle automation from an
-approved plan file.
+planner-side validation flow before expansion.
 
 For the full contract, read [Plan-Coverage Contract](../contracts/plan-coverage.md).
 
@@ -242,12 +240,7 @@ task and includes:
 Malformed manifests fail parsing. In `draft` mode the manifest may be absent;
 in `expansion` and `strict` modes it is required.
 
-## Build And Lifecycle Notes
-
-`gobby build` turns an approved plan into a task stage manifest. Review is
-metadata on a stage row: `review_policy`, `reviewer_agent`, attempt counters,
-and caps decide whether work is handed to a reviewer. Do not model review as a
-separate deliverable or a separate manifest row.
+## Lifecycle Notes
 
 When a plan asks for rule or workflow changes, write against semantic lifecycle
 events such as `turn_start` and `turn_end`. Raw `before_agent`, `after_agent`,
@@ -255,9 +248,8 @@ and `stop` events are provider/runtime details, not the main authoring API.
 Agent termination is separate from those events and still requires
 `end_agent_run`.
 
-Docs-category leaf tasks route to `tech-writer`, may run inside the parent
-epic's isolation context, and use the development stage's review policy to
-decide whether to close directly or submit to doc review.
+Docs-category leaf tasks route to `tech-writer` and may run inside the parent
+epic's isolation context.
 
 ## Validation
 

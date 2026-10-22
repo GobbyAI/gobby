@@ -14,15 +14,15 @@
 ---
 
 ```bash
-gobby build '#1842'
+gobby install
 ```
 
-That's the loop. Hand Gobby a task, walk away, come back to a PR.
+Every detected CLI shares one daemon: sessions, task ledger, memory and hook-time rules.
 
-Behind that one command: a plan, an expansion into staged subtasks, isolated
-worktrees, dispatched agents, hook-time guardrails, validation, review gates,
-and a commit-linked close. If something goes off the rails, Gobby stops and
-escalates instead of merging garbage.
+Behind that one command: a task ledger with validation gates and commit-linked
+close, spawned agents in isolated worktrees, hook-time rules, and handoffs across
+sessions and CLIs. If something goes off the rails, Gobby stops and escalates
+instead of merging garbage.
 
 **Gobby built Gobby.** 5K+ commits. 15K+ tasks across my projects. Two
 paying clients running production systems on it. The 0.4.x line was assembled
@@ -53,8 +53,7 @@ The fix isn't a better prompt. The fix is infrastructure around the agent.
 Gobby is fleet management for the AI coding CLIs you already use — Claude Code,
 Codex, Factory Droid, Grok, and AGY — and gives them what they're
 missing: shared sessions, a durable task ledger, hook-time rules,
-progressive MCP discovery, agent isolation, review gates, and a build loop that
-turns a task into a PR without you in the middle.
+progressive MCP discovery, agent isolation, and review gates.
 
 It is **not another agent.** It is the fleet manager the agents you already
 have are missing.
@@ -70,27 +69,18 @@ installed web UI run on `:60887`, WebSocket on `:60888`, dev web UI on
 
 Three things make Gobby load-bearing:
 
-### 1. Stage-manifest dispatch + hook-time rules
+### 1. Hook-time rules
 
 Most autonomous agents are one giant prompt loop where the model decides
 everything. That's the failure mode you've already lived through.
 
-Gobby splits the runtime in two. Dispatch is **deterministic**: a heartbeat
-scans tasks, reads the current stage manifest row (`ideation` → `research` →
-`architecture` → `prd` → `planning` → `expansion` → `development` →
-`epic_qa` → `pr` → `merge`), evaluates ordered rules in
-`src/gobby/dispatch/rules.py`, acquires a per-task mutex, and executes one
-bounded action — start a stage, spawn an agent, create isolation, advance,
-escalate. No prompting, no model freelancing.
-
-Inside a spawned worker, the agent gets full **autonomy** to plan, edit,
+Inside a session or spawned worker, the agent gets full **autonomy** to plan, edit,
 verify, and commit. But every tool call passes through the rule engine on
 `turn_start`, `before_tool`, `after_tool`, and `turn_end`. Rules can block,
 rewrite, inject context, or set variables synchronously. They are evaluated as
 code, not hoped for in a prompt.
 
-Agent freedom inside enforced boundaries. That's the only way `gobby build`
-gets to "hands-off" without lying about it.
+Agent freedom inside enforced boundaries.
 
 ### 2. Local-first, built with itself
 
@@ -98,11 +88,9 @@ Your database, transcripts, hooks, task ledger, workflows, and rules stay on
 your machine. No cloud control plane. No SaaS dependency. Fair Source
 (FSL-1.1-ALv2) — every release becomes Apache 2.0 two years after publication.
 
-The repo you're reading was built through its own build loop. 5K+ commits.
-15K+ tasks. 0.4.x was assembled by spawned agents working through staged
-manifests, with the dispatcher routing review and merge. That's the production
-test bed: every regression in dispatch, hooks, isolation, or task lifecycle
-shows up as a stalled build the next morning.
+The repo you're reading was built with Gobby. 5K+ commits. 15K+ tasks.
+That's the production test bed: every regression in hooks, isolation, or task
+lifecycle shows up in the next morning's work.
 
 I've also used it to ship production systems for two paying clients. It is the
 tool I needed to actually trust the output of an AI coding agent on real work.
@@ -123,40 +111,6 @@ Claude Code can be claimed in Codex and finished in Droid without losing
 context, validation gates, or review state. You don't pick a winner among
 coding CLIs; you pick what's best for the work in front of you and Gobby keeps
 them coherent.
-
----
-
-## How `gobby build` actually works
-
-```bash
-gobby build '#1842'                          # plan, epic, or leaf task
-gobby build plans/auth-refactor.md --quick   # straight from a plan file
-gobby build stop '#1842'                     # task-scoped controls
-```
-
-Under the hood:
-
-1. **Build state** is written onto the task: `allow_automation=true`,
-   isolation (`none` / `worktree` / `clone`), assigned agent, target branch.
-   Backlog tasks are inert until this gate is opened.
-2. **Stage manifest** materializes from the registry into `task_stage_states`.
-   Each row carries position, state (`ready` / `in_progress` / `needs_review` /
-   `review_approved` / `done`), review policy, reviewer, and attempt counters.
-3. **Heartbeat** scans opted-in tasks, filters out claimed/leased/escalated/
-   dependency-blocked work, reads the current stage row, and lets ordered
-   deterministic rules pick exactly one action under a mutex.
-4. **Agent runs** in a worktree or full clone. Tool calls pass through the
-   rule engine. Skills load on demand. Memory and code-graph results inject
-   only when relevant.
-5. **Review** is stage-native. Workers `submit_for_review` instead of closing
-   directly; the next heartbeat spawns the configured reviewer; approval
-   advances the row; rejection retries or escalates.
-6. **Close** requires a commit. If you changed files, you commit them — the
-   daemon won't let a leaf close with diffs and no SHA.
-
-The dispatcher does not draft plans, repair artifacts inline, or prompt
-models. Prompting belongs in spawned agents. Routing belongs to dispatch.
-Keeping that line clean is what makes the whole thing trustable.
 
 ---
 
@@ -185,8 +139,8 @@ finishing real work on real codebases, and the toolchain is part of the moat.
 | Tool | Category | Where Gobby differs |
 | --- | --- | --- |
 | **Claude Code, Codex, Droid, Grok, AGY** | First-party AI coding CLIs and hook surfaces | Gobby runs *under* supported CLIs. They become the worker, not the orchestrator. |
-| **Aider, Cline, OpenHands, Plandex, Continue** | Coding agents / IDE extensions | They each own the loop. Gobby owns the task, the rules, the dispatch, and the review gates around whichever loop you pick. |
-| **BMAD-METHOD** | Multi-agent role framework (Markdown/YAML personas) | Real overlap on staged work, but BMAD is a methodology layered on top of an existing agent; Gobby is the daemon, ledger, hook engine, and dispatcher. |
+| **Aider, Cline, OpenHands, Plandex, Continue** | Coding agents / IDE extensions | They each own the loop. Gobby owns the task, the rules, and the review gates around whichever loop you pick. |
+| **BMAD-METHOD** | Multi-agent role framework (Markdown/YAML personas) | BMAD is a methodology layered on top of an existing agent; Gobby provides a shared daemon, task ledger, and hook engine. |
 | **Superset, parallel-code, claude_code_bridge, CLI Agent Orchestrator** | Parallel CLI launchers | They run multiple CLIs side-by-side in worktrees. They don't share session, task, memory, or rules across CLIs. Gobby does. |
 | **IBM Context Forge, MintMCP, Composio, Runlayer** | MCP gateways | Cloud/enterprise reverse proxies for MCP. Gobby is local-first, adds progressive discovery, and binds MCP to a task lifecycle and rule engine. |
 | **OpenClaw** | Personal AI assistant across messaging channels | Different category — OpenClaw is a personal agent for WhatsApp/Slack/Telegram-style use. Gobby is dev infra for agents that ship code. |
@@ -194,9 +148,7 @@ finishing real work on real codebases, and the toolchain is part of the moat.
 
 The honest summary: if you've already picked a coding CLI you like, Gobby
 makes it more reliable. If you want to use several of them for different jobs,
-Gobby is the only thing that keeps them coherent. If you want to send a task
-into the build loop and get a PR back, Gobby is the only open-source project
-I'm aware of that does that locally.
+Gobby keeps their sessions, tasks, memory, and rules coherent.
 
 ---
 
@@ -250,11 +202,10 @@ teams that already track work there.
 The guides set is the source of truth for behavior:
 
 - [docs/guides/tasks.md](docs/guides/tasks.md) — task lifecycle, validation, commit-linked closure
-- [docs/guides/dispatch.md](docs/guides/dispatch.md) — stage-manifest dispatch and rule chain
-- [docs/guides/orchestration.md](docs/guides/orchestration.md) — build, agents, isolation, review
+- [docs/guides/orchestration.md](docs/guides/orchestration.md) — agents, isolation, spawn cap
 - [docs/guides/sessions.md](docs/guides/sessions.md) — session lifecycle and handoffs
 - [docs/guides/mcp-tools.md](docs/guides/mcp-tools.md) — MCP proxy and progressive discovery
-- [docs/guides/workflows-overview.md](docs/guides/workflows-overview.md) — rules, agents, pipelines, dispatch
+- [docs/guides/workflows-overview.md](docs/guides/workflows-overview.md) — rules, agents, pipelines
 - [docs/guides/system-requirements.md](docs/guides/system-requirements.md) — prerequisites
 
 See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
@@ -265,7 +216,7 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 
 | CLI | Integration | What Gobby adds |
 | --- | --- | --- |
-| Claude Code | Hooks + MCP | Durable sessions, task links, rule-enforced workflows, build dispatch |
+| Claude Code | Hooks + MCP | Durable sessions, task links, rule-enforced workflows, spawned agents |
 | Codex | Hooks + MCP | Shared tasks, MCP access, spawned agents, cross-CLI handoffs |
 | Factory Droid | Hooks + MCP | Droid sessions, transcript parsing, spawned-agent flows |
 | Grok | Hooks + MCP | Shared lifecycle, transcript parsing, spawned-agent flows |
@@ -333,12 +284,11 @@ gobby init                   # initialize .gobby/ for this repo
 Open the installed web UI at `http://localhost:60887/` once the daemon is running.
 The `:60889` UI port is for `gobby ui dev` during frontend development.
 
-Then either start interactive work in your CLI of choice — Gobby will track it
-quietly — or hand it a task and let the build loop run:
+Then start work in your CLI of choice; Gobby tracks it quietly. Create a task
+for an agent to claim:
 
 ```bash
 gobby tasks create "Add OAuth refresh-token rotation" --type feature --category code
-gobby build '#<id>'
 ```
 
 For agent operating instructions in this repository, read [CLAUDE.md](CLAUDE.md).

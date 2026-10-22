@@ -26,10 +26,9 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | --- | --- | --- |
 | `agents` | Manage agent definitions and agent runs. | `src/gobby/cli/agents.py` |
 | `auth` | Reset the installed account password and manage the local daemon API token. | `src/gobby/cli/auth.py` |
-| `build` | Start and control lifecycle automation for plans, epics, and tasks. | `src/gobby/cli/build.py` |
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage external communication channels. | `src/gobby/cli/communications.py` |
-| `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
+| `cron` | Manage scheduled jobs. | `src/gobby/cli/cron.py` |
 | `datastores` | Manage hub-side shared datastores: `expose`, `rotate-password`. | `src/gobby/cli/datastores.py` |
 | `embeddings` | Inspect the model catalog and health; start, inspect, resume, or abort a staged model switch. See [AI configuration](ai-configuration.md#changing-the-embedding-model). | `src/gobby/cli/embeddings.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
@@ -51,7 +50,6 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `plan` | Run plan utility commands. | `src/gobby/cli/plan.py` |
 | `plans` | Manage DB-backed plan records. | `src/gobby/cli/plans.py` |
 | `postgres` | Manage the local PostgreSQL hub (install, status, backup/restore, scoped roles). | `src/gobby/cli/postgres.py` |
-| `profiles` | Manage build profile registry rows. | `src/gobby/cli/profiles.py` |
 | `projects` | Inspect and manage project identities and local checkouts. | `src/gobby/cli/projects.py` |
 | `qdrant` | Manage Qdrant helper commands. | `src/gobby/cli/qdrant.py` |
 | `restart` | Restart the daemon. | `src/gobby/cli/daemon.py` |
@@ -61,7 +59,6 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `service` | Manage service installation/runtime helpers. | `src/gobby/cli/service.py` |
 | `sessions` | Inspect stored sessions and transcripts. | `src/gobby/cli/sessions.py` |
 | `skills` | Manage installed skills. | `src/gobby/cli/skills.py` |
-| `stages` | Manage the task stage registry. | `src/gobby/cli/stages.py` |
 | `start` | Start the daemon. | `src/gobby/cli/daemon.py` |
 | `status` | Show daemon status. | `src/gobby/cli/daemon.py` |
 | `stop` | Stop the daemon. | `src/gobby/cli/daemon.py` |
@@ -516,91 +513,6 @@ Run the stdio MCP server for MCP-capable clients.
 gobby mcp-server
 ```
 
-## Build Automation
-
-`gobby build` starts lifecycle automation from a plan file, epic, or leaf task.
-Control actions are implemented as `build` subcommands through the same Click
-entry point.
-
-```bash
-gobby build [INPUT_REF] [--project PROJECT] [--coordinator [current|SESSION_UUID]] [OPTIONS]
-gobby build stop [REF] [--project PROJECT]
-gobby build resume [REF] [--project PROJECT]
-gobby build clean REF [--project PROJECT] [--dry-run] [--force] [--yes]
-gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-resume]
-```
-
-| Option | Purpose |
-| --- | --- |
-| `--profile NAME` | Resolve an installed/project build preset (default name `default`). |
-| `--quick` | Run one bounded lifecycle action, then leave target automation disabled. |
-| `--project PROJECT` | Build or control automation in a target project by name or UUID. |
-| `--coordinator [current\|SESSION_UUID]` | Wake a coordinator session when build-spawned agents complete. `current` resolves from `GOBBY_SESSION_ID`; with `--project`, use `current` or a full session UUID. |
-| `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
-| `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
-| `--checkout-mode MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation comes from the resolved profile. |
-| `--clone` | Shorthand for `--checkout-mode clone`; conflicts with `--checkout-mode none` and `--checkout-mode worktree`. |
-| `--delivery-mode MODE` | Override `auto` or `pull_request` delivery intent. |
-| `--delivery-target-repo OWNER/REPO` | Override the PR target repository. |
-| `--no-merge` | Skip final promotion; requires worktree or clone isolation. |
-| `--pr VALUE` | Configure PR delivery behavior. |
-| `--target-branch BRANCH` | Override the target branch. |
-| `--agent NAME` | Assign a specific agent definition. |
-| `--reset-expansion-output` | Clear prior expansion output before building. |
-| `--max-active-agents N` | Cap immediately active automation agents. |
-| `--max-retries N` | Cap retries per build stage. |
-| `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
-| `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
-| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer-old` rounds before the adversary gate (`0` disables; overrides the build profile default). |
-| `--dry-run` | Preview launch, `clean`, or `restart`; control previews may record history. |
-| `--delete-dirty-worktrees` | For `clean`, explicitly permit dirty descendant worktree deletion. |
-| `--force` | Force destructive cleanup for `clean` or `restart`. |
-| `--yes` | Confirm destructive `clean` or `restart` prompts. |
-| `--no-resume` | For `restart`, reset state and leave automation paused. |
-
-Without a ref, `gobby build stop` pauses future project ticks. With a ref it
-disables the subtree, cancels active agents, clears mutexes/stale agent claims,
-and resets stoppable stage work while retaining task history and artifacts.
-Task-scoped resume preserves isolation; a new build request resolves profile
-options again. Use a clean/restart preview before destructive recovery.
-These are operator controls; agents use the corresponding `gobby-tasks-ops` tools.
-Explicit `--project` rejects project-local coordinator refs such as `#N` or
-bare numbers because they would resolve in the target project.
-
-Cross-project coordinator launch:
-
-```bash
-gobby build '#14354' --project gobby-cli --coordinator current
-```
-
-For `/gobby plan` handoff, use:
-
-```bash
-gobby build .gobby/plans/example.md --planning-seed-state approved --completed-plan-review-rounds 1
-```
-
-`planning_seed_state=approved` starts at expansion. `needs_review` starts at
-the remaining planning review loop with the completed round count already
-applied. `drafted` starts from planning.
-
-`--plan-enhancement-rounds N` seeds the target number of constructive
-`plan-enhancer-old` rounds that run as a pre-adversary sub-loop inside the planning
-stage. Bundled profiles default to `0` (no enhancement); inspect the installed row
-before relying on that default. Pass `N > 0` to enable it when authorized. The explicit value wins over the build profile default, including an
-explicit `0`. Enhancement rounds are counted independently of the adversary
-review budget.
-
-### Profiles And Stage Defaults
-
-Operators use `gobby profiles list|show|create|update|enable|disable|restore|delete`
-and `gobby stages list|show|update|restore|delete|defaults`. These are command
-families, not literal pipe-separated commands; use each command's `--help` for
-required fields. Profiles distinguish installed and project scope.
-`gobby stages defaults TASK_TYPE` reads the default manifest; repeated
-`--set STAGE:POSITION` values replace it. Agents use `gobby-profiles`,
-`gobby-tasks` reads, and `gobby-tasks-ops` stage mutations.
-See [Dispatch](./dispatch.md#stage-registry) for registry constraints.
-
 ## Task Lifecycle
 
 Task commands resolve task references such as `#123`, UUIDs, unique prefixes,
@@ -614,12 +526,11 @@ gobby tasks ready [OPTIONS]
 gobby tasks blocked [OPTIONS]
 gobby tasks stats [OPTIONS]
 gobby tasks show TASK
-gobby tasks stages TASK
 ```
 
 | Command | Key options |
 | --- | --- |
-| `tasks list` | `--active`, `--project`, `--stage`, `--state`, `--claimed`, `--unclaimed`, `--ready`, `--blocked`, `--closed`, `--escalated`, `--limit`, `--group`, `--json` |
+| `tasks list` | `--active`, `--project`, `--claimed`, `--unclaimed`, `--ready`, `--blocked`, `--closed`, `--escalated`, `--limit`, `--group`, `--json` |
 | `tasks ready` | `--limit`, `--project`, `--priority`, `--type`, `--json`, `--flat` |
 | `tasks blocked` | `--limit`, `--project`, `--json` |
 | `tasks stats` | `--project`, `--json` |
@@ -638,26 +549,13 @@ gobby tasks delete TASKS... [OPTIONS]
 | Command | Key options |
 | --- | --- |
 | `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
-| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type`, `--checkout-mode` |
+| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type` |
 | `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
 | `tasks delete` | `--cascade`, `--unlink`, `--yes` |
 
-Agents use `gobby-tasks` MCP lifecycle tools for claims and closure, and
-`gobby-tasks-ops` for authorized stage review transitions. The CLI remains an
-operator interface. Quote shell task references, for example `'#123'`.
-
-### Stages And Review
-
-```bash
-gobby tasks advance TASK [--stage STAGE]
-gobby tasks review TASK --submit
-gobby tasks review TASK --approve
-gobby tasks review TASK --reject --reason REASON
-```
-
-`advance` starts a ready current stage or completes a non-review stage.
-Stages with required review must be submitted through `tasks review --submit`.
+Agents use `gobby-tasks` MCP lifecycle tools for claims and closure. The CLI
+remains an operator interface. Quote shell task references, for example `'#123'`.
 
 ### Search, Validation, And Maintenance
 
@@ -667,7 +565,6 @@ gobby tasks reindex [OPTIONS]
 gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
-gobby tasks repair-lifecycle [--task TASK] [--provenance LABEL] [--apply] [--force] [--json]
 gobby tasks backup [--output PATH] [--quiet]
 gobby tasks restore [--input PATH] [--quiet]
 ```
@@ -1306,7 +1203,7 @@ See [feedback HTTP routes](http-endpoints.md#feedback-review) and
 
 ## Working Profile Prerequisites
 
-The global collaboration profile is `USER.md`, not a build profile. Use
+The global collaboration profile is `USER.md`. Use
 `$gobby intro` and [Working Profile](README.md#working-profile) to edit its content;
 there is no dedicated personal-profile CLI command.
 

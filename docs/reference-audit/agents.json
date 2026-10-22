@@ -104,7 +104,7 @@
     {
       "path": "docs/guides/http-endpoints.md",
       "anchors": [
-        "agents-and-build-automation"
+        "agents"
       ],
       "evidence": [
         "source-audit",

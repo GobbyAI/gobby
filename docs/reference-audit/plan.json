@@ -43,7 +43,7 @@
         "categories-and-tdd",
         "coverage-records",
         "task-manifest",
-        "build-and-lifecycle-notes",
+        "lifecycle-notes",
         "validation"
       ],
       "evidence": [
@@ -85,8 +85,8 @@
     {
       "path": "docs/guides/http-endpoints.md",
       "anchors": [
-        "tasks-and-stages",
-        "agents-and-build-automation"
+        "tasks",
+        "agents"
       ],
       "evidence": [
         "source-inspection",

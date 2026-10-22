@@ -14,7 +14,6 @@
         "agent-workflow",
         "create-and-claim",
         "close",
-        "stage-manifests",
         "dependencies-and-ready-work",
         "search-and-listing",
         "task-expansion",
@@ -55,7 +54,6 @@
         "task-lifecycle",
         "listing-and-inspection",
         "create-update-close",
-        "stages-and-review",
         "search-validation-and-maintenance",
         "dependencies-labels-commits-and-diffs",
         "expansion",
@@ -70,7 +68,7 @@
     {
       "path": "docs/guides/http-endpoints.md",
       "anchors": [
-        "tasks-and-stages"
+        "tasks"
       ],
       "evidence": [
         "http-routes",

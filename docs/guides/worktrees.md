@@ -54,7 +54,7 @@ call_tool(
 
 ```mermaid
 flowchart LR
-    Task[Task stage] --> Backend{Isolation}
+    Task[Task] --> Backend{Isolation}
     Backend -->|worktree| WT[Git worktree]
     Backend -->|clone| CL[Git clone]
     Backend -->|none| Repo[Current repository]
@@ -95,11 +95,10 @@ Ownership is separate from status. `claim_worktree` sets `agent_session_id`;
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active: create_worktree
-    active --> merged: mark_worktree_merged or successful merge
-    active --> abandoned: abandon_worktree
-    active --> abandoned: cleanup_stale_worktrees (inactive > threshold)
-    abandoned --> active: reactivate_worktree
+    [*] --> active: create
+    active --> merged: mark merged or merge
+    active --> abandoned: abandon or stale cleanup
+    abandoned --> active: reactivate
     merged --> [*]: cleanup after grace window
 ```
 
@@ -312,11 +311,10 @@ be skipped; inspect per-item errors and skips despite top-level `success=True`.
 `force_delete_branch` explicitly abandons unmerged branch content and is not a
 normal cleanup option.
 
-## Worktrees And Task Automation
+## Worktrees And Task Isolation
 
-Task and build automation can select `none`, `worktree`, or `clone` isolation.
-When a stage runs in worktree isolation, the stage manifest and task artifacts
-are the source of truth for the worktree ID, clone ID, and target branch.
+Spawned agents can select `none`, `worktree`, or `clone` isolation. Task
+artifacts are the source of truth for the worktree ID, clone ID, and target branch.
 
 Docs leaf work may run inside a parent epic's isolation context instead of
 creating a separate worktree. That is expected: file edits still happen in the
@@ -496,6 +494,5 @@ policy never authorizes bypassing required reviews or publication authority.
 - [agents.md](./agents.md) - Agent spawning and isolation options
 - [tasks.md](./tasks.md) - Task lifecycle and task-linked commits
 - [mcp-tools.md](./mcp-tools.md) - MCP server and tool reference
-- [dispatch.md](./dispatch.md) - Stage manifests, automation, and workspace delivery
 
 _Last verified: 2026-09-12_

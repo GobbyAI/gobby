@@ -22,7 +22,7 @@
         "creation",
         "sync-and-merge",
         "stale-cleanup",
-        "worktrees-and-task-automation",
+        "worktrees-and-task-isolation",
         "clones",
         "merge-resolution-tools",
         "operational-guidance",

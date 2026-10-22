@@ -56,7 +56,7 @@ validation.
 
 ## Review Gates
 
-`qa-reviewer` checks TDD-required leaves before approval. Missing red evidence,
+Leaf close review (`task-close-reviewer`) checks TDD-required leaves before approval. Missing red evidence,
 green evidence, refactor/final-green evidence, exact test command, or
 supported-language test-quality audit output is a rejection. Outside Gobby, an
 unsupported-language warning plus focused repo-native validation satisfies the

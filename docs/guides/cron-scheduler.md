@@ -109,8 +109,7 @@ explicit agent, model, isolation or other spawn controls are required.
 
 For pipeline/agent actions, `overlap_policy` defaults to `skip_if_active`; `allow`
 permits overlapping child work but does not bypass admission capacity. Handler
-and legacy dispatcher actions are internal implementation paths, not general
-agent creation choices. Use `gobby build` for task dispatch.
+actions are internal implementation paths, not general agent creation choices.
 
 ## Run History
 
@@ -141,16 +140,16 @@ Only failures increment backoff; skipped/dispatched outcomes reset it.
 Startup recovery reconciles interrupted owned runs and linked child status.
 Do not repair cron bookkeeping with direct SQL.
 
-Cron history should represent real scheduled jobs. Internal dispatcher and
-pipeline-heartbeat automation is reported through daemon service status, not
+Cron history should represent real scheduled jobs. Internal pipeline-heartbeat
+automation is reported through daemon service status, not
 through synthetic `cron_runs`.
 
 ## System Automation And Nightly Jobs
 
-Dispatcher and pipeline-heartbeat automation now lives in `SystemAutomationLoop`,
+Pipeline-heartbeat automation lives in `SystemAutomationLoop`,
 controlled by `system_loops.automation.enabled` and
 `system_loops.automation.interval_seconds`. The loop runs daemon-owned
-maintenance, direct project dispatch ticks, and pipeline heartbeat checks without
+maintenance and pipeline heartbeat checks without
 creating cron history rows.
 
 Older databases can contain legacy rows such as `gobby:dispatcher` or
@@ -249,12 +248,11 @@ Never test a new schedule against the user's live jobs.
 - `src/gobby/scheduler/executor.py`: action execution.
 - `src/gobby/storage/cron.py`: cron persistence.
 - `src/gobby/storage/cron_models.py`: cron model types.
-- `src/gobby/system_automation.py`: daemon-owned dispatcher and heartbeat loop.
+- `src/gobby/system_automation.py`: daemon-owned maintenance and heartbeat loop.
 - `web/src/components/cron/`: Cron Jobs page.
 
 ## See Also
 
-- [dispatch.md](dispatch.md)
 - [pipelines.md](pipelines.md)
 - [orchestration.md](orchestration.md)
 - [agents.md](agents.md)

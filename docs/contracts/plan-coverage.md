@@ -15,7 +15,6 @@ This page is the canonical reading order for the plan-coverage contract:
 6. `src/gobby/install/shared/skills/proportionality/SKILL.md` for the shared
    over-engineering / right-sizing criterion used by plan, epic, and leaf review.
 7. `src/gobby/install/shared/skills/gobby/references/plan/expansion.md` for expansion obligations.
-8. `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` for QA gating.
 
 Parser and coverage implementation surfaces live under `gobby.plans.parser`,
 `gobby plan coverage`, and the evidence resolver used by the coverage matrix.
@@ -238,8 +237,8 @@ planned branch checkout. This authoring evidence adds no semantic-lint behavior.
 - A mentioned path containing `/` must match a target's normalized file path
   **exactly**. `web/src/app.tsx` is not covered by a target for `app.tsx`.
 - A mentioned bare filename matches **any** target file path sharing that
-  basename. `stages.yaml` is covered by a target for
-  `src/gobby/install/shared/registry/stages.yaml`.
+  basename. `expand-task.yaml` is covered by a target for
+  `src/gobby/install/shared/workflows/pipelines/expand-task.yaml`.
 
 A bare extension such as `.tsx` is not a path and never requires an entry.
 
@@ -417,9 +416,8 @@ plan's epic, labeled `deferred-from:<plan-id>:<section-id>` and `needs-planning`
 with validation criteria that list the original acceptance items, a `blocked-by`
 edge to the leaf created for each section the heading depends on, and a
 `blocked-by` edge from the epic. The task is a ledger entry for work the plan
-could not specify: `needs-planning` is a hold label, and automated dispatch
-never selects a task carrying a hold label (`needs-decision`, `clean-window`,
-`needs-planning`) even once its blockers close. It is planned or expanded by
+could not specify: a task carrying a hold label (`needs-decision`, `clean-window`,
+`needs-planning`) stays on hold even once its blockers close. It is planned or expanded by
 hand when the gate passes. The run checkpoint `deferral_task_map` names the
 created refs. Until
 the coordinator writes those refs over the plan placeholders, the provenance
@@ -484,8 +482,7 @@ requires fresh hashes. The Program Director then reviews the stamped plan and
 Josh approves it. Josh's approval gates expansion, not the manifest write:
 the Adversary stamps M1 before approval, and nothing expands until Josh
 approves the stamped bytes. The evidence-round
-protocol in this contract remains the path for spawned taskless reviewers and
-`gobby build` stage reviews.
+protocol in this contract serves the static-seat rounds.
 
 Before review evidence is minted, the service runs the shared deterministic
 validator against the exact captured snapshot bytes. Manifest-bearing plans use
@@ -498,8 +495,7 @@ before preparing a new round.
 Plan registration also waits for a real expansion root. `create_plan` requires
 `root_task_ref` and generates the initial coverage manifest, so the coordinator
 must not invent a planning task merely to register a draft. Manual expansion
-registers against its real epic; `gobby build` creates or reuses its real root
-and preserves its established unattended stage-manifest sequence.
+registers against its real epic.
 
 ## Coverage Records
 
@@ -667,13 +663,13 @@ validation strictness:
 
 | Mode | Manifest | Used by | Behavior |
 | --- | --- | --- | --- |
-| `parse_mode="draft"` | optional | `validate_plan_file` (file-only planner gate run after materialization and before every adversary spawn); interactive canonical plans; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
-| `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; taskless adversary/coordinator post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
+| `parse_mode="draft"` | optional | `validate_plan_file` (file-only planner gate run after materialization and before every review round); interactive canonical plans; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
+| `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; adversary/coordinator post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
 | `parse_mode="strict"` (default) | required | callers that want full validation regardless of context | Same strict invariants as `expansion`; default so any caller that omits `parse_mode` keeps full validation. |
 
 The deadlock between "review the plan" and "manifest must exist" is resolved by
 construction: after materialization, the planner-side `validate_plan_file` gate
-parses in `draft` mode before each taskless adversary spawn. The adversary then
+parses in `draft` mode before each review round. The adversary then
 runs qualitative review without re-parsing and, on clean review, returns exact
 server-derived routing decisions and manifest entries without editing the plan.
 After user acceptance, the coordinator applies those entries through
@@ -683,7 +679,7 @@ in `expansion` mode. A staged conversational draft cannot enter this sequence.
 
 ### Manifest-on-Approval Contract
 
-First drafts are narrative-only. An approving `plan-adversary-taskless-old` run
+First drafts are narrative-only. An approving `plan-adversary` review
 returns server-derived manifest entries; the coordinator writes
 `## M1 Task Manifest` through the review-evidence apply path. When the user
 skips that optional review, the interactive coordinator uses the explicit
@@ -731,9 +727,8 @@ and after. Design-class findings stay prose; the planner owns those edits.
 
 ### Enhancement And Over-Engineering Vocabulary
 
-A constructive `plan-enhancer-old` pass is recommended and optional for interactive
-planning; autonomous `gobby build` controls it with
-`--plan-enhancement-rounds`. It loads `gobby:references/plan/enhancement.md` and `proportionality` and
+A constructive `plan-enhancer` pass is recommended and optional for interactive
+planning. It loads `gobby:references/plan/enhancement.md` and `proportionality` and
 emits ranked Better/Bigger suggestions. The enhancer is advisory only: it never
 approves, rejects, edits the plan file, or writes the manifest. Fold-ins are the
 planner's or coordinator's responsibility. When adversarial review is selected,
@@ -836,7 +831,7 @@ Registration begins only when a real implementation root exists. The
 `gobby-plans:create_plan` surface requires that `root_task_ref` and generates
 the initial coverage manifest. Drafting and review therefore create no
 synthetic planning task or registry row; the canonical file remains the sole
-plan authority until manual expansion or build supplies the real root.
+plan authority until manual expansion supplies the real root.
 
 `plan_kind` controls how the plan participates in coverage verification:
 
@@ -862,8 +857,8 @@ before applying, which still refuses closed, claimed, committed, or in-progress
 targets.
 
 Reconciliation records a `reconciliation` checkpoint on the new run.
-Classification reads `closed_at`, `closed_reason`, and `claimed_by_session_id`
-with `SELECT … FOR UPDATE` on the apply transaction, then checks stage progress.
+Classification reads closure, claim, commit, and escalation metadata with
+`SELECT … FOR UPDATE` on the apply transaction.
 A reuse write runs in that same transaction, so the row lock is held until
 commit. A claim or close that commits first leaves the leaf untouched or
 preserved. A reuse that commits first is what a later claim or close observes.
@@ -872,8 +867,9 @@ preserved. A reuse that commits first is what a later claim or close observes.
   section's leaf, except one closed as obsolete. Apply does not reopen it,
   edit it, or create another leaf for the section. Coverage QA counts the
   preserved leaf when its `covers:` label still matches the section.
-- **Reuse.** An open prior leaf that is unclaimed and has not entered a stage
-  is updated in place when the section text changes. No second task is created.
+- **Reuse.** An open prior leaf that is unclaimed, has no linked commits, and
+  is not escalated is updated in place when the section text changes. No second
+  task is created.
   Its labels are the same set a newly created leaf would receive, including
   `parallel:<execution_group>` when the section names one.
 - **Create.** A section new to the manifest gets a new leaf. Dependency edges
@@ -886,8 +882,9 @@ preserved. A reuse that commits first is what a later claim or close observes.
   apply does not change `parent_task_id`. The destination phase epic may gain
   a blocker edge on that leaf.
 - **Report.** A prior leaf whose section was removed is listed under `removed`
-  and left in place, including when it is closed. A claimed or in-progress open
-  leaf is listed under `untouched` and is not reset, reassigned, or edited.
+  and left in place, including when it is closed. An open leaf that is claimed,
+  has linked commits, or is escalated is listed under `untouched` and is not
+  reset, reassigned, or edited.
   Outgoing blockers of preserved and untouched leaves stay as they are. A spec
   edge that would add one is listed under `skipped_edges` and is not written.
   New and reused leaves may still depend on those leaves. Closed obsolete

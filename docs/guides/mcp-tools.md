@@ -232,9 +232,8 @@ capability guides and agent reference library.
 | Registry | Responsibility |
 | --- | --- |
 | `gobby-tasks` | Task lifecycle, dependencies, labels, and task queries |
-| `gobby-tasks-ops` | Task artifacts, stages, expansion, build, and delivery |
+| `gobby-tasks-ops` | Task artifacts, expansion, and delivery |
 | `gobby-plans` | Plan registry |
-| `gobby-profiles` | Build profiles |
 | `gobby-feedback` | Feedback batches and outcomes |
 | `gobby-results` | Stored oversized tool results |
 | `gobby-sessions` | Sessions, transcripts, handoffs, and terminals |

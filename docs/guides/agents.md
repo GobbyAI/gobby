@@ -272,11 +272,6 @@ them; they complete their run through `end_agent_run`. Their own definitions
 control provider, lifetime, and workflow choices, so standing-seat invariants
 do not apply to them.
 
-Build routing still names definitions whose bodies now serve standing seats.
-Stages that depend on those bodies terminating can degrade. That limitation is
-accepted during build retirement; this catalogue does not supply compatibility
-one-shot copies. See [Orchestration](./orchestration.md) for dispatch behavior.
-
 ## Strict Execution Fields
 
 Several execution fields use strict YAML types:
@@ -305,7 +300,7 @@ Valid:
 model: "gpt-5.6-sol"
 reasoning_effort: xhigh
 reasoning_required: false
-fallback_agent: "qa-reviewer"
+fallback_agent: "developer"
 api_base: "http://localhost:1234/v1"
 api_token: "${LM_STUDIO_API_KEY}"
 ```
@@ -329,8 +324,8 @@ prompts:
     Focus on accuracy, structure, terminology, and reader clarity.
   agent: |
     Claim the assigned docs task, audit the guide against code-owned sources,
-    make a scoped docs change, run focused verification, commit, hand off the
-    configured review stage, and end the agent run.
+    make a scoped docs change, run focused verification, commit, close the task,
+    and end the agent run.
 
 workflows:
   rule_selectors:
@@ -343,7 +338,7 @@ workflows:
 step_workflow:
   variables:
     task_claimed: false
-    review_submitted: false
+    task_closed: false
   steps:
     - name: claim
       allowed_tools:
@@ -369,14 +364,14 @@ step_workflow:
       blocked_mcp_tools:
         - "gobby-tasks:reopen_task"
       on_mcp_success:
-        - server: gobby-tasks-ops
-          tool: submit_for_review
+        - server: gobby-tasks
+          tool: close_task
           action: set_variable
-          variable: review_submitted
+          variable: task_closed
           value: true
       transitions:
         - to: finish
-          when: "vars.review_submitted"
+          when: "vars.task_closed"
 
     - name: finish
       allowed_tools:
@@ -530,13 +525,13 @@ Use a fresh key for a separate keyed hold. Only the waiting session can call
 `cancel_coordination_wait(wait_id=...)`.
 
 `send_message` uses explicit targets: `global`, `project`, `parent`, `session`,
-`agent`, and `build`. Spawned agents may omit `target`; it defaults to `parent`.
+and `agent`. Spawned agents may omit `target`; it defaults to `parent`.
 Other callers must pass `target`. `global` reaches every other live non-system
 session owned by the sender's machine across projects. A targetless `project` send
 reaches the same population in the sender's project and is the default for
 repository coordination. System-originated
 project sends must provide `project_id`; ordinary sessions derive their project and
-must not override it. `session`, `agent`, and `build` require `target_id`.
+must not override it. `session` and `agent` require `target_id`.
 
 Message text never triggers a wake. Set `wake=true` only when immediate processing is
 intended; it may steer an active turn. Interrupted sessions and sessions awaiting input,
@@ -600,7 +595,7 @@ Each definition declares one of three things:
 | Value | The spawned agent may spawn |
 | --- | --- |
 | `["*"]` | Any agent |
-| `[merge-worker]` | Only the named agents |
+| `[developer]` | Only the named agents |
 | `[]` or omitted | No agent |
 
 `"*"` stands alone; mixing it with names fails validation. Every agent the call
@@ -616,7 +611,7 @@ can start must be allowed, or the whole call is refused:
 A caller, run or definition the rule cannot resolve refuses the spawn. Disabling
 the installed rule row lifts the limit; there is no hardcoded allowlist. The
 agent depth limit applies independently. Pipeline `mcp` steps and daemon-driven
-spawns (build dispatch, close validation) do not pass through `before_tool`, so
+spawns (close validation) do not pass through `before_tool`, so
 the rule does not govern them.
 
 ## Recovery Checkpoints
@@ -641,7 +636,7 @@ Isolation is a runtime setting for spawned runs:
 | `inherit` | Definition-only; resolves to `none` unless the spawn passes `checkout_mode` |
 
 Docs leaf work may run inside a parent epic's existing isolation context. In
-that case the agent definition can keep `checkout_mode: inherit`, and dispatch
+that case the agent definition can keep `checkout_mode: inherit`, and the spawn
 provides the concrete worktree or clone context.
 
 ## Recommended Patterns
@@ -652,7 +647,7 @@ provides the concrete worktree or clone context.
 - Keep interactive domain guidance in `prompts.persona`; keep assigned-task and
   run-lifecycle instructions in `prompts.agent`.
 - Seed only variables the agent owns, such as `assigned_task_id` or
-  stage-specific gates.
+  task-specific gates.
 - Use inline steps for lifecycle phases: claim, load required skills,
   implement, review handoff, finish.
 - Use `end_agent_run` as the explicit successful termination path for spawned
@@ -664,6 +659,6 @@ provides the concrete worktree or clone context.
 - [Workflow Rules](./workflow-rules.md) for semantic rule events
 - [Rules](./rules.md) for hook-time enforcement
 - [Pipelines](./pipelines.md) for deterministic automation
-- [Orchestration](./orchestration.md) for stage dispatch and review flow
+- [Orchestration](./orchestration.md) for agent work, isolation and the spawn cap
 
 _Last verified: 2026-10-10_

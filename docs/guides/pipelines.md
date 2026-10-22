@@ -6,7 +6,7 @@ wait on completion events. A pipeline is useful when the control flow should be
 explicit and repeatable.
 
 For the broader system model, see [Workflows Overview](./workflows-overview.md).
-For automated task dispatch, see [Orchestration](./orchestration.md).
+For spawned agent work, see [Orchestration](./orchestration.md).
 
 ## What Pipelines Are For
 
@@ -19,9 +19,8 @@ Use a pipeline when you need:
 - nested runs with explicit completion waiting
 - standalone maintenance, merge, or expansion helpers
 
-Use an agent when you need open-ended reasoning. Use dispatch when you need to
-advance task lifecycle stages. Use a pipeline when the sequence itself is the
-contract.
+Use an agent when you need open-ended reasoning. Use a pipeline when the
+sequence itself is the contract.
 
 ## Public Pipeline Tools
 
@@ -118,7 +117,7 @@ description: Spawn a reviewer and wait for completion
 
 inputs:
   task_id: null
-  reviewer_agent: "qa-reviewer"
+  reviewer_agent: "task-close-reviewer"
 
 steps:
   - id: spawn_reviewer
@@ -504,11 +503,7 @@ Enabled installed definitions marked `expose_as_tool` can register a dynamic
 its actual schema; do not assume editing the flag instantly registers a tool.
 The dynamic tool uses the same project-aware run and completion path.
 
-## Dispatch Boundary
-
-Pipelines are not the primary autonomous task-dispatch loop. Current task
-automation starts with `gobby build` and continues through deterministic
-dispatch rules in `src/gobby/dispatch/rules.py`.
+## When To Use Pipelines
 
 Use pipelines for:
 
@@ -518,17 +513,8 @@ Use pipelines for:
 - standalone maintenance jobs
 - reusable merge or expansion helpers
 
-Use dispatch for:
-
-- scanning opted-in tasks
-- lifecycle-stage advancement
-- enforcing `allow_automation`, unattended policy, isolation, and the resolved stage
-  manifest
-- bounded worker spawning under the global agent-slot cap
-
 Hook and workflow rules are authored against semantic workflow events such as
-`turn_start` and `turn_end`; dispatch rules are deterministic manifest-state
-rules evaluated on heartbeat ticks. Provider/runtime hook names are
+`turn_start` and `turn_end`. Provider/runtime hook names are
 compatibility details, while agent termination remains a separate lifecycle
 step through `gobby-agents:end_agent_run`.
 
@@ -536,7 +522,7 @@ step through `gobby-agents:end_agent_run`.
 
 - [Agents](./agents.md) for worker definitions and spawning
 - [Rules](./rules.md) for hook-time enforcement
-- [Orchestration](./orchestration.md) for stage-manifest task automation
+- [Orchestration](./orchestration.md) for spawned agent work and isolation
 - [Workflows Overview](./workflows-overview.md) for the complete workflow model
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 

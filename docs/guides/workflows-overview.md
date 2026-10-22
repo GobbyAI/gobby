@@ -6,11 +6,11 @@ Codex, and Antigravity sessions all flow through the same normalized hook events
 session variables, rule engine, and MCP tool surface.
 
 This guide is the high-level map. Use it to decide whether behavior belongs in
-a rule, an agent definition, a pipeline, or stage-driven dispatch.
+a rule, an agent definition, or a pipeline.
 
 ## Mental Model
 
-Gobby has five layers that compose together:
+Gobby has four layers that compose together:
 
 | Layer | Purpose | Where it lives | Runtime surface |
 | --- | --- | --- | --- |
@@ -18,9 +18,8 @@ Gobby has five layers that compose together:
 | Agents | Define persona, restrictions, and step workflows | `agent_definitions` + optional `agent_step_workflows` / bundled YAML | `gobby-workflows` definitions, `gobby-agents` runtime |
 | Variables | Default session values | `session_variable_defaults` / bundled YAML | `gobby-workflows` variable tools |
 | Pipelines | Run deterministic multi-step automation | `pipeline_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
-| Dispatch | Coordinate task stages, agents, isolation, and completion | Stage manifests + task/agent tooling | `gobby-tasks`, `gobby-tasks-ops`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
 
-The shared state across all five layers is:
+The shared state across all four layers is:
 
 - Session variables, which rules and step workflows read and mutate.
 - Domain definitions, which live in the typed tables above and are synced from
@@ -29,7 +28,7 @@ The shared state across all five layers is:
   and an immutable snapshot taken at spawn or whole-definition activation.
   The snapshot retains activation provenance; live step policy uses the
   installed definition as described below.
-- Completion IDs and notifications, which let agents, pipelines, and dispatch
+- Completion IDs and notifications, which let agents and pipelines
   reconnect long-running work after a daemon restart or parent-session wait.
 
 ## How The Pieces Fit
@@ -90,31 +89,6 @@ Pipeline `wait` steps block on completion IDs such as agent run IDs or nested
 pipeline execution IDs. Agent sessions use the applicable durable `wait_for_*`
 primitive and yield; status inspection is diagnostic, not a polling wait loop.
 
-### Dispatch
-
-Task automation is state-driven dispatch. `gobby build` writes explicit
-automation state onto a plan, epic, or leaf task; the dispatcher then evaluates
-ordered lifecycle rules and spawns workers only when task state says the next
-stage is ready.
-
-Dispatch composes:
-
-- Build state from `gobby build`: `allow_automation`, `unattended`,
-  `checkout_mode`, resolved stage manifest, `assigned_agent`,
-  `additional_skills`, target branch, and PR/merge controls
-- Task lifecycle from `gobby-tasks`
-- Sparse dispatch state from `task_artifacts`
-- Per-task leases from `task_dispatch_mutex`
-- Append-only audit from `task_lifecycle_events`
-- Agent runtime from `gobby-agents`
-- Isolation from `gobby-worktrees` or `gobby-clones`
-- Landing and conflict handling from existing merge tools
-
-Docs leaf tasks can run inside the parent epic's isolation context. A docs leaf
-may have its own task worktree while its `target_branch` points at the nearest
-parent integration branch; merge-stage dispatch uses the stored workspace or
-clone metadata to land that work.
-
 ## Current Public Surface
 
 These are the servers readers should think in terms of when authoring workflow
@@ -124,8 +98,8 @@ behavior today:
 | --- | --- |
 | `gobby-workflows` | Rule, variable, agent-definition, and pipeline definitions; step-status and evaluation tools; pipeline execution and pipeline `wait` steps |
 | `gobby-agents` | Agent spawning, runtime inspection, definition activation, persona switching, inter-agent messaging, and commands |
-| `gobby-tasks` | Task lifecycle, dependencies, readiness, review states, close, and escalation |
-| `gobby-tasks-ops` | Build, artifact, stage-transition, review, expansion-run, and affected-file helpers |
+| `gobby-tasks` | Task lifecycle, dependencies, readiness, close, and escalation |
+| `gobby-tasks-ops` | Artifact, expansion-run, and affected-file helpers |
 | `gobby-worktrees` | Worktree creation, sync, merge, and cleanup |
 | `gobby-clones` | Clone-based isolation lifecycle |
 | `gobby-merge` | AI-assisted conflict resolution for merge flows |
@@ -137,10 +111,9 @@ behavior today:
 | Block `git push`, destructive shell, or invalid task lifecycle actions | Rule | Reactive enforcement belongs at hook time |
 | Inject reminders or dynamic context into the next agent turn | Rule | `inject_context` delivers text; `load_skill` emits an explicit fetch directive |
 | Guide a worker through claim → implement → terminate | Agent | Inline step workflows model phased behavior |
-| Spawn child workers for ready tasks | Dispatch rule | Task lifecycle dispatch owns autonomous worker routing |
+| Spawn child workers for ready tasks | Pipeline | Runbooks launch seats through `spawn_agent` |
 | Wait for a spawned worker or nested run to finish | Pipeline | `wait` steps block on completion IDs and survive daemon restarts |
-| Keep task automation moving on a heartbeat | Dispatch | The dispatcher re-evaluates task state each heartbeat |
-| Run a deterministic approval sequence outside task dispatch | Pipeline | Pipelines still own explicit, resumable sequences |
+| Run a deterministic approval sequence | Pipeline | Pipelines still own explicit, resumable sequences |
 
 ## Event Flow
 
@@ -159,7 +132,7 @@ remain Gobby-owned; use distinct custom rules and intentional selector changes.
 4. The rule engine evaluates matching rules in priority order and returns a
    merged response: allow/block, context injections, rewritten input, variable
    updates, and deferred MCP calls.
-5. Dispatch rules or explicit callers use MCP tools to spawn agents, persist
+5. Agents, pipelines, or explicit callers use MCP tools to spawn agents, persist
    completion IDs, inspect task/agent/pipeline state, and continue work.
 
 Two important abstractions here are `turn_start` and `turn_end`:
@@ -184,8 +157,8 @@ Keep this split clear:
   `agent_step_workflows` child), `session_variable_defaults`, and
   `pipeline_definitions`.
 - **Runtime state** is session-specific: variables, `agent_step_instances`
-  snapshots, agent runs, pipeline executions, completion subscriptions, task
-  stage manifests, and task claims. Definition edits preserve the instance's
+  snapshots, agent runs, pipeline executions, completion subscriptions, and
+  task claims. Definition edits preserve the instance's
   current step and variables.
 
 After definition sync, the next tool call resolves the installed agent

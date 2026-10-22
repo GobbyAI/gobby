@@ -27,8 +27,6 @@ committed when local live activation fails and reports the failed-live keys.
 | `.gobby/mcp/servers/*.yaml` / `~/.gobby/mcp/servers/*.yaml` | Project / machine | Instance YAML synced into `mcp_servers` |
 | `secrets` table (`project_id` scoped) | Project then machine | MCP template secrets referenced as `$secret:<name>` |
 | `.gobby/project.json` | Project | Project identity, verification commands, sandbox write roots, and project hook settings |
-| `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
-| `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
 
 `~/.gobby/config.yaml` is an export/import artifact. Daemon startup reads the
 bootstrap topology, registry defaults, and one coherent database snapshot.
@@ -586,7 +584,7 @@ hooks:
   provider_timeout: 120
 ```
 
-Task lifecycle automation is stage-manifest based. Docs leaf work can run inside
+Docs leaf work can run inside
 a parent epic's isolation context. Agent process termination is separate from
 task lifecycle completion; agent runs still release resources through
 `gobby-agents:end_agent_run`.
@@ -875,7 +873,6 @@ or global scope, `enabled: true`, and that secret parameters resolve
 ## See Also
 
 - [cli-commands.md](./cli-commands.md) - CLI command reference
-- [dispatch.md](./dispatch.md) - Build lifecycle and dispatcher behavior
 - [memory.md](./memory.md) - Memory configuration and operations
 - [observability.md](./observability.md) - Logs, metrics, traces, and collector deployment
 - [rules.md](./rules.md) - Rule engine configuration

@@ -61,7 +61,7 @@ Start with the file whose surface matches the failing operation:
 | `hooks.log` | Hook ingestion, dispatch, adapter, and lifecycle behavior |
 | `llm.log` | Feature LLM calls, candidate routing, latency, outcomes, and provider circuit-breaker events |
 | `mcp.log` | MCP proxy, server, client, discovery, and MCP route behavior |
-| `automation.log` | Scheduler, dispatcher, build, system automation, and pipeline-heartbeat behavior |
+| `automation.log` | Scheduler, system automation, and pipeline-heartbeat behavior |
 | `ui.log` | UI development-server stdout/stderr |
 | `*-parser-error.log` | Per-CLI transcript parser diagnostics, such as `codex-parser-error.log` |
 
@@ -279,8 +279,7 @@ the bounded health counters:
   `mcp`, `automation`, and `parser`, with severities `WARNING`, `ERROR`, and
   `CRITICAL`. `errors.log` is an aggregate file and is not a metric surface.
 - `automation_events_total{component,outcome}` uses `cron` outcomes `fired`,
-  `succeeded`, and `failed`; `dispatcher` outcomes `succeeded`, `failed`, and
-  `skipped`; and `pipeline-heartbeat` outcomes `recovered` and `failed`.
+  `succeeded`, and `failed`; and `pipeline-heartbeat` outcomes `recovered` and `failed`.
 
 Useful PromQL queries:
 
@@ -291,7 +290,7 @@ sum by (component, outcome) (rate(automation_events_total[5m]))
 increase(automation_events_total{component="pipeline-heartbeat",outcome="failed"}[15m])
 ```
 
-`automation.log` explains individual scheduler and dispatcher decisions.
+`automation.log` explains individual scheduler decisions.
 Persisted `cron_runs` remains the source of truth for cron run history; use the
 `gobby-cron` run-history tools when exact run status and output matter.
 

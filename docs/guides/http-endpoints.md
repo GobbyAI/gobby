@@ -9,8 +9,7 @@ three HTTP-facing surfaces:
 
 The route source of truth is `src/gobby/servers/app_factory.py` plus the router
 modules under `src/gobby/servers/routes/`. This reference is not exhaustive:
-some surfaces (for example `/api/profiles`, `/api/llm`,
-`/api/embeddings`, chat attachments, and stage-registry mutation routes) are
+some surfaces (for example `/api/llm`, `/api/embeddings`, and chat attachments) are
 documented in their feature guides rather than here.
 
 Admin route helpers define paths relative to `/api/admin`; session and task
@@ -444,7 +443,7 @@ route is operator-only and uses a simplified HTTP path; it does not verify
 runtime event filtering, retries, address policy, or blocking decisions.
 See [Hook Schemas](./hook-schemas.md) and [Webhooks](./webhooks-and-plugins.md).
 
-## Tasks And Stages
+## Tasks
 
 These routes support operator/client interfaces. Agents use the `gobby-tasks`
 and `gobby-tasks-ops` MCP lifecycle tools so session attribution and workflow
@@ -460,7 +459,7 @@ gates remain in the agent call path; HTTP claim/release is not an agent workarou
 | `POST` | `/api/tasks/{task_id}/claim` | Claim a task. |
 | `POST` | `/api/tasks/{task_id}/release-claim` | Release a task claim. |
 | `POST` | `/api/tasks/{task_id}/escalate` | Escalate a task. |
-| `POST` | `/api/tasks/{task_id}/de-escalate` | Return an escalated task to its preserved stage. |
+| `POST` | `/api/tasks/{task_id}/de-escalate` | Clear task escalation. |
 | `POST` | `/api/tasks/{task_id}/close` | Close a task. |
 | `POST` | `/api/tasks/{task_id}/reopen` | Reopen a task. |
 | `GET` | `/api/tasks/{task_id}/comments` | List task comments. |
@@ -469,23 +468,12 @@ gates remain in the agent call path; HTTP claim/release is not an agent workarou
 | `GET` | `/api/tasks/{task_id}/dependencies` | Read task dependency tree. |
 | `POST` | `/api/tasks/{task_id}/dependencies` | Add a dependency. |
 | `DELETE` | `/api/tasks/{task_id}/dependencies/{depends_on_id}` | Remove a dependency. |
-| `GET` | `/api/tasks/{task_id}/stages` | Read a task stage manifest. |
-| `PATCH` | `/api/tasks/{task_id}/stages/{stage_name}` | Apply a stage transition or stage manifest mutation. |
-| `GET` | `/api/stages/registry` | List stage registry entries. |
-| `PUT` | `/api/stages/registry/{name}` | Update stage registry metadata. |
-| `POST` | `/api/stages/registry/{name}/restore` | Restore a bundled stage definition. |
-| `DELETE` | `/api/stages/registry/{name}` | Delete an unused stage definition. |
-| `GET` | `/api/task-types/{task_type}/default-stages` | Read default stages for a task type. |
-| `PUT` | `/api/task-types/{task_type}/default-stages` | Replace default stages for a task type. |
 
 `PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
 `description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,
-`validation_criteria`, `allow_automation`, and `checkout_mode`. `checkout_mode` must be
-`none`, `worktree`, or `clone`. Retargeting to `worktree` is rejected when clone
-artifacts exist, and retargeting to `clone` is rejected when worktree artifacts
-exist.
+and `validation_criteria`.
 
-## Agents And Build Automation
+## Agents
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -510,54 +498,11 @@ exist.
 | `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
 | `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
 | `POST` | `/api/agents/cleanup` | Reconcile stale runs using timeout criteria. |
-| `POST` | `/api/build` | Start lifecycle automation. |
-| `POST` | `/api/build/stop` | Stop lifecycle automation. |
-| `POST` | `/api/build/resume` | Resume lifecycle automation. |
-| `POST` | `/api/build/clean` | Clean lifecycle automation artifacts. |
-| `POST` | `/api/build/restart` | Restart lifecycle automation. |
-| `GET` | `/api/build/status` | Read compact build state for a task tree or build input. |
-| `GET` | `/api/build/dispatch/explain` | Explain dispatcher eligibility without mutation. |
-| `GET` | `/api/build/history` | List recent build run and event history. |
 
 Agent HTTP routes are operator/client interfaces. Spawn requires `task_id` and
 uses `agent_name`; MCP spawn requires `prompt` and uses `agent`. HTTP batches
 contain individual spawn requests. `GET /api/agents/launch-defaults` is read-only;
 there is no corresponding PUT route. Use configuration management for changes.
-
-`POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
-`dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,
-`target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
-`max_retries`, the planning-seed fields, and build isolation fields. `checkout_mode`
-accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
-`clone`) and `clone` are supported aliases. Contradictory isolation
-inputs return `400` instead of silently choosing one value.
-
-The planning-seed fields are `planning_seed_state` (`drafted`, `needs_review`,
-or `approved`), `completed_plan_review_rounds` (already-completed adversary
-rounds, `>= 0`), and `plan_enhancement_rounds` (target constructive
-`plan-enhancer-old` rounds before the adversary gate, `>= 0`, default `0`). Presence
-in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
-`0` overrides the build profile default.
-
-Build control requests accept `project_id`; stop/resume omit `input_ref` for
-project-wide control. A task stop also cancels agents and resets stoppable work;
-it is broader than project tick pause. Clean/restart require a target and
-`yes=true` unless previewing with `dry_run=true`. Clean accepts
-`delete_dirty_worktrees`; restart accepts `no_resume`. Control previews may
-record history. Use the current request model for restart-specific overrides.
-
-Build profile operator/client routes are:
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/profiles` | List scoped profiles. |
-| `POST` | `/api/profiles` | Create a profile. |
-| `GET` | `/api/profiles/{name}` | Show a profile in the selected source/project scope. |
-| `PUT` | `/api/profiles/{name}` | Update mutable profile fields. |
-| `POST` | `/api/profiles/{name}/restore` | Restore an installed bundled profile. |
-| `DELETE` | `/api/profiles/{name}` | Soft-delete, or purge a project profile. |
-| `POST` | `/api/profiles/{name}/enable` | Enable a profile. |
-| `POST` | `/api/profiles/{name}/disable` | Disable a profile. |
 
 ## Memory, Skills, Workflows, And Rules
 
@@ -920,8 +865,8 @@ over 6,291,470 bytes returns 413. Both declared and streamed body sizes are boun
 There is no revision/ETag write precondition: preserve the current profile before
 replacement and reconcile concurrent updates. GET strips surrounding whitespace.
 
-This profile API is separate from the machine-local checkout browser and from
-build-profile management. Assigned agents may use it for an authorized intro
+This profile API is separate from the machine-local checkout browser.
+Assigned agents may use it for an authorized intro
 request; installation and legacy migration remain operator operations. See
 [Working Profile](README.md#working-profile) and
 [prerequisites](cli-commands.md#working-profile-prerequisites).

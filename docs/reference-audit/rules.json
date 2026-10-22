@@ -82,7 +82,6 @@
         "rules",
         "agents",
         "pipelines",
-        "dispatch",
         "current-public-surface",
         "decision-guide",
         "event-flow",

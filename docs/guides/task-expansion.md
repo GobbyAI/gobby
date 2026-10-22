@@ -1,17 +1,14 @@
 # Task Expansion
 
 Task expansion turns a high-level task or typed plan into a concrete task tree
-with dependencies, affected-file annotations, stage manifests, and optional TDD
-structure. The current system is **run-based**: `start_expansion_run` creates an
+with dependencies, affected-file annotations, and optional TDD structure. The current system is **run-based**: `start_expansion_run` creates an
 expansion run, `ExpansionService` compiles a normalized spec, and the same run
 stores compile, apply, validation, and QA checkpoints.
 
 This guide covers the current flow: how plans feed expansion, what gets
-stored on the run, how validation works, and how lifecycle automation picks up
-the expanded tree.
+stored on the run, and how validation works.
 
-For dispatch after expansion, see [Dispatch](./dispatch.md) and
-[Orchestration](./orchestration.md).
+For spawned agent work after expansion, see [Orchestration](./orchestration.md).
 
 ---
 
@@ -29,8 +26,7 @@ flowchart LR
         VALIDATE --> COVERAGE["contract coverage QA"]
     end
 
-    PIPELINE --> TREE["Task tree<br/>stage manifests + dependencies"]
-    TREE --> DISPATCH["build_task / dispatch heartbeat"]
+    PIPELINE --> TREE["Task tree<br/>dependencies"]
 ```
 
 The expansion flow:
@@ -41,15 +37,13 @@ The expansion flow:
 3. **Compile**: `ExpansionService.compile_run()` builds a normalized compiled
    spec with phases, tasks, dependencies, execution groups, and contract
    metadata.
-4. **Apply**: `ExpansionService.apply_run()` creates the task tree, initializes
-   child stage manifests, wires dependencies, and attaches affected files.
+4. **Apply**: `ExpansionService.apply_run()` creates the task tree, wires
+   dependencies, and attaches affected files.
 5. **Validate**: `validate_expansion_run` checks the compiled spec and, after
    apply, the created-task map.
-6. **Dispatch**: `build_task` or the dispatcher runs the resulting stage rows;
-   workflow rules operate on semantic lifecycle events such as `turn_start` and
-   `turn_end`.
 
-Rule authors should target those semantic events. Raw provider/runtime hooks
+Workflow rules operate on semantic lifecycle events such as `turn_start` and
+`turn_end`. Rule authors should target those semantic events. Raw provider/runtime hooks
 such as `before_agent`, `after_agent`, and `stop` are adapter details below the
 main rule-authoring API.
 
@@ -93,7 +87,6 @@ not finished: correct the task-tree evidence and rerun coverage QA.
 | `plan_file` | Optional plan path relative to the project root |
 | `auto_apply` | Apply the compiled spec after compile; default `true` |
 | `subscribe_caller` | Register the direct caller for completion; default `true`; pipeline uses `false` |
-| `stage_pipeline_mode` | Optional internal stage-pipeline behavior; inspect caller context before overriding |
 | `force_new` | Create a new run even if another run is active |
 | `reset_output` | Delete existing generated output before starting |
 | `provider` / `model` | Optional LLM provider/model overrides |
@@ -223,26 +216,20 @@ draft time.
 
 `ExpansionService.apply_run()` turns the compiled spec into tasks:
 
-1. Derives child stage manifests from the parent task manifest.
-2. Creates phase sub-epics for multi-phase expansions.
-3. Creates implementation tasks under the correct parent.
-4. Copies category, priority, task type, description, validation text,
+1. Creates phase sub-epics for multi-phase expansions.
+2. Creates implementation tasks under the correct parent.
+3. Copies category, priority, task type, description, validation text,
    assigned agent, and additional skills onto created tasks.
-5. Adds dependency edges from the compiled graph.
-6. Attaches affected files through the affected-files manager.
-7. Adds `expansion-run:<run_id>` provenance and `parallel:<group>` labels.
-8. Inherits target branch, automation settings, unattended mode, and isolation
-   from the parent.
-9. Stores `task_id_map`, `created_task_ids`, and apply validation back onto the
+4. Adds dependency edges from the compiled graph.
+5. Attaches affected files through the affected-files manager.
+6. Adds `expansion-run:<run_id>` provenance and `parallel:<group>` labels.
+7. Copies the parent's target branch to created leaves.
+8. Stores `task_id_map`, `created_task_ids`, and apply validation back onto the
    run.
-10. Completes the parent expansion stage when that stage is current.
 
 If a `plan_file` was provided, created tasks include a short plan reference
 block. The created task description remains authoritative; the plan is
 supporting context.
-
-When development is the only enabled stage on the parent, expansion completes as
-a dev-only run without creating child tasks.
 
 ---
 
@@ -259,14 +246,12 @@ coordinator folds accepted suggestions into the plan, validates, and processes
 any selected adversary review. The adversary returns server-derived manifest
 entries; only the coordinator applies M1 through the approved API. Base validation,
 explicit implementation approval and expansion-mode validation remain mandatory.
-Build controls enhancement through `--plan-enhancement-rounds`; inspect the
-selected profile and stage settings in the [orchestration guide](./orchestration.md#build-lifecycle).
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant P as /gobby plan
-    participant N as plan-enhancer-old
+    participant N as plan-enhancer
     participant R as plan-adversary
     participant E as /gobby expand
     participant EP as expand-task pipeline
@@ -455,21 +440,6 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 })
 ```
 
-### Via Lifecycle Automation
-
-`gobby-tasks-ops:build_task` is the MCP entrypoint for lifecycle automation.
-It accepts an `input_ref` pointing at a plan file, epic, or automated leaf, plus
-automation options such as `quick`, `stage`, `checkout_mode`, `workspace_backend`,
-`target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`, and
-`max_retries`. Use the registered build schema for isolation and workspace options.
-
-Build automation can run docs leaf work inside the parent epic's isolation
-context. After expansion, dispatch routes stage rows by manifest policy; docs
-development rows route to `tech-writer`, and docs review rows route to
-`doc-reviewer`.
-
----
-
 ## Resume and Reuse
 
 Expansion work survives interruption through the expansion run record. If a run
@@ -508,8 +478,7 @@ Use:
 
 ## See Also
 
-- [Dispatch](./dispatch.md) — Stage-manifest dispatch and lifecycle routing
-- [Orchestration](./orchestration.md) — Automation model around dispatch
+- [Orchestration](./orchestration.md) — Spawned agent work and isolation
 - [Spec Writing](./spec-writing.md) — Plan authoring workflow
 - [TDD Enforcement](./tdd-enforcement.md) — Skill-backed TDD evidence details
 - [Pipelines](./pipelines.md) — Pipeline system reference
