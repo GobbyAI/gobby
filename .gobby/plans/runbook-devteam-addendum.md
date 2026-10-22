@@ -584,3 +584,302 @@ These are completion gates for the implementation. Except for plan validation, n
 - After 7.3, 8.2, 8.5 and 9.3 land, the installed definition and rule rows must match the templates.
 - The 8.6 isolated e2e must pass, and the live pilot results must be recorded in `.gobby/plans/research/devteam-epic-pilot-results.md`.
 - After 9.4, a real session's workspace history must show commits from every trigger: timer, set_handoff, pre-compact, session end, clear binding and epic close.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Key reviewer and maker seat steps on step grants
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '7.1.1: A seat whose definition grants only `review` gets verdict
+    binding, verdict recovery and the reviewing link whatever its name; a seat without
+    the grant gets none. test: `tests/workflows/test_grant_keyed_seats.py::test_review_grant_drives_reviewer_steps`.
+
+    7.1.2: A seat whose definition grants `implementation` gets the maker route_skills
+    and submit-bounce steps; code-reviewer and developer behavior is unchanged. test:
+    `tests/workflows/test_grant_keyed_seats.py::test_implementation_grant_drives_maker_steps`.'
+  labels:
+  - covers:runbook-devteam-addendum:7.1:7.1.1
+  - covers:runbook-devteam-addendum:7.1:7.1.2
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Route review by category at team admission
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: A default policy requires a review record for research
+    tasks; code and docs are unchanged. test: `tests/agents/test_review_routing.py::test_research_requires_review_by_default`.
+
+    7.2.2: Admission accepts a reviewer_agent with the review grant and records it
+    as the team''s first reviewer binding. It refuses a definition without the grant,
+    a second reviewer definition on a single-task team, and a replacement whose definition
+    differs from its binding. test: `tests/agents/test_review_routing.py::test_reviewer_agent_admission`.'
+  labels:
+  - covers:runbook-devteam-addendum:7.2:7.2.1
+  - covers:runbook-devteam-addendum:7.2:7.2.2
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Ship docs and research reviewers and the routing table
+  category: config
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '7.3.1: Both definitions parse, sync, grant only `review`,
+    block every edit tool, and load their procedure. test: `tests/agents/test_category_reviewer_definitions.py::test_reviewer_definitions_are_read_only_review_writers`.
+
+    7.3.2: The Orchestrator and Dev Manager procedures carry the identical routing
+    table and the docs-about-code rule. test: `tests/agents/test_category_reviewer_definitions.py::test_routing_table_matches_procedures`.
+
+    7.3.3: The devteam runbook launches the reviewer named by `reviewer_agent`, and
+    the seat rules match both new reviewers. test: `tests/agents/test_category_reviewer_definitions.py::test_runbook_and_seat_rules_cover_new_reviewers`.'
+  labels:
+  - covers:runbook-devteam-addendum:7.3:7.3.1
+  - covers:runbook-devteam-addendum:7.3:7.3.2
+  - covers:runbook-devteam-addendum:7.3:7.3.3
+  tdd: true
+  source_section: '7.3'
+  assigned_agent: developer
+- title: Bind a team to an epic and scope its leaf claims
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '8.1.1: Admitting an epic with open descendants records epic
+    mode and creates branch `epic/<seq>/main` in worktree `wt-epic-<seq>`; a leaf
+    admission stays single-task. test: `tests/agents/test_devteam_epic_mode.py::test_epic_admission_names_and_mode`.
+
+    8.1.2: Overlapping epic or descendant admissions are refused. test: `tests/agents/test_devteam_epic_mode.py::test_overlapping_admissions_refused`.
+
+    8.1.3: Inside an active epic team, team seats can claim descendants and other
+    sessions cannot. test: `tests/agents/test_devteam_epic_mode.py::test_descendant_claims_scoped_to_team`.
+
+    8.1.4: Admission refuses an epic with a non-epic descendant that has open children;
+    closing a descendant leaf or a cascaded phase epic queues no teardown, and closing
+    the bound epic does. test: `tests/agents/test_devteam_epic_mode.py::test_topology_and_bound_close_teardown`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.1:8.1.1
+  - covers:runbook-devteam-addendum:8.1:8.1.2
+  - covers:runbook-devteam-addendum:8.1:8.1.3
+  - covers:runbook-devteam-addendum:8.1:8.1.4
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Dev Manager dispatches leaf developers and merges sub-worktrees
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  - '7.3'
+  validation_criteria: '8.2.1: A team manager spawns a primary in the epic worktree
+    and a sub-worktree developer on the derived leaf branch and directory; spawns
+    outside its epic, with a non-team definition, or for an in-flight leaf are refused.
+    test: `tests/agents/test_devteam_epic_dispatch.py::test_manager_leaf_spawns_scoped`.
+
+    8.2.2: Seats without `team_manager` stay blocked from spawning, and the seat guidance
+    names the exception. test: `tests/workflows/test_seat_rules.py::test_team_manager_spawn_exception`.
+
+    8.2.3: After a no-ff merge into epic main, the sub-worktree and branch delete
+    with `merged_into` epic main; an unmerged sub-branch is refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_merged_leaf_tree_cleanup`.
+
+    8.2.4: In an epic team with code, non-code docs and research leaves, the manager
+    spawns `code-reviewer`, `docs-reviewer` and `research-reviewer` seats, each recorded
+    as a binding, and respawning an ended reviewer fills its own definition''s binding.
+    A definition without the review grant and a second live seat for a bound definition
+    are refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_routed_reviewer_bindings`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.2:8.2.1
+  - covers:runbook-devteam-addendum:8.2:8.2.2
+  - covers:runbook-devteam-addendum:8.2:8.2.3
+  - covers:runbook-devteam-addendum:8.2:8.2.4
+  tdd: true
+  source_section: '8.2'
+  implementation_domain: backend
+- title: Intra-epic blockers resolve on finished leaves
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: '8.3.1: Inside an active epic team, a dependent unblocks once
+    its blocker has a current approved implementation record at its tip, and stays
+    blocked on test commits alone or when the record is stale. test: `tests/storage/test_intra_epic_blockers.py::test_finished_blocker_unblocks_inside_team`.
+
+    8.3.2: Without an active epic team, or across epics, blocking is unchanged, and
+    SQL projection and hydration agree. test: `tests/storage/test_intra_epic_blockers.py::test_predicate_parity_outside_teams`.
+
+    8.3.3: A no-work blocker with an approved disposition and no linked commits unblocks
+    its dependents. A blocker whose latest implementation record is rejected or superseded
+    stays blocking despite an earlier approval at the same commit. SQL projection,
+    hydration and `approved_task_step` agree on every case. test: `tests/storage/test_intra_epic_blockers.py::test_no_work_and_superseded_blockers`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.3:8.3.1
+  - covers:runbook-devteam-addendum:8.3:8.3.2
+  - covers:runbook-devteam-addendum:8.3:8.3.3
+  tdd: true
+  source_section: '8.3'
+  implementation_domain: backend
+- title: Epic review loop without a fixer and epic escalation
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.2'
+  validation_criteria: '8.4.1: In epic mode, rejections go back to developers and
+    the same reviewer reviews every round; no seat changes role. test: `tests/agents/test_devteam_epic_review.py::test_reviewer_never_fixes_in_epic_mode`.
+
+    8.4.2: A leaf''s or the epic tip''s third rejection escalates the epic once, holds
+    the team, and lifts after the audited reset and re-claim. test: `tests/agents/test_devteam_epic_review.py::test_third_rejection_holds_epic`.
+
+    8.4.3: An externally blocked leaf holds landing, and no leaf is detached or reverted.
+    test: `tests/agents/test_devteam_epic_review.py::test_blocked_leaf_holds_epic`.
+
+    8.4.4: After every leaf is approved, an epic-tip rejection returns to an owning
+    leaf. Only that leaf''s records go stale and are rewritten, and the next epic-tip
+    round approves the new tip as round two, with the earlier epic rejection still
+    counted. test: `tests/agents/test_devteam_epic_review.py::test_epic_tip_rejection_repairs_through_leaf`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.4:8.4.1
+  - covers:runbook-devteam-addendum:8.4:8.4.2
+  - covers:runbook-devteam-addendum:8.4:8.4.3
+  - covers:runbook-devteam-addendum:8.4:8.4.4
+  tdd: true
+  source_section: '8.4'
+  implementation_domain: backend
+- title: Epic-mode procedures and runbook binding
+  category: config
+  task_type: feature
+  depends_on:
+  - '8.4'
+  - '8.3'
+  validation_criteria: '8.5.1: The procedures state the phase order, dispatch rule,
+    merge-only updates, unlock order, per-leaf routing and reviewer spawns, the no-work
+    path, the epic-tip repair, hold rules, landing order, nested close order and the
+    Orchestrator''s epic admission rules, with no detach or reviewer-fix path. test:
+    `tests/workflows/test_devteam_epic_runbook.py::test_epic_procedures`.
+
+    8.5.2: The devteam runbook dry-runs bound to an epic and to a leaf with the same
+    seat catalogue. test: `tests/workflows/test_devteam_epic_runbook.py::test_runbook_binds_epic_or_leaf`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.5:8.5.1
+  - covers:runbook-devteam-addendum:8.5:8.5.2
+  tdd: true
+  source_section: '8.5'
+  assigned_agent: developer
+- title: Pilot one epic team
+  category: test
+  task_type: feature
+  depends_on:
+  - '8.5'
+  - '9.4'
+  validation_criteria: '8.6.1: The six-leaf nested epic completes from admission to
+    teardown with parallel sub-worktrees, a no-work blocker, three routed reviewers,
+    one rejection, one landing, closes in leaf, phase-epic and root order, and exactly
+    one teardown. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_complete_epic_team`.
+
+    8.6.2: A third leaf rejection holds the epic until the audited reset, and then
+    the epic lands. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_escalated_leaf_holds_then_lands`.
+
+    8.6.3: An epic-tip rejection after every leaf is approved is repaired through
+    a leaf, and the epic lands on the second epic-tip round. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_epic_tip_rejection_repaired_then_lands`.
+
+    8.6.4: The live pilot''s outcome, timings and any findings are recorded. file:
+    `.gobby/plans/research/devteam-epic-pilot-results.md`.'
+  labels:
+  - covers:runbook-devteam-addendum:8.6:8.6.1
+  - covers:runbook-devteam-addendum:8.6:8.6.2
+  - covers:runbook-devteam-addendum:8.6:8.6.3
+  - covers:runbook-devteam-addendum:8.6:8.6.4
+  tdd: false
+  source_section: '8.6'
+  assigned_agent: developer
+- title: Workspace repository and daemon committer
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '9.1.1: The anchor is identical from the main checkout and
+    a linked worktree, and the work tree holds no `.git`. test: `tests/agents/test_agent_workspaces.py::test_anchor_shared_and_gitless`.
+
+    9.1.2: A commit runs only when the tree is dirty, skips oversized files and symlinks,
+    and is serialized per project. test: `tests/agents/test_agent_workspaces.py::test_commit_only_when_dirty_with_guards`.
+
+    9.1.3: A commit failure does not fail set_handoff, pre-compact or session end,
+    and the cron trigger commits a dirty tree. test: `tests/agents/test_agent_workspaces.py::test_trigger_failures_are_non_blocking`.'
+  labels:
+  - covers:runbook-devteam-addendum:9.1:9.1.1
+  - covers:runbook-devteam-addendum:9.1:9.1.2
+  - covers:runbook-devteam-addendum:9.1:9.1.3
+  tdd: true
+  source_section: '9.1'
+  implementation_domain: backend
+- title: Workspace write and read scope rules
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.1'
+  validation_criteria: '9.2.1: Writes to the session''s own folder and its epic folder
+    pass for the researcher, assistant, archivist, developer and a plan-mode session;
+    writes to another folder, the Git directory or a `.gobby` segment are blocked.
+    test: `tests/workflows/test_agent_workspace_scope.py::test_write_isolation`.
+
+    9.2.2: A non-persistent seat can read only its own folder, its epic folder and
+    the README; a persistent seat can also read its definition''s eligible predecessor
+    folders, for both read tools and literal shell paths. test: `tests/workflows/test_agent_workspace_scope.py::test_read_scope_by_persistence`.
+
+    9.2.3: A literal workspace write sets no `canonical_repo_mutation`, leaves no
+    task edit-ledger entry, and native `set_variable` cannot change workspace keys.
+    test: `tests/workflows/test_agent_workspace_scope.py::test_exemptions_and_variable_protection`.
+
+    9.2.4: A persistent seat is refused a live same-definition sibling''s folder,
+    a later-started ended session''s folder and a resumed predecessor''s folder while
+    it is live, and allowed an ended earlier predecessor''s folder. A non-persistent
+    seat is refused every predecessor folder. test: `tests/workflows/test_agent_workspace_scope.py::test_predecessor_eligibility`.'
+  labels:
+  - covers:runbook-devteam-addendum:9.2:9.2.1
+  - covers:runbook-devteam-addendum:9.2:9.2.2
+  - covers:runbook-devteam-addendum:9.2:9.2.3
+  - covers:runbook-devteam-addendum:9.2:9.2.4
+  tdd: true
+  source_section: '9.2'
+  implementation_domain: backend
+- title: Session folders, the persistent flag and clear inheritance
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.2'
+  validation_criteria: '9.3.1: A session gets its own folder at start and keeps it
+    across compaction and resume; a manual clear gets a new folder. test: `tests/agents/test_agent_workspace_lifecycle.py::test_session_folder_binding`.
+
+    9.3.2: A persistent seat''s clear successor inherits the predecessor''s folder;
+    a non-persistent seat''s successor gets a fresh folder. test: `tests/agents/test_agent_workspace_lifecycle.py::test_clear_inheritance_by_persistence`.
+
+    9.3.3: Exactly the five Admin definitions set `persistent_workspace`, and the
+    injection and reset rules deliver the path once per epoch, with the predecessor-read
+    restriction for persistent sessions only. test: `tests/agents/test_agent_workspace_lifecycle.py::test_persistent_set_and_injection`.'
+  labels:
+  - covers:runbook-devteam-addendum:9.3:9.3.1
+  - covers:runbook-devteam-addendum:9.3:9.3.2
+  - covers:runbook-devteam-addendum:9.3:9.3.3
+  tdd: true
+  source_section: '9.3'
+  implementation_domain: backend
+- title: Epic workspace folders
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.3'
+  - '8.4'
+  validation_criteria: '9.4.1: Every seat of an epic team, sub-worktree developers
+    included, can write the epic folder; sessions outside the team cannot. test: `tests/agents/test_agent_workspace_epics.py::test_epic_folder_scoped_to_team`.
+
+    9.4.2: After epic close and teardown, the final `epic-<seq>` commit exists and
+    later writes are refused. test: `tests/agents/test_agent_workspace_epics.py::test_epic_close_commit_and_lock`.'
+  labels:
+  - covers:runbook-devteam-addendum:9.4:9.4.1
+  - covers:runbook-devteam-addendum:9.4:9.4.2
+  tdd: true
+  source_section: '9.4'
+  implementation_domain: backend
+```
