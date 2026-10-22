@@ -514,7 +514,7 @@ async def test_list_tasks_filters_closed_children_and_reports_open_count(
     )
     temp_db.execute(
         "UPDATE tasks SET closed_at = %s, closed_reason = %s WHERE id = %s",
-        ("2026-09-01T00:00:00+00:00", "test-complete", closed_task.id),
+        ("2026-09-01T00:00:00+00:00", "done", closed_task.id),
     )
 
     with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:

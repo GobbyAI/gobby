@@ -1,4 +1,4 @@
-"""Atomic finalization after rechecking the same four close invariants."""
+"""Atomic finalization after rechecking the same five close gates."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from typing import Any
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
-from gobby.storage.tasks import TaskHasOpenChildrenError, TaskStaleStateError
+from gobby.storage.tasks import (
+    TaskHasOpenChildrenError,
+    TaskStaleStateError,
+    TaskStepRecordsMissingError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,8 @@ async def commit_close(
             )
     except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
         return fresh.refuse("close_state_changed", str(exc)).response(preview=False)
+    except TaskStepRecordsMissingError as exc:
+        return fresh.refuse("step_records", str(exc)).response(preview=False)
 
     await asyncio.to_thread(
         _queue_close_memory_review, ctx, fresh, task.id, changes_summary, reason, fresh.commit_shas

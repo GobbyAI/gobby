@@ -248,6 +248,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
             "linked_commits",
             "uncommitted_task_edits",
             "integration_ancestry",
+            "step_records",
         ]
         mock_task_manager.close_task.assert_not_called()
         archive.assert_not_called()

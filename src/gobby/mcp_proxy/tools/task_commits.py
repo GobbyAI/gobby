@@ -54,7 +54,8 @@ def get_current_project_id() -> str | None:
     return context.get("id") if context else None
 
 
-def _session_machine_id(session_manager: Any | None, project_id: str | None) -> str | None:
+def session_machine_id(session_manager: Any | None, project_id: str | None) -> str | None:
+    """Resolve the calling session's local machine id for project checkout lookups."""
     if not project_id:
         return None
     session_ref = get_current_session_id()
@@ -125,7 +126,7 @@ def create_commit_registry(
                 project_manager=project_manager,
                 task=task,
                 project_path=project_path,
-                machine_id=_session_machine_id(session_manager, task.project_id),
+                machine_id=session_machine_id(session_manager, task.project_id),
             )
         except RepoPathValidationError as e:
             return {"error": str(e)}
@@ -421,7 +422,7 @@ def create_commit_registry(
                     project_manager=project_manager,
                     project_path=project_path,
                     project_id=current_project_id,
-                    machine_id=_session_machine_id(session_manager, current_project_id),
+                    machine_id=session_machine_id(session_manager, current_project_id),
                 )
             except RepoPathValidationError as e:
                 return {"error": str(e)}

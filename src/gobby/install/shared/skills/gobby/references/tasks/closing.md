@@ -50,7 +50,14 @@ activation workflow before requesting its final close.
 Use `link_commit` to attach work while keeping the task open. Include every commit
 that belongs to the task, and integrate those commits before closing. Closing the
 last child may close eligible organizational ancestors; an explicit epic close
-uses the same four gates. Never report an epic complete while children remain.
+uses the same five gates. Never report an epic complete while children remain.
+
+When the project's `task_close_policy` sets `enforce_step_records`, a non-epic
+close also needs the approved step records that policy selects for the task's
+category: implementation and closing always, plus test and review where
+configured. Implementation, review and closing records cite the latest linked
+commit; a test record may cite any linked commit. With no linked commit, records
+carry the no-work disposition. `force` never bypasses them.
 
 Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested

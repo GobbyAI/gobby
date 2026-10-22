@@ -42,9 +42,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         name="close_task",
         description=(
             "Close a task whose children are closed, with a linked commit or explicit "
-            "no-work disposition, clean task-attributed files, and linked work landed "
-            "on the project's integration branch. commit_sha links the supplied commit "
-            "atomically with closure. preview=true evaluates the same four invariants "
+            "no-work disposition, clean task-attributed files, linked work landed "
+            "on the project's integration branch, and the approved step records its "
+            "project policy requires. commit_sha links the supplied commit "
+            "atomically with closure. preview=true evaluates the same five gates "
             "without changing state. No reviewer is launched."
         ),
         input_schema={

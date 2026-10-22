@@ -12,6 +12,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.tasks._close_context import CloseAttributionSnapshot
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.tasks.step_records import StepRequirements
 from gobby.utils.machine_id import require_machine_id
 from tests.mcp_proxy.tools.tasks.test_close_task_flow import _ctx, _task
 
@@ -60,6 +61,9 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
             AsyncMock(return_value=CloseAttributionSnapshot({}, True)),
         ),
         patch.object(lifecycle, "main_checkout_target", AsyncMock(return_value=(repo, "0.5.0"))),
+        patch.object(
+            lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
+        ),
     ):
         return await lifecycle._evaluate_close(
             ctx,

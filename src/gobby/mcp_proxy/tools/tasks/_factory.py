@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
+from gobby.mcp_proxy.tools.tasks._step_records import create_step_record_registry
 from gobby.storage.tasks import LocalTaskManager
 
 if TYPE_CHECKING:
@@ -105,5 +106,8 @@ def create_task_registry(
             session_manager=ctx.session_manager,
         )
     )
+
+    # Merge role-owned task step record tools.
+    registry.merge_from(create_step_record_registry(ctx))
 
     return registry

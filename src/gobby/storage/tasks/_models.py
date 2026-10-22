@@ -109,6 +109,18 @@ class TaskHasOpenChildrenError(ValueError):
         )
 
 
+class TaskStepRecordsMissingError(ValueError):
+    """Raised when project policy requires step records the task has not had approved."""
+
+    def __init__(self, task_id: str, missing_steps: tuple[str, ...]) -> None:
+        self.task_id = task_id
+        self.missing_steps = missing_steps
+        super().__init__(
+            f"Cannot close task {task_id}: missing approved step records: "
+            + ", ".join(missing_steps)
+        )
+
+
 def validate_category(category: str | None) -> str | None:
     """Validate and normalize a category value.
 

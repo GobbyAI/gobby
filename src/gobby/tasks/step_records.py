@@ -9,14 +9,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_policy
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    require_root,
+)
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
@@ -24,6 +31,7 @@ from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._transitions import release_task_claim
 from gobby.storage.tasks._updates import update_task
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_edited_file_set
@@ -118,6 +126,51 @@ def approved_task_step(
         return None if commits else record
     evidence = commits[-1:] if step in _TIP_BOUND else commits
     return record if any(record.commit_sha.startswith(sha) for sha in evidence) else None
+
+
+@dataclass(frozen=True)
+class StepRequirements:
+    """Steps project policy requires for a close, and those not yet approved."""
+
+    required: tuple[TaskStep, ...]
+    missing: tuple[TaskStep, ...]
+
+
+def required_task_steps(
+    policy: TaskClosePolicyConfig, *, task_type: str, category: str | None
+) -> tuple[TaskStep, ...]:
+    """Select the steps a policy requires; epics never need records."""
+    if not policy.enforce_step_records or task_type == "epic":
+        return ()
+    selected = {"implementation", "closing"}
+    if category in policy.test_categories:
+        selected.add("test")
+    if category in policy.review_categories:
+        selected.add("review")
+    return tuple(step for step in TASK_STEPS if step in selected)
+
+
+def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyConfig:
+    # The primary checkout owns the policy, so a candidate worktree cannot relax it.
+    try:
+        root = require_root(db, project_id, require_machine_id())
+    except (CheckoutNotFoundError, CheckoutSentinelRejectedError):
+        return TaskClosePolicyConfig()
+    return load_project_task_close_policy(root)
+
+
+def task_step_requirements(db: HubDatabase, task: Task) -> StepRequirements:
+    """Evaluate policy against the task's present commits, for preview and final close."""
+    required = required_task_steps(
+        _project_close_policy(db, task.project_id),
+        task_type=task.task_type,
+        category=task.category,
+    )
+    if not required:
+        return StepRequirements((), ())
+    records = list_task_step_records(db, task.id)
+    missing = tuple(step for step in required if approved_task_step(task, records, step) is None)
+    return StepRequirements(required, missing)
 
 
 def _writer(

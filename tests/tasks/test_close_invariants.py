@@ -1,7 +1,8 @@
-"""Behavioral contract for the four close invariants."""
+"""Behavioral contract for the close invariants and required step records."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,7 @@ def repository(tmp_path: Path) -> tuple[Path, str, str]:
     return tmp_path, landed, git(tmp_path, "rev-parse", "HEAD")
 
 
-def test_close_has_exactly_four_invariants() -> None:
+def test_close_has_exactly_five_gates() -> None:
     from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CLOSE_GATE_ORDER
 
     assert tuple(name for _, name in CLOSE_GATE_ORDER) == (
@@ -40,6 +41,7 @@ def test_close_has_exactly_four_invariants() -> None:
         "linked_commits",
         "uncommitted_task_edits",
         "integration_ancestry",
+        "step_records",
     )
 
 
@@ -80,10 +82,12 @@ async def test_close_invariant_matrix(
         attributed_checkouts={str(repo): {"owned.txt"}},
         integration_repo_path=str(repo),
         integration_ref="refs/heads/integration",
+        required_steps=(),
+        missing_steps=(),
     )
     assert tuple(gate.name for gate in result.all_failures) == failed
     assert result.ready is (not failed)
-    assert len(result.gates) == 4
+    assert len(result.gates) == 5
 
 
 @pytest.mark.asyncio
@@ -98,6 +102,8 @@ async def test_all_linked_commits_must_be_landed(repository: tuple[Path, str, st
         attributed_checkouts={},
         integration_repo_path=str(repo),
         integration_ref="refs/heads/integration",
+        required_steps=(),
+        missing_steps=(),
     )
     assert [gate.name for gate in result.all_failures] == ["integration_ancestry"]
 
@@ -114,6 +120,8 @@ async def test_integration_tip_must_resolve(repository: tuple[Path, str, str]) -
         attributed_checkouts={},
         integration_repo_path=str(repo),
         integration_ref="refs/heads/missing",
+        required_steps=(),
+        missing_steps=(),
     )
     assert [gate.name for gate in result.all_failures] == ["integration_ancestry"]
 
@@ -217,8 +225,8 @@ async def test_close_needs_no_evidence_relay(
             "preview": True,
         },
     )
-    assert preview["can_close"] is True, preview
-    assert len(preview["gates"]) == 4
+    assert preview["can_close"] is True, (preview.get("error"), preview.get("gates"))
+    assert len(preview["gates"]) == 5
     pending = manager.get_task(task.id)
     assert pending.closed_at is None and not pending.commits
     closed = await registry.call("close_task", {"task_id": task.id, "commit_sha": sha})
@@ -352,3 +360,173 @@ async def test_no_work_close_checks_dirty_task_checkout(
         assert result["can_close"] is False, result
         assert result["error"] == "uncommitted_task_edits"
     assert manager.get_task(task.id).closed_at is None
+
+
+_POLICY_TIP = "5ca1ab1" + "e" * 33
+
+
+def _set_close_policy(db: HubDatabase, project_id: str, policy: dict[str, Any]) -> None:
+    """Write the policy into the project's primary checkout marker."""
+    from gobby.storage.project_checkouts import require_root
+    from gobby.utils.machine_id import require_machine_id
+
+    marker = Path(require_root(db, project_id, require_machine_id())) / ".gobby" / "project.json"
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    marker.write_text(json.dumps({**data, "task_close_policy": policy}), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_required_step_records_follow_project_policy(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    from gobby.config.tasks import TaskClosePolicyConfig
+    from gobby.storage.tasks import Task, TaskStepRecordsMissingError
+    from gobby.tasks.close_invariants import evaluate_close_invariants
+    from gobby.tasks.step_records import (
+        StepSubmission,
+        TaskStep,
+        record_task_step,
+        required_task_steps,
+        task_step_requirements,
+    )
+    from tests.tasks.test_step_records import _Seats
+
+    enforced = TaskClosePolicyConfig(enforce_step_records=True)
+    tested = TaskClosePolicyConfig(
+        enforce_step_records=True, test_categories=["code"], review_categories=["code"]
+    )
+    matrix: list[tuple[TaskClosePolicyConfig, str, str | None]] = [
+        (TaskClosePolicyConfig(), "task", "code"),
+        (enforced, "task", "code"),
+        (enforced, "chore", "docs"),
+        (enforced, "research_spike", "research"),
+        (enforced, "task", None),
+        (enforced, "epic", "code"),
+        (tested, "bug", "code"),
+        (tested, "chore", "docs"),
+        (tested, "epic", "code"),
+    ]
+    required = [
+        required_task_steps(policy, task_type=kind, category=area) for policy, kind, area in matrix
+    ]
+    assert required == [
+        (),
+        ("implementation", "review", "closing"),
+        ("implementation", "review", "closing"),
+        ("implementation", "closing"),
+        ("implementation", "closing"),
+        (),
+        ("test", "implementation", "review", "closing"),
+        ("implementation", "closing"),
+        (),
+    ]
+    with pytest.raises(ValueError, match="unknown task category"):
+        TaskClosePolicyConfig(review_categories=["cod"])
+
+    project_id = sample_project["id"]
+    manager = LocalTaskManager(temp_db)
+    seats = _Seats(temp_db, project_id)
+    developer = seats.add("policy-developer", ["test", "implementation"])
+    reviewer = seats.add("policy-reviewer", ["review"])
+    closer = seats.add("policy-closer", ["closing"])
+
+    def record(task: Task, session_id: str, step: TaskStep, *, linked: bool = True) -> None:
+        record_task_step(
+            temp_db,
+            task_id=task.id,
+            session_id=session_id,
+            step=step,
+            submission=StepSubmission(
+                status="approved",
+                epoch=1,
+                round_number=1,
+                feedback=f"The {step} step is approved.",
+                commit_sha=_POLICY_TIP if linked else None,
+                disposition=None if linked else "moot",
+            ),
+        )
+
+    def work_task(title: str, category: str, parent_id: str | None = None) -> Task:
+        created = manager.create_task(
+            project_id,
+            title,
+            category=category,
+            parent_task_id=parent_id,
+            validation_criteria="Project policy selects the approved step records.",
+        )
+        manager.claim_task(created.id, developer)
+        manager.link_commit(created.id, _POLICY_TIP[:10])
+        return manager.get_task(created.id)
+
+    unenforced = work_task("Policy off", "code")
+    assert task_step_requirements(temp_db, unenforced).required == ()
+    assert manager.close_task(unenforced.id).closed_at is not None
+
+    _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
+    epic = manager.create_task(project_id, "Policy epic", task_type="epic")
+    work = work_task("Policy code", "code", epic.id)
+    with pytest.raises(TaskStepRecordsMissingError, match="implementation, review, closing"):
+        manager.close_task(work.id)
+    record(work, developer, "implementation")
+    record(work, reviewer, "review")
+    requirements = task_step_requirements(temp_db, manager.get_task(work.id))
+    assert (requirements.required, requirements.missing) == (
+        ("implementation", "review", "closing"),
+        ("closing",),
+    )
+    preview = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[],
+        reason="moot",
+        attributed_checkouts={},
+        integration_repo_path=None,
+        integration_ref=None,
+        required_steps=requirements.required,
+        missing_steps=requirements.missing,
+    )
+    gate = preview.gates[-1]
+    assert (gate.item, gate.name, gate.status, gate.details["missing_steps"]) == (
+        5,
+        "step_records",
+        "failed",
+        ["closing"],
+    )
+    assert [failure.name for failure in preview.all_failures] == ["step_records"]
+    with pytest.raises(TaskStepRecordsMissingError, match="closing"):
+        manager.close_task(work.id, force=True)
+    record(work, closer, "closing")
+    closed_ancestors: list[str] = []
+    assert manager.close_task(work.id, closed_ancestors=closed_ancestors).closed_at is not None
+    assert closed_ancestors == [epic.id]
+
+    research = manager.create_task(
+        project_id, "Policy research", category="research", validation_criteria="Moot."
+    )
+    with pytest.raises(TaskStepRecordsMissingError, match="implementation, closing"):
+        manager.close_task(research.id, reason="moot")
+    record(research, developer, "implementation", linked=False)
+    record(research, closer, "closing", linked=False)
+    assert manager.close_task(research.id, reason="moot").closed_at is not None
+
+    _set_close_policy(
+        temp_db, project_id, {"enforce_step_records": True, "test_categories": ["code"]}
+    )
+    test_first = work_task("Policy tested", "code")
+    record(test_first, developer, "test")
+    record(test_first, developer, "implementation")
+    record(test_first, reviewer, "review")
+    record(test_first, closer, "closing")
+    assert task_step_requirements(temp_db, manager.get_task(test_first.id)).missing == ()
+    assert manager.close_task(test_first.id).closed_at is not None
+    untested = work_task("Policy untested", "code")
+    record(untested, developer, "implementation")
+    record(untested, reviewer, "review")
+    record(untested, closer, "closing")
+    with pytest.raises(TaskStepRecordsMissingError, match="test"):
+        manager.close_task(untested.id)
+
+    _set_close_policy(temp_db, project_id, {"enforce": True})
+    with pytest.raises(ValueError, match="task_close_policy"):
+        task_step_requirements(temp_db, manager.get_task(untested.id))
+    with pytest.raises(ValueError, match="task_close_policy"):
+        manager.close_task(untested.id)

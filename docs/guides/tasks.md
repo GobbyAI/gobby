@@ -133,7 +133,7 @@ handed off", repeat `escalate_task` on the reclaimed task with the original
 `Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated
 task and records its handoff in the current workflow. Then call
 `de_escalate_task` and `close_task(preview=true)` through the ordinary developer
-path. The preview checks the four close invariants. Independent review remains part
+path. The preview checks the five close gates. Independent review remains part
 of the developer workflow.
 This recovery requires no workflow-variable writes.
 
@@ -152,7 +152,7 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
 ```
 
 After checking task/session/repository authorization, both leaf and epic closes
-evaluate the same four invariants:
+evaluate the same five gates:
 
 | Gate | Requirement |
 | :--- | :--- |
@@ -160,6 +160,25 @@ evaluate the same four invariants:
 | `linked_commits` | Linked or prospective commits exist, or a canonical no-work reason is supplied. |
 | `uncommitted_task_edits` | Task-attributed paths are clean in every recorded checkout, with complete attribution. |
 | `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
+| `step_records` | Every step record the project's close policy requires is approved. Implementation, review and closing records cite the latest linked commit; a test record may cite any linked commit. With no linked commit, records carry the no-work disposition. |
+
+The close policy is the `task_close_policy` key in the primary checkout's
+`.gobby/project.json`. A candidate worktree cannot relax it.
+
+```json
+"task_close_policy": {
+  "enforce_step_records": true,
+  "test_categories": [],
+  "review_categories": ["code", "docs"]
+}
+```
+
+`enforce_step_records` defaults to false, which skips the gate. When it is true,
+every non-epic task needs approved implementation and closing records. Tasks
+whose category is in `test_categories` also need a test record, and tasks whose
+category is in `review_categories` also need an independent review record.
+Epics need no records. A malformed policy refuses the close. The final close
+rechecks the records under the task lock, and `force` never bypasses them.
 
 Preview returns `gates`, `can_close`, `closed=false`, and resolved commit
 identities. It does not modify task state or commit links. Fix failed gates,
@@ -328,7 +347,7 @@ gobby tasks validation-history '#14390'
 
 Run focused checks appropriate to the change and retain their commands and
 results for independent review. Acceptance criteria are authored task data;
-the close tool enforces the four invariants described above. Historical
+the close tool enforces the five gates described above. Historical
 validation records remain readable through `validation-history`.
 
 Closing the last child may auto-close eligible organizational ancestors.
@@ -351,7 +370,7 @@ commit list or file manifest.
 Independent reviewers use the linked diff and complete commit/file manifests.
 Follow every `get_task_diff` page, inspect all changed paths, and run relevant
 checks. Review and activation receipts record those workflow decisions; they
-are separate from the close tool's four-invariant evaluator.
+are separate from the close tool's gate evaluator.
 
 ## CLI Reference
 

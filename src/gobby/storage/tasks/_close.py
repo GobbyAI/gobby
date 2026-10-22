@@ -7,7 +7,12 @@ from datetime import datetime
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._automation import has_hold_label
-from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
+from gobby.storage.tasks._models import (
+    Task,
+    TaskHasOpenChildrenError,
+    TaskStaleStateError,
+    TaskStepRecordsMissingError,
+)
 from gobby.tasks.criteria_text import normalized_validation_criteria
 from gobby.tasks.state_semantics import validate_task_close_reason
 from gobby.utils.datetime import utc_now
@@ -32,7 +37,7 @@ def _close_task_in_txn(
     conn: Transaction,
     task_id: str,
     *,
-    db: HubDatabase | None = None,
+    db: HubDatabase,
     reason: str | None = None,
     commit_sha: str | None = None,
     closed_at: datetime | str | None = None,
@@ -42,16 +47,19 @@ def _close_task_in_txn(
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
 ) -> None:
-    """Close a task inside the caller's already-open transaction."""
+    """Close a task inside the caller's already-open transaction.
+
+    ``force`` skips only the open-children check; required step records always apply.
+    """
     reason = validate_task_close_reason("done" if reason is None else reason)
 
+    # Hold this row before counting children or reading step records. Creation takes
+    # the same lock on the parent it is attaching to, so the two serialize here;
+    # without it the count runs before the UPDATE acquires any lock, and a child
+    # inserted in that window survives its parent's close (#22570). Step writers take
+    # it too, so the records checked here are the ones the close commits against.
+    row = conn.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
     if not force:
-        # Hold this row before counting children. Creation takes the same lock on
-        # the parent it is attaching to, so the two serialize here; without it the
-        # count runs before the UPDATE acquires any lock, and a child inserted in
-        # that window survives its parent's close (#22570). _close_eligible_ancestors
-        # already locks an ancestor this way before its own open-child probe.
-        conn.execute("SELECT 1 FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
         open_children = conn.execute(
             "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
             (task_id,),
@@ -59,6 +67,13 @@ def _close_task_in_txn(
         if open_children:
             listed = [f"{child['id']} ({child['title']})" for child in open_children]
             raise TaskHasOpenChildrenError(task_id, listed)
+    if row is not None and row["closed_at"] is None:
+        # step_records imports this package, so it loads at call time.
+        from gobby.tasks.step_records import task_step_requirements
+
+        missing = task_step_requirements(db, Task.from_row(row)).missing
+        if missing:
+            raise TaskStepRecordsMissingError(task_id, missing)
 
     now = closed_at or utc_now()
     persisted_session_id = (
@@ -130,7 +145,7 @@ def _close_eligible_ancestors(
     conn: Transaction,
     task_id: str,
     *,
-    db: HubDatabase | None,
+    db: HubDatabase,
     reason: str | None,
     closed_at: datetime | str,
     closed_in_session_id: str | None,
@@ -156,7 +171,7 @@ def close_eligible_parent_chain(
     conn: Transaction,
     parent_id: str | None,
     *,
-    db: HubDatabase | None,
+    db: HubDatabase,
     reason: str | None,
     closed_at: datetime | str,
     closed_in_session_id: str | None,

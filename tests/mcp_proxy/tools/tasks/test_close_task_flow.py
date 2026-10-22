@@ -17,10 +17,11 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CLOSE_GATE_ORDER, CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
+from gobby.tasks.step_records import StepRequirements
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -67,17 +68,17 @@ def _ready_evaluation(task: Task) -> CloseEvaluation:
         checklist=CloseChecklist(
             tuple(
                 CloseGateResult(index, name, "passed", "Passed.")
-                for index, name in enumerate(
-                    (
-                        "children_closed",
-                        "linked_commits",
-                        "uncommitted_task_edits",
-                        "integration_ancestry",
-                    ),
-                    start=1,
-                )
+                for index, name in CLOSE_GATE_ORDER
             )
         ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_step_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These fakes have no project checkout; step-record policy has its own tests."""
+    monkeypatch.setattr(
+        lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
     )
 
 

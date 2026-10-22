@@ -493,7 +493,7 @@ class TestParallelTaskProcessing:
             assert result.get("can_close") is True, result
             assert "error" not in result, result
             assert all(gate["status"] in {"passed", "skipped"} for gate in result["gates"]), result
-            assert len(result["gates"]) == 4, result
+            assert len(result["gates"]) == 5, result
 
         mcp_client.session_id = session_id
         # Preview keeps every claim intact until the worker requests close.

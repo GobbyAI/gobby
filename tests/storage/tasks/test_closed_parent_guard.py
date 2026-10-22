@@ -260,7 +260,7 @@ def test_create_waits_for_a_concurrent_parent_close_and_is_refused(
 
     def close_parent() -> None:
         with temp_db.transaction() as conn:
-            _close_task_in_txn(conn, parent.id, db=None, reason="done")
+            _close_task_in_txn(conn, parent.id, db=temp_db, reason="done")
             close_holds_row.set()
             release_close.wait(timeout=JOIN_TIMEOUT_SECONDS)
 
@@ -321,7 +321,7 @@ def test_close_waits_for_a_concurrent_child_insert_and_is_refused(
 
     def close_parent() -> None:
         with temp_db.transaction() as conn:
-            _close_task_in_txn(conn, parent.id, db=None, reason="done")
+            _close_task_in_txn(conn, parent.id, db=temp_db, reason="done")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         creator = executor.submit(create_child)
