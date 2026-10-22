@@ -93,7 +93,7 @@ def _close(
     commit_sha: str | None = None,
     *,
     preview: bool = False,
-    reason: str = "completed",
+    reason: str = "done",
 ) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "task_id": task_id,
@@ -195,7 +195,7 @@ def test_unintegrated_commit_blocks_close(
     assert result["closed"] is False
 
 
-@pytest.mark.parametrize("reason,ready", [("completed", False), ("obsolete", True)])
+@pytest.mark.parametrize("reason,ready", [("done", False), ("moot", True)])
 def test_epic_uses_same_commit_and_no_work_gates(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,

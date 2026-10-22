@@ -236,7 +236,7 @@ def reopen_task(
         reason: Optional reason for reopening
 
     Raises:
-        ValueError: If task not found or already ready
+        ValueError: If task not found or already open
     """
     _reopen_task_transition(db, task_id, reason=reason)
 

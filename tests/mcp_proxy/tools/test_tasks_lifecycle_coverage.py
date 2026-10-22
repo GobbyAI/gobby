@@ -205,7 +205,7 @@ class TestCloseTaskTool:
         close_case.manager.close_task_with_commit.assert_not_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("reason,expected", [("completed", False), ("duplicate", True)])
+    @pytest.mark.parametrize("reason,expected", [("done", False), ("superseded", True)])
     async def test_commitless_close_requires_no_work_reason(
         self, close_case: CloseCase, reason: str, expected: bool
     ) -> None:
@@ -342,7 +342,7 @@ class TestCloseTaskTool:
         close_case.task.commits = []
         close_case.variables.get_variables.return_value = close_case.attribute(["owned.py"])
         (close_case.repo / "owned.py").write_text("owned = 2\n")
-        result = await close_case.close(reason="out_of_repo")
+        result = await close_case.close(reason="wont_do")
         assert result["error"] == "uncommitted_task_edits"
         close_case.manager.close_task.assert_not_called()
 
@@ -358,7 +358,7 @@ class TestCloseTaskTool:
         if not scoped_ledger:
             variables.pop("task_edited_file_checkouts")
         close_case.variables.get_variables.return_value = variables
-        result = await close_case.close(reason="out_of_repo")
+        result = await close_case.close(reason="wont_do")
         assert result["success"] is scoped_ledger
         assert result.get("error") == (None if scoped_ledger else "uncommitted_task_edits")
         assert close_case.manager.close_task.call_count == int(scoped_ledger)
@@ -372,7 +372,7 @@ class TestCloseTaskTool:
             "task_edited_files": {"other-task": ["other.py"]},
             "task_edited_file_checkouts": {"other-task": {str(close_case.repo): ["other.py"]}},
         }
-        result = await close_case.close(reason="out_of_repo")
+        result = await close_case.close(reason="wont_do")
         assert result["closed"] is True
         close_case.manager.close_task.assert_called_once()
         assert close_case.variables.merge_variables.call_args.args[1]["task_edited_files"] == {

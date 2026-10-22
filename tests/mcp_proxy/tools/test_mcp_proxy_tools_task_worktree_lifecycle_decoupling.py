@@ -11,12 +11,19 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
 _CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+
+
+async def _resolving_git(argv: tuple[str, ...], **_kwargs: object) -> GitOk:
+    """Resolve every linked commit and report it as landed on the integration tip."""
+    stdout = argv[-1].removesuffix("^{commit}") if argv[0] == "rev-parse" else ""
+    return GitOk("ok", argv, stdout, "")
 
 
 def _checkout_session_manager() -> MagicMock:
@@ -71,6 +78,10 @@ def _set_session_context() -> Iterator[None]:
             return_value="21000000-0000-4000-8000-000000000001",
         ),
         patch(
+            "gobby.sessions.machine_scope.get_machine_id",
+            return_value=_CHECKOUT_MACHINE,
+        ),
+        patch(
             "gobby.storage.project_checkouts.require_root",
             return_value=TEST_REPO_PATH,
         ),
@@ -83,7 +94,7 @@ def _set_session_context() -> Iterator[None]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["completed", "duplicate"])
+@pytest.mark.parametrize("reason", ["done", "superseded"])
 async def test_close_task_does_not_mutate_worktree_status(
     mock_task_manager: MagicMock,
     reason: str,
@@ -91,10 +102,13 @@ async def test_close_task_does_not_mutate_worktree_status(
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.LocalWorktreeManager") as MockWorktreeManager,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-        patch("gobby.utils.git.run_git_command") as mock_git,
         patch(
-            "gobby.utils.git.normalize_commit_sha",
-            side_effect=lambda sha, cwd=None: sha,
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.daemon_git.run",
+            side_effect=_resolving_git,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
+            return_value=(Path(TEST_REPO_PATH), "0.5.0"),
         ),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
@@ -103,7 +117,6 @@ async def test_close_task_does_not_mutate_worktree_status(
         mock_proj_instance = MagicMock()
         mock_proj_instance.get.return_value = MagicMock()
         MockProjManager.return_value = mock_proj_instance
-        mock_git.return_value = "abc123"
 
         registry: InternalToolRegistry = create_task_registry(mock_task_manager)
 
@@ -141,8 +154,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         "closed": True,
         "task_id": mock_task.id,
         "commit_shas": ["abc123"],
-        "candidate_commit_sha": None,
-        "clean_proof": {"status": "clean"},
+        "candidate_commit_sha": "abc123",
     }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)

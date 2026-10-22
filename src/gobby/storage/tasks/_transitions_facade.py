@@ -253,7 +253,7 @@ class TaskTransitionsMixin:
             reason: Optional reason for reopening
 
         Raises:
-            ValueError: If task not found or already ready
+            ValueError: If task not found or already open
         """
         _reopen_task(self.db, task_id=task_id, reason=reason)
         self._notify_listeners()

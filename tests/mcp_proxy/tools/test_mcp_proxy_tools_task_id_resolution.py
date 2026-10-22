@@ -279,7 +279,7 @@ class TestMCPCloseTaskWithHashFormat:
         ):
             await close_task_func(
                 task_id="#10",
-                reason="obsolete",
+                reason="moot",
             )
 
         mock_task_manager.resolve_task_reference.assert_called_with(

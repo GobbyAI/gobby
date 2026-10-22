@@ -17,9 +17,8 @@ with your next tool call after it. Never end the turn or idle to wait for it.
 If a call is denied, abandon it and complete the missing loads named in
 the recovery guidance; do not retry the denied capability in this step.
 
-First apply the stated closure_reason. For duplicate, already_implemented,
-wont_fix, obsolete, or out_of_repo, judge the changes_summary as a no-work
-disposition justification. Original implementation criteria are not expected
+First apply the stated closure_reason. For moot, superseded or wont_do, judge
+the changes_summary as a no-work disposition justification. Original implementation criteria are not expected
 to be met: mark each satisfied when the specific justification coherently
 explains its disposition. Reject a missing, vague, or contradicted
 justification. Do not demand implementation, tests, commits, or operational

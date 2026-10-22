@@ -384,7 +384,7 @@ def reopen_task(
         )
     has_ownership_metadata = bool(task.claimed_by_session_id)
     if not is_task_closed(task) and not task.is_escalated and not has_ownership_metadata:
-        raise ValueError(f"Task {_task_ref(task, task_id)} is already ready")
+        raise ValueError(f"Task {_task_ref(task, task_id)} is already open")
 
     description = task.description
     if reason:

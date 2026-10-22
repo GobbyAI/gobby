@@ -124,7 +124,7 @@ async def test_live_prefix_has_no_close_semantics(
     )
     registry = InternalToolRegistry("gobby-tasks")
     register_close_task(registry, ctx)
-    result = await registry.call("close_task", {"task_id": task.id, "reason": "obsolete"})
+    result = await registry.call("close_task", {"task_id": task.id, "reason": "moot"})
     assert result["closed"] is True, result
     closed = manager.get_task(task.id)
     assert closed.validation_criteria == criteria

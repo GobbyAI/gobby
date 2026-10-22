@@ -61,7 +61,7 @@ def _create_closed_task(
 ) -> None:
     task = task_manager.create_task(project_id, title, validation_criteria=VALIDATION_CRITERIA)
     task_manager.db.execute(
-        "UPDATE tasks SET created_at = %s, closed_at = %s WHERE id = %s",
+        "UPDATE tasks SET created_at = %s, closed_at = %s, closed_reason = 'done' WHERE id = %s",
         (
             f"2026-05-{created_day:02d}T00:00:00+00:00",
             f"2026-06-{closed_day:02d}T00:00:00+00:00",
@@ -89,7 +89,7 @@ class TestLocalTaskManager:
 
         assert task.title == "Fix bug"
         assert task.project_id == project_id
-        _assert_task_state(task, "ready")
+        _assert_task_state(task, "open")
         assert task.labels == ["urgent", "backend"]
         assert task.priority == 1
         assert task.task_type == "bug"
@@ -133,7 +133,7 @@ class TestLocalTaskManager:
         )
         updated = task_manager.update_task(task.id, title="New Title")
         assert updated.title == "New Title"
-        _assert_task_state(updated, "ready")
+        _assert_task_state(updated, "open")
         assert updated.updated_at > task.updated_at
 
     def test_update_task_persists_schedule_fields(self, task_manager, project_id) -> None:
@@ -249,7 +249,7 @@ class TestLocalTaskManager:
         )
 
         assert updated.title == "From Linear"
-        _assert_task_state(updated, "ready")
+        _assert_task_state(updated, "in_progress")
         assert updated.claimed_by_session_id == session.id
 
     def test_reconcile_task_state_noop_preserves_updated_at(self, task_manager, project_id) -> None:
@@ -297,9 +297,9 @@ class TestLocalTaskManager:
             title="To Close",
             validation_criteria=VALIDATION_CRITERIA,
         )
-        closed = task_manager.close_task(task.id, reason="Done")
+        closed = task_manager.close_task(task.id, reason="done")
         assert is_task_closed(closed)
-        assert closed.closed_reason == "Done"
+        assert closed.closed_reason == "done"
 
     def test_delete_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(
@@ -701,10 +701,10 @@ class TestLocalTaskManager:
             t.id for t in task_manager.list_blocked_tasks(project_id=project_id)
         }
 
-    def test_list_blocked_tasks_includes_escalated_tasks(
+    def test_list_blocked_tasks_excludes_escalated_tasks(
         self, task_manager, dep_manager, project_id
     ) -> None:
-        """Blocked is independent of escalation."""
+        """Escalation takes precedence over dependency blockers in the projected state."""
         blocked = task_manager.create_task(
             project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
@@ -716,8 +716,9 @@ class TestLocalTaskManager:
         task_manager.escalate_task(blocked.id, reason="Needs human help")
 
         blocked_ids = {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
-        assert blocked.id in blocked_ids
-        assert task_manager.count_blocked_tasks(project_id=project_id) == 1
+        assert blocked.id not in blocked_ids
+        assert task_manager.count_blocked_tasks(project_id=project_id) == 0
+        _assert_task_state(task_manager.get_task(blocked.id), "escalated")
 
     def test_task_state_tracks_only_unresolved_external_blockers(
         self, task_manager, dep_manager, project_id
@@ -1238,12 +1239,12 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id, "To Reopen", validation_criteria=VALIDATION_CRITERIA
         )
-        task_manager.close_task(task.id, reason="Done")
+        task_manager.close_task(task.id, reason="done")
 
         reopened = task_manager.reopen_task(task.id)
 
         assert not is_task_closed(reopened)
-        _assert_task_state(reopened, "ready")
+        _assert_task_state(reopened, "open")
         assert reopened.closed_reason is None
         assert reopened.closed_at is None
         assert reopened.closed_in_session_id is None
@@ -1271,7 +1272,7 @@ class TestLocalTaskManager:
             project_id, "Open Task", validation_criteria=VALIDATION_CRITERIA
         )
 
-        with pytest.raises(ValueError, match="already ready"):
+        with pytest.raises(ValueError, match="already open"):
             task_manager.reopen_task(task.id)
 
     def test_reopen_task_already_open_claimed_releases_owner(
@@ -1295,7 +1296,7 @@ class TestLocalTaskManager:
         reopened = task_manager.reopen_task(task.id, reason="Release claim")
 
         assert not is_task_closed(reopened)
-        _assert_task_state(reopened, "ready")
+        _assert_task_state(reopened, "open")
         assert reopened.claimed_by_session_id is None
         assert reopened.review_fail_count == 2
         assert reopened.review_epoch == task.review_epoch
@@ -1312,13 +1313,13 @@ class TestLocalTaskManager:
 
         assert not reopened.is_escalated
         assert reopened.escalated_at is None
-        _assert_task_state(reopened, "ready")
+        _assert_task_state(reopened, "open")
         assert reopened.claimed_by_session_id is None
 
     def test_claim_task_sets_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Claiming records the owning session without changing the task's open state."""
+        """Claiming records the owning session and projects the task as in progress."""
         session = session_manager.register(
             external_id="claim-ext",
             machine_id="21000000-0000-4000-8000-000000000002",
@@ -1331,7 +1332,7 @@ class TestLocalTaskManager:
 
         claimed = task_manager.claim_task(task.id, session.id)
 
-        _assert_task_state(claimed, "ready")
+        _assert_task_state(claimed, "in_progress")
         assert claimed.claimed_by_session_id == session.id
 
     def test_release_task_claim_clears_canonical_owner(
@@ -1351,7 +1352,7 @@ class TestLocalTaskManager:
 
         released = task_manager.release_task_claim(task.id)
 
-        _assert_task_state(released, "ready")
+        _assert_task_state(released, "open")
         assert released.claimed_by_session_id is None
 
     def test_agent_claim_is_idempotent_and_close_preserves_other_claims(
@@ -1666,7 +1667,7 @@ class TestLocalTaskManager:
 
         closed = task_manager.close_task(
             task.id,
-            reason="Done",
+            reason="done",
             closed_in_session_id=session.id,
             closed_commit_sha="abc123def",
         )
@@ -2079,7 +2080,7 @@ class TestLocalTaskManager:
 
         counts = task_manager.count_by_state(project_id=project_id)
 
-        assert counts.get("ready") == 2
+        assert counts.get("open") == 2
         assert counts.get("closed") == 1
 
     def test_count_by_state_all_projects(self, task_manager, project_id) -> None:
@@ -2088,7 +2089,7 @@ class TestLocalTaskManager:
 
         counts = task_manager.count_by_state()
 
-        assert counts.get("ready", 0) >= 1
+        assert counts.get("open", 0) >= 1
 
     def test_count_ready_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting ready tasks."""

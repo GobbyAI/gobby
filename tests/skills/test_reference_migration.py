@@ -248,7 +248,7 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
         additional_skills=["merge"],
         validation_criteria="Migration neither rewrites nor reports this closed task",
     )
-    closed = tasks.close_task(closed.id, reason="obsolete")
+    closed = tasks.close_task(closed.id, reason="moot")
     agent = make_agent_definition(
         name="runtime-fixture",
         prompts={"agent": "Task instructions"},

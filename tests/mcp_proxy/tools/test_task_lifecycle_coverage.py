@@ -271,14 +271,14 @@ class TestCloseTask(_CloseTaskGitIsolation):
         mock_task_manager.close_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_obsolete_empty_epic_closes_without_commits(
+    async def test_moot_empty_epic_closes_without_commits(
         self, mock_task_manager: MagicMock
     ) -> None:
         task = _make_task(task_type="epic")
         mock_task_manager.get_task.return_value = task
         with patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive:
             result = await _create_registry(mock_task_manager).call(
-                "close_task", {"task_id": task.id, "reason": "obsolete"}
+                "close_task", {"task_id": task.id, "reason": "moot"}
             )
         assert result["closed"] is True
         mock_task_manager.close_task.assert_called_once()
@@ -307,7 +307,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
         mock_task_manager.close_task_with_commit.assert_called_once_with(
             task.id,
             "abc1234",
-            reason="completed",
+            reason="done",
             closed_in_session_id="resolved-session",
             cwd=TEST_REPO_PATH,
             expected_updated_at=task.updated_at,
