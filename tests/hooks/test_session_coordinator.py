@@ -21,7 +21,6 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -37,7 +36,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
-from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -63,7 +61,6 @@ def _stub_agent_sandbox_reaping(monkeypatch: pytest.MonkeyPatch) -> None:
 PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
 PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
-REVIEWER_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000004"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
@@ -122,126 +119,6 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
             current_step=current_step,
             variables={},
         )
-    )
-
-
-def _install_running_close_review(
-    db: HubDatabase,
-    *,
-    task: Any,
-    caller_session_id: str,
-    reviewer_run_id: str,
-) -> str:
-    store = TaskCloseReviewStore(db)
-    review, _created = store.create_or_get_active(
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=caller_session_id,
-        commit_shas=(),
-        close_arguments={"preview": True},
-        expected_task_updated_at=task.updated_at,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        diff_sha="d" * 64,
-        test_bodies_sha="e" * 64,
-        stable_facts={},
-        review_id=str(uuid.uuid4()),
-        run=QueuedAgentRunSpec(
-            id=reviewer_run_id,
-            machine_id=MACHINE_ID,
-            provider="codex",
-            model=None,
-            agent_name="task-close-reviewer",
-            prompt="review close evidence",
-            timeout_seconds=1200,
-            requested_reasoning_effort=None,
-        ),
-    )
-    promoted = store.claim_queued(project_id=PROJECT_ID, max_concurrency=3)
-    assert review.id in {item.id for item in promoted}
-    run_manager = LocalAgentRunManager(db)
-    activated = run_manager.activate_queued(
-        reviewer_run_id,
-        child_session_id=REVIEWER_SESSION_ID,
-        provider="codex",
-        prompt="review close evidence",
-        workflow_name="task-close-reviewer",
-        agent_name="task-close-reviewer",
-        model=None,
-        is_local=True,
-        requested_reasoning_effort=None,
-        effective_reasoning_effort=None,
-        reasoning_required=False,
-        reasoning_status="not_requested",
-        reasoning_message=None,
-        timeout_seconds=1200,
-        resume_metadata_json=None,
-        worktree_id=None,
-        clone_id=None,
-    )
-    assert activated is not None
-    assert run_manager.start(reviewer_run_id) is not None
-    bound = store.bind_run(review.id, reviewer_run_id)
-    assert bound is not None
-    return review.id
-
-
-@dataclass(frozen=True)
-class _CloseReviewCaller:
-    run_manager: LocalAgentRunManager
-    run_id: str
-    task_id: str
-    review_id: str
-    coordinator: SessionCoordinator
-    session: SimpleNamespace
-
-
-def _close_review_caller(db: HubDatabase) -> _CloseReviewCaller:
-    """A Grok caller on its implement step, parked on a running close review."""
-    _create_session_row(db, PARENT_SESSION_ID)
-    _create_session_row(db, CHILD_SESSION_ID)
-    _create_session_row(db, REVIEWER_SESSION_ID)
-    _install_step_workflow(db, CHILD_SESSION_ID, "implement")
-    task_manager = LocalTaskManager(db)
-    task = task_manager.create_task(
-        project_id=PROJECT_ID,
-        title="Backend leaf",
-        task_type="bug",
-        category="code",
-        implementation_domain="backend",
-        validation_criteria="Closed after review.",
-    )
-    run_manager = LocalAgentRunManager(db)
-    caller = run_manager.create(
-        parent_session_id=PARENT_SESSION_ID,
-        provider="grok",
-        prompt="implement the leaf",
-        workflow_name="backend-developer",
-        agent_name="backend-developer",
-        child_session_id=CHILD_SESSION_ID,
-        task_id=task.id,
-    )
-    run_manager.start(caller.id)
-    reviewer_run_id = str(uuid.uuid4())
-    review_id = _install_running_close_review(
-        db,
-        task=task,
-        caller_session_id=CHILD_SESSION_ID,
-        reviewer_run_id=reviewer_run_id,
-    )
-    return _CloseReviewCaller(
-        run_manager=run_manager,
-        run_id=caller.id,
-        task_id=task.id,
-        review_id=review_id,
-        coordinator=SessionCoordinator(agent_run_manager=run_manager, task_manager=task_manager),
-        session=SimpleNamespace(
-            id=CHILD_SESSION_ID,
-            agent_run_id=caller.id,
-            summary_markdown="Waiting on close review.",
-            tool_call_count=12,
-            turn_count=8,
-        ),
     )
 
 
@@ -1440,100 +1317,6 @@ class TestAgentRunCompletion:
         call_kwargs = mock_agent_run_manager.complete.call_args[1]
         assert call_kwargs["tool_calls_count"] == 10
         assert call_kwargs["turns_used"] == 5
-
-    def test_complete_agent_run_defers_close_review_handoff(
-        self,
-        temp_db: HubDatabase,
-    ) -> None:
-        """SESSION_END must not fail a caller parked on its close-review validator."""
-        caller = _close_review_caller(temp_db)
-
-        caller.coordinator.complete_agent_run(caller.session)
-
-        updated = caller.run_manager.get(caller.run_id)
-        assert updated is not None
-        assert updated.status == "running"
-        assert updated.error is None
-
-    def test_repeat_session_end_fails_ended_caller_on_rejected_review(
-        self,
-        temp_db: HubDatabase,
-    ) -> None:
-        """After deferral deletes the step instance, the rejected review decides the run."""
-        from gobby.workflows.step_instances import AgentStepInstanceManager
-
-        caller = _close_review_caller(temp_db)
-        caller.coordinator.complete_agent_run(caller.session)
-        AgentStepInstanceManager(temp_db).delete_for_session(CHILD_SESSION_ID)
-        SessionManager(temp_db).update_status(CHILD_SESSION_ID, "expired")
-        rejected = TaskCloseReviewStore(temp_db).finish(
-            caller.review_id,
-            status="invalid",
-            result_payload={"status": "invalid"},
-        )
-        assert rejected is not None
-
-        caller.coordinator.complete_agent_run(caller.session)
-
-        updated = caller.run_manager.get(caller.run_id)
-        assert updated is not None
-        assert updated.status == "error"
-        error = updated.error or ""
-        assert "review_status=invalid" in error
-        assert f"review_id={caller.review_id}" in error
-        assert "before step workflow completed" not in error
-
-    def test_session_end_completes_ended_caller_on_external_pending_review(
-        self,
-        temp_db: HubDatabase,
-    ) -> None:
-        """A verdict parked on coordinator-owned live criteria completes and names the gate.
-
-        SESSION_END completes the run before it moves the session row out of a live status.
-        """
-        caller = _close_review_caller(temp_db)
-        pending = TaskCloseReviewStore(temp_db).finish(
-            caller.review_id,
-            status="external_pending",
-            result_payload={"status": "external_pending"},
-        )
-        assert pending is not None
-
-        caller.coordinator.complete_agent_run(caller.session)
-
-        updated = caller.run_manager.get(caller.run_id)
-        assert updated is not None
-        assert updated.status == "success"
-        result = updated.result or ""
-        assert "coordinator-owned live criteria remain pending verification" in result
-        assert f"review_id={caller.review_id}" in result
-
-    def test_repeat_session_end_completes_caller_once_review_closes_task(
-        self,
-        temp_db: HubDatabase,
-    ) -> None:
-        """A closed task wins over an undelivered closed review on the next SESSION_END."""
-        caller = _close_review_caller(temp_db)
-        caller.coordinator.complete_agent_run(caller.session)
-        SessionManager(temp_db).update_status(CHILD_SESSION_ID, "expired")
-        LocalTaskManager(temp_db).close_task(
-            caller.task_id,
-            reason="Done",
-            closed_commit_sha="abc123",
-        )
-        closed = TaskCloseReviewStore(temp_db).finish(
-            caller.review_id,
-            status="closed",
-            result_payload={"closed": True},
-        )
-        assert closed is not None
-
-        caller.coordinator.complete_agent_run(caller.session)
-
-        updated = caller.run_manager.get(caller.run_id)
-        assert updated is not None
-        assert updated.status == "success"
-        assert "Task completion:" in (updated.result or "")
 
 
 class TestStartAgentRunIdempotency:

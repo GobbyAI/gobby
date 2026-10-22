@@ -43,7 +43,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import TerminalManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.terminal_fixtures import make_live_terminal
 
@@ -572,12 +571,11 @@ class TestAgentRestartReconciliation:
 
     @pytest.mark.asyncio
     async def test_missing_terminal_close_reviewer_is_parked_not_resumed(self) -> None:
-        # The review stays bound to this run, so a resumed successor could never
-        # submit; close-review reconciliation retries the parked reviewer instead.
+        # The shared resume boundary keeps historical reviewer runs inert.
         run = SimpleNamespace(
             id="0f1c2d3e-4b5a-4c6d-8e7f-901a2b3c4d5e",
             terminal_id="6d1b5c7f-8a2e-4d3f-9e1b-4f5a6b7c8d9e",
-            agent_name=TASK_CLOSE_REVIEWER_AGENT,
+            agent_name="task-close-reviewer",
             task_id=None,
             resume_metadata_json={},
         )
@@ -587,20 +585,15 @@ class TestAgentRestartReconciliation:
         runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
         resolved_run_ids: set[str] = set()
 
-        with patch(
-            "gobby.agents.resume_executor.resume_agent_run",
-            new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
-        ) as resume:
-            count = await runner_lifecycle._reconcile_agent_runs_after_restart(
-                runner, resolved_run_ids=resolved_run_ids
-            )
+        count = await runner_lifecycle._reconcile_agent_runs_after_restart(
+            runner, resolved_run_ids=resolved_run_ids
+        )
 
-        assert count == 2
-        assert resolved_run_ids == {run.id}
+        assert count == 1
+        assert resolved_run_ids == set()
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             run.id, terminal_reason="daemon_stop"
         )
-        resume.assert_not_awaited()
         assert row.state == "exited"
 
     @pytest.mark.asyncio
@@ -644,18 +637,8 @@ class TestAgentRestartReconciliation:
         assert run_storage.update_runtime.call_count == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("claimed_by", "claim"),
-        [
-            ("cooperative_close_handoff_pending", True),
-            ("bound_task_is_closed", True),
-            ("ended_caller_close_review_outcome", ("fail", "review_status=invalid")),
-        ],
-    )
-    async def test_reconcile_unavailable_manager_fences_close_review_caller(
+    async def test_reconcile_unavailable_manager_fences_task_run(
         self,
-        claimed_by: str,
-        claim: object,
     ) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
@@ -673,15 +656,8 @@ class TestAgentRestartReconciliation:
         )
         runner = self._runner(run_storage, parked_run=run)
         resolved_run_ids: set[str] = set()
-        predicates = {
-            "cooperative_close_handoff_pending": MagicMock(return_value=False),
-            "bound_task_is_closed": MagicMock(return_value=False),
-            "ended_caller_close_review_outcome": MagicMock(return_value=None),
-        }
-        predicates[claimed_by].return_value = claim
-
         with (
-            patch.multiple("gobby.agents.run_completion", **predicates),
+            patch("gobby.agents.run_completion.bound_task_is_closed", return_value=True) as closed,
             patch(
                 "gobby.agents.resume_executor.resume_agent_run",
                 new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
@@ -701,7 +677,7 @@ class TestAgentRestartReconciliation:
                 "reconciliation_blocked_reason": "terminal_manager_unavailable",
             },
         )
-        predicates[claimed_by].assert_not_called()
+        closed.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
         resume.assert_not_awaited()
         run_storage.update_runtime.assert_not_called()

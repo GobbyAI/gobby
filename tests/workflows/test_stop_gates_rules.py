@@ -12,24 +12,18 @@ Tier 2 rules (YAML templates — configurable):
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
-import gobby.storage.task_close_reviews as review_storage
-import gobby.tasks.agentic_close_review as review_payloads
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.agentic_close_review import build_terminal_review_payload
-from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
@@ -714,51 +708,51 @@ class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
 
     @pytest.fixture
-    def close_review_wait(
+    def child_agent_wait(
         self,
         db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> tuple[str, str, LocalAgentRunManager]:
-        """Persist the parent/run relationship used by close-review orchestration."""
+        """Persist an ordinary child run for completion-subscriber waits."""
         machine_id = "21000000-0000-4000-8000-000000000001"
         patch_local_machine_id(monkeypatch, machine_id)
         caller = session_manager.register(
-            external_id="step-completion-review-caller",
+            external_id="step-completion-caller",
             machine_id=machine_id,
             source="claude",
             project_id=str(sample_project["id"]),
         )
         runs = LocalAgentRunManager(db)
-        review = runs.create(
+        child = runs.create(
             parent_session_id=caller.id,
             provider="claude",
-            prompt="Review the caller's committed task criteria.",
-            agent_name="task-close-reviewer",
+            prompt="Complete the delegated task.",
+            agent_name="backend-developer",
         )
-        return caller.id, review.id, runs
+        return caller.id, child.id, runs
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
-    @pytest.mark.parametrize("review_status", ["pending", "running"])
+    @pytest.mark.parametrize("run_status", ["pending", "running"])
     @pytest.mark.parametrize("observer", [False, True])
-    async def test_close_review_wait_yields_without_completing_step_and_rearms_after_verdict(
+    async def test_child_agent_wait_yields_without_completing_step_and_rearms_after_completion(
         self,
         db: HubDatabase,
-        close_review_wait: tuple[str, str, LocalAgentRunManager],
+        child_agent_wait: tuple[str, str, LocalAgentRunManager],
         event_type: HookEventType,
-        review_status: str,
+        run_status: str,
         observer: bool,
     ) -> None:
         _sync_bundled(db)
-        caller_id, review_run_id, runs = close_review_wait
+        caller_id, child_run_id, runs = child_agent_wait
         if observer:
             caller_id = SESSION_ID
-        if review_status == "running":
-            assert runs.start(review_run_id) is not None
+        if run_status == "running":
+            assert runs.start(child_run_id) is not None
         subscribers = CompletionSubscriberManager(db)
-        subscribers.add_completion_subscriber(review_run_id, caller_id)
+        subscribers.add_completion_subscriber(child_run_id, caller_id)
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "is_spawned_agent": True,
@@ -777,9 +771,9 @@ class TestRequireStepCompletion:
         assert variables["step_workflow_complete"] is False
         assert variables["stop_attempts"] == 0
 
-        assert runs.complete(review_run_id, result="Close-review verdict delivered.") is not None
-        # A terminal validator must rearm the gate even before subscription cleanup.
-        assert subscribers.get_completion_subscribers(review_run_id) == [caller_id]
+        assert runs.complete(child_run_id, result="Delegated task completed.") is not None
+        # A terminal child must rearm the gate even before subscription cleanup.
+        assert subscribers.get_completion_subscribers(child_run_id) == [caller_id]
         resumed = await engine.evaluate(event, caller_id, variables)
 
         assert resumed.decision == "block"
@@ -793,11 +787,11 @@ class TestRequireStepCompletion:
     async def test_incomplete_step_blocks_without_an_active_completion_wait(
         self,
         db: HubDatabase,
-        close_review_wait: tuple[str, str, LocalAgentRunManager],
+        child_agent_wait: tuple[str, str, LocalAgentRunManager],
         wait_state: str,
     ) -> None:
         _sync_bundled(db)
-        caller_id, review_run_id, _runs = close_review_wait
+        caller_id, child_run_id, _runs = child_agent_wait
         subscribers = CompletionSubscriberManager(db)
         if wait_state == "orphan":
             subscribers.add_completion_subscriber("22222222-2222-4222-8222-222222222222", caller_id)
@@ -819,100 +813,15 @@ class TestRequireStepCompletion:
         assert variables["step_workflow_complete"] is False
         assert variables["stop_attempts"] == 1
 
-    @pytest.fixture
-    def close_review_retry_wait(
-        self,
-        db: HubDatabase,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> tuple[LocalTaskManager, Task, str]:
-        """Persist a task whose latest close review is parked on a retryable error."""
-        now = datetime(2026, 9, 18, 12, tzinfo=UTC)
-        monkeypatch.setattr(review_payloads, "utc_now", lambda: now)
-        monkeypatch.setattr(review_storage, "utc_now", lambda: now)
-        caller = session_manager.register(
-            external_id="close-review-retry-wait",
-            machine_id=require_machine_id(),
-            source="codex",
-            project_id=str(sample_project["id"]),
-        )
-        tasks = LocalTaskManager(db)
-        task = tasks.create_task(
-            validation_criteria="Spawned-agent step gate yields to the close review",
-            project_id=sample_project["id"],
-            title="Pending close review",
-        )
-        store = TaskCloseReviewStore(db)
-        review, _ = store.create_or_get_active(
-            task_id=task.id,
-            task_ref=f"#{task.seq_num}",
-            caller_session_id=caller.id,
-            commit_shas=(),
-            close_arguments={},
-            expected_task_updated_at=task.updated_at,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence",
-            diff_sha="d" * 64,
-            test_bodies_sha="e" * 64,
-            stable_facts={},
-            review_id=str(uuid4()),
-            run=QueuedAgentRunSpec(
-                id=str(uuid4()),
-                machine_id=require_machine_id(),
-                provider="codex",
-                model=None,
-                agent_name="task-close-reviewer",
-                prompt="Review close evidence.",
-                timeout_seconds=1200,
-                requested_reasoning_effort=None,
-            ),
-        )
-        store.finish(
-            review.id,
-            status="error",
-            result_payload=build_terminal_review_payload(
-                review, status="error", error_class="retryable_infrastructure"
-            ),
-        )
-        return tasks, task, caller.id
-
     @pytest.mark.asyncio
-    async def test_pending_close_review_yields_the_step_gate(
+    async def test_unclaimed_spawned_agent_with_incomplete_step_blocks(
         self,
         db: HubDatabase,
-        close_review_retry_wait: tuple[LocalTaskManager, Task, str],
-    ) -> None:
-        """A spawned worker parked on its own claimed task's close review may yield."""
-        _sync_bundled(db)
-        tasks, task, caller_id = close_review_retry_wait
-        variables: dict[str, object] = {
-            "is_spawned_agent": True,
-            "current_step": "implement",
-            "step_workflow_complete": False,
-            "task_claimed": True,
-            "claimed_tasks": {task.id: f"#{task.seq_num}"},
-            "stop_attempts": 0,
-            "_memory_initial_stop_checked": True,
-        }
-
-        response = await RuleEngine(db, task_manager=tasks).evaluate(
-            _make_event(HookEventType.STOP), caller_id, variables
-        )
-
-        assert response.decision == "allow"
-        assert variables["current_step"] == "implement"
-        assert variables["step_workflow_complete"] is False
-
-    @pytest.mark.asyncio
-    async def test_unclaimed_spawned_agent_still_blocks_beside_a_parked_review(
-        self,
-        db: HubDatabase,
-        close_review_retry_wait: tuple[LocalTaskManager, Task, str],
     ) -> None:
         """An empty claim set grants no durable wait, so an incomplete step still blocks."""
         _sync_bundled(db)
-        tasks, _task, caller_id = close_review_retry_wait
+        tasks = LocalTaskManager(db)
+        caller_id = SESSION_ID
         variables: dict[str, object] = {
             "is_spawned_agent": True,
             "current_step": "implement",
@@ -2336,117 +2245,3 @@ class TestForceAllowStopWithTaskClaimed:
         variables["force_allow_stop"] = False
         await engine.evaluate(event, SESSION_ID, variables)
         assert variables.get("force_allow_stop") is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("task_type", ["task", "epic"])
-@pytest.mark.parametrize(
-    "wait_state,expected",
-    [
-        ("valid", "allow"),
-        ("expired", "block"),
-        ("superseded", "block"),
-        ("other-caller", "block"),
-        ("mixed", "block"),
-        ("mixed-waits", "allow"),
-    ],
-)
-async def test_infrastructure_retry_wait_reaches_task_and_epic_stop_gates(
-    db: HubDatabase,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-    task_type: str,
-    wait_state: str,
-    expected: str,
-) -> None:
-    _sync_bundled(db)
-    now = datetime(2026, 9, 13, 12, tzinfo=UTC)
-    monkeypatch.setattr(review_payloads, "utc_now", lambda: now)
-    monkeypatch.setattr(review_storage, "utc_now", lambda: now)
-    tasks = LocalTaskManager(db)
-    review_caller = session_manager.register(
-        external_id=f"infrastructure-wait-{task_type}-{wait_state}",
-        machine_id=require_machine_id(),
-        source="codex",
-        project_id=str(sample_project["id"]),
-    )
-    task = tasks.create_task(
-        validation_criteria="Focused close retry regression passes",
-        project_id=sample_project["id"],
-        title="Infrastructure wait",
-        task_type=task_type,
-    )
-    if task_type == "epic":
-        tasks.create_task(
-            validation_criteria="Focused close retry regression passes",
-            project_id=sample_project["id"],
-            title="Open child",
-            parent_task_id=task.id,
-        )
-    store = TaskCloseReviewStore(db)
-    review, _ = store.create_or_get_active(
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=review_caller.id,
-        commit_shas=(),
-        close_arguments={},
-        expected_task_updated_at=task.updated_at,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        diff_sha="d" * 64,
-        test_bodies_sha="e" * 64,
-        stable_facts={},
-        review_id=str(uuid4()),
-        run=QueuedAgentRunSpec(
-            id=str(uuid4()),
-            machine_id=require_machine_id(),
-            provider="codex",
-            model=None,
-            agent_name="task-close-reviewer",
-            prompt="Review close evidence.",
-            timeout_seconds=1200,
-            requested_reasoning_effort=None,
-        ),
-    )
-    payload = build_terminal_review_payload(
-        review, status="error", error_class="retryable_infrastructure"
-    )
-    store.finish(review.id, status="error", result_payload=payload)
-    claimed = {task.id: f"#{task.seq_num}"}
-    if wait_state in {"mixed", "mixed-waits"}:
-        other = tasks.create_task(
-            validation_criteria="Focused close retry regression passes",
-            project_id=sample_project["id"],
-            title="Another claimed task",
-        )
-        claimed[other.id] = f"#{other.seq_num}"
-        if wait_state == "mixed-waits":
-            tasks.escalate_task(other.id, reason="Product decision required")
-    if wait_state == "expired":
-        monkeypatch.setattr(review_storage, "utc_now", lambda: now + timedelta(seconds=900))
-    if wait_state == "superseded":
-        store.supersede_retry_wait(task.id, caller_session_id=review_caller.id)
-    caller = review_caller.id
-    if wait_state == "other-caller":
-        caller = session_manager.register(
-            external_id=f"infrastructure-observer-{task_type}",
-            machine_id=require_machine_id(),
-            source="codex",
-            project_id=str(sample_project["id"]),
-        ).id
-    variables: dict[str, object] = {
-        "mode_level": 2,
-        "task_claimed": True,
-        "claimed_tasks": claimed,
-        "stop_attempts": 0,
-        "_memory_initial_stop_checked": True,
-    }
-    event = _make_event(HookEventType.STOP)
-    event.session_id = caller
-    response = await RuleEngine(db, task_manager=tasks).evaluate(event, caller, variables)
-    assert response.decision == expected
-    if expected == "block":
-        assert "require-task-close" in (response.reason or "")
-    persisted = tasks.get_task(task.id)
-    assert persisted is not None and persisted.closed_at is None
