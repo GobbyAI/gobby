@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
+from prometheus_client.parser import text_string_to_metric_families
 
 from gobby.config.persistence import DatabasesConfig
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
@@ -865,8 +866,27 @@ class TestAdminRoutes:
             provider.shutdown()
 
         assert response.status_code == 200
-        assert 'logging_records_total{severity="WARNING",surface="daemon"} 1.0' in response.text
-        assert 'automation_events_total{component="cron",outcome="fired"} 1.0' in response.text
+        # The exporter may add scope labels (otel_scope_*); match on our own labels.
+        samples = [
+            (sample.name, sample.labels, sample.value)
+            for family in text_string_to_metric_families(response.text)
+            for sample in family.samples
+        ]
+
+        def sample_value(name: str, labels: dict[str, str]) -> float | None:
+            for sample_name, sample_labels, value in samples:
+                if sample_name == name and labels.items() <= sample_labels.items():
+                    return value
+            return None
+
+        assert (
+            sample_value("logging_records_total", {"severity": "WARNING", "surface": "daemon"})
+            == 1.0
+        )
+        assert (
+            sample_value("automation_events_total", {"component": "cron", "outcome": "fired"})
+            == 1.0
+        )
 
     @pytest.mark.asyncio
     async def test_metrics_rendering_keeps_event_loop_responsive(
