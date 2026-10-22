@@ -42,7 +42,6 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import Terminal, TerminalManager
@@ -1088,68 +1087,6 @@ def _make_progress_stagnation_monitor(
         requested_reasoning_effort=requested_reasoning_effort,
     )
     return monitor, run, stuck_detector
-
-
-async def test_stuck_check_skips_session_awaiting_close_review(
-    agent_run_manager: LocalAgentRunManager,
-    temp_db: HubDatabase,
-    sample_session: dict[str, Any],
-) -> None:
-    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
-        agent_run_manager=agent_run_manager,
-        temp_db=temp_db,
-        sample_session=sample_session,
-    )
-    tracker = ProgressTracker(temp_db, stagnation_threshold=60)
-    tracker.record_event(sample_session["id"], ProgressType.FILE_MODIFIED)
-    temp_db.execute(
-        "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
-        (
-            (datetime.now(UTC) - timedelta(seconds=120)).isoformat(),
-            sample_session["id"],
-        ),
-    )
-    monitor._stuck_detector = StuckDetector(temp_db, progress_tracker=tracker)
-    task = LocalTaskManager(temp_db).create_task(
-        sample_session["project_id"],
-        "Close review lifecycle task",
-        validation_criteria="The lifecycle behavior is covered.",
-    )
-    TaskCloseReviewStore(temp_db).create_or_get_active(
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=sample_session["id"],
-        commit_shas=(),
-        close_arguments={"preview": True},
-        expected_task_updated_at=task.updated_at,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        diff_sha="d" * 64,
-        test_bodies_sha="e" * 64,
-        stable_facts={},
-        review_id=str(uuid.uuid4()),
-        run=QueuedAgentRunSpec(
-            id=str(uuid.uuid4()),
-            machine_id=run.machine_id,
-            provider="codex",
-            model=None,
-            agent_name="task-close-reviewer",
-            prompt="Review close evidence.",
-            timeout_seconds=1200,
-            requested_reasoning_effort=None,
-        ),
-    )
-
-    with patch.object(
-        monitor._cleanup_handler,
-        "cleanup_agent",
-        new_callable=AsyncMock,
-    ) as cleanup_agent:
-        handled = await monitor.check_autonomous_stuck_agents()
-
-    assert handled == 0
-    assert run.id not in monitor._stuck_interventions
-    cleanup_agent.assert_not_awaited()
 
 
 @pytest.mark.parametrize("suggested_action", ["stop", "escalate"])

@@ -26,7 +26,6 @@ from gobby.sessions.context_usage import (
     LOCAL_CONTEXT_ROUTE_VARIABLE,
 )
 from gobby.storage.agents import AgentRun
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from tests.terminals.fakes import bind_spawn_runtime
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
@@ -221,18 +220,18 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
 
 @pytest.mark.asyncio
 async def test_resume_refuses_task_close_reviewer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Its review stays bound to the original run, so a successor could never submit."""
+    """Retired reviewer runs remain inert after a daemon restart."""
     prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
 
     result = await resume_executor.resume_agent_run(
-        _original_run(agent_name=TASK_CLOSE_REVIEWER_AGENT),
+        _original_run(agent_name="task-close-reviewer"),
         resume_metadata=_resume_metadata(),
         runner=_runner(),
         session_manager=MagicMock(),
     )
 
     assert result.success is False
-    assert result.error == "resume_task_close_reviewer_unsupported"
+    assert result.error == "retired_close_review_run"
     prepare.assert_not_called()
 
 

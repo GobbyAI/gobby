@@ -21,7 +21,6 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.storage.workspaces import WorkspaceManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import (
     SessionContext,
@@ -362,10 +361,10 @@ def _deleted_caller(h: _Harness) -> tuple[Session, dict[str, Any]]:
 
 
 def _queued_reviewer(h: _Harness) -> tuple[Session, dict[str, Any]]:
-    """The task-close reviewer branch still validates its queued run."""
+    """A historical reviewer name grants no reserved-run authority."""
     caller, _ = _non_pipeline_caller(h)
     return caller, {
-        "agent": TASK_CLOSE_REVIEWER_AGENT,
+        "agent": "task-close-reviewer",
         "parent_session_id": caller.id,
         "placement": None,
         "reserved_run_id": str(uuid.uuid4()),
@@ -417,7 +416,7 @@ _CONFLICT = {"success": False, "error_code": "invocation_conflict"}
     [
         pytest.param(
             _non_pipeline_caller,
-            {"success": False, "error": "reserved_run_id is reviewer-internal"},
+            {"success": False, "error": "reserved_run_id requires a pipeline caller"},
             False,
             id="non-pipeline-caller",
         ),
@@ -439,8 +438,8 @@ _CONFLICT = {"success": False, "error_code": "invocation_conflict"}
         ),
         pytest.param(
             _queued_reviewer,
-            {"success": False, "error": "reserved queued reviewer run mismatch"},
-            True,
+            {"success": False, "error": "reserved_run_id requires a pipeline caller"},
+            False,
             id="queued-reviewer",
         ),
     ],
@@ -453,7 +452,7 @@ async def test_invocation_authority(
     looks_up_runs: bool,
 ) -> None:
     caller, arguments = caller_case(seat)
-    if arguments.get("agent") == TASK_CLOSE_REVIEWER_AGENT:
+    if arguments.get("agent") == "task-close-reviewer":
         monkeypatch.setattr(_factory, "_load_agent_body", lambda *a, **k: MagicMock())
     lookups: list[str] = []
     real_get = LocalAgentRunManager.get
@@ -469,41 +468,6 @@ async def test_invocation_authority(
     assert {key: reply.get(key) for key in expected} == expected
     assert bool(lookups) is looks_up_runs
     _assert_nothing_launched(seat)
-
-
-async def test_pipeline_caller_launches_queued_reviewer(
-    seat: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A close review promoted inside a pipeline step keeps the queued reviewer launch."""
-    run_id = str(uuid.uuid4())
-    seat.runs.create(
-        parent_session_id=seat.child.id,
-        provider="claude",
-        prompt="Review the close",
-        agent_name=TASK_CLOSE_REVIEWER_AGENT,
-        run_id=run_id,
-    )
-    seat.db.execute("UPDATE agent_runs SET status = 'queued' WHERE id = %s", (run_id,))
-    reviewer_body = MagicMock()
-    reviewer_body.workflows.pipeline = None
-    monkeypatch.setattr(_factory, "_load_agent_body", lambda *a, **k: reviewer_body)
-
-    async def launch(**kwargs: Any) -> dict[str, Any]:
-        seat.launches.append(kwargs)
-        return {"success": True, "run_id": kwargs["reserved_run_id"]}
-
-    monkeypatch.setattr(_factory, "spawn_agent_impl", launch)
-
-    reply = await seat.spawn(
-        seat.child,
-        agent=TASK_CLOSE_REVIEWER_AGENT,
-        prompt="Review the close",
-        placement=None,
-        reserved_run_id=run_id,
-    )
-
-    assert reply == {"success": True, "run_id": run_id}
-    assert [launch["reserved_run_id"] for launch in seat.launches] == [run_id]
 
 
 async def test_adopted_reply_names_bound_pane(seat: _Harness) -> None:

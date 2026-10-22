@@ -1,10 +1,9 @@
-"""Focused coverage for task-close review progress behavior."""
+"""Focused coverage for awake-time stagnation and tool activity classification."""
 
 from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -16,15 +15,7 @@ from gobby.autonomous.progress_tracker import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import (
-    QueuedAgentRunSpec,
-    TaskCloseReview,
-    TaskCloseReviewStore,
-)
-from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
 from gobby.utils.host_sleep import AwakeClock
-from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -33,80 +24,13 @@ def _create_session(db: HubDatabase) -> str:
     return (
         SessionManager(db)
         .register(
-            external_id=f"progress-review-{uuid4()}",
+            external_id=f"progress-{uuid4()}",
             machine_id=None,
             source="codex",
             project_id=None,
         )
         .id
     )
-
-
-def _create_active_review(
-    db: HubDatabase,
-    session_id: str,
-    project_id: str,
-) -> TaskCloseReview:
-    task = LocalTaskManager(db).create_task(
-        project_id,
-        "Close review progress task",
-        validation_criteria="The progress behavior is covered.",
-    )
-    review, created = TaskCloseReviewStore(db).create_or_get_active(
-        task_id=task.id,
-        task_ref=f"#{task.seq_num}",
-        caller_session_id=session_id,
-        commit_shas=(),
-        close_arguments={"preview": True},
-        expected_task_updated_at=task.updated_at,
-        review_fingerprint="review",
-        evidence_fingerprint="evidence",
-        diff_sha="d" * 64,
-        test_bodies_sha="e" * 64,
-        stable_facts={},
-        review_id=str(uuid4()),
-        run=QueuedAgentRunSpec(
-            id=str(uuid4()),
-            machine_id=require_machine_id(),
-            provider="codex",
-            model=None,
-            agent_name="task-close-reviewer",
-            prompt="Review close evidence.",
-            timeout_seconds=1200,
-            requested_reasoning_effort=None,
-        ),
-    )
-    assert created is True
-    return review
-
-
-def test_active_close_review_suppresses_stagnation(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    session_id = _create_session(temp_db)
-    tracker = ProgressTracker(temp_db, stagnation_threshold=60)
-    tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-    temp_db.execute(
-        "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
-        ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
-    )
-    assert tracker.get_summary(session_id).is_stagnant is True
-
-    review = _create_active_review(temp_db, session_id, sample_project["id"])
-    assert tracker.get_summary(session_id).is_stagnant is False
-
-    payload = {
-        "event": "task_close_review_completed",
-        "review_id": review.id,
-        "status": "invalid",
-    }
-    TaskCloseReviewStore(temp_db).finish(
-        review.id,
-        status="invalid",
-        result_payload=payload,
-    )
-    assert tracker.get_summary(session_id).is_stagnant is True
 
 
 def _backdate_progress(db: HubDatabase, session_id: str, *, seconds: float) -> None:
@@ -131,32 +55,6 @@ def test_host_sleep_does_not_count_as_stagnation(temp_db: HubDatabase) -> None:
     # Another 120 awake seconds without progress is stagnation again.
     _backdate_progress(temp_db, session_id, seconds=240)
     assert tracker.get_summary(session_id).is_stagnant is True
-
-
-def test_close_review_delivery_records_progress(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    session_id = _create_session(temp_db)
-    review = _create_active_review(temp_db, session_id, sample_project["id"])
-    payload = {
-        "event": "task_close_review_completed",
-        "review_id": review.id,
-        "status": "invalid",
-    }
-    TaskCloseReviewStore(temp_db).finish(
-        review.id,
-        status="invalid",
-        result_payload=payload,
-    )
-
-    assert mark_terminal_review_delivered(temp_db, payload, [session_id]) is True
-
-    events = ProgressTracker(temp_db).get_recent_events(session_id, limit=1)
-    assert len(events) == 1
-    assert events[0].progress_type is ProgressType.TASK_CLOSE_REVIEW_COMPLETED
-    assert events[0].tool_name == "task_close_review_completed"
-    assert events[0].details == {"review_id": review.id, "status": "invalid"}
 
 
 @pytest.mark.parametrize(

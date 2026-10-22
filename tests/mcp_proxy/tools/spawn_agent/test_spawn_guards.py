@@ -24,7 +24,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import (
@@ -227,11 +226,11 @@ async def test_bundled_developer_can_admit_only_its_close_reviewer(
     assert row is not None
     manager.update(row.id, definition_json={**definition, "name": "scope-caller"})
     _scope_definition(
-        spawn_caller.sessions.db, spawn_caller.child.project_id, TASK_CLOSE_REVIEWER_AGENT, []
+        spawn_caller.sessions.db, spawn_caller.child.project_id, "task-close-reviewer", []
     )
     with session_context_for_test(spawn_caller.child.id):
         admitted = await _spawn_guards.enforce_spawn_caller(
-            spawn_caller.sessions, TASK_CLOSE_REVIEWER_AGENT, spawn_caller.child.project_id
+            spawn_caller.sessions, "task-close-reviewer", spawn_caller.child.project_id
         )
         assert admitted == spawn_caller.child.id
         with pytest.raises(ValueError, match="spawnable_agents"):
@@ -357,7 +356,7 @@ async def test_spawn_guard_checks_the_actual_target_project(
         launch.assert_not_awaited()
 
 
-def test_validator_runs_excluded_from_active_count(
+def test_all_active_runs_count_toward_the_cap(
     temp_db: HubDatabase,
     sample_project: dict[str, object],
 ) -> None:
@@ -379,10 +378,10 @@ def test_validator_runs_excluded_from_active_count(
         parent_session_id=parent.id,
         provider="codex",
         prompt="validate close",
-        agent_name=TASK_CLOSE_REVIEWER_AGENT,
+        agent_name="task-close-reviewer",
     )
 
-    assert _spawn_guards._count_active_agents(temp_db, project_id) == 1
+    assert _spawn_guards._count_active_agents(temp_db, project_id) == 2
 
 
 @pytest.mark.asyncio

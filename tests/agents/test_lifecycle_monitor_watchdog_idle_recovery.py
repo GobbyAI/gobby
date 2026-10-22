@@ -5,7 +5,6 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -26,7 +25,6 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger
@@ -75,40 +73,15 @@ def _make_terminal_run(
     task_id: str | None = None,
     agent_name: str | None = None,
 ) -> AgentRun:
-    run = agent_run_manager.get(run_id)
-    if run is None:
-        run = agent_run_manager.create(
-            parent_session_id=parent_session["id"],
-            provider="codex",
-            prompt="test",
-            run_id=run_id,
-            child_session_id=child_session_id,
-            task_id=task_id,
-            agent_name=agent_name,
-        )
-    else:
-        assert run.status == "queued"
-        activated = agent_run_manager.activate_queued(
-            run_id,
-            child_session_id=child_session_id,
-            provider="codex",
-            prompt="test",
-            workflow_name=None,
-            agent_name=agent_name or run.agent_name,
-            model=run.model,
-            is_local=False,
-            requested_reasoning_effort=None,
-            effective_reasoning_effort=None,
-            reasoning_required=False,
-            reasoning_status="not_requested",
-            reasoning_message=None,
-            timeout_seconds=run.timeout_seconds,
-            resume_metadata_json=None,
-            worktree_id=None,
-            clone_id=None,
-        )
-        assert activated is not None
-        run = activated
+    run = agent_run_manager.create(
+        parent_session_id=parent_session["id"],
+        provider="codex",
+        prompt="test",
+        run_id=run_id,
+        child_session_id=child_session_id,
+        task_id=task_id,
+        agent_name=agent_name,
+    )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(run.id)
     _live_run = agent_run_manager.get(run.id)
@@ -407,7 +380,6 @@ def _make_idle_monitor_run(
     completion_registry: CompletionEventRegistry | None = None,
     made_gobby_mcp_call: bool = True,
     stuck_detector: StuckDetector | None = None,
-    prepare_queued_run: Callable[[dict[str, Any], str], None] | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
@@ -449,8 +421,6 @@ def _make_idle_monitor_run(
             child.id, "mcp_calls", {"gobby-agents": ["send_message"]}
         )
     temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (updated_at, child.id))
-    if prepare_queued_run is not None:
-        prepare_queued_run(parent.to_dict(), child.id)
     run = _make_terminal_run(
         agent_run_manager,
         parent.to_dict(),
@@ -1101,54 +1071,23 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
 
 
 @pytest.mark.asyncio
-async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_subscriber(
+async def test_exhausted_capacity_recovery_fails_run_and_wakes_subscriber(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    transcript_path = tmp_path / "codex-close-reviewer-capacity.jsonl"
+    transcript_path = tmp_path / "codex-capacity-recovery.jsonl"
     _append_codex_capacity_turn(transcript_path)
     wake = AsyncMock(return_value={"ism_persisted": True})
     registry = CompletionEventRegistry(wake_callback=wake)
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
         sample_project["id"],
-        "Close reviewer capacity recovery",
-        validation_criteria="Terminal recovery wakes the close caller.",
+        "Capacity recovery",
+        validation_criteria="Terminal recovery wakes the parent subscriber.",
     )
-    store = TaskCloseReviewStore(temp_db)
-    review_ids: list[str] = []
-
-    def prepare_queued_run(parent_session: dict[str, Any], _child_session_id: str) -> None:
-        review, created = store.create_or_get_active(
-            task_id=task.id,
-            task_ref=f"#{task.seq_num}",
-            caller_session_id=parent_session["id"],
-            commit_shas=(),
-            close_arguments={"preview": False},
-            expected_task_updated_at=task.updated_at,
-            review_fingerprint="review",
-            evidence_fingerprint="evidence",
-            diff_sha="d" * 64,
-            test_bodies_sha="e" * 64,
-            stable_facts={},
-            review_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee1024",
-            run=QueuedAgentRunSpec(
-                id="dddddddd-dddd-4ddd-8ddd-dddddddd1024",
-                machine_id=LOCAL_MACHINE_ID,
-                provider="codex",
-                model="gpt-test",
-                agent_name="task-close-reviewer",
-                prompt="Review the task close evidence.",
-                timeout_seconds=1200,
-            ),
-        )
-        assert created is True
-        promoted = store.claim_queued(project_id=sample_project["id"], max_concurrency=3)
-        assert [item.id for item in promoted] == [review.id]
-        review_ids.append(review.id)
 
     monitor, run = _make_idle_monitor_run(
         temp_db=temp_db,
@@ -1160,10 +1099,7 @@ async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_s
         session_age_seconds=1,
         completion_registry=registry,
         task_id=task.id,
-        prepare_queued_run=prepare_queued_run,
     )
-    review = store.get(review_ids[0])
-    assert review is not None
     subscribers = CompletionSubscriberManager(temp_db)
     subscribers.add_completion_subscriber(run.id, run.parent_session_id)
     registry.register(run.id, subscribers=[run.parent_session_id])
@@ -1175,10 +1111,9 @@ async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_s
         _append_codex_capacity_turn(transcript_path)
         await monitor.check_idle_agents()
 
-    terminal_review = store.get(review.id)
-    assert terminal_review is not None
-    assert terminal_review.status == "error"
-    assert terminal_review.delivered_at is not None
+    terminal_run = agent_run_manager.get(run.id)
+    assert terminal_run is not None
+    assert terminal_run.status == "error"
     wake.assert_awaited_once()
     assert subscribers.get_completion_subscribers(run.id) == []
 
