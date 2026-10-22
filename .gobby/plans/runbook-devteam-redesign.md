@@ -345,9 +345,50 @@ Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_landing.py::*` — scope-reason: expose the new landing authority and refusals
 - `src/gobby/tasks/landing_policy.py::*` — scope-reason: remove restart approval prerequisite while retaining carriers and sync policy
 - `tests/tasks/test_land_commit.py::*` — scope-reason: cover manager landing and ancestry/disjoint-update behavior
-- `tests/tasks/test_dev_manager_landing.py`
+- `tests/tasks/test_dev_manager_landing.py::*` — scope-reason: Dev Manager landing authority, ancestry and worktree marking
+- `src/gobby/tasks/lifecycle_access.py::*` — scope-reason: resolve the landing caller's task authority
+- `src/gobby/tasks/step_records.py::*` — scope-reason: independent review approval read by landing
+- `src/gobby/mcp_proxy/tools/task_commits.py::*` — scope-reason: delete the record_close_receipt tool
+- `src/gobby/mcp_proxy/tools/tasks/_session.py::*` — scope-reason: delete the transfer_task_authority tool
+- `src/gobby/storage/tasks/_delegation.py::*` — scope-reason: delete authority transfer storage
+- `src/gobby/storage/tasks/_manager.py::*` — scope-reason: delete the authority transfer method
+- `src/gobby/workflows/enforcement/blocking.py::*` — scope-reason: drop retired tools from task mutation gating
+- `src/gobby/servers/routes/tasks_comment_routes.py::*` — scope-reason: name land_commit as the only receipt writer
+- `src/gobby/workflows/engine/seat_transitions.py::*` — scope-reason: reviewer unit ends at its own verdict; no parking or landing events
+- `src/gobby/workflows/engine/seat_messages.py::*` — scope-reason: retire park/resume grammar and fields
+- `src/gobby/workflows/condition_helpers_sessions.py::*` — scope-reason: delete the reviewer landing condition
+- `src/gobby/workflows/step_binding.py::*` — scope-reason: delete reviewer landing recovery
+- `src/gobby/workflows/step_context.py::*` — scope-reason: stop calling the deleted recovery
+- `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: verdict-only reviewer
+- `src/gobby/install/shared/workflows/agents/developer.yaml::*` — scope-reason: wait on the lander's EVENT=LANDED
+- `src/gobby/install/shared/workflows/agents/inbox-manager.yaml::*` — scope-reason: lander wording
+- `src/gobby/install/shared/workflows/agents/release-manager.yaml::*` — scope-reason: no activation receipt; Orchestrator lands
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/implementation.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/creation.md`
+- `docs/guides/tasks.md`
+- `docs/contracts/parity-ledger.md`
+- `docs/contracts/parity-ledger-status.d/tasks.json::*` — scope-reason: unmap retired tools
+- `docs/reference-audit/tasks.json::*` — scope-reason: unmap retired tools
+- `tests/fixtures/landing_case.py::*` — scope-reason: shared landing fixtures
+- `tests/fixtures/review_approvals.py::*` — scope-reason: shared review approval fixture
+- `tests/tasks/test_close_receipts.py::*` — scope-reason: landing-only receipts
+- `tests/cli/installers/test_landing_guard_hook.py::*` — scope-reason: the bound Dev Manager lands through the guard
+- `tests/mcp_proxy/tools/tasks/test_cross_project_task_refs.py::*` — scope-reason: cross-project landing runs as a granted Orchestrator
+- `tests/mcp_proxy/tools/test_tasks_list_coverage.py::*` — scope-reason: drop the retired tools from coverage
+- `tests/servers/routes/test_tasks_routes.py::*` — scope-reason: landing-only receipt fixtures
+- `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: retired tools absent from enforcement lists
+- `tests/workflows/test_team_runbooks.py::*` — scope-reason: runbook admission no longer names record_close_receipt
+- `tests/agents/test_review_observation_seat_definitions.py::*` — scope-reason: verdict-only reviewer
+- `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: Orchestrator lander, no parked candidates
+- `tests/workflows/test_seat_step_loops.py::*` — scope-reason: reviewer loop ends at its verdict
+- `tests/workflows/test_step_definition_refresh.py::*` — scope-reason: reloaded reviewer ends on its own verdict
 
-**Research context:** The cited landing evidence separates schema carriers from restart approval. The assessment notes current landing requires the caller's own reviewer receipt and refuses former claimants. Authorize the task's Dev Manager to use the distinct independent reviewer's approved review-step record for the exact task tip. Retire the old receipt as an alternative approval authority. Preserve current ancestry-safe landing and transaction/lock checks, idempotently record the landing, resolve the actual source branch/tree from Git and task binding, refresh its registry association, and call `mark_merged(cleanup_days=0)`. Do not rely on stale lane labels. Disjoint intervening integration changes permit a two-parent merge without per-task retest; overlapping paths or semantic conflicts produce a structured Triage escalation. No creator/delegator receipt transfer or activation wait remains.
+**Research context:** The cited landing evidence separates schema carriers from restart approval. The assessment notes current landing requires the caller's own reviewer receipt and refuses former claimants. Authorize the task's Dev Manager to use the distinct independent reviewer's approved review-step record for the exact task tip. Retire the old receipt as an alternative approval authority. Preserve current ancestry-safe landing and transaction/lock checks, idempotently record the landing, resolve the actual source branch/tree from Git and task binding, refresh its registry association, and call `mark_merged(cleanup_days=0)`. Do not rely on stale lane labels. Disjoint intervening integration changes permit a two-parent merge without per-task retest; overlapping paths or semantic conflicts produce a structured Triage escalation. No creator/delegator receipt transfer or activation wait remains. The Code Reviewer's LAND becomes verdict-only here; the Orchestrator lands each approved LAND with `land_commit` until 3.5 hands landings to Dev Managers. `tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py` is deleted with its tool.
 
 **Acceptance:**
 - 2.4.1 - Bound Dev Manager can land an independently approved exact SHA; unrelated manager, missing approval and self-review fail. test: `tests/tasks/test_dev_manager_landing.py::test_manager_landing_authority`.
@@ -552,11 +593,11 @@ Targets:
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: seed consistent target and Cargo home for task trees
 - `src/gobby/agents/constants.py::*` — scope-reason: align agent Cargo-home resolution with the approved shared project build policy
 - `src/gobby/agents/sandbox_run_environment.py::*` — scope-reason: use the same Cargo home in sandbox environment construction
-- `src/gobby/agents/cargo_environment.py`
+- `src/gobby/agents/cargo_environment.py::*` — scope-reason: one Cargo environment builder for every launch path
 - `scripts/gobby-project-shell.sh`
 - `tests/agents/test_cargo_target.py::*` — scope-reason: replace per-checkout cache expectations
 - `tests/integration/test_cargo_target_isolation.py::*` — scope-reason: test divergent checkout reuse and cleanup safety
-- `tests/integration/test_project_cargo_cache.py`
+- `tests/integration/test_project_cargo_cache.py::*` — scope-reason: project cache parity, provenance and cleanup safety
 
 **Research context:** The assessment identifies per-checkout target directories in `cargo_target.py` and reports hundreds of gigabytes of duplicated caches. Use the project UUID as the stable parent namespace and sanitized `cargo-target-<project_name>` below it, shared by worktrees, agent subprocesses, sandbox binds, Release Manager and the supported project-shell wrapper. Resolve project identity before constructing the path; same names in different projects must not collide. Centralize environment construction in `cargo_environment.py`, including one Cargo home. Update every import/literal consumer of target and cleanup helpers, and keep emitted artifact provenance tied to the exact source SHA/version despite shared storage. Worktree cleanup removes only its symlink/registration. Old checkout caches are not destructively bulk-deleted by this change. Cargo's build-directory lock supplies serialization; do not add heavy grants or nextest resource caps.
 
