@@ -254,38 +254,84 @@ Observed checks include 91 watchdog tests passing before and after extraction, 1
 
 Targets:
 - `src/gobby/tasks/close_receipts.py::*` — scope-reason: retire independent-review receipts as an alternate approval writer
-- `src/gobby/mcp_proxy/tools/tasks/_landing.py::*` — scope-reason: retire the independent-review receipt input in favor of the dedicated review-step writer
-- `src/gobby/tasks/step_records.py`
-- `src/gobby/mcp_proxy/tools/tasks/_step_records.py`
+- `src/gobby/tasks/step_records.py::*` — scope-reason: new module owning record storage, current-record selection, policy requirements, the atomic review counter and landing approval
+- `src/gobby/mcp_proxy/tools/tasks/_step_records.py::*` — scope-reason: new module defining the four dedicated role-owned writer tools
 - `src/gobby/servers/routes/tasks_comment_routes.py::*` — scope-reason: reserve step-record authorship and immutability from ordinary comment creation and deletion
-- `src/gobby/mcp_proxy/tools/tasks/_factory.py::*` — scope-reason: register four dedicated role-owned step writer tools
-- `src/gobby/config/tasks.py::*` — scope-reason: define project test-step and task-type review requirements
-- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerate the task close-policy contract carrier
+- `src/gobby/mcp_proxy/tools/tasks/_factory.py::*` — scope-reason: register four dedicated role-owned step writer tools and stop registering the MCP restore tool
+- `src/gobby/workflows/agent_models.py::*` — scope-reason: add the `task_step_writes` definition grant field
+- `src/gobby/config/tasks.py::*` — scope-reason: define the step-record enforcement switch and the task categories that need test and review records
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: verify the generated carrier stays unchanged, because the task close policy is project config outside the daemon contract
+- `.gobby/project.json::*` — scope-reason: turn on step-record enforcement in Gobby's task close policy
 - `src/gobby/tasks/close_invariants.py::*` — scope-reason: mechanically check required approved records in preview and close
 - `src/gobby/mcp_proxy/tools/tasks/_close_context.py::*` — scope-reason: resolve project policy and current task step records for close
-- `src/gobby/storage/tasks/_models.py::*` — scope-reason: expose current role-owned records in task views
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::*` — scope-reason: evaluate required and missing step records with the close gates
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py::*` — scope-reason: count the step-record gate among the evaluated close gates
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::*` — scope-reason: return missing step records as a typed close refusal
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py::*` — scope-reason: describe the step-record gate in the close tool contract
+- `src/gobby/storage/tasks/_close.py::*` — scope-reason: enforce the required approved records inside the close transaction under the final task lock
+- `src/gobby/storage/tasks/_models.py::*` — scope-reason: add the closing error that names missing approved step records
+- `src/gobby/storage/tasks/__init__.py::*` — scope-reason: export the closing error that names missing approved step records
+- `src/gobby/mcp_proxy/tools/tasks/_crud.py::*` — scope-reason: show the current epoch's step records in the full task view
 - `src/gobby/sync/task_review_serialization.py::*` — scope-reason: round-trip role-owned record history without restoring approval through user comments
+- `src/gobby/sync/tasks.py::*` — scope-reason: read step-record history into backups, validate it before restore and preserve linked-commit order
+- `src/gobby/mcp_proxy/tools/tasks/_backup.py::*` — scope-reason: remove the MCP restore tool and fix backups to the default path
+- `src/gobby/install/shared/workflows/rules/task-enforcement/block-gobby-tasks-cli.yaml::*` — scope-reason: block agents from the operator-only task restore command
+- `src/gobby/workflows/enforcement/blocking.py::*` — scope-reason: classify the step writers as task mutations and drop the restore tool
 - `src/gobby/storage/tasks/_transitions.py::*` — scope-reason: atomic failure increment and third-rejection escalation
 - `src/gobby/storage/tasks/_de_escalation.py::*` — scope-reason: audited Triage reset
-- `tests/tasks/test_step_records.py`
-- `tests/mcp_proxy/tools/tasks/test_step_record_authority.py`
-- `tests/tasks/test_close_invariants.py::*` — scope-reason: verify project and task-type record requirements
+- `src/gobby/storage/tasks/_updates.py::*` — scope-reason: let the audited reset write the review epoch
+- `src/gobby/tasks/land_commit.py::*` — scope-reason: land only for a session holding an approved review record for the SHA the current review approves
+- `src/gobby/workflows/engine/seat_transitions.py::*` — scope-reason: drive the reviewer land gate and stale-approval clearing from the same review record
+- `src/gobby/mcp_proxy/tools/task_commits.py::*` — scope-reason: share checkout machine resolution with the step writers and retire the independent-review receipt kind
+- `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: grant the review step writer and gate LAND on the reviewer's approved review record
+- `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: grant all four step writers for exhausted-avenue record repair
+- `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/backups.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
+- `docs/guides/tasks.md`
+- `docs/design/task-authority-audit.md`
+- `tests/tasks/test_step_records.py::*` — scope-reason: new storage tests for record atomicity, independence, rejection counting and policy selection
+- `tests/mcp_proxy/tools/tasks/test_step_record_authority.py::*` — scope-reason: new MCP tests for role-owned writers, definition grants and task views
+- `tests/fixtures/review_approvals.py::*` — scope-reason: new shared fixture that writes an approved review record at the task tip
+- `tests/tasks/test_close_invariants.py::*` — scope-reason: verify project and task-category record requirements
 - `tests/servers/routes/test_tasks_routes.py::*` — scope-reason: verify ordinary comments cannot forge or delete role-owned step records
+- `tests/tasks/test_land_commit.py::*` — scope-reason: landing accepts only an approved review record for the exact approved SHA
+- `tests/tasks/test_close_receipts.py::*` — scope-reason: the retired independent-review receipt kind is refused
+- `tests/workflows/test_seat_step_loops.py::*` — scope-reason: the reviewer land gate follows the reviewer's own review record
+- `tests/mcp_proxy/tools/tasks/test_cross_project_task_refs.py::*` — scope-reason: cross-project step writes and landing resolve through lifecycle authority
+- `tests/cli/installers/test_landing_guard_hook.py::*` — scope-reason: seed landing approval through a review record
+- `tests/mcp_proxy/tools/tasks/test_close_candidate.py::*` — scope-reason: close refuses missing policy-selected records
+- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: close and preview report missing policy-selected records
+- `tests/storage/tasks/test_closed_parent_guard.py::*` — scope-reason: pass the database the close transaction now reads policy from
+- `tests/e2e/test_task_close_checklist_e2e.py::*` — scope-reason: end-to-end closes write the required step records
+- `tests/e2e/test_parallel_clones.py::*` — scope-reason: end-to-end clone closes write the required step records
+- `tests/sync/test_task_step_record_backup.py::*` — scope-reason: new backup and restore round-trip tests for step-record history
+- `tests/storage/test_review_field_migration.py::*` — scope-reason: backups carry an empty step-record history for migrated tasks
+- `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py::*` — scope-reason: task views list step records
+- `tests/mcp_proxy/tools/test_tasks_list_coverage.py::*` — scope-reason: receipts use the surviving kinds
+- `tests/mcp_proxy/tools/tasks/test_handed_off_claims.py::*` — scope-reason: drop the review receipt that claim logic never read
+- `tests/mcp_proxy/tools/test_internal_action_tools.py::*` — scope-reason: restore is the operator's CLI only
+- `tests/workflows/test_gobby_tasks_cli_rule.py::*` — scope-reason: agents are blocked from the task restore command
+- `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: step writers count as task mutations and restore does not
+- `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: the orchestrator holds all four step writers
+- `tests/agents/test_review_observation_seat_definitions.py::*` — scope-reason: the code reviewer records review steps
 
-**Research context:** The October 22 ruling replaces the proposed parallel verdict subsystem with four records: test, implementation, review and closing. Each has pending/in_progress/approved/rejected status, server-derived agent definition/version/session identity, timestamps, full feedback and an epoch; work-bearing evidence also binds the exact commit SHA. Reuse durable task comments as the append-only record store, with a reserved author type unavailable to ordinary comment writers and task-row locking for latest-record selection, sequence and idempotency. No new review table or second verdict ledger is needed. Expose `record_test_step`, `record_implementation_step`, `record_review_step` and `record_closing_step`; each tool fixes its step server-side, verifies the resolved session's definition grants and rejects writes for another role. Section 3.5 grants those tools to the corresponding seats. The reviewer who becomes a fixer can write implementation only after the manager's role transition; former claimants/editors still cannot write an approved review.
+**Research context:** The October 22 ruling replaces the proposed parallel verdict subsystem with four records: test, implementation, review and closing. Each has pending/in_progress/approved/rejected status, server-derived agent definition/version/session identity, timestamps, full feedback and an epoch; work-bearing evidence also binds the exact commit SHA. Reuse durable task comments as the append-only record store, with a reserved author type unavailable to ordinary comment writers and task-row locking for latest-record selection, sequence and idempotency. No new review table or second verdict ledger is needed. Expose `record_test_step`, `record_implementation_step`, `record_review_step` and `record_closing_step`; each tool fixes its step server-side, verifies the resolved session's definition grants (`task_step_writes`) and rejects writes for another role. This section grants `record_review_step` to the code reviewer and all four writers to the Orchestrator, whose procedure delegates first and writes records directly only when other avenues are exhausted; section 3.5 grants the remaining seats. A writer in another project is accepted when `resolve_lifecycle_task` grants lineage or operator authority, preserving #24629 cross-project review and landing. Restore is operator-only: the MCP `restore_tasks` tool is removed, agents are blocked from `gobby tasks restore`, and `backup_tasks` writes only the default path, so no agent can restore approvals from a crafted backup. The reviewer who becomes a fixer can write implementation only after the manager's role transition; former claimants/editors still cannot write an approved review.
 
-The earlier atomic failure helper was retired with build removal; the current transition facade only forwards the review counter. Implement the review-record transaction under the task-row lock: record feedback and review result, increment the current epoch's rejection count once, clear the claim and escalate on the third rejection. Replaying the same reviewer/SHA/round/epoch returns the original record and never increments; contradictory replays fail. Infrastructure errors leave the review step unapproved and do not count as rejection. Audited Triage resets begin a new epoch without erasing history. Task-level review fields summarize these records for readers and are not independent approval inputs. Landing consumes the approved review record for the exact task tip.
+The earlier atomic failure helper was retired with build removal; the current transition facade only forwards the review counter. Implement the review-record transaction under the task-row lock: record feedback and review result, increment the current epoch's rejection count once, clear the claim and escalate on the third rejection. Replaying the same reviewer/SHA/round/epoch returns the original record and never increments; contradictory replays fail. Infrastructure errors leave the review step unapproved and do not count as rejection. Audited Triage resets begin a new epoch without erasing history. Task-level review fields summarize these records for readers and are not independent approval inputs. Landing consumes an approved review record for the exact SHA the current review approves; any session holding its own such record may land, replay or recover it. The independent-review receipt grants nothing, and its kind is retired.
 
-Close always requires approved implementation and closing records, requires test approval when the project enables testing, and requires review approval for the task types configured by the project (code and docs included in Gobby's policy). The test record can precede or follow implementation; the DevTeam runbook chooses test-first. Evaluate record requirements alongside the four existing data invariants through the shared preview/final-close evaluator, under the final task lock. For no-work closure the responsible role records the disposition; absence of a linked commit does not bypass required records. Project policy remains generic for non-code tasks. This section does not implement #23817 routing or the per-epic variant.
+When the project enables step-record enforcement (`enforce_step_records` in `task_close_policy`, on in Gobby's `.gobby/project.json`), close of a work-bearing task category always requires approved implementation and closing records, requires test approval for the categories the project lists for testing (none in Gobby's policy), and requires review approval for the categories the project configures (code and docs in Gobby's policy). Epics need no records; their children carry them. The test record can precede or follow implementation; the DevTeam runbook chooses test-first. Evaluate record requirements alongside the four existing data invariants through the shared preview/final-close evaluator, and enforce them in storage `_close_task_in_txn` under the final task lock. For no-work closure the responsible role records the disposition; absence of a linked commit does not bypass required records. Project policy remains generic for non-code tasks. This section does not implement #23817 routing or the per-epic variant.
 
-**Granularity:** Record storage, dedicated writers and mechanical close checks form one authority boundary. The review counter and landing stamp use that same record, so separate authorities would allow contradictory approvals.
+**Granularity:** Record storage, dedicated writers and mechanical close checks form one authority boundary. The review counter and landing stamp use that same record, so separate authorities would allow contradictory approvals. Backup round-trip and operator-only restore stay in this section because restore is the only other path that writes those records.
 
 **Acceptance:**
 - 2.3.1 - Each dedicated writer can update only its authorized role's record; records preserve statuses provenance timestamps and full feedback. test: `tests/mcp_proxy/tools/tasks/test_step_record_authority.py::test_role_owned_writers`.
 - 2.3.2 - Concurrent/replayed review records count once and retain full feedback atomically. test: `tests/tasks/test_step_records.py::test_review_record_is_atomic_and_idempotent`.
 - 2.3.3 - Editors and former claimants cannot approve; stale-SHA approval cannot authorize landing. test: `tests/tasks/test_step_records.py::test_independent_exact_sha_review`.
 - 2.3.4 - The third rejection escalates and blocks ordinary rounds until an audited reset; infrastructure errors do not increment. test: `tests/tasks/test_step_records.py::test_three_rejections_and_audited_reset`.
-- 2.3.5 - Preview and close require exactly the approved records selected by project policy and task type, including non-code tasks and optional test steps. test: `tests/tasks/test_close_invariants.py::test_required_step_records_follow_project_policy`.
+- 2.3.5 - Preview and close require exactly the approved records selected by project policy and task category, including non-code tasks and optional test steps. test: `tests/tasks/test_close_invariants.py::test_required_step_records_follow_project_policy`.
 
 **Verification:** Planned concurrent storage tests, MCP role-forgery refusals, project-policy matrix, no-work closure, replay/epoch behavior, snapshot restore and exact-SHA landing tests with isolated sessions/tasks. No transcript parsing supplies approval.
 
@@ -432,7 +478,7 @@ Targets:
 
 **Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward, task-close-reviewer and expansion-qa under Josh's overriding ruling. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy.
 
-The definitions grant only their role's step writer: Test Writer gets `record_test_step`, Developer gets `record_implementation_step`, Code Reviewer gets `record_review_step`, and Dev Manager gets `record_closing_step`. A manager-authorized reviewer-to-fixer transition grants implementation authority for that task and removes review approval authority. Procedures require approved records before landing/close; the reviewer record supplies the exact-SHA stamp and the manager's closing record confirms the summary and final checks.
+The definitions grant only their role's step writer: Test Writer gets `record_test_step`, Developer gets `record_implementation_step`, Code Reviewer gets `record_review_step`, and Dev Manager gets `record_closing_step`. The Orchestrator keeps the four writers section 2.3 granted, for repair only after other avenues are exhausted. A manager-authorized reviewer-to-fixer transition grants implementation authority for that task and removes review approval authority. Procedures require approved records before landing/close; the reviewer record supplies the exact-SHA stamp and the manager's closing record confirms the summary and final checks.
 
 **Granularity:** These configuration files jointly define one usable launch contract. Runtime mechanisms land first; definition and registry activation occur as one coordinated cutover so no partially renamed seat can launch.
 
